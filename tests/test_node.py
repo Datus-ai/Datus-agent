@@ -126,7 +126,7 @@ def db_manager(agent_config: AgentConfig) -> DBManager:
 
 
 @pytest.fixture
-def snowflake_db(db_manager: DBManager):
+def sql_connector(db_manager: DBManager):
     """Create real Snowflake database connection"""
     from dotenv import load_dotenv
 
@@ -343,7 +343,7 @@ class TestNode:
         # save_to_yaml(reflection_input, "ReflectionInput.yaml")
 
     @pytest.mark.acceptance
-    def test_reasoning_node(self, generate_sql_input, snowflake_db, agent_config):
+    def test_reasoning_node(self, generate_sql_input, agent_config):
         """Test reasoning node with real DeepSeek model and Snowflake database"""
         try:
             # Initialize reasoning input
