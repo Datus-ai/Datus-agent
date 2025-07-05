@@ -9,7 +9,7 @@ authors = [
 ]
 
 [[tool.uv.index]]
-url = "https://mirrors.aliyun.com/pypi/simple"
+url = "http://mirrors.aliyun.com/pypi/simple"
 default = true
 [tool.uv.pip]
 index-url = "https://test.pypi.org/simple"

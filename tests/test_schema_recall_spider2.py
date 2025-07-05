@@ -8,13 +8,23 @@ import pytest
 from conftest import PROJECT_ROOT
 from pandas import DataFrame
 
+from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.storage.schema_metadata.store import rag_by_configuration
+from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
 from datus.utils.json_utils import load_jsonl
 
-agent_config = load_agent_config(**{"namespace": "snowflake"})
-# setup schema store
-rag = rag_by_configuration(agent_config)
+
+@pytest.fixture
+def agent_config() -> AgentConfig:
+    return load_agent_config(**{"namespace": "snowflake"})
+
+
+@pytest.fixture
+def rag(agent_config: AgentConfig) -> SchemaWithValueRAG:
+    # setup schema store
+    rag = rag_by_configuration(agent_config)
+    return rag
+
 
 # Init gold schema dir. If you are running the use case for this file for the first time,
 # run utils/extracting_sql_metadata.py first to generate the schema files.
@@ -29,9 +39,6 @@ def load_gold_tables() -> dict[str, Set[str]]:
     for gold_table in load_jsonl(gold_schema_file):
         gold_tables[gold_table["instance_id"]] = set(gold_table["gold_tables"])
     return gold_tables
-
-
-gold_tables = load_gold_tables()
 
 
 def clean_query_text(text: str) -> str:
@@ -63,13 +70,14 @@ def match_result(target_schema: Set[str], full_name_set: Set[str]):
 @pytest.mark.parametrize(
     "task_ids,use_rerank", [({"sf_ga011", "sf_ga019", "sf_ga030", "sf_ga005", "sf_ga028", "sf_ga022"}, False)]
 )
-def test_recall(task_ids: Set[str], use_rerank: bool):
+def test_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, task_ids: Set[str], use_rerank: bool):
+    gold_tables = load_gold_tables()
     with open(os.path.join(agent_config.benchamrk_path("spider2"), "spider2-snow.jsonl")) as f:
         for line in f:
             task = json.loads(line)
             if task["instance_id"] not in task_ids:
                 continue
-            result = do_recall(task, 5, use_rerank)
+            result = do_recall(rag, task, 5, use_rerank, gold_tables)
             if result:
                 print(f"Task ID: {task['instance_id']}")
                 print(f"Actual Tables: {result['actual_tables']}")
@@ -89,7 +97,7 @@ def test_recall(task_ids: Set[str], use_rerank: bool):
 
 
 @pytest.mark.parametrize("top_n,use_rerank", [(5, False), (10, False), (20, False), (5, True), (10, True), (20, True)])
-def test_full_recall(top_n: int, use_rerank: bool):
+def test_full_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: int, use_rerank: bool):
     """Test the RAG SQL callback
     # Test matching tables from spider2-snow.jsonl tasks with actual schema
     # Output format: Task ID, Actual Tables, Schema Matched Tables, Schema Match Score, Value Matched Tables,
@@ -107,24 +115,31 @@ def test_full_recall(top_n: int, use_rerank: bool):
 
     match_results = []
     total = 0
+    gold_tables = load_gold_tables()
     for task in tasks:
-        result = do_recall(task, top_n, use_rerank)
+        result = do_recall(rag, task, top_n, use_rerank, gold_tables)
         if result:
             match_results.append(result)
             if result["union_match_tables_score"] == 1:
                 total += 1
+    output_dir = os.path.join(PROJECT_ROOT, "tests/output/recall")
+    os.makedirs(output_dir, exist_ok=True)
     df = DataFrame(match_results)
     if use_rerank:
-        df.to_excel(f"match_results_{top_n}_{use_rerank}.xlsx", engine="xlsxwriter", index=False)
+        df.to_excel(
+            os.path.join(output_dir, f"match_results_{top_n}_{use_rerank}.xlsx"), engine="xlsxwriter", index=False
+        )
     else:
-        df.to_excel(f"match_results_{top_n}.xlsx", engine="xlsxwriter", index=False)
+        df.to_excel(os.path.join(output_dir, f"match_results_{top_n}.xlsx"), engine="xlsxwriter", index=False)
     print(
         f"The number of top{top_n} exact matches is: {total}, total_result:{len(match_results)}, "
         f"spends {(datetime.now() - start_time).total_seconds()}"
     )
 
 
-def do_recall(task: Dict[str, Any], top_n: int, use_rerank: bool) -> Dict[str, Any]:
+def do_recall(
+    rag: SchemaWithValueRAG, task: Dict[str, Any], top_n: int, use_rerank: bool, gold_tables: dict[str, Set[str]]
+) -> Dict[str, Any]:
     task_id = task["instance_id"]
     db_id = task["db_id"]
     task = clean_query_text(task["instruction"])
@@ -135,7 +150,9 @@ def do_recall(task: Dict[str, Any], top_n: int, use_rerank: bool) -> Dict[str, A
 
     # print(task_id, schema)
 
-    (schema_tables, schema_values) = rag.search_similar(task, top_n=top_n, database_name=db_id, use_rerank=use_rerank)
+    (schema_tables, schema_values) = rag.search_similar(
+        query_text=task, top_n=top_n, database_name=db_id, use_rerank=use_rerank
+    )
     table_count = len(rag.search_all_schemas(database_name=db_id))
     if len(schema_tables) == 0:
         print(f"No schema tables found for task {task_id} from {db_id}")
@@ -191,7 +208,7 @@ def test_unique():
     schema_size = rag.get_schema_size()
     value_size = rag.get_value_size()
 
-    def parse_unique(tables: list[dict[str, any]]) -> set[str]:
+    def parse_unique(tables: list[dict[str, Any]]) -> set[str]:
         unique_tables = set()
         for t in tables:
             unique_tables.add(f"{t['database_name']}.{t['schema_name']}.{t['table_name']}")

@@ -9,7 +9,6 @@
 **/__pycache__
 /data
 /output*
-/benchmark
 /tests/*.xlsx
 /tests/llm_find_tables
 /conf/agent.yml

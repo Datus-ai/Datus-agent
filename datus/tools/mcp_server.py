@@ -230,7 +230,7 @@ class MCPServer:
                         "env": {
                             "STARROCKS_DATABASE": database_name if database_name else db_config.database,
                             "STARROCKS_HOST": db_config.host,
-                            "STARROCKS_PORT": db_config.port,
+                            "STARROCKS_PORT": str(db_config.port),
                             "STARROCKS_USER": db_config.username,
                             "STARROCKS_PASSWORD": db_config.password,
                         },

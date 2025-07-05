@@ -6,10 +6,11 @@ from typing import Any, Dict, List, Set, Union
 import pytest
 from pandas import DataFrame
 
+from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
-from datus.storage.schema_metadata.store import rag_by_configuration
+from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
 from datus.tools.llms_tools.match_schema import MatchSchemaTool, gen_all_table_dict
 from datus.utils.json_utils import load_jsonl_iterator
 from datus.utils.loggings import configure_logging, get_logger
@@ -19,11 +20,11 @@ from tests.test_schema_recall_spider2 import load_gold_tables
 configure_logging(debug=True)
 logger = get_logger("test_match_schema")
 
-agent_config = load_agent_config(namespace="snowflake")
 
+@pytest.fixture
+def agent_config() -> AgentConfig:
+    return load_agent_config(namespace="snowflake")
 
-# Init gold sql tables
-gold_sql_tables = load_gold_tables()
 
 json_path = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -32,16 +33,25 @@ json_path = os.path.join(
 
 
 not_matched_databases = {}
-rag = rag_by_configuration(agent_config)
+
+
+@pytest.fixture
+def rag(agent_config: AgentConfig) -> SchemaWithValueRAG:
+    rag = rag_by_configuration(agent_config)
+    return rag
 
 
 @pytest.mark.parametrize("target_task_id, top_n", [("sf_bq236", 10)])
-def test_match_schema(target_task_id: str, top_n: int, check_exists=False):
+def test_match_schema(
+    agent_config: AgentConfig, rag: SchemaWithValueRAG, target_task_id: str, top_n: int, check_exists=False
+):
     """Match the schema by llm
     Args:
         task_id: the task id
         check_exists: whether to check if the result exists, if True, skip the task
     """
+    # Init gold sql tables
+    gold_sql_tables = load_gold_tables()
     need_matched_data = []
     for json_line in load_jsonl_iterator(json_path):
         task_id = json_line["instance_id"]
@@ -49,12 +59,14 @@ def test_match_schema(target_task_id: str, top_n: int, check_exists=False):
             continue
         need_matched_data.append(json_line)
 
-    do_gen_match_schema(need_matched_data, top_n, check_exists)
+    do_gen_match_schema(agent_config, rag, need_matched_data, top_n, check_exists)
 
 
-def test_full_match_schema(top_n: int = 10, check_exists=True):
+def test_full_match_schema(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: int = 10, check_exists=True):
     """Match the schema by llm for all tasks"""
     need_matched_data = []
+    # Init gold sql tables
+    gold_sql_tables = load_gold_tables()
     with open(json_path, "r") as f:
         lines = f.readlines()
 
@@ -97,7 +109,7 @@ def test_full_match_schema(top_n: int = 10, check_exists=True):
             if match_result["matched_score"] != 1:
                 need_matched_data.append(json_line)
 
-        recall_result = do_gen_match_schema(need_matched_data, top_n, check_exists)
+        recall_result = do_gen_match_schema(agent_config, rag, need_matched_data, top_n, check_exists)
         logger.info(f"Full-Match-Schema done {recall_result}")
 
         if recall_result:
@@ -112,7 +124,14 @@ def test_full_match_schema(top_n: int = 10, check_exists=True):
         logger.info("Full-Match-Schema result2 write done")
 
 
-def do_gen_match_schema(lines: List[Dict[str, Any]], top_n: int, check_exists: bool) -> List[Dict[str, Any]]:
+def do_gen_match_schema(
+    agent_config: AgentConfig,
+    rag: SchemaWithValueRAG,
+    lines: List[Dict[str, Any]],
+    top_n: int,
+    check_exists: bool,
+    gold_sql_tables: dict[str, Set[str]],
+) -> List[Dict[str, Any]]:
     """Match the schema by llm
     Args:
         lines: the lines to match
@@ -161,7 +180,7 @@ def do_gen_match_schema(lines: List[Dict[str, Any]], top_n: int, check_exists: b
                 gen_all_table_dict(database_name, all_tables),
             )
             logger.info(f"{task_id} result: {response}")
-            result.append(do_match_recall(task_id, database_name, response))
+            result.append(do_match_recall(task_id, database_name, response, gold_sql_tables))
             logger.info(f"{task_id} recall: {result[-1]}")
         except Exception:
             logger.info(f"Failed to generate for {task_id}, error: {traceback.format_exc()}")
@@ -178,7 +197,10 @@ def do_gen_match_schema(lines: List[Dict[str, Any]], top_n: int, check_exists: b
 
 
 def do_match_recall(
-    task_id: str, database_name: str, gen_result: Union[List[Dict[str, Any]], Dict[str, Any]]
+    task_id: str,
+    database_name: str,
+    gen_result: Union[List[Dict[str, Any]], Dict[str, Any]],
+    gold_sql_tables: dict[str, Set[str]],
 ) -> Dict[str, Any]:
     if not gen_result:
         return {}
@@ -220,6 +242,7 @@ def test_llm_match_recall():
     target_dir = os.path.join(PROJECT_ROOT, "tests/llm_find_tables")
     os.makedirs(target_dir, exist_ok=True)
 
+    gold_sql_tables = load_gold_tables()
     task_dbs = {}
     for json_line in load_jsonl_iterator(json_path):
         task_dbs[json_line["instance_id"]] = json_line["db_id"]
@@ -232,7 +255,7 @@ def test_llm_match_recall():
         with open(os.path.join(target_dir, json_file_name), "r") as f:
             try:
                 gen_result = json.load(f)
-                match_results.append(do_match_recall(task_id, task_dbs[task_id], gen_result))
+                match_results.append(do_match_recall(task_id, task_dbs[task_id], gen_result, gold_sql_tables))
             except Exception as e:
                 logger.info(f"Failed to load json for {task_id}, error: {e}")
 
