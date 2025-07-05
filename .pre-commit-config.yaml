@@ -18,8 +18,3 @@ repos:
     hooks:
       - id: isort
         args: ["--profile=black", "--line-length=120"]
-
-  - repo: https://github.com/zricethezav/gitleaks
-    rev: v8.18.2
-    hooks:
-      - id: gitleaks

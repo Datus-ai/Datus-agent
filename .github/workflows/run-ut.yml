@@ -26,7 +26,7 @@ jobs:
 
       - name: Copy config file
         run: |
-          cp /home/eyu/ci_template/agent.yml conf/agent.yml
+          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
 
       - name: run pytest
         run: |
