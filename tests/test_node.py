@@ -116,8 +116,7 @@ def generate_semantic_model_input() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    agent_config = load_agent_config()
-    agent_config.current_namespace = "bird_sqlite"  # FIXME Modify it according to your configuration
+    agent_config = load_agent_config(namespace="bird_dev")  # FIXME Modify it according to your configuration
     return agent_config
 
 

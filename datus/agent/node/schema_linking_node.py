@@ -69,10 +69,10 @@ class SchemaLinkingNode(Node):
                 table_values=[],
             )
         else:
+            tool = SchemaLineageTool(db_path=path)
             try:
                 # Import SchemaLineageTool only when needed
 
-                tool = SchemaLineageTool(db_path=self.agent_config.rag_storage_path())
                 if tool:
                     result = tool.execute(self.input, self.model)
                     logger.info(f"Schema linking result: found {len(result.table_schemas)} tables")
