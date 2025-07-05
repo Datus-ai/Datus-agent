@@ -59,7 +59,7 @@ class SchemaLinkingNode(Node):
         path = self.agent_config.rag_storage_path()
         logger.debug(f"Checking if rag storage path exists: {path}")
         if not os.path.exists(path):
-            logger.info("RAG storage path does not exist.")
+            logger.info(f"RAG storage path `{path}` does not exist.")
             return SchemaLinkingResult(
                 success=False,
                 error="Schema linking failed: RAG storage path does not exist.",

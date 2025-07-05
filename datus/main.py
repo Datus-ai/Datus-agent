@@ -92,7 +92,7 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         nargs="+",
         choices=["metrics", "metadata", "table_lineage", "document"],
-        default=["table_lineage"],
+        default=["metadata"],
         help="Knowledge base components to initialize",
     )
     bootstrap_parser.add_argument("--storage_path", type=str, help="Parent directory for all storage components")
