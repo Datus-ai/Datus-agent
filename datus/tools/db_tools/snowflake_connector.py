@@ -4,6 +4,9 @@ import snowflake.connector
 
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.db_tools.base import BaseSqlConnector
+from datus.utils.loggings import get_logger
+
+logger = get_logger("snowflake_connector")
 
 
 class SnowflakeConnector(BaseSqlConnector):
@@ -126,7 +129,7 @@ class SnowflakeConnector(BaseSqlConnector):
 
                 # Handle case where arrow_table is None
                 if arrow_table is None:
-                    print(f"[DEBUG] Arrow table is None for query. Row count from cursor: {cursor.rowcount}")
+                    logger.debug(f"[DEBUG] Arrow table is None for query. Row count from cursor: {cursor.rowcount}")
                     row_count = 0
                     # Create an empty arrow table or use None
                     arrow_table = None
@@ -143,7 +146,7 @@ class SnowflakeConnector(BaseSqlConnector):
                     result_format="arrow",
                 )
         except snowflake.connector.errors.ProgrammingError as e:
-            print(f"[DEBUG] Snowflake ProgrammingError: errno={e.errno}, sqlstate={e.sqlstate}, msg={e.msg}")
+            logger.debug(f"[DEBUG] Snowflake ProgrammingError: errno={e.errno}, sqlstate={e.sqlstate}, msg={e.msg}")
             return ExecuteSQLResult(
                 sql_query=input_params["sql_query"] if isinstance(input_params, dict) else str(input_params),
                 row_count=0,
@@ -153,10 +156,10 @@ class SnowflakeConnector(BaseSqlConnector):
                 result_format="arrow",
             )
         except Exception as e:
-            print(f"[DEBUG] Snowflake General Exception: {type(e).__name__}: {str(e)}")
+            logger.debug(f"[DEBUG] Snowflake General Exception: {type(e).__name__}: {str(e)}")
             import traceback
 
-            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
+            logger.debug(f"[DEBUG] Traceback: {traceback.format_exc()}")
             return ExecuteSQLResult(
                 sql_query=input_params["sql_query"] if isinstance(input_params, dict) else str(input_params),
                 row_count=0,

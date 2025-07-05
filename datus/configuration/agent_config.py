@@ -17,7 +17,7 @@ class DbConfig:
     type: str = field(default="", init=True)
     uri: str = field(default="", init=True)
     host: str = field(default="", init=True)
-    port: int = field(default="", init=True)
+    port: str = field(default="", init=True)
     username: str = field(default="", init=True)
     password: str = field(default="", init=True)
     account: str = field(default="", init=True)
@@ -120,7 +120,7 @@ class AgentConfig:
         self.workflow_plan = workflow_config.get("plan", "reflection")
         self.custom_workflows = {k: v for k, v in workflow_config.items() if k != "plan"}
 
-        self.namespaces = {}
+        self.namespaces: Dict[str, Union[Dict[str, DbConfig], DbConfig]] = {}
         for namespace, db_config in kwargs.get("namespace", {}).items():
             db_type = db_config.get("type", "")
             if db_type == "sqlite" or db_type == "duckdb":
@@ -134,8 +134,9 @@ class AgentConfig:
                         self.namespaces.pop(namespace)
                         continue
                     for db_path in db_paths:
+                        database_name = db_path["name"] if db_type == "sqlite" else duckdb_database_name(db_path["uri"])
                         self.namespaces[namespace][db_path["name"]] = DbConfig(
-                            type=db_type, uri=db_path["uri"], database=db_path["name"], schema=db_path.get("schema", "")
+                            type=db_type, uri=db_path["uri"], database=database_name, schema=db_path.get("schema", "")
                         )
                 else:
                     # only sqlite and duckdb support multiple databases
@@ -157,7 +158,12 @@ class AgentConfig:
                             schema=db_config.get("schema", ""),
                         )
             else:
-                self.namespaces[namespace] = DbConfig.filter_kwargs(DbConfig, db_config)
+                if db_type == "duckdb":
+                    db_config["database"] = duckdb_database_name(db_config["uri"])
+                if db_type == "duckdb" or db_type == "sqlite":
+                    self.namespaces[namespace] = {db_config["name"]: DbConfig.filter_kwargs(DbConfig, db_config)}
+                else:
+                    self.namespaces[namespace] = DbConfig.filter_kwargs(DbConfig, db_config)
 
     @property
     def current_namespace(self) -> str:
@@ -335,3 +341,8 @@ def load_model_config(data: dict) -> ModelConfig:
         model=data["model"],
         save_llm_trace=data.get("save_llm_trace", False),
     )
+
+
+def duckdb_database_name(uri: str) -> str:
+    file_name = uri.split("/")[-1]
+    return file_name.split(".")[0]

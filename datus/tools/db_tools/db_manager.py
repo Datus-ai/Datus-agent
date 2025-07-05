@@ -66,7 +66,7 @@ class DBManager:
         if current_name not in self._db_configs:
             raise DatusException(
                 code=ErrorCode.TOOL_DB_FAILED,
-                message=f"Database config not found, namespace: {name}, db_type: {db_type}, db_name: {db_name}",
+                message=f"Database config not found, namespace: {name}, db_type: {db_type}, name: {db_name}",
             )
 
         return self._get_conn(current_name, self._db_configs[current_name])

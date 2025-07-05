@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -30,4 +30,4 @@ jobs:
 
       - name: run pytest
         run: |
-          pytest tests/test_node.py::TestNode::test_schema_linking_node
+          pytest -m acceptance  tests/
