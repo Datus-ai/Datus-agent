@@ -13,7 +13,7 @@ def test_storage_spends():
     for _ in range(10):
         first_start = datetime.now()
         start = datetime.now()
-        agent_config = load_agent_config(**{"namespace": "bird_dev"})
+        agent_config = load_agent_config(**{"namespace": "bird_sqlite"})
         end = datetime.now()
         print("init agent config spends", (end - start).total_seconds() * 1000)
         start = datetime.now()

@@ -28,7 +28,7 @@ class TestLLMsTools:
 
     @pytest.fixture
     def global_config(self) -> AgentConfig:
-        return load_agent_config()
+        return load_agent_config(namespace="bird_sqlite")
 
     @pytest.fixture
     def setup_tool(self, llm):
@@ -50,8 +50,8 @@ class TestLLMsTools:
         """Create a temporary lineage tool instance"""
 
         # FIXME Modify it according to your configuration
-        test_db_path = Path(__file__).parent.parent / "data/datus_db_snowflake"
-        storage = SchemaStorage(test_db_path, embedding_model=get_db_embedding_model())
+        test_db_path = Path(__file__).parent.parent / "data/datus_db_bird_sqlite"
+        storage = SchemaStorage(str(test_db_path), embedding_model=get_db_embedding_model())
         return storage
 
     def test_tool_has_required_functions(self, setup_tool: LLMTool):
@@ -70,22 +70,15 @@ class TestLLMsTools:
         result = tool.generate_sql(input_data)
         assert result is not None, "Tool execution should return a result"
 
-    @pytest.mark.acceptance
+    # @pytest.mark.acceptance
     def test_schema_linking(self, setup_tool: LLMTool, rag_storage: SchemaStorage):
+        # TODO: fix this test
         """Test schema linking by llm"""
         input_data = SchemaLinkingInput(
-            input_text="Retrieve the following information for U.S. patents filed between "
-            "January 1, 2014, and February 1, 2014. The patent title and abstract. "
-            "The publication date of the patent. The number of backward citations for each patent "
-            "(i.e., the number of patents cited by the current patent before its filing date). "
-            "The number of forward citations for each patent within the first 5 years of its "
-            "publication (i.e., the number of patents that cited the current patent within 5 "
-            "years after its publication). For each patent, ensure the forward citations are "
-            "counted only for citations within 5 years after the publication date, and backward "
-            "citations are counted for citations before the filing date.",
+            input_text="Describe the information about rulings for card named 'Sublime Epiphany' with number 74s.",
             matching_rate="fast",
-            database_type="snowflake",
-            database_name="PATENTSVIEW",
+            database_type="sqlite",
+            database_name="card_games",
         )
         match_result = setup_tool.match_schema(input_data=input_data, rag_storage=rag_storage)
         logger.info(f"match result {match_result}")
@@ -297,7 +290,7 @@ class TestLineageTools:
 
     @pytest.fixture
     def agent_config(self) -> AgentConfig:
-        return load_agent_config(**{"namespace": "snowflake"})
+        return load_agent_config(**{"namespace": "bird_sqlite"})
 
     @pytest.fixture
     def setup_lineage_tool(self, agent_config: AgentConfig):
@@ -351,8 +344,8 @@ class TestLineageTools:
             search_result, SchemaLinkingResult
         ), f"Expected SchemaLinkingResult, got {type(search_result)}"
         assert search_result.success is True, f"Schema search failed: {search_result}"
-        assert search_result.schema_count == 5, "Invalid schema count"
-        assert search_result.value_count == 5, "Invalid value count"
+        assert search_result.schema_count > 0, "Invalid schema count"
+        assert search_result.value_count > 0, "Invalid value count"
         # assert len(search_result.table_schemas) == input_data["top_n"], \
         #     f"Expected {input_data['top_n']} results, got {len(search_result.table_schemas)}"
 

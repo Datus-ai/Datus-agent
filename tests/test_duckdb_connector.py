@@ -14,7 +14,7 @@ def test_get_table_with_ddl(duckdb_connector: DuckdbConnector):
     tables = duckdb_connector.get_tables_with_ddl()
     assert len(tables) > 0
     for t in tables:
-        values = duckdb_connector.get_sample_values(
+        values = duckdb_connector.get_sample_rows(
             tables=[t["table_name"]],
             top_n=5,
             database_name=t["database_name"],

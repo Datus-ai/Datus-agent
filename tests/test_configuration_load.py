@@ -38,9 +38,7 @@ def agent_config() -> AgentConfig:
     return load_agent_config()
 
 
-@pytest.mark.acceptance
-# change namespace according to your config
-@pytest.mark.parametrize("namespace", ["bird_dev", "snowflake", "local_duckdb"])
+@pytest.mark.parametrize("namespace", ["bird_sqlite", "snowflake", "local_duckdb"])
 def test_configuration_load(namespace: str, agent_config: AgentConfig):
     assert agent_config.target
     assert agent_config.models
@@ -74,7 +72,7 @@ def test_configuration_load(namespace: str, agent_config: AgentConfig):
 
 @pytest.mark.acceptance
 def test_benchmark_db_check(agent_config: AgentConfig, namespace: str = "snowflake"):
-    agent_config.namespaces[namespace].type = "sqlite"
+    agent_config.namespaces[namespace][namespace].type = "sqlite"
 
     with pytest.raises(DatusException, match="spider2 only support snowflake"):
         agent_config.override_by_args(
@@ -88,7 +86,7 @@ def test_benchmark_db_check(agent_config: AgentConfig, namespace: str = "snowfla
 @pytest.mark.acceptance
 @pytest.mark.parametrize(
     argnames=["namespace", "benchmark"],
-    argvalues=[("bird_dev", "bird_dev"), ("snowflake", "spider2")],
+    argvalues=[("bird_sqlite", "bird_dev"), ("snowflake", "spider2")],
 )
 def test_benchmark_config(namespace: str, benchmark: str, agent_config: AgentConfig):
     assert agent_config.benchamrk_path
@@ -104,15 +102,13 @@ def test_benchmark_config(namespace: str, benchmark: str, agent_config: AgentCon
     assert not os.path.exists(agent_config.benchamrk_path(benchmark))
 
 
-@pytest.mark.acceptance
 def test_storage_config(agent_config: AgentConfig):
-    assert agent_config.storage_configs
+    assert agent_config.storage_configs is not None
     assert agent_config.storage_configs["database"]
 
 
-@pytest.mark.acceptance
 def test_check_storage_config(agent_config: AgentConfig):
-    agent_config.current_namespace = "bird_dev"
+    agent_config.current_namespace = "bird_sqlite"
     rag_path = agent_config.rag_storage_path()
     agent_config.check_init_storage_config()
 

@@ -32,9 +32,8 @@ class TestBirdDevOutput:
     @pytest.mark.acceptance
     def test_output(self, test_data: dict, llm_model: LLMBaseModel, global_config: AgentConfig):
         for benchmark, data in test_data.items():
-            global_config.current_namespace = benchmark
             print(f"switch benchmark to {benchmark}")
-            global_config.current_namespace = benchmark
+            global_config.current_namespace = data["namespace"]
             self._do_execute(benchmark, data, global_config, llm_model)
 
     def _do_execute(

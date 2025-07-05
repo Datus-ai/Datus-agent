@@ -91,7 +91,7 @@ def do_add_data(table: Table, data: List[Dict[str, Any]]):
 @pytest.fixture
 def bird_agent_config() -> AgentConfig:
     # Modify namespace according to your config file
-    return load_agent_config(**{"namespace": "bird_dev"})
+    return load_agent_config(**{"namespace": "bird_sqlite"})
 
 
 @pytest.fixture

@@ -1,49 +1,7 @@
 - input:
-    sql_query: "WITH address_balances AS (\n  -- Calculate net balance from traces\
-      \ (only successful transactions and excluding certain call types)\n  SELECT\
-      \ \n    \"from_address\" AS \"address\", \n    -SUM(\"value\") AS \"balance\"\
-      \n  FROM \n    \"ETHEREUM_BLOCKCHAIN\".\"ETHEREUM_BLOCKCHAIN\".\"TRACES\"\n\
-      \  WHERE \n    \"status\" = 1 \n    AND \"trace_type\" = 'call' \n    AND\
-      \ \"call_type\" NOT IN ('delegatecall', 'callcode', 'staticcall')\n    AND\
-      \ \"from_address\" IS NOT NULL\n    AND \"from_address\" != '0x0000000000000000000000000000000000000000'\n\
-      \  GROUP BY \n    \"from_address\"\n  \n  UNION ALL\n  \n  SELECT \n    \"\
-      to_address\" AS \"address\", \n    SUM(\"value\") AS \"balance\"\n  FROM \n\
-      \    \"ETHEREUM_BLOCKCHAIN\".\"ETHEREUM_BLOCKCHAIN\".\"TRACES\"\n  WHERE \n\
-      \    \"status\" = 1 \n    AND \"trace_type\" = 'call' \n    AND \"call_type\"\
-      \ NOT IN ('delegatecall', 'callcode', 'staticcall')\n    AND \"to_address\"\
-      \ IS NOT NULL\n    AND \"to_address\" != '0x0000000000000000000000000000000000000000'\n\
-      \  GROUP BY \n    \"to_address\"\n),\n\nminer_rewards AS (\n  -- Calculate\
-      \ miner rewards (gas fees per block)\n  SELECT \n    \"miner\" AS \"address\"\
-      , \n    SUM(\"gas_used\" * \"gas_price\") AS \"balance\"\n  FROM \n    \"\
-      ETHEREUM_BLOCKCHAIN\".\"ETHEREUM_BLOCKCHAIN\".\"TRANSACTIONS\" t\n  JOIN \n\
-      \    \"ETHEREUM_BLOCKCHAIN\".\"ETHEREUM_BLOCKCHAIN\".\"BLOCKS\" b\n  ON \n\
-      \    t.\"block_number\" = b.\"number\"\n  WHERE \n    \"receipt_status\" =\
-      \ 1\n    AND \"miner\" IS NOT NULL\n    AND \"miner\" != '0x0000000000000000000000000000000000000000'\n\
-      \  GROUP BY \n    \"miner\"\n),\n\nsender_gas_deductions AS (\n  -- Calculate\
-      \ sender gas fee deductions\n  SELECT \n    \"from_address\" AS \"address\"\
-      , \n    -SUM(\"gas_used\" * \"gas_price\") AS \"balance\"\n  FROM \n    \"\
-      ETHEREUM_BLOCKCHAIN\".\"ETHEREUM_BLOCKCHAIN\".\"TRANSACTIONS\"\n  WHERE \n\
-      \    \"receipt_status\" = 1\n    AND \"from_address\" IS NOT NULL\n    AND\
-      \ \"from_address\" != '0x0000000000000000000000000000000000000000'\n  GROUP\
-      \ BY \n    \"from_address\"\n),\n\ncombined_balances AS (\n  -- Combine all\
-      \ balance components\n  SELECT \n    \"address\", \n    SUM(\"balance\") AS\
-      \ \"net_balance\"\n  FROM (\n    SELECT * FROM address_balances\n    UNION\
-      \ ALL\n    SELECT * FROM miner_rewards\n    UNION ALL\n    SELECT * FROM sender_gas_deductions\n\
-      \  )\n  GROUP BY \n    \"address\"\n),\n\ntop_addresses AS (\n  -- Get top\
-      \ 10 addresses by net balance\n  SELECT \n    \"address\", \n    \"net_balance\"\
-      \ / POWER(10, 15) AS \"balance_in_quadrillions\"\n  FROM \n    combined_balances\n\
-      \  ORDER BY \n    \"net_balance\" DESC\n  LIMIT 10\n)\n\n-- Calculate average\
-      \ balance of top 10 addresses in quadrillions\nSELECT \n  ROUND(AVG(\"balance_in_quadrillions\"\
-      ), 2) AS \"average_balance_quadrillions\"\nFROM \n  top_addresses;"
+    database_name: "card_games"
+    sql_query: "SELECT DISTINCT T1.name FROM cards AS T1 INNER JOIN rulings AS T2 ON T1.uuid = T2.uuid WHERE T1.rarity = 'uncommon' ORDER BY T2.date ASC LIMIT 3"
 
 - input:
-    sql_query: "WITH FIRST_TWO_FULL_WEEKS AS (\n  SELECT DATEADD(DAY, -14, '2025-04-01'::DATE)\
-      \ AS WEEK_END_DATE\n),\nHISTORICAL_SNOWFALL AS (\n  SELECT\n    \"POSTAL_CODE\"\
-      ,\n    \"DATE_VALID_STD\",\n    \"TOT_SNOWFALL_IN\"\n  FROM\n    GLOBAL_WEATHER__CLIMATE_DATA_FOR_BI.STANDARD_TILE.HISTORY_DAY\n\
-      \  WHERE\n    \"DATE_VALID_STD\" BETWEEN DATEADD(WEEK, -2, (SELECT WEEK_END_DATE\
-      \ FROM FIRST_TWO_FULL_WEEKS)) AND (SELECT WEEK_END_DATE FROM FIRST_TWO_FULL_WEEKS)\n\
-      \    AND \"TOT_SNOWFALL_IN\" > 6\n    AND \"COUNTRY\" = 'US'\n)\nSELECT\n\
-      \  \"POSTAL_CODE\",\n  \"DATE_VALID_STD\",\n  \"TOT_SNOWFALL_IN\"\nFROM\n\
-      \  HISTORICAL_SNOWFALL\nORDER BY\n  \"POSTAL_CODE\",\n  \"DATE_VALID_STD\"\
-      ;"
-
+    database_name: "codebase_community"
+    sql_query: "SELECT CAST(SUM(IIF(T2.Age > 65, 1, 0)) AS REAL) * 100 / COUNT(T1.Id) FROM posts AS T1 INNER JOIN users AS T2 ON T1.OwnerUserId = T2.Id WHERE T1.Score > 5"
