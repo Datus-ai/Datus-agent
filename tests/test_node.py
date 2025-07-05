@@ -226,6 +226,7 @@ class TestNode:
             assert isinstance(node.input, SchemaLinkingInput)
             assert node.input.input_text == test_case["input_text"]
             result = node.run()
+            assert isinstance(result, SchemaLinkingResult)
             print(f"result is {type(result)}, {result.success}, {result.schema_count}")
             assert isinstance(result, SchemaLinkingResult)
             assert result.success
