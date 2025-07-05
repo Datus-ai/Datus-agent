@@ -284,6 +284,6 @@ python -m datus.main benchmarking --benchmark bird_dev --plan fixed --schema_lin
 ### Using cli to develop
 
 ```bash
-python -m datus.cli.main --namespace bird_sqlite  --config conf/agent.yml
+python -m datus.cli.main --namespace bird_sqlite  --config conf/agent.ym l
 ```
 
