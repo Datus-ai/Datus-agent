@@ -1,6 +1,7 @@
 import os
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field, fields
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput
@@ -82,7 +83,6 @@ class AgentConfig:
     target: str
     models: Dict[str, ModelConfig]
     nodes: Dict[str, NodeConfig]
-    namespaces: Dict[str, Union[Dict[str, DbConfig], DbConfig]]
     rag_base_path: str
     schema_linking_rate: str
     _reflection_nodes: Dict[str, List[str]]
@@ -120,7 +120,7 @@ class AgentConfig:
         self.workflow_plan = workflow_config.get("plan", "reflection")
         self.custom_workflows = {k: v for k, v in workflow_config.items() if k != "plan"}
 
-        self.namespaces: Dict[str, Union[Dict[str, DbConfig], DbConfig]] = {}
+        self.namespaces: Dict[str, Dict[str, DbConfig]] = defaultdict(dict)
         for namespace, db_config in kwargs.get("namespace", {}).items():
             db_type = db_config.get("type", "")
             if db_type == "sqlite" or db_type == "duckdb":
@@ -163,14 +163,26 @@ class AgentConfig:
                 if db_type == "duckdb" or db_type == "sqlite":
                     self.namespaces[namespace] = {db_config["name"]: DbConfig.filter_kwargs(DbConfig, db_config)}
                 else:
-                    self.namespaces[namespace] = DbConfig.filter_kwargs(DbConfig, db_config)
+                    self.namespaces[namespace] = {namespace: DbConfig.filter_kwargs(DbConfig, db_config)}
 
     @property
     def current_namespace(self) -> str:
         return self._current_namespace
 
-    def current_dbconfigs(self) -> Union[DbConfig, Dict[str, DbConfig]]:
+    def current_dbconfigs(self) -> Dict[str, DbConfig]:
         return self.namespaces[self._current_namespace]
+
+    def current_db_config(self, db_name: str = "") -> DbConfig:
+        configs = self.namespaces[self._current_namespace]
+        if len(configs) == 1:
+            return list(configs.values())[0]
+        else:
+            if db_name not in configs:
+                raise DatusException(
+                    code=ErrorCode.COMMON_UNSUPPORTED,
+                    message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
+                )
+            return configs[db_name]
 
     @current_namespace.setter
     def current_namespace(self, value: str):
@@ -187,10 +199,7 @@ class AgentConfig:
         self._current_namespace = value
 
         configs = self.namespaces[value]
-        if isinstance(configs, DbConfig):
-            self.db_type = configs.type
-        else:
-            self.db_type = list(configs.values())[0].type
+        self.db_type = list(configs.values())[0].type
 
     @property
     def output_dir(self) -> str:
@@ -266,7 +275,7 @@ class AgentConfig:
             )
         return self.benchmark_pathes[name]
 
-    def _current_db_config(self) -> Union[Dict[str, DbConfig], DbConfig]:
+    def _current_db_config(self) -> Dict[str, DbConfig]:
         if not self._current_namespace:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
@@ -281,15 +290,12 @@ class AgentConfig:
 
     def current_db_name_type(self, db_name: str) -> tuple[str, str]:
         db_config = self._current_db_config()
-        if isinstance(db_config, dict):
-            if db_name not in db_config:
-                raise DatusException(
-                    code=ErrorCode.COMMON_UNSUPPORTED,
-                    message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
-                )
-            db_type = db_config[db_name].type
-        else:
-            db_type = db_config.type
+        if db_name not in db_config:
+            raise DatusException(
+                code=ErrorCode.COMMON_UNSUPPORTED,
+                message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
+            )
+        db_type = db_config[db_name].type
         return db_name, db_type
 
     def active_model(self) -> ModelConfig:

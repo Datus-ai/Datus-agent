@@ -297,10 +297,7 @@ class Agent:
             from datus.tools.mcp_server import MCPServer
 
             db_configs = self.global_config.current_dbconfigs()
-            if isinstance(db_configs, DbConfig):
-                db_type = db_configs.type
-            else:
-                db_type = list(db_configs.values())[0].type
+            db_type = self.global_config.db_type
 
             logger.info(f"Checking MCP server for database type: {db_type}")
 

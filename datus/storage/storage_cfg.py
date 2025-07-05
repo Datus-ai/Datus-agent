@@ -47,9 +47,9 @@ def _find_config_differences(existing: Dict[str, Any], new: Dict[str, Dict[str, 
         missing = existing_sections - new_sections
         extra = new_sections - existing_sections
         if missing:
-            differences.append(f"Missing sections in current config: {', '.join(missing)}")
+            differences.append(f"Missing sections in current config: {', '.join(missing)}.")
         if extra:
-            differences.append(f"Extra sections in current config: {', '.join(extra)}")
+            differences.append(f"Extra sections in current config: {', '.join(extra)}.")
 
     # Check differences in each section
     for section in existing_sections & new_sections:
@@ -58,7 +58,7 @@ def _find_config_differences(existing: Dict[str, Any], new: Dict[str, Dict[str, 
 
         for key, value in existing_config.items():
             if key not in new_config:
-                differences.append(f"Missing key '{key}' in section [{section}]")
+                differences.append(f"Missing key '{key}' in section [{section}].")
             elif str(value) != str(new_config[key]):
                 differences.append(
                     f"Value mismatch in section [{section}] for key '{key}': "
@@ -79,7 +79,7 @@ def check_storage_config(storage_config: Dict[str, dict[str, Any]], rag_path: st
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message="Embedding model configuration mismatch:\n"
                 + "\n".join(f"- {diff}" for diff in differences)
-                + "If you want to use the new model, initialize it first using overwrite mode.",
+                + ". If you want to use the new model, initialize it first using overwrite mode.",
             )
 
     # Convert EmbeddingModel objects to config dictionary

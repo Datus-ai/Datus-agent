@@ -94,7 +94,7 @@ class ReasonSQLNode(Node):
         try:
             tool = LLMTool(self.model)
             # TODO: pass the mcp_server to tools, don't repeat init the mcp server
-            return tool.reasoning_sql(self.input, self.agent_config.current_dbconfigs())
+            return tool.reasoning_sql(self.input, self.agent_config.current_db_config())
         except Exception as e:
             logger.error(f"SQL reasoning execution error: {str(e)}")
             return ReasoningResult(success=False, error=str(e), sql_query="")

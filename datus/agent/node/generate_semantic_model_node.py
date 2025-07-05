@@ -91,7 +91,7 @@ class GenerateSemanticModelNode(Node):
                 return tool.generate_semantic_model(
                     tables_with_ddl[0]["definition"],
                     self.input,
-                    self.agent_config.current_dbconfigs(),
+                    self.agent_config.current_db_config(),
                 )
 
         except Exception as e:

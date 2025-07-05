@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 from urllib.parse import quote_plus
 
 from datus.configuration.agent_config import DbConfig
@@ -89,7 +89,7 @@ class DBManager:
             message=f"Database config not found, namespace: {namespace}",
         )
 
-    def get_db_uris(self, namespace: str) -> Union[Dict[str, str], str]:
+    def get_db_uris(self, namespace: str) -> Dict[str, str]:
         result = {}
         for k, v in self._db_configs.items():
             if k == namespace:
@@ -168,14 +168,14 @@ def db_config_name(namespace: str, db_type: str, name: str = "") -> str:
     if db_type == "sqlite" or db_type == "duckdb":
         return f"{namespace}::{name}"
     # fix local snowflake
-    return namespace
+    return f"{namespace}::{namespace}"
 
 
 _INSTANCE = None
 
 
 def db_manager_instance(
-    db_configs: Optional[Dict[str, Union[Dict[str, DbConfig], DbConfig]]] = None,
+    db_configs: Optional[Dict[str, Dict[str, DbConfig]]] = None,
 ) -> DBManager:
     global _INSTANCE
     if _INSTANCE is None:
@@ -184,7 +184,7 @@ def db_manager_instance(
 
 
 def _db_manager(
-    db_configs: Optional[Dict[str, Union[Dict[str, DbConfig], DbConfig]]] = None,
+    db_configs: Optional[Dict[str, Dict[str, DbConfig]]] = None,
 ) -> DBManager:
     configs = {}
 
@@ -192,15 +192,10 @@ def _db_manager(
         return DBManager({})
 
     for name, db_config in db_configs.items():
-        if isinstance(db_config, DbConfig):
-            if name in configs:
-                raise ValueError(f"Database config for {name} already exists")
-            configs[name] = db_config
-        else:
-            for db_name, db in db_config.items():
-                full_name = db_config_name(name, db.type, db_name)
-                if full_name in configs:
-                    raise ValueError(f"Database config for {full_name} already exists")
-                configs[full_name] = db
+        for db_name, db in db_config.items():
+            full_name = db_config_name(name, db.type, db_name)
+            if full_name in configs:
+                raise ValueError(f"Database config for {full_name} already exists")
+            configs[full_name] = db
     manager = DBManager(configs)
     return manager
