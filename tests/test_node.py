@@ -117,7 +117,7 @@ def generate_semantic_model_input() -> List[Dict[str, Any]]:
 @pytest.fixture
 def agent_config() -> AgentConfig:
     agent_config = load_agent_config()
-    agent_config.current_namespace = "starrocks"  # FIXME Modify it according to your configuration
+    agent_config.current_namespace = "bird_sqlite"  # FIXME Modify it according to your configuration
     return agent_config
 
 
@@ -208,7 +208,6 @@ class TestNode:
         assert node.status == "failed"
         assert node.result == BaseResult(success=False, error=error_msg)
 
-    @pytest.mark.acceptance
     def test_schema_linking_node(self, schema_linking_input, agent_config: AgentConfig):
         """Test schema linking node"""
         # Take first test case from the list
@@ -217,8 +216,6 @@ class TestNode:
             if "namespace" in test_case:
                 agent_config.current_namespace = test_case["namespace"]
                 del test_case["namespace"]
-            else:
-                agent_config.current_namespace = "snowflake"
             node = Node.new_instance(
                 node_id="schema_link",
                 description="Schema Linking",

@@ -1,35 +1,21 @@
 - input:
-    database_name: ETHEREUM_BLOCKCHAIN
-    database_type: snowflake
-    input_text: Calculate the average balance (in quadrillions, 10^15) of the top
-      10 Ethereum addresses by net balance, including incoming and outgoing transfers
-      from traces (only successful transactions and excluding call types like delegatecall,
-      callcode, and staticcall), miner rewards (sum of gas fees per block), and
-      sender gas fee deductions. Exclude null addresses and round the result to
-      two decimal places.
+    database_name: california_schools
+    database_type: sqlite
+    input_text: What is the highest eligible free rate for K-12 students in the schools in Alameda County?
     matching_rate: fast
 - input:
-    database_name: GEO_OPENSTREETMAP
-    database_type: snowflake
-    input_text: What are the five longest types of highways within the multipolygon
-      boundary of Denmark (as defined by Wikidata ID 'Q35') by total length, analyzed
-      through planet features?
+    database_name: financial
+    database_type: sqlite
+    input_text: How many accounts who choose issuance after transaction are staying in East Bohemia region?
     matching_rate: medium
 - input:
-    database_name: FINANCE__ECONOMICS
-    database_type: snowflake
-    input_text: As of December 31, 2022, list the top 10 active banks with assets
-      exceeding $10 billion, ranked by the highest percentage of uninsured assets,
-      where the percentage is calculated as one minus the value of the '% Insured
-      (Estimated)' variable from quarterly estimates. Provide the names of these
-      banks and their respective percentages of uninsured assets.
+    database_name: toxicology
+    database_type: sqlite
+    input_text: Calculate the average number of oxygen atoms in single-bonded molecules.
     matching_rate: slow
 
 - input:
-    database_name: PATENTSVIEW
-    database_type: snowflake
-    input_text: Retrieve the following information for U.S. patents filed between January 1, 2014, and February 1, 2014. 
-      The patent title and abstract. The publication date of the patent. The number of backward citations for each patent (i.e., the number of patents cited by the current patent before its filing date).
-      The number of forward citations for each patent within the first 5 years of its publication (i.e., the number of patents that cited the current patent within 5 years after its publication). 
-      For each patent, ensure the forward citations are counted only for citations within 5 years after the publication date, and backward citations are counted for citations before the filing date.
+    database_name: card_games
+    database_type: sqlite
+    input_text: Name the card and artist with the most ruling information. Also state if the card is a promotional printing.
     matching_rate: from_llm
