@@ -29,4 +29,4 @@ prompt-toolkit==3.0.51
 sqlglot==26.12.0
 anthropic==0.51.0
 snowflake-sqlalchemy==1.7.3
-
+duckdb-engine>=0.17.0
