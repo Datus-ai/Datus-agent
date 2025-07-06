@@ -73,11 +73,10 @@ class SQLiteConnector(SQLAlchemyConnector):
             - table_name: The name of the table
             - table_schema: The CREATE TABLE statement for the table
         """
-        filter_tables = self._reset_filter_tables(tables, **kwargs)
         return self._get_schema_with_ddl(
             database_name=kwargs.get("database_name", "") or kwargs.get("schema_name", ""),
             table_type="table",
-            filter_tables=filter_tables,
+            filter_tables=tables,
         )
 
     def get_views_with_ddl(self, **kwargs) -> List[Dict[str, str]]:

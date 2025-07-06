@@ -29,7 +29,7 @@ class DuckdbConnector(SQLAlchemyConnector):
             if schema_name:
                 return f'"{database_name}"."{schema_name}"."{table_name}"'
             return f'"{database_name}"."{table_name}"'
-        return f"{schema_name}.{table_name}"
+        return f'"{schema_name}"."{table_name}"'
 
     @override
     def sqlalchemy_schema(self, **kwargs) -> Optional[str]:
@@ -79,8 +79,15 @@ class DuckdbConnector(SQLAlchemyConnector):
         tables = self.execute_query(query_sql)
         result = []
         for i in range(len(tables)):
-            table_name = tables[name_field][i]
-            if filter_tables and table_name not in filter_tables:
+            table_name = str(tables[name_field][i])
+            full_name = self.full_name(
+                database_name=str(tables["database_name"][i]),
+                schema_name=str(tables["schema_name"][i]),
+                table_name=table_name,
+            )
+            if not database_name:
+                full_name = ".".join(full_name.split(".")[1:])
+            if filter_tables and full_name not in filter_tables:
                 continue
             result.append(
                 {
