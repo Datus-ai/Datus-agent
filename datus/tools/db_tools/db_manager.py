@@ -64,6 +64,12 @@ class DBManager:
     def get_conn(self, name: str, db_type: str, db_name: str = "") -> BaseSqlConnector:
         current_name = db_config_name(name, db_type, db_name)
         if current_name not in self._db_configs:
+            namespace_configs = []
+            for k, v in self._db_configs.items():
+                if k.startswith(f"{name}::"):
+                    namespace_configs.append(v)
+            if len(namespace_configs) == 1:
+                return self._get_conn(current_name, namespace_configs[0])
             raise DatusException(
                 code=ErrorCode.TOOL_DB_FAILED,
                 message=f"Database config not found, namespace: {name}, db_type: {db_type}, name: {db_name}",

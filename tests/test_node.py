@@ -232,6 +232,28 @@ class TestNode:
             assert result.success
             assert result.schema_count > 0
 
+    def test_schema_linking_fallback(self, agent_config: AgentConfig):
+        """Test schema linking node with fallback"""
+        agent_config.current_namespace = "local_sqlite2"
+        node = Node.new_instance(
+            node_id="schema_link",
+            description="Schema Linking",
+            node_type=NodeType.TYPE_SCHEMA_LINKING,
+            input_data=SchemaLinkingInput(
+                input_text="",
+                database_type="sqlite",
+                catalog_name="",
+                database_name="",
+                schema_name="",
+            ),
+            agent_config=agent_config,
+        )
+        res = node.run()
+        assert isinstance(res, SchemaLinkingResult)
+        assert res.success is True
+        assert res.schema_count > 0
+        assert res.value_count == 0
+
     @pytest.mark.acceptance
     def test_generation_node(self, generate_sql_input, agent_config):
         """Test SQL generation node with real DeepSeek model and Snowflake database"""

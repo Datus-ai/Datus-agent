@@ -3,6 +3,7 @@ import os
 import lancedb
 import pytest
 
+from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
 from datus.utils.loggings import get_logger
@@ -182,3 +183,39 @@ def test_query_nyc_trees_from_lancedb():
     )
     log.info("Found all schemas", result=result.model_dump())
     log.info("Found all schemas", result.schema_count, result.value_count)
+
+
+def test_schema_linking_no_exist():
+    tool = SchemaLineageTool(db_path="data/datus_db_no_exist")
+    res = tool.execute(
+        SchemaLinkingInput(
+            input_text="",
+            database_type="sqlite",
+            catalog_name="",
+            database_name="",
+            schema_name="",
+            matching_rate="fast",
+            sql_context=None,
+        )
+    )
+    assert res["success"] is False
+    assert res["schema_count"] == 0
+    assert res["value_count"] == 0
+
+
+def test_get_schema_from_db(schema_lineage_tool: SchemaLineageTool, sqlite_connector: SQLiteConnector):
+    res = schema_lineage_tool.get_schems_by_db(
+        connector=sqlite_connector,
+        input_param=SchemaLinkingInput(
+            input_text="",
+            database_type="sqlite",
+            catalog_name="",
+            database_name="",
+            schema_name="",
+            matching_rate="fast",
+            sql_context=None,
+        ),
+    )
+    assert res["success"]
+    assert res["schema_count"] == 0
+    assert res["value_count"] == 0

@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from datus.configuration.agent_config import AgentConfig
@@ -19,7 +20,7 @@ class SchemaLineageTool(BaseTool):
 
     def __init__(
         self,
-        db_path: str = "data/datus_db",
+        db_path: str = "",
         storage: Optional[SchemaWithValueRAG] = None,
         agent_config: Optional[AgentConfig] = None,
         **kwargs,
@@ -30,12 +31,15 @@ class SchemaLineageTool(BaseTool):
             db_path: Path to the LanceDB database directory
         """
         super().__init__(**kwargs)
+        store: SchemaWithValueRAG | None = None
         if storage:
-            self.store = storage
+            store = storage
         elif agent_config:
-            self.store = rag_by_configuration(agent_config)
-        else:
-            self.store = SchemaWithValueRAG(db_path)
+            store = rag_by_configuration(agent_config)
+        elif db_path:
+            if os.path.exists(db_path):
+                store = SchemaWithValueRAG(db_path)
+        self.store = store
 
     def validate_input(self, input_data: Dict[str, Any]) -> None:
         """Validate the input data for schema lineage operations.
@@ -58,13 +62,23 @@ class SchemaLineageTool(BaseTool):
         Returns:
             SchemaLinkingResult: Validated operation results with table schemas and values
         """
+        if self.store is None:
+            return SchemaLinkingResult(
+                success=False,
+                error="Schema linking tool not found",
+                schema_count=0,
+                value_count=0,
+                table_schemas=[],
+                table_values=[],
+            )
+
         # Leave exceptions to the higher-ups to handle.
         if input_param.matching_rate == "from_llm":
             tool = LLMTool(model)
             if not tool:
                 return SchemaLinkingResult(
                     success=False,
-                    error="Schema linking tool not found",
+                    error="Schema metadata has not yet been built",
                     schema_count=0,
                     value_count=0,
                     table_schemas=[],
@@ -122,7 +136,11 @@ class SchemaLineageTool(BaseTool):
     def get_schems_by_db(self, connector: BaseSqlConnector, input_param: SchemaLinkingInput) -> SchemaLinkingResult:
         from datus.schemas.node_models import TableSchema
 
-        tables_with_ddl = connector.get_tables_with_ddl(input_param.database_name)
+        tables_with_ddl = connector.get_tables_with_ddl(
+            catalog_name=input_param.catalog_name,
+            database_name=input_param.database_name,
+            schema_name=input_param.schema_name,
+        )
         top_n = input_param.top_n_by_rate()
         # Limit to top_n tables
         tables_with_ddl = tables_with_ddl[:top_n] if tables_with_ddl else []
@@ -130,7 +148,6 @@ class SchemaLineageTool(BaseTool):
         # Convert to TableSchema objects
         table_schemas = []
         for table_info in tables_with_ddl:
-            # FIXME identifier
             table_schema = TableSchema(
                 identifier=table_info.get("identifier", ""),
                 catalog_name=table_info.get("catalog_name", ""),

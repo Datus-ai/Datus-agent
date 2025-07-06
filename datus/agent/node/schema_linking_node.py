@@ -60,27 +60,21 @@ class SchemaLinkingNode(Node):
         logger.debug(f"Checking if rag storage path exists: {path}")
         if not os.path.exists(path):
             logger.info(f"RAG storage path `{path}` does not exist.")
-            return SchemaLinkingResult(
-                success=False,
-                error="Schema linking failed: RAG storage path does not exist.",
-                schema_count=0,
-                value_count=0,
-                table_schemas=[],
-                table_values=[],
-            )
+            return self._execute_schema_linking_fallback(SchemaLineageTool())
         else:
             tool = SchemaLineageTool(db_path=path)
             try:
                 # Import SchemaLineageTool only when needed
-
                 if tool:
                     result = tool.execute(self.input, self.model)
-                    logger.info(f"Schema linking result: found {len(result.table_schemas)} tables")
-                    if len(result.table_schemas) == 0:
-                        logger.info("No tables found, using fallback method")
+                    if not result.success:
+                        logger.warning(f"Schema linking failed: {result.error}")
                         return self._execute_schema_linking_fallback(tool)
-                    else:
+                    logger.info(f"Schema linking result: found {len(result.table_schemas)} tables")
+                    if len(result.table_schemas) > 0:
                         return result
+                    logger.info("No tables found, using fallback method")
+                    return self._execute_schema_linking_fallback(tool)
                 else:
                     logger.warning("Schema linking tool not found")
                     return self._execute_schema_linking_fallback(tool)
