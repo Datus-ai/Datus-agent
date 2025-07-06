@@ -73,17 +73,9 @@ class DuckdbConnector(SQLAlchemyConnector):
             f"where database_name != 'system'"
         )
         if database_name:
-            if schema_name:
-                table_schema = f"{database_name}.{schema_name}"
-            else:
-                table_schema = f"{database_name}"
-        else:
-            if schema_name:
-                table_schema = f"{schema_name}"
-            else:
-                table_schema = ""
-        if table_schema:
-            query_sql += f" and schema_name = '{table_schema}'"
+            query_sql += f" and database_name = '{database_name}'"
+        if schema_name:
+            query_sql += f" and schema_name = '{schema_name}'"
         tables = self.execute_query(query_sql)
         result = []
         for i in range(len(tables)):
