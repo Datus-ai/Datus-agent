@@ -358,9 +358,16 @@ class Agent:
                             f"value_size={self.metadata_store.get_value_size()}",
                         }
 
-                if kb_update_strategy == "overwrite" and os.path.exists(dir_path):
-                    shutil.rmtree(dir_path)
-                    logger.info(f"Deleted existing directory {dir_path}")
+                if kb_update_strategy == "overwrite":
+                    schema_metadata_path = os.path.join(dir_path, "schema_metadata.lance")
+                    if os.path.exists(schema_metadata_path):
+                        shutil.rmtree(schema_metadata_path)
+                        logger.info(f"Deleted existing directory {schema_metadata_path}")
+                    schema_value_path = os.path.join(dir_path, "schema_value.lance")
+                    if os.path.exists(schema_value_path):
+                        shutil.rmtree(schema_value_path)
+                        logger.info(f"Deleted existing directory {schema_value_path}")
+
                 self.global_config.check_init_storage_config()
                 self.metadata_store = rag_by_configuration(self.global_config)
 
@@ -406,6 +413,16 @@ class Agent:
                 }
 
             elif component == "metrics":
+                semantic_model_path = os.path.join(dir_path, "semantic_model.lance")
+                metrics_path = os.path.join(dir_path, "metrics.lance")
+                if kb_update_strategy == "overwrite":
+                    if os.path.exists(semantic_model_path):
+                        shutil.rmtree(semantic_model_path)
+                        logger.info(f"Deleted existing directory {semantic_model_path}")
+                    if os.path.exists(metrics_path):
+                        shutil.rmtree(metrics_path)
+                        logger.info(f"Deleted existing directory {metrics_path}")
+
                 self.metrics_store = SemanticMetricsRAG(dir_path)
                 init_success_story_metrics(self.metrics_store, self.args, self.global_config)
                 return {

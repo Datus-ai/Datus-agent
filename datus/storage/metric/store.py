@@ -24,10 +24,11 @@ class SemanticModelStorage(BaseEmbeddingStore):
             embedding_model=embedding_model,
             schema=pa.schema(
                 [
+                    pa.field("id", pa.string()),
                     pa.field("catalog_name", pa.string()),
                     pa.field("database_name", pa.string()),
-                    pa.field("table_name", pa.string()),
                     pa.field("schema_name", pa.string()),
+                    pa.field("table_name", pa.string()),
                     pa.field("catalog_database_schema", pa.string()),
                     pa.field("domain", pa.string()),
                     pa.field("semantic_file_path", pa.string()),
@@ -44,6 +45,7 @@ class SemanticModelStorage(BaseEmbeddingStore):
         )
 
     def create_indices(self):
+        self.table.create_scalar_index("id", replace=True)
         self.table.create_scalar_index("catalog_name", replace=True)
         self.table.create_scalar_index("database_name", replace=True)
         self.table.create_scalar_index("schema_name", replace=True)
@@ -77,6 +79,7 @@ class MetricStorage(BaseEmbeddingStore):
             embedding_model=embedding_model,
             schema=pa.schema(
                 [
+                    pa.field("id", pa.string()),
                     pa.field("semantic_model_name", pa.string()),
                     pa.field("domain", pa.string()),
                     pa.field("layer1", pa.string()),
@@ -85,7 +88,7 @@ class MetricStorage(BaseEmbeddingStore):
                     pa.field("metric_name", pa.string()),
                     pa.field("metric_value", pa.string()),
                     pa.field("metric_type", pa.string()),
-                    pa.field("sql_query", pa.string()),
+                    pa.field("metric_sql_query", pa.string()),
                     pa.field("created_at", pa.string()),
                     pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
                 ]
@@ -94,9 +97,10 @@ class MetricStorage(BaseEmbeddingStore):
         )
 
     def create_indices(self):
+        self.table.create_scalar_index("id", replace=True)
         self.table.create_scalar_index("semantic_model_name", replace=True)
         self.table.create_scalar_index("domain_layer1_layer2", replace=True)
-        self.create_fts_index(["metric_name", "metric_value", "sql_query"])
+        self.create_fts_index(["metric_name", "metric_value", "metric_sql_query"])
 
     def search_all(self, semantic_model_name: str) -> List[Dict[str, Any]]:
         """Search all schemas for a given database name."""
@@ -135,8 +139,8 @@ class SemanticMetricsRAG:
     def store_batch(self, semantic_models: List[Dict[str, Any]], metrics: List[Dict[str, Any]]):
         logger.info(f"store semantic models: {semantic_models}")
         logger.info(f"store metrics: {metrics}")
-        self.semantic_model_storage.store(semantic_models)
-        self.metric_storage.store_batch(metrics)
+        self.semantic_model_storage.store_batch(semantic_models, mode="overwrite")
+        self.metric_storage.store_batch(metrics, mode="overwrite")
 
     def search_all_semantic_models(self, database_name: str) -> List[Dict[str, Any]]:
         return self.semantic_model_storage.search_all(database_name)

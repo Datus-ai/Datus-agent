@@ -59,7 +59,6 @@ class MCPServer:
         db_type = db_configs.type if isinstance(db_configs, DbConfig) else list(db_configs.values())[0].type
         # Snowflake and starrocks only have one Dbconfig, they can switch database internally
         # but duckdb and sqlite may have multiple databases
-
         if db_type == "snowflake":
             logger.debug("Initializing Snowflake MCP server")
             if isinstance(db_configs, DbConfig):

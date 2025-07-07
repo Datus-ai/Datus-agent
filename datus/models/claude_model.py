@@ -296,7 +296,7 @@ class ClaudeModel(LLMBaseModel):
                             system=instruction,
                             messages=wrap_prompt_cache(messages),
                             tools=tools,
-                            max_tokens=kwargs.get("max_tokens", 8192),
+                            max_tokens=kwargs.get("max_tokens", 20480),
                             temperature=kwargs.get("temperature", 0.7),
                         )
 

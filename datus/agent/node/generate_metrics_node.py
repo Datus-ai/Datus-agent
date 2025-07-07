@@ -24,7 +24,7 @@ class GenerateMetricsNode(Node):
             return GenerateMetricsResult(
                 success=False,
                 error="Metrics generation model not provided",
-                sql_query="",
+                sql_queries=[],
                 metrics=[],
             )
         try:
@@ -36,7 +36,7 @@ class GenerateMetricsNode(Node):
             return GenerateMetricsResult(
                 success=False,
                 error=str(e),
-                sql_query="",
+                sql_queries=[],
                 metrics=[],
             )
 

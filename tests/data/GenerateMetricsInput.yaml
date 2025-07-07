@@ -1,6 +1,7 @@
 - input:
     sql_task:
-      database_name: mf_demo
+      database_name: duck
+      schema_name: mf_demo
       database_type: duckdb
       external_knowledge: ''
       id: '2'

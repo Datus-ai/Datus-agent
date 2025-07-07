@@ -79,9 +79,18 @@ Natural Language Description: Business context for the metrics
 Return ONLY a JSON object with this exact structure:
 ```json
 {
-  "sql_query": "the SQL query you generated for MetricFlow",
+  "sql_queries": "return a list of SQL queries you generated for MetricFlow, even if there is only one metric. The number of sql queries should be the same as the number of metrics, and the order of sql queries should be the same as the order of metrics.",
   "metrics": "A JSON array containing objects, even if there is only one metric. ONLY contain the new metric definitions, transform the YAML to JSON. "
 }
+```
+
+## Example Output
+
+```json
+{"sql_queries": ["SELECT 1", "SELECT 2"], "metrics": [{"name": "metric1", "type": "simple"}, {"name": "metric2", "type": "ratio"}]}
+```
+```json
+{"sql_queries": ["SELECT 1"], "metrics": [{"name": "metric1", "type": "simple"}]}
 ```
 
 **IMPORTANT:**

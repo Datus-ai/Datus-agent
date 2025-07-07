@@ -23,7 +23,7 @@ class GenerateMetricsResult(BaseResult):
     Contains the generated metric file path.
     """
 
-    sql_query: str = Field(..., description="The SQL query generated from metrics")
+    sql_queries: List[str] = Field(default_factory=list, description="The SQL queries generated from metrics")
     metrics: List[Metrics] = Field(
         default_factory=list, description="The metrics you added to the semantic model YAML file"
     )

@@ -1,5 +1,6 @@
 import argparse
 import json
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Set
 
@@ -61,7 +62,9 @@ def process_line(
         id=f"sql_task_{index}",
         database_type=agent_config.db_type,
         task=row["question"],
-        database_name="mf_demo",
+        catalog_name=agent_config.current_db_config().catalog,
+        database_name=agent_config.current_db_config().database,
+        schema_name=agent_config.current_db_config().schema,
     )
     layer1 = args.layer1 if getattr(args, "layer1", None) else agent_config.db_type
     layer2 = args.layer2 if getattr(args, "layer2", None) else sql_task.database_name
@@ -69,8 +72,9 @@ def process_line(
         layer1=layer1,
         layer2=layer2,
         domain=args.domain,
-        catalog_name=args.catalog,
+        catalog_name=sql_task.catalog_name,
         database_name=sql_task.database_name,
+        schema_name=sql_task.schema_name,
     )
 
     logger.info(f"sql task: {sql_task}")
@@ -85,6 +89,7 @@ def process_line(
         input_data=semantic_model_input_data,
         agent_config=agent_config,
     )
+    logger.info(f"semantic model node: {semantic_model_node}")
     semantic_model_result = semantic_model_node.run()
     logger.info(f"semantic model result: {semantic_model_result}")
     if not semantic_model_result.success:
@@ -101,19 +106,11 @@ def process_line(
     )
     logger.info(f"semantic model: {semantic_model}")
 
-    full_semantic_model_name = ".".join(
-        [
-            semantic_model_meta.catalog_name,
-            semantic_model_meta.database_name,
-            semantic_model_meta.schema_name,
-            semantic_model.get("semantic_model_name", ""),
-        ]
-    )
-    if full_semantic_model_name not in all_semantic_models:
-        storage.semantic_model_storage.store([semantic_model])
-        all_semantic_models.add(full_semantic_model_name)
+    if semantic_model["id"] not in all_semantic_models:
+        storage.semantic_model_storage.store([semantic_model], mode="overwrite")
+        all_semantic_models.add(semantic_model["id"])
     else:
-        logger.info(f"semantic model {full_semantic_model_name} already exists")
+        logger.info(f"semantic model {semantic_model['id']} already exists")
 
     metric_input_data = GenerateMetricsInput(sql_task=sql_task, sql_query=row["sql"], prompt_version="1.0")
     logger.info(f"metric input data: {metric_input_data}")
@@ -124,6 +121,7 @@ def process_line(
         input_data=metric_input_data,
         agent_config=agent_config,
     )
+    logger.info(f"metric node: {metric_node}")
     metric_result = metric_node.run()
     logger.info(f"metric node result: {metric_result}")
     if not metric_result.success:
@@ -132,8 +130,7 @@ def process_line(
 
     metrics = gen_metrics(
         semantic_model.get("semantic_model_name", ""),
-        metric_result.sql_query,
-        metric_result.metrics,
+        metric_result.sql_queries,
         metric_result.metrics,
         args.domain,
         layer1,
@@ -141,12 +138,11 @@ def process_line(
     )
     logger.info(f"metrics: {metrics}")
     for metric in metrics:
-        full_metric_name = f'{metric["semantic_model_name"]}.{metric["metric_name"]}'
-        if full_metric_name not in all_metrics:
-            storage.metric_storage.store([metric])
-            all_metrics.add(full_metric_name)
+        if metric["id"] not in all_metrics:
+            storage.metric_storage.store([metric], mode="overwrite")
+            all_metrics.add(metric["id"])
         else:
-            logger.info(f"metric {full_metric_name} already exists")
+            logger.info(f"metric {metric['id']} already exists")
 
 
 def gen_semantic_model(
@@ -164,33 +160,35 @@ def gen_semantic_model(
             content = doc.get("data_source", {})
             if not content:
                 continue
+            semantic_model["id"] = f"{catalog_name}_{database_name}_{schema_name}_{table_name}"
+            semantic_model["catalog_name"] = catalog_name
+            semantic_model["database_name"] = database_name
+            semantic_model["schema_name"] = schema_name
+            semantic_model["table_name"] = table_name
+            semantic_model["catalog_database_schema"] = f"{catalog_name}_{database_name}_{schema_name}"
+            semantic_model["domain"] = domain
+            semantic_model["semantic_file_path"] = semantic_model_file
             semantic_model["semantic_model_name"] = content.get("name", "")
             semantic_model["semantic_model_desc"] = content.get("description", "")
             semantic_model["identifiers"] = json.dumps(content.get("identifiers", []))
             semantic_model["dimensions"] = json.dumps(content.get("dimensions", []))
             semantic_model["measures"] = json.dumps(content.get("measures", []))
-            semantic_model["database_name"] = database_name
-            semantic_model["table_name"] = table_name
-            semantic_model["schema_name"] = schema_name
-            semantic_model["catalog_name"] = catalog_name
-            semantic_model["catalog_database_schema"] = f"{catalog_name}.{database_name}.{schema_name}"
-            semantic_model["domain"] = domain
-            semantic_model["semantic_file_path"] = semantic_model_file
-            break
+            semantic_model["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return semantic_model
 
 
 def gen_metrics(
     semantic_model_name: str,
-    sql_query: str,
+    sql_queries: List[str],
     metrics: List[Metrics],
     domain: str,
     layer1: str,
     layer2: str,
 ):
     metric_list = []
-    for metric in metrics:
+    for metric, sql_query in zip(metrics, sql_queries):
         metric_dict = {}
+        metric_dict["id"] = f"{domain}_{layer1}_{layer2}_{semantic_model_name}_{metric.metric_name}"
         metric_dict["semantic_model_name"] = semantic_model_name
         metric_dict["domain"] = domain
         metric_dict["layer1"] = layer1
@@ -199,6 +197,7 @@ def gen_metrics(
         metric_dict["metric_name"] = metric.metric_name
         metric_dict["metric_value"] = metric.metric_value
         metric_dict["metric_type"] = metric.metric_type
-        metric_dict["sql_query"] = sql_query
+        metric_dict["metric_sql_query"] = sql_query
+        metric_dict["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         metric_list.append(metric_dict)
     return metric_list

@@ -35,7 +35,7 @@ def generate_metrics_with_mcp(
     max_turns = tool_config.get("max_turns", 30)
 
     prompt = get_generate_metrics_prompt(
-        database_type=input_data.get("database_type", "duckdb"),
+        database_type=input_data.sql_task.database_type,
         sql_query=input_data.sql_query,
         description=input_data.sql_task.task,
         prompt_version=input_data.prompt_version,
@@ -59,33 +59,26 @@ def generate_metrics_with_mcp(
             logger.info(f"exec_result: {exec_result['content']}")
             content_dict = json.loads(strip_json_str(exec_result["content"]))
             metrics = parse_metrics(content_dict)
-            metrics = parse_metrics(content_dict)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse exec_result.content: {e}, exec_result: {exec_result}")
             content_dict = {}
+            metrics = []
         # content_dict = exec_result
         # Extract required pieces from the parsed dict
         return GenerateMetricsResult(
             success=True,
             error="",
-            sql_query=content_dict.get("sql_query", ""),
+            sql_queries=content_dict.get("sql_queries", []),
             metrics=metrics,
         )
     except Exception as e:
-        # TODO : deal with excced the max round
+        # TODO : deal with excceed the max round
         error_msg = str(e)
         logger.error(f"Generate Metrics with MCP failed: {e}")
-
-        # Re-raise permission/tool-calling errors so fallback can handle them
-        if any(indicator in error_msg.lower() for indicator in ["403", "forbidden", "not allowed", "permission"]):
-            logger.info("Re-raising permission error for fallback handling")
-            raise
-
-        # Return failed result for other errors
         return GenerateMetricsResult(
             success=False,
             error=error_msg,
-            sql_query="",
+            sql_queries=[],
             metrics=[],
         )
 
@@ -93,14 +86,17 @@ def generate_metrics_with_mcp(
 def parse_metrics(content_dict: Dict[str, Any]) -> List[Metrics]:
     metrics = []
     metric_list = content_dict.get("metrics", [])
-    if not metric_list:
+    query_list = content_dict.get("sql_queries", [])
+    if not metric_list or not query_list or len(metric_list) != len(query_list):
+        logger.error(f"Failed to parse metrics: {content_dict}")
         return metrics
-    for metric in metric_list:
+    for metric, query in zip(metric_list, query_list):
         metrics.append(
             Metrics(
                 metric_name=metric.get("name", ""),
-                metric_value=json.dumps(metric),
+                metric_value=metric.get("value", ""),
                 metric_type=metric.get("type", ""),
+                metric_sql_query=query,
             )
         )
     return metrics

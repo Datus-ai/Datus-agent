@@ -63,16 +63,21 @@ class GenerateSemanticModelNode(Node):
             # Get database manager and connector using context manager
             db_manager = db_manager_instance(self.agent_config.namespaces)
             current_namespace = self.agent_config.current_namespace
+            catalog_name = self.input.sql_task.catalog_name
             database_name = self.input.sql_task.database_name
+            schema_name = self.input.sql_task.schema_name
             db_type = self.agent_config.db_type
 
             with get_db_connector(db_manager, current_namespace, db_type, database_name) as connector:
                 # Get tables with DDL
-                schema_name = database_name if database_name else current_namespace
                 table_name = table_names[0].split(".")[-1]
 
-                tables_with_ddl = connector.get_tables_with_ddl(tables=[table_name], schema_name=schema_name)
-                tables_with_ddl = connector.get_tables_with_ddl(tables=[table_name], schema_name=schema_name)
+                tables_with_ddl = connector.get_tables_with_ddl(
+                    tables=[table_name],
+                    catalog_name=catalog_name,
+                    database_name=database_name,
+                    schema_name=schema_name,
+                )
 
                 if len(tables_with_ddl) == 0:
                     return GenerateSemanticModelResult(

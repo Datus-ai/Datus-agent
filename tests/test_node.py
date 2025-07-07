@@ -116,7 +116,7 @@ def generate_semantic_model_input() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    agent_config = load_agent_config(namespace="bird_sqlite")  # FIXME Modify it according to your configuration
+    agent_config = load_agent_config(namespace="duckdb")  # FIXME Modify it according to your configuration
     return agent_config
 
 
@@ -517,30 +517,6 @@ class TestNode:
             logger.error(f"Doc search node test failed: {str(e)}")
             raise
 
-    def test_generate_metrics_node(self, generate_metrics_input, agent_config):
-        """Test generate metrics node"""
-        try:
-            # Create generate metrics input from test data
-            for case in generate_metrics_input:
-                input_data = GenerateMetricsInput(**case["input"])
-                node = Node.new_instance(
-                    node_id="generate_metrics_test",
-                    description="Generate Metrics Test",
-                    node_type=NodeType.TYPE_GENERATE_METRICS,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                )
-                result = node.run()
-                logger.debug(f"Generate metrics node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                assert isinstance(result, GenerateMetricsResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-                assert result.metrics is not None, "Metrics is empty"
-                assert result.sql_query is not None, "SQL query is empty"
-        except Exception as e:
-            logger.error(f"Generate metrics node test failed: {str(e)}")
-            raise
-
     def test_generate_semantic_model_node(self, generate_semantic_model_input, agent_config):
         """Test generate semantic model node"""
         try:
@@ -561,4 +537,28 @@ class TestNode:
                 assert result.success is True, f"Node execution failed: {result}"
         except Exception as e:
             logger.error(f"Generate semantic model node test failed: {str(e)}")
+            raise
+
+    def test_generate_metrics_node(self, generate_metrics_input, agent_config):
+        """Test generate metrics node"""
+        try:
+            # Create generate metrics input from test data
+            for case in generate_metrics_input:
+                input_data = GenerateMetricsInput(**case["input"])
+                node = Node.new_instance(
+                    node_id="generate_metrics_test",
+                    description="Generate Metrics Test",
+                    node_type=NodeType.TYPE_GENERATE_METRICS,
+                    input_data=input_data,
+                    agent_config=agent_config,
+                )
+                result = node.run()
+                logger.debug(f"Generate metrics node result: {result}")
+                assert node.status == "completed", f"Node execution failed with status: {node.status}"
+                assert isinstance(result, GenerateMetricsResult), "Result type mismatch"
+                assert result.success is True, f"Node execution failed: {result}"
+                assert len(result.metrics) > 0, "Metrics is empty"
+                assert len(result.sql_queries) > 0, "SQL queries is empty"
+        except Exception as e:
+            logger.error(f"Generate metrics node test failed: {str(e)}")
             raise

@@ -134,6 +134,15 @@ class BaseEmbeddingStore(StorageBase):
 
     def _ensure_table(self, schema: Optional[Union[pa.Schema, LanceModel]] = None):
         try:
+            logger.info(f"Creating table {self.table_name} with schema {schema}")
+            logger.info(f"Embedding function: {self.model.model}")
+            logger.info(
+                f"Embedding function config: {EmbeddingFunctionConfig(
+                        vector_column=self.vector_column_name,
+                        source_column=self.vector_source_name,
+                        function=self.model.model,
+                    )}"
+            )
             self.table = self.db.create_table(
                 self.table_name,
                 schema=schema,
@@ -225,7 +234,7 @@ class BaseEmbeddingStore(StorageBase):
             # Does not affect usage, so no exception is thrown.
             logger.warning(f"Failed to create fts index for {self.table_name} table: {str(e)}")
 
-    def store_batch(self, data: List[Dict[str, Any]]):
+    def store_batch(self, data: List[Dict[str, Any]], mode: str = "append"):
         """
         Store a batch of data in the database. The following steps are performed:
 
@@ -240,20 +249,20 @@ class BaseEmbeddingStore(StorageBase):
             return
         try:
             if len(data) <= self.batch_size:
-                self.table.add(pd.DataFrame(data))
+                self.table.add(pd.DataFrame(data), mode=mode)
                 return
             # split the data into batches and store them
             for i in range(0, len(data), self.batch_size):
                 batch = data[i : i + self.batch_size]
-                self.table.add(pd.DataFrame(batch))
+                self.table.add(pd.DataFrame(batch), mode=mode)
         except Exception as e:
             raise DatusException(
                 ErrorCode.TOOL_STORE_FAILED,
                 message=f"Failed to store batch because {str(e)}",
             ) from e
 
-    def store(self, data: List[Dict[str, Any]]):
-        self.table.add(pd.DataFrame(data))
+    def store(self, data: List[Dict[str, Any]], mode: str = "append"):
+        self.table.add(pd.DataFrame(data), mode=mode)
 
     def search(
         self,
