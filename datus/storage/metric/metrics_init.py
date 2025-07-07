@@ -1,6 +1,5 @@
 import argparse
 import json
-from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import List, Set

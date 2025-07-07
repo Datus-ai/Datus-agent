@@ -134,15 +134,6 @@ class BaseEmbeddingStore(StorageBase):
 
     def _ensure_table(self, schema: Optional[Union[pa.Schema, LanceModel]] = None):
         try:
-            logger.info(f"Creating table {self.table_name} with schema {schema}")
-            logger.info(f"Embedding function: {self.model.model}")
-            logger.info(
-                f"Embedding function config: {EmbeddingFunctionConfig(
-                        vector_column=self.vector_column_name,
-                        source_column=self.vector_source_name,
-                        function=self.model.model,
-                    )}"
-            )
             self.table = self.db.create_table(
                 self.table_name,
                 schema=schema,
