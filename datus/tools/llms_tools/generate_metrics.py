@@ -50,7 +50,7 @@ def generate_metrics_with_mcp(
                     "filesystem_mcp_server": filesystem_mcp_server,
                 },
                 instruction=instruction,
-                output_type=GenerateMetricsResult,
+                output_type=str,
                 max_turns=max_turns,
             )
         )

@@ -47,7 +47,7 @@ def generate_semantic_model_with_mcp(
                     "filesystem_mcp_server": filesystem_mcp_server,
                 },
                 instruction=instruction,
-                output_type=GenerateSemanticModelResult,
+                output_type=str,
                 max_turns=max_turns,
             )
         )

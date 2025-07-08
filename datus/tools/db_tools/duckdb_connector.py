@@ -50,8 +50,6 @@ class DuckdbConnector(SQLAlchemyConnector):
             - database_name: The CREATE TABLE statement for the table
         """
         filter_tables = self._reset_filter_tables(tables, **kwargs)
-        logger.info(f"---kwargs: {kwargs}")
-        logger.info(f"---filter_tables: {filter_tables}")
         return self._get_meta_with_ddl(
             database_name=kwargs.get("database_name", ""),
             schema_name=kwargs.get("schema_name", ""),
