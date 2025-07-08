@@ -12,7 +12,7 @@ from datus.schemas.node_models import SqlTask
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.utils.loggings import get_logger
 
-logger = get_logger("sql_agent")
+logger = get_logger(__name__)
 
 
 def load_builtin_workflow_config() -> dict:

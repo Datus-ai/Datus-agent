@@ -11,7 +11,7 @@ from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
-logger = get_logger("sqlalchemy_connector")
+logger = get_logger(__name__)
 
 
 class SQLAlchemyConnector(BaseSqlConnector):

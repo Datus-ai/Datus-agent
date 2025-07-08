@@ -19,7 +19,7 @@ from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
 
-logger = get_logger("claude_model")
+logger = get_logger(__name__)
 
 
 def wrap_prompt_cache(messages):

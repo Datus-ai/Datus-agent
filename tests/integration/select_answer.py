@@ -24,7 +24,7 @@ from datus.utils.loggings import get_logger
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
-logger = get_logger("select_answer")
+logger = get_logger(__name__)
 
 
 class AgentAnswerSelector:

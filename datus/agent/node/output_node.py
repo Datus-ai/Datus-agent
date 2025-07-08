@@ -6,7 +6,7 @@ from datus.schemas.node_models import OutputInput
 from datus.tools.output_tools import BenchmarkOutputTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("output_node")
+logger = get_logger(__name__)
 
 
 class OutputNode(Node):

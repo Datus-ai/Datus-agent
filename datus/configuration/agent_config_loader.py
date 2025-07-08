@@ -8,7 +8,7 @@ from datus.configuration.node_type import NodeType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
-logger = get_logger("agent_config_loader")
+logger = get_logger(__name__)
 
 
 def load_node_config(node_type: str, data: dict) -> NodeConfig:

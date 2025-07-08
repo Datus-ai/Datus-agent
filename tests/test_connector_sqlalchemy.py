@@ -9,7 +9,7 @@ from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
 from datus.utils.loggings import get_logger
 
-logger = get_logger("test_sqlalchemy_tools")
+logger = get_logger(__name__)
 
 
 class TestSQLAlchemyTools:

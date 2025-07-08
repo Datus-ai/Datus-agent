@@ -7,7 +7,7 @@ from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchM
 from datus.tools.metric_tools.search_metric import SearchMetricsTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("search_metrics_node")
+logger = get_logger(__name__)
 
 
 class SearchMetricsNode(Node):

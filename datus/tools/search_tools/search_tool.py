@@ -11,7 +11,7 @@ from datus.storage.document.store import DocumentStore
 from datus.tools.base import BaseTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("search_tools")
+logger = get_logger(__name__)
 
 
 class SearchTool(BaseTool):

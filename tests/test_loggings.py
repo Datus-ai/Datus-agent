@@ -2,7 +2,7 @@ from datus.utils.loggings import configure_logging, get_log_manager, get_logger,
 
 configure_logging(debug=True)
 
-logger = get_logger("test_loggings")
+logger = get_logger(__name__)
 
 
 def test_log_context():

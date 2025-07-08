@@ -11,7 +11,7 @@ from datus import __version__
 from datus.cli.repl import DatusCLI
 from datus.utils.loggings import configure_logging, get_logger
 
-logger = get_logger("datus-cli")
+logger = get_logger(__name__)
 
 
 class ArgumentParser:

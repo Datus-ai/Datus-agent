@@ -9,7 +9,7 @@ from datus.utils.loggings import get_logger
 
 from .init_utils import exists_table_value
 
-logger = get_logger("local_init")
+logger = get_logger(__name__)
 
 
 def init_local_schema(

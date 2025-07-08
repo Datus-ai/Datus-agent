@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from datus.utils.loggings import get_log_manager, get_logger
 
-logger = get_logger("exception")
+logger = get_logger(__name__)
 
 
 class ErrorCode(Enum):

@@ -20,7 +20,7 @@ from datus.utils.loggings import get_logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-logger = get_logger("test_tools")
+logger = get_logger(__name__)
 
 
 class TestLLMsTools:

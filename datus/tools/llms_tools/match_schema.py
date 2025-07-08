@@ -13,7 +13,7 @@ from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import metadata_identifier
 from datus.utils.token_utils import cal_task_size
 
-logger = get_logger("MatchSchemaLLMTool")
+logger = get_logger(__name__)
 
 
 class MatchSchemaTool(BaseTool):

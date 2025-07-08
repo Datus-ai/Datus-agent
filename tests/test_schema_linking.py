@@ -8,7 +8,7 @@ from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
 from datus.utils.loggings import get_logger
 
-log = get_logger("test_schema_lineage")
+log = get_logger(__name__)
 
 
 @pytest.fixture

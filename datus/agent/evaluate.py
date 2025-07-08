@@ -5,7 +5,7 @@ from datus.agent.workflow import Workflow
 from datus.configuration.node_type import NodeType
 from datus.utils.loggings import get_logger
 
-logger = get_logger("evaluation")
+logger = get_logger(__name__)
 
 
 def setup_node_input(node, workflow):

@@ -13,7 +13,7 @@ from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.utils.json_utils import strip_json_str
 from datus.utils.loggings import get_logger
 
-logger = get_logger("tools")
+logger = get_logger(__name__)
 
 
 @traceable

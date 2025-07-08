@@ -5,7 +5,7 @@ from agents.result import RunResultBase
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
 
-logger = get_logger("sql_agent")
+logger = get_logger(__name__)
 
 # Mapping of mcp server types to their supported query function names
 DB_QUERY_FUNCTIONS: Dict[str, Set[str]] = {

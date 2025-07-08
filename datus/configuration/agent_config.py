@@ -54,7 +54,7 @@ class NodeConfig:
     input: BaseInput | None
 
 
-logger = get_logger("agent_config")
+logger = get_logger(__name__)
 
 DEFAULT_REFLECTION_NODES = {
     StrategyType.SCHEMA_LINKING.lower(): [

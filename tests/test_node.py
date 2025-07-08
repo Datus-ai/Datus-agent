@@ -28,7 +28,7 @@ from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.llms_tools.llms import LLMTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("test_node")
+logger = get_logger(__name__)
 
 
 @pytest.fixture

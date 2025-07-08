@@ -7,7 +7,7 @@ from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.tools.llms_tools import LLMTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("reason_sql_node")
+logger = get_logger(__name__)
 
 
 class ReasonSQLNode(Node):

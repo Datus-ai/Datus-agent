@@ -12,7 +12,7 @@ from pathlib import Path
 
 from datus.utils.loggings import get_logger
 
-logger = get_logger("datus-init")
+logger = get_logger(__name__)
 
 
 class DatusInitializer:

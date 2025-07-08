@@ -12,7 +12,7 @@ from datus.utils.loggings import get_logger
 from ...schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from ..base import BaseTool
 
-logger = get_logger("schema_lineage")
+logger = get_logger(__name__)
 
 
 class SchemaLineageTool(BaseTool):

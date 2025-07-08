@@ -12,7 +12,7 @@ from datus.utils.loggings import get_logger
 
 from .base import BaseTool
 
-logger = get_logger("tools")
+logger = get_logger(__name__)
 
 
 def get_tool_types() -> List[str]:

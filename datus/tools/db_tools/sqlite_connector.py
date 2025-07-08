@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, override
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
 from datus.utils.loggings import get_logger
 
-logger = get_logger("sqlite_connector")
+logger = get_logger(__name__)
 
 
 class SQLiteConnector(SQLAlchemyConnector):

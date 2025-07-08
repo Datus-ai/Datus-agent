@@ -6,7 +6,7 @@ from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, Gen
 from datus.tools.llms_tools import LLMTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger(__file__)
+logger = get_logger(__name__)
 
 
 class GenerateMetricsNode(Node):

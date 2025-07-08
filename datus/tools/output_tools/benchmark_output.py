@@ -13,7 +13,7 @@ from datus.tools.base import BaseTool
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.loggings import get_logger
 
-logger = get_logger("output_tools")
+logger = get_logger(__name__)
 
 
 class BenchmarkOutputTool(BaseTool):

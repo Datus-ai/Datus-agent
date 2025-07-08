@@ -16,7 +16,7 @@ from textual.widgets import Tree as TextualTree
 
 from datus.utils.loggings import get_logger
 
-logger = get_logger("datus-context")
+logger = get_logger(__name__)
 
 
 class ContextScreen(Screen):

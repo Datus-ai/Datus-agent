@@ -6,7 +6,7 @@ from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaL
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("schema_link_node")
+logger = get_logger(__name__)
 
 
 class SchemaLinkingNode(Node):

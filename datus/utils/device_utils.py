@@ -3,7 +3,7 @@ import subprocess
 
 from datus.utils.loggings import get_logger
 
-logger = get_logger("sql_agent")
+logger = get_logger(__name__)
 
 _DEVICE = None
 

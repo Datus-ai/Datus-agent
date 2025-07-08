@@ -19,7 +19,7 @@ from datus.agent.workflow import Workflow
 from datus.schemas.node_models import BaseInput, BaseResult
 from datus.utils.loggings import get_logger
 
-logger = get_logger("datus-workflow")
+logger = get_logger(__name__)
 
 # Configure debug logging based on environment variable
 WORKFLOW_SCREEN_DEBUG = os.environ.get("DATUS_WORKFLOW_DEBUG", "0").lower() in ("1", "true", "yes")

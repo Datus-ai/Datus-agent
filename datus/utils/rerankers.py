@@ -9,7 +9,7 @@ from datus.utils.device_utils import get_device
 from datus.utils.loggings import get_logger
 
 ARROW_VERSION = Version(pa.__version__)
-logger = get_logger("rerankers")
+logger = get_logger(__name__)
 
 
 class BGEReranker(Reranker):

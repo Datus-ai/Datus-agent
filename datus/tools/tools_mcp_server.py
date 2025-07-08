@@ -7,7 +7,7 @@ from fastmcp import MCPServer
 from datus.tools.base import BaseTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("mcp_server")
+logger = get_logger(__name__)
 
 
 # untested

@@ -8,7 +8,7 @@ from datus.schemas.node_models import STRATEGY_LIST, ReflectionInput, Reflection
 from datus.utils.env import get_env_int
 from datus.utils.loggings import get_logger
 
-logger = get_logger("reflect_node")
+logger = get_logger(__name__)
 
 
 class ReflectNode(Node):

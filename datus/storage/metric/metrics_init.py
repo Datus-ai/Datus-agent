@@ -19,7 +19,7 @@ from datus.utils.loggings import get_logger
 
 from .store import SemanticMetricsRAG
 
-logger = get_logger(__file__)
+logger = get_logger(__name__)
 
 
 def init_success_story_metrics(

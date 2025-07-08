@@ -9,7 +9,7 @@ from agents.mcp import MCPServerStdio
 from datus.configuration.agent_config import DbConfig
 from datus.utils.loggings import get_logger
 
-logger = get_logger("mcp_server")
+logger = get_logger(__name__)
 
 
 def find_mcp_directory(mcp_name: str) -> str:

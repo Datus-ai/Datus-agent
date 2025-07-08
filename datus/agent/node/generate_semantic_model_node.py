@@ -9,7 +9,7 @@ from datus.tools.llms_tools import LLMTool
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names
 
-logger = get_logger(__file__)
+logger = get_logger(__name__)
 
 
 @contextmanager

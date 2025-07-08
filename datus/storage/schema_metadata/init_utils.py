@@ -4,7 +4,7 @@ from datus.schemas.base import TABLE_TYPE
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.utils.loggings import get_logger
 
-logger = get_logger("schema_store")
+logger = get_logger(__name__)
 
 
 def exists_table_value(

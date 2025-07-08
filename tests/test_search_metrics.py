@@ -4,7 +4,7 @@ from datus.storage.metric.store import qualify_name
 from datus.tools.metric_tools.search_metric import SearchMetricsTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("test_search")
+logger = get_logger(__name__)
 
 
 @pytest.fixture

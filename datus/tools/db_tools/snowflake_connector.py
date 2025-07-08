@@ -6,7 +6,7 @@ from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.loggings import get_logger
 
-logger = get_logger("snowflake_connector")
+logger = get_logger(__name__)
 
 
 class SnowflakeConnector(BaseSqlConnector):

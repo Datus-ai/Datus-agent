@@ -17,7 +17,7 @@ from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_confi
 from datus.utils.loggings import configure_logging, get_logger
 
 configure_logging(debug=True)
-logger = get_logger("test_storage")
+logger = get_logger(__name__)
 
 
 @pytest.fixture

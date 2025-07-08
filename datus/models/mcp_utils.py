@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 from datus.utils.loggings import get_logger
 
-logger = get_logger(__file__)
+logger = get_logger(__name__)
 
 
 @asynccontextmanager

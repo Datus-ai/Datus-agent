@@ -15,7 +15,7 @@ from datus.utils.loggings import get_logger
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-logger = get_logger("schema_store")
+logger = get_logger(__name__)
 
 
 class BaseMetadataStorage(BaseEmbeddingStore):

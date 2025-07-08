@@ -13,7 +13,7 @@ from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
 from datus.schemas.doc_search_node_models import DocSearchResult
 from datus.utils.loggings import get_logger
 
-logger = get_logger("node_models")
+logger = get_logger(__name__)
 
 MAX_SQL_RESULT_LENGTH = int(os.getenv("MAX_SQL_RESULT_LENGTH", 2000))
 

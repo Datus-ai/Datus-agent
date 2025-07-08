@@ -7,7 +7,7 @@ from datus.utils.loggings import get_logger
 
 from .node import Node
 
-logger = get_logger("sql_agent")
+logger = get_logger(__name__)
 
 
 class Workflow:

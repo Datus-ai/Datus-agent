@@ -6,7 +6,7 @@ from datus.schemas.node_models import ExecuteSQLResult, GenerateSQLResult, SqlTa
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.utils.loggings import get_logger
 
-logger = get_logger("test_input")
+logger = get_logger(__name__)
 
 
 class TestSchemaLinkingInput:

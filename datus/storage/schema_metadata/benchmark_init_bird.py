@@ -10,7 +10,7 @@ from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 
-logger = get_logger("benchmark_init_bird")
+logger = get_logger(__name__)
 # Get the current directory path
 current_path = os.path.dirname(os.path.abspath(__file__))
 # Go up two levels to reach project root

@@ -15,7 +15,7 @@ from .store import SchemaWithValueRAG
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-logger = get_logger("schema_store")
+logger = get_logger(__name__)
 # init spider2 schemas
 
 

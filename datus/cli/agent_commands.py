@@ -19,7 +19,7 @@ from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
 
-logger = get_logger("agent-commands")
+logger = get_logger(__name__)
 
 
 class AgentCommands:

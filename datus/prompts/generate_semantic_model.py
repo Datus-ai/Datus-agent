@@ -2,7 +2,7 @@ from datus.utils.loggings import get_logger
 
 from .prompt_manager import prompt_manager
 
-logger = get_logger(__file__)
+logger = get_logger(__name__)
 
 
 def get_generate_semantic_model_prompt(

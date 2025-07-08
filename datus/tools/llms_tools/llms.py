@@ -20,7 +20,7 @@ from .generate_sql import generate_sql
 from .match_schema import MatchSchemaTool
 from .reasoning_sql import reasoning_sql_with_mcp
 
-logger = get_logger("llm_tools")
+logger = get_logger(__name__)
 
 
 class LLMTool(BaseTool):

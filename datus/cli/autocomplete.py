@@ -10,7 +10,7 @@ from prompt_toolkit.document import Document
 
 from datus.utils.loggings import get_logger
 
-logger = get_logger("datus-autocomplete")
+logger = get_logger(__name__)
 
 # Common SQL keywords and functions
 SQL_KEYWORDS = [

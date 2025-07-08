@@ -8,7 +8,7 @@ from datus.schemas.base import BaseInput
 from datus.schemas.node_models import STRATEGY_LIST, SqlTask
 from datus.utils.loggings import get_logger
 
-logger = get_logger("reflection")
+logger = get_logger(__name__)
 
 
 @traceable

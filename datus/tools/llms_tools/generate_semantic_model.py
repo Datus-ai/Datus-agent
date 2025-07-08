@@ -13,7 +13,7 @@ from datus.tools.mcp_server import MCPServer
 from datus.utils.json_utils import strip_json_str
 from datus.utils.loggings import get_logger
 
-logger = get_logger(__file__)
+logger = get_logger(__name__)
 
 
 @traceable

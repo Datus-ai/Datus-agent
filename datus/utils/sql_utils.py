@@ -6,7 +6,7 @@ from sqlglot.expressions import CTE, Table
 
 from .loggings import get_logger
 
-logger = get_logger("sql_utils")
+logger = get_logger(__name__)
 
 
 def parse_dialect(dialect: str = "snowflake") -> str:

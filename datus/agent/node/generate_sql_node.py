@@ -7,7 +7,7 @@ from datus.tools.lineage_graph_tools import SchemaLineageTool
 from datus.tools.llms_tools import LLMTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("generate_sql_node")
+logger = get_logger(__name__)
 
 
 class GenerateSQLNode(Node):

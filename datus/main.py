@@ -17,7 +17,7 @@ from datus.schemas.node_models import SqlTask
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import configure_logging, get_logger
 
-logger = get_logger("main")
+logger = get_logger(__name__)
 
 
 def create_parser() -> argparse.ArgumentParser:

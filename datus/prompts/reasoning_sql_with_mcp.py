@@ -7,7 +7,7 @@ from datus.utils.loggings import get_logger
 
 from .prompt_manager import prompt_manager
 
-logger = get_logger("reasoning_sql_with_mcp")
+logger = get_logger(__name__)
 
 
 # class for the output of the reasoning sql with mcp

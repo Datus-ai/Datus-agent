@@ -14,7 +14,7 @@ from datus.storage.embedding_models import EmbeddingModel
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
-logger = get_logger("sql_agent")
+logger = get_logger(__name__)
 
 
 class StorageBase:

@@ -19,7 +19,7 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 
-logger = get_logger("sql_agent")
+logger = get_logger(__name__)
 MAX_INPUT_QEN = 98000  # 98304 - buffer of ~300 tokens
 
 

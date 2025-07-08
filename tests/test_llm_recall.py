@@ -18,7 +18,7 @@ from tests.conftest import PROJECT_ROOT
 from tests.test_schema_recall_spider2 import load_gold_tables
 
 configure_logging(debug=True)
-logger = get_logger("test_match_schema")
+logger = get_logger(__name__)
 
 
 @pytest.fixture

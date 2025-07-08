@@ -7,7 +7,7 @@ from datus.schemas.node_models import SQLContext
 from datus.tools.llms_tools import LLMTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("fix_node")
+logger = get_logger(__name__)
 
 
 class FixNode(Node):

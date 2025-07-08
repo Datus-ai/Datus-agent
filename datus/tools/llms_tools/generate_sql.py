@@ -7,7 +7,7 @@ from datus.prompts.gen_sql import get_sql_prompt
 from datus.schemas.node_models import GenerateSQLInput, GenerateSQLResult
 from datus.utils.loggings import get_logger
 
-logger = get_logger("tools")
+logger = get_logger(__name__)
 
 
 @traceable

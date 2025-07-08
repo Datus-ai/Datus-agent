@@ -6,7 +6,7 @@ from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
 from datus.tools.search_tools import SearchTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("doc_search_node")
+logger = get_logger(__name__)
 
 
 class DocSearchNode(Node):

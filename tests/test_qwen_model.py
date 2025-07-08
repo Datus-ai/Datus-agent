@@ -8,7 +8,7 @@ from datus.models.qwen_model import QwenModel
 from datus.tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
 
-logger = get_logger("test_deepseek_model")
+logger = get_logger(__name__)
 
 set_tracing_disabled(True)
 

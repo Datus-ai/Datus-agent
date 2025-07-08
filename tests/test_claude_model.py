@@ -9,7 +9,7 @@ from datus.models.claude_model import ClaudeModel
 from datus.tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
 
-logger = get_logger("test_claude_model")
+logger = get_logger(__name__)
 
 
 class TestClaudeModel:

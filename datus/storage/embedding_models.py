@@ -5,7 +5,7 @@ from typing import Any, Optional
 from datus.utils.device_utils import get_device
 from datus.utils.loggings import get_logger
 
-logger = get_logger("sql_agent")
+logger = get_logger(__name__)
 
 
 @dataclass

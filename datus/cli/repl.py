@@ -31,7 +31,7 @@ from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
 
-logger = get_logger("datus-cli")
+logger = get_logger(__name__)
 
 
 class CommandType(Enum):

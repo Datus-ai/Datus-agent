@@ -29,7 +29,7 @@ from datus.storage.schema_metadata.store import rag_by_configuration
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.loggings import get_logger
 
-logger = get_logger("sql_agent")
+logger = get_logger(__name__)
 
 MODEL_TYPE_MAP = {
     "deepseek": DeepSeekModel,

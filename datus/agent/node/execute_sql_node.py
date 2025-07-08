@@ -8,7 +8,7 @@ from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
 from datus.tools.db_tools import DBTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("execute_sql_node")
+logger = get_logger(__name__)
 
 
 class ExecuteSQLNode(Node):

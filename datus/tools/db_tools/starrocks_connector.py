@@ -7,7 +7,7 @@ from datus.tools.db_tools.mysql_connector import MySQLConnectorBase
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
-logger = get_logger("starrocks_connector")
+logger = get_logger(__name__)
 
 # Global registry to track all StarRocks connections for cleanup
 _starrocks_connections = weakref.WeakSet()

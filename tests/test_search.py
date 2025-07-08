@@ -10,7 +10,7 @@ from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
 from datus.tools.search_tools import SearchTool
 from datus.utils.loggings import get_logger
 
-logger = get_logger("test_search")
+logger = get_logger(__name__)
 
 
 @pytest.fixture

@@ -9,7 +9,7 @@ from rich.tree import Tree
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
 
-logger = get_logger("datus-cli")
+logger = get_logger(__name__)
 
 
 class ContextCommands:
