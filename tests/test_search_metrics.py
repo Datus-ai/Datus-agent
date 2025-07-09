@@ -61,10 +61,12 @@ def build_some_value_pure_scalar_input() -> SearchMetricsInput:
 def test_vector_and_scalar_query(search_metrics_tool, build_some_value_pure_scalar_input):
     result = search_metrics_tool.execute(build_some_value_pure_scalar_input)
     print(f'result {result}')
+    assert result is not None, result is None
 
 def test_empty_vector_and_scalar_query(search_metrics_tool, build_empty_pure_scalar_input):
     result = search_metrics_tool.execute(build_empty_pure_scalar_input)
     print(f'result {result}')
+    assert result is not None, result is None
 
 def test_pure_scalar_query(search_metrics_tool):
     result = search_metrics_tool.store.semantic_model_storage.table.search().where("catalog_database_schema like '%.%.%'").to_list()
@@ -97,3 +99,4 @@ def test_json():
     )
     json_str = json.dumps(metric.__dict__)
     print(f"json:{json_str}")
+    assert json.loads(json_str) == metric.__dict__
