@@ -15,6 +15,7 @@
 /save
 uv.lock
 /logs
+/datus/logs/*
 /tests/output
 before_reflection_*.yaml
 /.history
