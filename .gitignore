@@ -17,6 +17,7 @@ tests/data/metricflow_csv/*
 /save
 uv.lock
 /logs
+/datus/logs/*
 /tests/output
 before_reflection_*.yaml
 /.history
