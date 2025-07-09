@@ -2,7 +2,11 @@
 import json
 from typing import List, Union
 
+<<<<<<< HEAD
 from datus.schemas.node_models import Metrics, TableSchema, TableValue
+=======
+from datus.schemas.node_models import TableSchema, TableValue, Metrics
+>>>>>>> 1027f39 (search_metric node & its workflow)
 from datus.utils.loggings import get_logger
 
 from .prompt_manager import prompt_manager

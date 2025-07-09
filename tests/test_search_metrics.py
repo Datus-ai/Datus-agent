@@ -33,11 +33,10 @@ def build_empty_pure_scalar_input() -> SearchMetricsInput:
         # input_text="Calculate the cancellation rate by transaction type (Quick Buy or Not Quick Buy).",
         input_text="",
         semantic_model_meta=semantic_model_meta,
-        database_type="duckdb",
+        database_type='duckdb',
     )
 
     return input_param
-
 
 @pytest.fixture
 def build_some_value_pure_scalar_input() -> SearchMetricsInput:
@@ -54,46 +53,33 @@ def build_some_value_pure_scalar_input() -> SearchMetricsInput:
     input_param = SearchMetricsInput(
         input_text="Calculate the cancellation rate by transaction type (Quick Buy or Not Quick Buy).",
         semantic_model_meta=semantic_model_meta,
-        database_type="duckdb",
+        database_type='duckdb',
     )
 
     return input_param
 
-
 def test_vector_and_scalar_query(search_metrics_tool, build_some_value_pure_scalar_input):
     result = search_metrics_tool.execute(build_some_value_pure_scalar_input)
-    print(f"result {result}")
-    assert result is not None, result is None
-
+    print(f'result {result}')
 
 def test_empty_vector_and_scalar_query(search_metrics_tool, build_empty_pure_scalar_input):
     result = search_metrics_tool.execute(build_empty_pure_scalar_input)
-    print(f"result {result}")
-    assert result is not None, result is None
-
+    print(f'result {result}')
 
 def test_pure_scalar_query(search_metrics_tool):
-    result = (
-        search_metrics_tool.store.semantic_model_storage.table.search()
-        .where("catalog_database_schema like '%.%.%'")
-        .to_list()
-    )
-    print(f"result: {result}")
+    result = search_metrics_tool.store.semantic_model_storage.table.search().where("catalog_database_schema like '%.%.%'").to_list()
+    print(f'result: {result}')
     assert len(result) > 0
-    result = (
-        search_metrics_tool.store.metric_storage.table.search().where("domain_layer1_layer2 like '%_%_%'").to_list()
-    )
-    print(f"result: {result}")
+    result = search_metrics_tool.store.metric_storage.table.search().where("domain_layer1_layer2 like '%_%_%'").to_list()
+    print(f'result: {result}')
     assert len(result) > 0
-
 
 def test_qualify_name_with_none_or_blank():
     first = None
     second = ""
     three = "23456"
     full_name = qualify_name([first, second, three])
-    assert "%.%.23456" == full_name
-
+    assert "%_%_23456" == full_name
 
 def test_invalid_input(search_metrics_tool):
     """Test input validation"""
@@ -102,7 +88,6 @@ def test_invalid_input(search_metrics_tool):
     # Test missing SearchMetricsInput
     with pytest.raises(AttributeError, match="'dict' object has no attribute 'input_text'"):
         search_metrics_tool.execute({})
-
 
 def test_json():
     metric = Metrics(

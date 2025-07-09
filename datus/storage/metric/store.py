@@ -197,28 +197,30 @@ class SemanticMetricsRAG:
         metric_result = []
         if semantic_search_results and metric_search_results:
             try:
-                model_names_in_semantic = {result["semantic_model_name"]: result for result in semantic_search_results}
-                model_names_in_metric = {result["semantic_model_name"]: result for result in metric_search_results}
-                common_keys = model_names_in_semantic.keys() & model_names_in_metric.keys()
-                logger.info("get the common keys are: {common_keys}")
-                for key in common_keys:
-                    result = model_names_in_metric[key]
-                    metric_result.append(
-                        {
-                            "domain": result["domain"],
-                            "layer1": result["layer1"],
-                            "layer2": result["layer2"],
-                            "semantic_model_name": result["semantic_model_name"],
-                            "metric_name": result["metric_name"],
-                            "metric_value": result["metric_value"],
-                            "metric_type": result["metric_type"],
-                            "metric_sql_query": result["metric_sql_query"],
-                            "created_at": result["created_at"],
-                        }
-                    )
+                semantics_name_set = {result["semantic_model_name"] for result in semantic_search_results}
+                logger.info("get the semantics_name_set are: {semantics_name_set}")
+                for semantics_name in semantics_name_set:
+                    for result in metric_search_results:
+                        if semantics_name == result["semantic_model_name"]:
+                            metric_result.append(
+                                {
+                                    "domain": result["domain"],
+                                    "layer1": result["layer1"],
+                                    "layer2": result["layer2"],
+                                    "semantic_model_name": result["semantic_model_name"],
+                                    "metric_name": result["metric_name"],
+                                    "metric_value": result["metric_value"],
+                                    "metric_type": result["metric_type"],
+                                    "metric_sql_query": result["metric_sql_query"],
+                                    "created_at": result["created_at"],
+                                }
+                            )
             except Exception as e:
                 # the main purpose is to catch the key:semantic_model_name not in search_results
                 logger.warning(f"Failed to get the intersection set, exception: {str(e)}")
+
+        logger.info(f"Success to get the metric_result size: {len(metric_result)}, query_text: {query_text}")
+        return metric_result
 
         logger.info(f"Success to get the metric_result size: {len(metric_result)}, query_text: {query_text}")
         return metric_result
