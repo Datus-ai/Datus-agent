@@ -264,7 +264,7 @@ class Metrics(BaseModel):
 
     metric_name: str = Field(..., description="Name of the metric")
     metric_value: str = Field(..., description="Value of the metric")
-    # metric_type: str = Field(..., description="Type of the metric")
+    metric_type: str = Field(default="", description="Type of the metric")
     metric_sql_query: str = Field(default="", description="sql of the metric")
 
     def to_prompt(self, dialect: str = "snowflake") -> str:

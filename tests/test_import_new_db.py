@@ -29,7 +29,10 @@ def test_import_from_file():
 def test_duckdb_query():
     conn = duckdb.connect(NEW_DB_PATH)
     # result = conn.execute("SELECT * FROM mf_demo.mf_demo_countries")
-    result = conn.execute("SELECT * FROM duckdb_tables()")
+    # result = conn.execute("SELECT * FROM duckdb_tables()")
+    result = conn.execute(
+        "select database_name, schema_name, table_name, 'sql' from duckdb_tables() where database_name != 'system'"
+    )
     print(result.fetchall())
     assert result is not None
     conn.close()
