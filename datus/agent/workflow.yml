@@ -23,6 +23,10 @@ workflow:
     - output
 
   metric2SQL:
+<<<<<<< HEAD
+=======
+    - schema_linking
+>>>>>>> 1027f39 (search_metric node & its workflow)
     - search_metrics
     - generate_sql
     - execute_sql
