@@ -7,7 +7,7 @@ from datus.schemas.generate_semantic_model_node_models import GenerateSemanticMo
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.llms_tools import LLMTool
 from datus.utils.loggings import get_logger
-from datus.utils.sql_utils import extract_table_names
+from datus.utils.sql_utils import extract_table_names, parse_table_name_parts
 
 logger = get_logger(__name__)
 
@@ -60,18 +60,34 @@ class GenerateSemanticModelNode(Node):
                     semantic_model_file="",
                 )
 
+            # Parse table name parts using the new utility function
+            table_parts = parse_table_name_parts(table_names[0], self.agent_config.db_type)
+
             # Get database manager and connector using context manager
             db_manager = db_manager_instance(self.agent_config.namespaces)
             current_namespace = self.agent_config.current_namespace
-            catalog_name = self.input.sql_task.catalog_name
-            database_name = self.input.sql_task.database_name
-            schema_name = self.input.sql_task.schema_name
+
+            # Use parsed parts or fallback to sql_task values
+            catalog_name = table_parts["catalog_name"] or self.input.sql_task.catalog_name
+            database_name = table_parts["database_name"] or self.input.sql_task.database_name
+            schema_name = table_parts["schema_name"] or self.input.sql_task.schema_name
+            table_name = table_parts["table_name"]
             db_type = self.agent_config.db_type
+
+            logger.debug(
+                f"sql_query: {self.input.sql_query}\n"
+                f"Table names: {table_names}\n"
+                f"Parsed table parts: {table_parts}\n"
+                f"catalog_name: {catalog_name}\n"
+                f"database_name: {database_name}\n"
+                f"schema_name: {schema_name}\n"
+                f"table_name: {table_name}\n"
+                f"db_type: {db_type}\n"
+                f"current_namespace: {current_namespace}\n"
+            )
 
             with get_db_connector(db_manager, current_namespace, db_type, database_name) as connector:
                 # Get tables with DDL
-                table_name = table_names[0].split(".")[-1]
-
                 tables_with_ddl = connector.get_tables_with_ddl(
                     tables=[table_name],
                     catalog_name=catalog_name,

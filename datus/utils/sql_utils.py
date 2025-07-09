@@ -192,3 +192,136 @@ def metadata_identifier(
     elif dialect == "databricks":
         return f"{catalog_name}.{schema_name}.{table_name}" if catalog_name else f"{schema_name}.{table_name}"
     return table_name
+
+
+def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> Dict[str, str]:
+    """
+    Parse a full table name into its component parts (catalog, database, schema, table).
+
+    Args:
+        full_table_name: Full table name string (e.g., "database.schema.table")
+        dialect: SQL dialect to determine parsing logic
+
+    Returns:
+        Dict with keys: catalog_name, database_name, schema_name, table_name
+
+    Examples:
+        For DuckDB:
+        - "table" -> {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": "table"}
+        - "schema.table" -> {"catalog_name": "", "database_name": "", "schema_name": "schema", "table_name": "table"}
+        - "database.schema.table" -> {"catalog_name": "", "database_name": "database",
+                                      "schema_name": "schema", "table_name": "table"}
+    """
+    dialect = parse_dialect(dialect)
+
+    # Split the table name by dots
+    parts = full_table_name.split(".")
+
+    # Initialize result with empty strings
+    result = {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": ""}
+
+    if dialect == "duckdb":
+        # DuckDB: maximum 3 parts - database.schema.table
+        if len(parts) == 1:
+            # Only table name
+            result["table_name"] = parts[0]
+        elif len(parts) == 2:
+            # schema.table
+            result["schema_name"] = parts[0]
+            result["table_name"] = parts[1]
+        elif len(parts) == 3:
+            # database.schema.table
+            result["database_name"] = parts[0]
+            result["schema_name"] = parts[1]
+            result["table_name"] = parts[2]
+        else:
+            # More than 3 parts, take the last 3
+            result["database_name"] = parts[-3] if len(parts) > 2 else ""
+            result["schema_name"] = parts[-2] if len(parts) > 1 else ""
+            result["table_name"] = parts[-1]
+
+    elif dialect == "sqlite":
+        # SQLite: maximum 2 parts - database.table
+        if len(parts) == 1:
+            # Only table name
+            result["table_name"] = parts[0]
+        elif len(parts) == 2:
+            # database.table
+            result["database_name"] = parts[0]
+            result["table_name"] = parts[1]
+        else:
+            # More than 2 parts, take the last 2
+            result["database_name"] = parts[-2] if len(parts) > 1 else ""
+            result["table_name"] = parts[-1]
+
+    elif dialect == "starrocks":
+        # StarRocks: maximum 3 parts - catalog.database.table (no schema)
+        if len(parts) == 1:
+            # Only table name
+            result["table_name"] = parts[0]
+        elif len(parts) == 2:
+            # database.table
+            result["database_name"] = parts[0]
+            result["table_name"] = parts[1]
+        elif len(parts) == 3:
+            # catalog.database.table
+            result["catalog_name"] = parts[0]
+            result["database_name"] = parts[1]
+            result["table_name"] = parts[2]
+        else:
+            # More than 3 parts, take the last 3
+            result["catalog_name"] = parts[-3] if len(parts) > 2 else ""
+            result["database_name"] = parts[-2] if len(parts) > 1 else ""
+            result["table_name"] = parts[-1]
+
+    elif dialect == "snowflake":
+        # Snowflake: maximum 4 parts - catalog.database.schema.table
+        if len(parts) == 1:
+            # Only table name
+            result["table_name"] = parts[0]
+        elif len(parts) == 2:
+            # schema.table
+            result["schema_name"] = parts[0]
+            result["table_name"] = parts[1]
+        elif len(parts) == 3:
+            # database.schema.table
+            result["database_name"] = parts[0]
+            result["schema_name"] = parts[1]
+            result["table_name"] = parts[2]
+        elif len(parts) == 4:
+            # catalog.database.schema.table
+            result["catalog_name"] = parts[0]
+            result["database_name"] = parts[1]
+            result["schema_name"] = parts[2]
+            result["table_name"] = parts[3]
+        else:
+            # More than 4 parts, take the last 4
+            result["catalog_name"] = parts[-4] if len(parts) > 3 else ""
+            result["database_name"] = parts[-3] if len(parts) > 2 else ""
+            result["schema_name"] = parts[-2] if len(parts) > 1 else ""
+            result["table_name"] = parts[-1]
+    else:
+        # Default behavior: assume last part is table name
+        result["table_name"] = parts[-1]
+        if len(parts) > 1:
+            result["schema_name"] = parts[-2]
+        if len(parts) > 2:
+            result["database_name"] = parts[-3]
+        if len(parts) > 3:
+            result["catalog_name"] = parts[-4]
+
+    return result
+
+
+def parse_table_names_parts(full_table_names: List[str], dialect: str = "snowflake") -> List[Dict[str, str]]:
+    """
+    Parse a list of full table names into their component parts.
+
+    Args:
+        full_table_names: List of full table name strings
+        dialect: SQL dialect to determine parsing logic
+
+    Returns:
+        List of dicts with keys: catalog_name, database_name, schema_name, table_name
+    """
+    return [parse_table_name_parts(table_name, dialect) for table_name in full_table_names]
