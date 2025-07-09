@@ -1,11 +1,12 @@
 import time
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.node_models import Context, SQLContext, SqlTask
 from datus.utils.loggings import get_logger
 
-from .node import Node
+if TYPE_CHECKING:
+    from .node import Node
 
 logger = get_logger(__name__)
 
@@ -153,6 +154,7 @@ class Workflow:
             node = self.nodes[self.node_order[nid]]
             if node.type == node_type:
                 return node
+        return None
 
     def get_current_node(self) -> Optional["Node"]:
         """

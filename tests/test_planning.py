@@ -1,7 +1,8 @@
 from unittest.mock import MagicMock, patch
 
+from datus.agent.node import Node
 from datus.agent.plan import generate_workflow
-from datus.agent.workflow import Node, Workflow
+from datus.agent.workflow import Workflow
 
 
 class TestPlanning:

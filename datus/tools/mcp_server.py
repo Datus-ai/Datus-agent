@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 from typing import Dict, Union
 
-from agents.mcp import MCPServerStdio
+from agents.mcp import MCPServerStdio, MCPServerStdioParams
 
 from datus.configuration.agent_config import DbConfig
 from datus.utils.loggings import get_logger
@@ -194,10 +194,10 @@ class MCPServer:
                             logger.error(f"Could not find Snowflake MCP directory: {e}")
                             return None
 
-                    mcp_server_params = {
-                        "command": "uv",
-                        "args": ["--directory", directory, "run", "mcp_snowflake_server"],
-                        "env": {
+                    mcp_server_params = MCPServerStdioParams(
+                        command="uv",
+                        args=["--directory", directory, "run", "mcp_snowflake_server"],
+                        env={
                             "SNOWFLAKE_DATABASE": database_name if database_name else db_config.database,
                             "SNOWFLAKE_SCHEMA": db_config.schema,
                             "SNOWFLAKE_WAREHOUSE": db_config.warehouse,
@@ -205,9 +205,12 @@ class MCPServer:
                             "SNOWFLAKE_PASSWORD": db_config.password,
                             "SNOWFLAKE_ACCOUNT": db_config.account,
                         },
-                    }
+                    )
                     logger.info(f"Snowflake MCP server params: {mcp_server_params}")
-                    cls._snowflake_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._snowflake_mcp_server = MCPServerStdio(
+                        params=mcp_server_params,
+                        client_session_timeout_seconds=20,
+                    )
         return cls._snowflake_mcp_server
 
     @classmethod
@@ -223,18 +226,20 @@ class MCPServer:
                             logger.error(f"Could not find StarRocks MCP directory: {e}")
                             return None
 
-                    mcp_server_params = {
-                        "command": "uv",
-                        "args": ["--directory", directory, "run", "mcp-server-starrocks"],
-                        "env": {
+                    mcp_server_params = MCPServerStdioParams(
+                        command="uv",
+                        args=["--directory", directory, "run", "mcp-server-starrocks"],
+                        env={
                             "STARROCKS_DATABASE": database_name if database_name else db_config.database,
                             "STARROCKS_HOST": db_config.host,
                             "STARROCKS_PORT": str(db_config.port),
                             "STARROCKS_USER": db_config.username,
                             "STARROCKS_PASSWORD": db_config.password,
                         },
-                    }
-                    cls._starrocks_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    )
+                    cls._starrocks_mcp_server = MCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=20
+                    )
         return cls._starrocks_mcp_server
 
     @classmethod
@@ -252,9 +257,9 @@ class MCPServer:
 
                     logger.info(f"Using SQLite database: {db_path}")
 
-                    mcp_server_params = {
-                        "command": "uv",
-                        "args": [
+                    mcp_server_params = MCPServerStdioParams(
+                        command="uv",
+                        args=[
                             "--directory",
                             directory,
                             "run",
@@ -262,8 +267,8 @@ class MCPServer:
                             "--db-path",
                             db_path,
                         ],
-                        "env": {},  # SQLite doesn't need additional environment variables
-                    }
+                        env={},  # SQLite doesn't need additional environment variables
+                    )
                     cls._sqlite_mcp_server = MCPServerStdio(params=mcp_server_params)
         return cls._sqlite_mcp_server
 
@@ -282,9 +287,9 @@ class MCPServer:
 
                     logger.info(f"Using DuckDB database: {db_path}")
 
-                    mcp_server_params = {
-                        "command": "uv",
-                        "args": [
+                    mcp_server_params = MCPServerStdioParams(
+                        command="uv",
+                        args=[
                             "--directory",
                             directory,
                             "run",
@@ -293,9 +298,9 @@ class MCPServer:
                             db_path,
                             "--read-only",
                         ],
-                        "env": {},  # DuckDB doesn't need additional environment variables for local usage
-                    }
-                    cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params)
+                        env={},  # DuckDB doesn't need additional environment variables for local usage
+                    )
+                    cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params, client_session_timeout_seconds=20)
         return cls._duckdb_mcp_server
 
     @classmethod
@@ -315,21 +320,23 @@ class MCPServer:
                             return None
                     logger.info(f"Using MetricFlow MCP server with directory: {directory}")
 
-                    mcp_server_params = {
-                        "command": "uv",
-                        "args": [
+                    mcp_server_params = MCPServerStdioParams(
+                        command="uv",
+                        args=[
                             "--directory",
                             directory,
                             "run",
                             "mcp-metricflow-server",
                         ],
-                        "env": {
+                        env={
                             "MF_PATH": mf_path,
                             "MF_PROJECT_DIR": mf_project_dir,
                             "MF_VERBOSE": mf_verbose,
                         },
-                    }
-                    cls._metricflow_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    )
+                    cls._metricflow_mcp_server = MCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=20
+                    )
         return cls._metricflow_mcp_server
 
     @classmethod
@@ -338,13 +345,15 @@ class MCPServer:
             with cls._lock:
                 if cls._filesystem_mcp_server is None:
                     filesystem_mcp_directory = os.environ.get("FILESYSTEM_MCP_DIRECTORY", "/tmp")
-                    mcp_server_params = {
-                        "command": "npx",
-                        "args": [
+                    mcp_server_params = MCPServerStdioParams(
+                        command="npx",
+                        args=[
                             "-y",
                             "@modelcontextprotocol/server-filesystem",
                             filesystem_mcp_directory,
                         ],
-                    }
-                    cls._filesystem_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    )
+                    cls._filesystem_mcp_server = MCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=20
+                    )
         return cls._filesystem_mcp_server

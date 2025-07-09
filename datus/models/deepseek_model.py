@@ -213,7 +213,7 @@ class DeepSeekModel(LLMBaseModel):
         prompt: str,
         mcp_servers: Dict[str, MCPServerStdio],
         instruction: str,
-        output_type: dict,
+        output_type: type[Any],
         max_turns: int = 10,
         **kwargs,
     ) -> Dict:
@@ -284,26 +284,6 @@ class DeepSeekModel(LLMBaseModel):
                     "sql_contexts": extract_sql_contexts(result),
                 }
 
-                # Create reasoning content from the full interaction list
-                reasoning_content = None
-                if hasattr(result, "to_input_list"):
-                    try:
-                        # Pass the raw list of interactions
-                        reasoning_content = result.to_input_list()
-                    except Exception as e:
-                        logger.error(f"Error getting reasoning content list: {e}")
-                        # Fallback to a simple string representation
-                        reasoning_content = str(result.to_input_list())
-
-                logger.debug(f"Reasoning content: {reasoning_content}")
-                self._save_llm_trace(
-                    prompt=prompt,
-                    response_content=result.final_output,
-                    reasoning_content=reasoning_content,
-                )
-
-                return final_result
-
         except Exception as e:
             logger.error(f"Error in run_agent: {str(e)}")
             reasoning_steps.append("=== Error Occurred ===")
@@ -317,6 +297,7 @@ class DeepSeekModel(LLMBaseModel):
                 reasoning_content=full_reasoning_content,
             )
             raise
+        return final_result
 
     def token_count(self, prompt: str) -> int:
         """Estimate the number of tokens in a text using the deepseek tokenizer.

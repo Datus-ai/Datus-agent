@@ -6,6 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config_loader import load_agent_config
+
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -42,33 +45,33 @@ def mock_model():
     return model
 
 
-@pytest.fixture
-def sample_workflow():
-    """Create a sample workflow for testing."""
-    from agent.workflow import Node, Workflow
+# @pytest.fixture
+# def sample_workflow():
+#     """Create a sample workflow for testing."""
+#     from datus.agent.workflow import Node, Workflow
 
-    workflow = Workflow("Test Workflow", "A workflow for testing")
+#     workflow = Workflow("Test Workflow", "A workflow for testing")
 
-    # Add some tasks to the workflow
-    task1 = Node(
-        "task1",
-        "Parse the query",
-        "query_processing",
-        "Select all employees who earn more than $50,000",
-    )
-    task2 = Node("task2", "Generate SQL", "sql_generation", "Parsed query data")
-    task3 = Node(
-        "task3",
-        "Execute SQL",
-        "sql_execution",
-        "SELECT * FROM employees WHERE salary > 50000;",
-    )
+#     # Add some tasks to the workflow
+#     task1 = Node(
+#         "task1",
+#         "Parse the query",
+#         "query_processing",
+#         "Select all employees who earn more than $50,000",
+#     )
+#     task2 = Node("task2", "Generate SQL", "sql_generation", "Parsed query data")
+#     task3 = Node(
+#         "task3",
+#         "Execute SQL",
+#         "sql_execution",
+#         "SELECT * FROM employees WHERE salary > 50000;",
+#     )
 
-    workflow.add_task(task1)
-    workflow.add_task(task2)
-    workflow.add_task(task3)
+#     workflow.add_task(task1)
+#     workflow.add_task(task2)
+#     workflow.add_task(task3)
 
-    return workflow
+#     return workflow
 
 
 @pytest.fixture
@@ -131,3 +134,7 @@ def sample_database_data():
             "hire_date": "2020-07-30",
         },
     ]
+
+
+def load_acceptance_config(namespace: str = "") -> AgentConfig:
+    return load_agent_config(config="tests/conf/agent.yml", namespace=namespace)

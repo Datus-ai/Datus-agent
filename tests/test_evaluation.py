@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from datus.agent.evaluate import evaluate_result
-from datus.agent.workflow import Node
+from datus.agent.node import Node
 
 
 class TestEvaluation:

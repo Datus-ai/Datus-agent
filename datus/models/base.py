@@ -2,6 +2,8 @@ import os
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict
 
+from agents.mcp import MCPServerStdio
+
 from datus.configuration.agent_config import AgentConfig, ModelConfig
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -88,3 +90,27 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     @abstractmethod
     def token_count(self, prompt: str) -> int:
         pass
+
+    async def generate_with_mcp(
+        self,
+        prompt: str,
+        mcp_servers: Dict[str, MCPServerStdio],
+        instruction: str,
+        output_type: type[Any],
+        max_turns: int = 10,
+        **kwargs,
+    ) -> Dict:
+        """Generate a response using multiple MCP (Machine Conversation Protocol) servers.
+
+        Args:
+            prompt: The input prompt to send to the model
+            mcp_servers: Dictionary of MCP servers to use for execution
+            instruction: The instruction for the agent
+            output_type: The type of output expected from the agent
+            max_turns: Maximum number of conversation turns
+            **kwargs: Additional parameters for the agent
+
+        Returns:
+            The result from the MCP agent execution with content and sql_contexts
+        """
+        return {}

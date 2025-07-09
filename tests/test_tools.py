@@ -173,7 +173,7 @@ class TestDBTools:
         # Initialize connector with environment variables
         connector = SnowflakeConnector(
             account=os.getenv("SNOWFLAKE_ACCOUNT", "RSRSBDK-YDB67606"),
-            user=os.getenv("SNOWFLAKE_USER", ""),
+            user=os.getenv("SNOWFLAKE_USER", "") or os.getenv("SNOWFLAKE_USERNAME", ""),
             password=os.getenv("SNOWFLAKE_PASSWORD", ""),
             warehouse=os.getenv("SNOWFLAKE_WAREHOUSE", ""),
             database=os.getenv("SNOWFLAKE_DATABASE", "GOOGLE_TRNEDS"),

@@ -82,7 +82,7 @@ class QwenModel(LLMBaseModel):
         }
 
         # Create messages format expected by Qwen
-        if type(prompt) is list:
+        if isinstance(prompt, list):
             messages = prompt
         else:
             messages = [{"role": "user", "content": prompt}]
@@ -188,7 +188,7 @@ class QwenModel(LLMBaseModel):
         prompt: str,
         mcp_servers: Dict[str, MCPServerStdio],
         instruction: str,
-        output_type: dict,
+        output_type: type[Any],
         max_turns: int = 10,
         **kwargs,
     ) -> Dict:
@@ -224,7 +224,7 @@ class QwenModel(LLMBaseModel):
 
         # Define the agent instructions
         logger.debug("Starting run_agent")
-        from agents.models.openai_chatcompletions import ResponseTextDeltaEvent
+        from openai.types.responses import ResponseTextDeltaEvent
 
         try:
             # Use context manager to manage multiple MCP servers
@@ -246,10 +246,9 @@ class QwenModel(LLMBaseModel):
                 result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns)
                 while not result.is_complete:
                     async for event in result.stream_events():
-                        # FIXME print temp
                         if event.type == "raw_response_event":
-                            if isinstance(event.data, ResponseTextDeltaEvent):
-                                print(event.data.delta, end="")
+                            if isinstance(event.data, ResponseTextDeltaEvent) and event.data.delta:
+                                print(event.data.delta, end="", flush=True)
 
                 logger.debug("Agent execution completed")
                 # Wrap in object so .content and .sql_contexts are accessible

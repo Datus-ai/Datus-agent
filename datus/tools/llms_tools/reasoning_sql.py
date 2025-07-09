@@ -11,7 +11,7 @@ from datus.prompts.reasoning_sql_with_mcp import get_reasoning_prompt
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.tools.mcp_server import MCPServer
-from datus.utils.json_utils import strip_json_str
+from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -65,9 +65,9 @@ def reasoning_sql_with_mcp(
 
         try:
             logger.debug(f"exec_result: {exec_result['content']}")
-            content_dict = json.loads(strip_json_str(exec_result["content"]))
+            content_dict = llm_result2json(exec_result["content"])
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse exec_result.content: {e}, exec_result: {exec_result}")
+            logger.error(f"Failed to parse exec_result.content: {e}, exec_result_strip: {exec_result['content']}")
             content_dict = {}
         # content_dict = exec_result
         # Extract required pieces from the parsed dict

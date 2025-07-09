@@ -31,3 +31,5 @@ anthropic==0.51.0
 snowflake-sqlalchemy==1.7.3
 duckdb-engine>=0.17.0
 uv>=0.7.19
+json-repair>=0.47.6
+pymysql>=1.1.1

@@ -2,6 +2,7 @@ import io
 import json
 from typing import Any, Dict, List, Optional, Union
 
+import json_repair
 import pandas as pd
 
 
@@ -20,7 +21,7 @@ def json2csv(result: Any, columns: Optional[List[str]] = None) -> str:
         return ""
     if isinstance(result, str):
         if result.strip().startswith("[") or result.strip().startswith("{"):
-            result = json.loads(result)
+            result = json_repair.loads(result)
         else:
             return result
     if isinstance(result, dict):
@@ -161,7 +162,7 @@ def extract_code_block_content(text: str) -> str:
     return text[start:end].strip()
 
 
-def llm_result2json(llm_str: str, expected_type: type = dict) -> Union[Dict[str, Any], List[Any]]:
+def llm_result2json(llm_str: str, expected_type: type[Dict | List] = dict) -> Union[Dict[str, Any], List[Any]]:
     """
     Convert LLM output string to a JSON object or array.
     Supports the following formats:
@@ -176,24 +177,13 @@ def llm_result2json(llm_str: str, expected_type: type = dict) -> Union[Dict[str,
     Returns:
         Union[Dict[str, Any], List[Any]]: JSON object or array
     """
-    llm_str = llm_str.strip()
-    if not llm_str:
+    cleaned_string = strip_json_str(llm_str)
+    if not cleaned_string:
         return {} if expected_type == dict else []
-
-    start = llm_str.find("```json")
-    if start >= 0:
-        start = start + 7
-        end = llm_str.find("```", start + 6)
-    else:
-        start = 0
-        end = len(llm_str)
-    llm_str = llm_str[start:end]
-    return json.loads(
-        llm_str,
-    )
+    return json_repair.loads(cleaned_string)
 
 
-def json_list2markdown_table(json_list: List[Dict[str, Any]]) -> str:
+def json_list2markdown_table(json_list: List[Dict[str, Any]]) -> str | None:
     """
     Convert a list of dictionaries to a markdown table format using tabulate.
 
@@ -210,24 +200,16 @@ def json_list2markdown_table(json_list: List[Dict[str, Any]]) -> str:
 
 
 def strip_json_str(llm_str: str) -> str:
-    llm_str = llm_str.strip()
-    if not llm_str:
+    cleaned_string = llm_str.strip()
+    if not cleaned_string:
         return ""
 
-    json_str = llm_str
-    if "```json" in llm_str:
-        start = llm_str.index("```json")
-        end = llm_str.rindex("```")
-        json_str = llm_str[start + len("```json") : end]
+    if cleaned_string.startswith("```json") and cleaned_string.endswith("```"):
+        cleaned_string = cleaned_string[len("```json") : -len("```")].strip()
+    elif cleaned_string.startswith("```") and cleaned_string.endswith("```"):
+        cleaned_string = cleaned_string[len("```") : -len("```")].strip()
 
-    try:
-        start = json_str.find("{")
-        end = json_str.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json_str[start:end]
-    except Exception:
-        pass
-    return json_str
+    return cleaned_string
 
 
 def load_jsonl(file_path) -> List[Dict[str, Any]]:

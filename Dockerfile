@@ -6,8 +6,9 @@ WORKDIR /app
 
 # Install git and other necessary packages
 RUN apt-get update && \
-    apt-get install -y git wget unzip && \
-    rm -rf /var/lib/apt/lists/*
+  apt-get install -y build-essential && \
+  apt-get install -y git wget unzip libsqlite3-dev default-libmysqlclient-dev pkg-config &&\
+  rm -rf /var/lib/apt/lists/*
 
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 RUN pip config set install.trusted-host mirrors.aliyun.com
@@ -38,13 +39,13 @@ COPY ./conf/agent.yml.example /app/.datus/agent.example.yml
 
 # Download and extract benchmark data
 RUN mkdir -p /app/benchmark && \
-    cd /app/benchmark && \
-    wget https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip && \
-    unzip dev.zip && \
-    rm dev.zip && \
-    cd dev_20240627 && \
-    unzip dev_databases.zip && \
-    rm dev_databases.zip
+  cd /app/benchmark && \
+  wget https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip && \
+  unzip dev.zip && \
+  rm dev.zip && \
+  cd dev_20240627 && \
+  unzip dev_databases.zip && \
+  rm dev_databases.zip
 
 RUN cd /app
 # Create .datus directory and agent.yml
@@ -110,6 +111,7 @@ RUN mkdir -p .datus && \
       model_name: intfloat/multilingual-e5-small\n\
       dim_size: 384' > .datus/agent.yml
 
+RUN apt-get install --reinstall gcc
 # Run uv sync
 RUN uv venv -p 3.12 && uv sync
 

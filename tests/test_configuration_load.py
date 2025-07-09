@@ -30,8 +30,6 @@ def test_config_exception():
     with pytest.raises(DatusException, match="Unsupported value abc for namespace"):
         agent_config.override_by_args(namespace="abc")
 
-    agent_config.override_by_args(namespace="snowflake", benchmark="spider2")
-
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
@@ -70,7 +68,6 @@ def test_configuration_load(namespace: str, agent_config: AgentConfig):
         agent_config.benchamrk_path(error_benchmark)
 
 
-@pytest.mark.acceptance
 def test_benchmark_db_check(agent_config: AgentConfig, namespace: str = "snowflake"):
     agent_config.namespaces[namespace][namespace].type = "sqlite"
 
@@ -83,7 +80,6 @@ def test_benchmark_db_check(agent_config: AgentConfig, namespace: str = "snowfla
         )
 
 
-@pytest.mark.acceptance
 @pytest.mark.parametrize(
     argnames=["namespace", "benchmark"],
     argvalues=[("bird_sqlite", "bird_dev"), ("snowflake", "spider2")],

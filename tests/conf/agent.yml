@@ -1,0 +1,66 @@
+agent:
+  target: deepseek
+  models:
+    deepseek:
+      type: deepseek
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api_key: ${DEEPSEEK_API_KEY}
+      model: deepseek-v3
+
+  nodes:
+    schema_linking:
+      model: deepseek
+      matching_rate: fast
+      prompt_version: "1.0"
+    generate_sql:
+      model: deepseek
+      prompt_version: "1.0"
+      max_table_schemas_length: 10000
+      max_data_details_length: 8000
+      max_context_length: 8000
+      max_value_length: 500
+    reasoning:
+      model: deepseek
+      prompt_version: "1.0"
+      max_table_schemas_length: 10000
+      max_data_details_length: 8000
+      max_context_length: 8000
+      max_value_length: 500
+    reflect:
+      prompt_version: "2.1"
+    output:
+      prompt_version: "1.0"
+      check_result: true
+
+  schema_linking_rate: medium
+  # benchmark configuration
+  benchmark:
+    bird_dev: # this is namespace of benchmark
+      benchmark_path: benchmark/bird/dev_20240627
+    spider2:
+      benchmark_path: benchmark/spider2/spider2-snow
+
+  # local databases configuration
+  namespace:
+    snowflake:
+      type: snowflake
+      account: ${SNOWFLAKE_ACCOUNT}
+      username: ${SNOWFLAKE_USERNAME}
+      password: ${SNOWFLAKE_PASSWORD}
+    bird_sqlite:
+      type: sqlite
+      path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
+    local_duckdb:
+      type: duckdb
+      name: ssb
+      uri: duckdb:///tests/duckdb-demo.duckdb # absolute path: sqlite:////full/path/to/example.db
+    starrocks:
+      type: starrocks
+      host: ${STARROCKS_HOST}
+      port: ${STARROCKS_PORT}
+      username: ${STARROCKS_USER}
+      password: ${STARROCKS_PASSWORD}
+      database: ${STARROCKS_DATABASE}
+
+  storage:
+    base_path: data

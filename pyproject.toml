@@ -75,8 +75,8 @@ core = [
     # sentence-transformers and lancedb depends on the torch. If your mac is not an arm chip, then version 2.2.2 should be used under python 3.12.
     # otherwise, you can use the latest version of torch(2.7.0).
     "torch==2.2.2",
-    "mysqlclient==2.2.7",
     "pymysql>=1.1.1",
+    "json-repair>=0.47.6",
 ]
 # uv sync --dev
 dev = [
