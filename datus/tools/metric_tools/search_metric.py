@@ -31,15 +31,16 @@ class SearchMetricsTool(BaseTool):
         return self._search_hybrid_metrics(input_param)
 
     def _search_hybrid_metrics(self, input_param: SearchMetricsInput) -> SearchMetricsResult:
-        (semantics, values) = self.store.search_hybrid_metrics(input_param)
+        top_n = 100000 # hard code for the limit according to the scale of medium-sized company
+        metric_results = self.store.search_hybrid_metrics(input_param, top_n)
 
         # Convert dictionaries to proper model instances
-        metric_list = [Metrics.from_dict(value) for value in values]
+        metric_list = [Metrics.from_dict(metric) for metric in metric_results]
 
         return SearchMetricsResult(
             success=True,
             error=None,
-            semantic_model_meta=SearchMetricsInput.semantic_model_meta,
+            semantic_model_meta=input_param.semantic_model_meta,
             metrics=metric_list,
             metrics_count=len(metric_list),
         )

@@ -119,14 +119,14 @@ class MetricStorage(BaseEmbeddingStore):
         ]
 
 
-def qualify_name(input_names: List) -> str:
+def qualify_name(input_names: List, delimiter:str = ".") -> str:
     names = []
     for name in input_names:
         if not name:
             names.append("%")
         else:
             names.append(name)
-    return ".".join(names)
+    return delimiter.join(names)
 
 
 class SemanticMetricsRAG:
@@ -160,7 +160,7 @@ class SemanticMetricsRAG:
 
     def search_hybrid_metrics(
         self, input_param: SearchMetricsInput, top_n: int = 5, use_rerank: bool = True
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         query_text = input_param.input_text
         semantic_full_name: str = qualify_name(
             [
@@ -173,11 +173,11 @@ class SemanticMetricsRAG:
         semantic_where = f"catalog_database_schema = '{semantic_full_name}'"
         if "%" in semantic_where:
             semantic_where = f"catalog_database_schema like '{semantic_full_name}'"
-        semantic_results = self.semantic_model_storage.search(
+        logger.info(f"start to search semantic, semantic_where: {semantic_where}, query_text: {query_text}")
+        semantic_search_results = self.semantic_model_storage.search(
             query_text,
             top_n=top_n,
             where=semantic_where,
-            reranker=self.semantic_model_storage.reranker if use_rerank else None,
         )
 
         metric_full_name: str = qualify_name(
@@ -185,51 +185,43 @@ class SemanticMetricsRAG:
                 input_param.semantic_model_meta.domain,
                 input_param.semantic_model_meta.layer1,
                 input_param.semantic_model_meta.layer2,
-            ]
+            ],
+            delimiter="_",
         )
         metric_where = f"domain_layer1_layer2 = '{metric_full_name}'"
         if "%" in metric_where:
             metric_where = f"domain_layer1_layer2 like '{metric_full_name}'"
-        metric_results = self.metric_storage.search(
-            query_text, top_n=top_n, where=metric_where, reranker=self.metric_storage.reranker if use_rerank else None
-        )
+        logger.info(f"start to search metrics, metric_where: {metric_where}, query_text: {query_text}")
+        metric_search_results = self.metric_storage.search(query_text, top_n=top_n, where=metric_where)
 
-        semantic_result = []
+        #get the intersection result in (semantic_results & metric_results)
         metric_result = []
-        for result in semantic_results:
-            semantic_result.append(
-                {
-                    "database_name": result["database_name"],
-                    "catalog_name": result["catalog_name"],
-                    "table_name": result["table_name"],
-                    "schema_name": result["schema_name"],
-                    "catalog_database_schema": result["catalog_database_schema"],
-                    "semantic_file_path": result["semantic_file_path"],
-                    "semantic_model_name": result["semantic_model_name"],
-                    "semantic_model_desc": result["semantic_model_desc"],
-                    "identifiers": result["identifiers"],
-                    "dimensions": result["dimensions"],
-                    "measures": result["measures"],
-                    "created_at": result["created_at"],
-                }
-            )
+        if semantic_search_results and metric_search_results:
+            try:
+                model_names_in_semantic = {result["semantic_model_name"]:result for result in semantic_search_results}
+                model_names_in_metric = {result["semantic_model_name"]:result for result in metric_search_results}
+                common_keys = model_names_in_semantic.keys() & model_names_in_metric.keys()
+                logger.info("get the common keys are: {common_keys}")
+                for key in common_keys:
+                    result = model_names_in_metric[key]
+                    metric_result.append(
+                        {
+                            "domain": result["domain"],
+                            "layer1": result["layer1"],
+                            "layer2": result["layer2"],
+                            "semantic_model_name": result["semantic_model_name"],
+                            "metric_name": result["metric_name"],
+                            "metric_value": result["metric_value"],
+                            "sql_query": result["sql_query"],
+                            "created_at": result["created_at"],
+                        }
+                    )
+            except Exception as e:
+                # the main purpose is to catch the key:semantic_model_name not in search_results
+                logger.warning(f"Failed to get the intersection set, exception: {str(e)}")
 
-        for result in metric_results:
-            metric_result.append(
-                {
-                    "database_name": result["database_name"],
-                    "domain": result["domain"],
-                    "layer1": result["layer1"],
-                    "layer2": result["layer2"],
-                    "semantic_model_name": result["semantic_model_name"],
-                    "metric_name": result["metric_name"],
-                    "metric_content": result["metric_content"],
-                    "sql_query": result["sql_query"],
-                    "created_at": result["created_at"],
-                }
-            )
-
-        return semantic_result, metric_result
+        logger.info(f"Success to get the metric_result size: {len(metric_result)}, query_text: {query_text}")
+        return metric_result
 
 
 def rag_by_configuration(agent_config: AgentConfig):

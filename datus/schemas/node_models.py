@@ -35,9 +35,9 @@ class SqlTask(BaseModel):
     schema_linking_type: TABLE_TYPE = Field(default="table", description="Schema linking type for the task")
 
     # Metrics relative part
-    domain: str = Field(default="", description="domain name")
     layer1: str = Field(default="", description="Layer1 name")
     layer2: str = Field(default="", description="Layer2 name")
+    domain: str = Field(default="", description="domain name")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value by key with an optional default value."""
@@ -264,7 +264,7 @@ class Metrics(BaseModel):
 
     metric_name: str = Field(..., description="Name of the metric")
     metric_value: str = Field(..., description="Value of the metric")
-    metric_type: str = Field(..., description="Type of the metric")
+    # metric_type: str = Field(..., description="Type of the metric")
     metric_sql_query: str = Field(default="", description="sql of the metric")
 
     def to_prompt(self, dialect: str = "snowflake") -> str:
@@ -275,8 +275,8 @@ class Metrics(BaseModel):
         return cls(
             metric_name=data["metric_name"],
             metric_value=data["metric_value"],
-            metric_type=data["metric_type"],
-            metric_sql_query=data.get("metric_sql_query", ""),
+            metric_sql_query=data["sql_query"],
+            # metric_type=data["metric_type"]
         )
 
 

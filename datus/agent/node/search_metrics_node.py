@@ -49,25 +49,35 @@ class SearchMetricsNode(Node):
         logger.debug(f"Checking if rag storage path exists: {path}")
         if not os.path.exists(path):
             logger.info("RAG storage path does not exist.")
-            # todo _execute_search_metrics_fallback
+            return self.get_bad_result("RAG storage path does not exist.")
         else:
             try:
                 tool = SearchMetricsTool(db_path=self.agent_config.rag_storage_path())
                 if tool:
                     result = tool.execute(self.input, self.model)
-                    logger.info(f"Search metric result: found {len(result.table_schemas)} tables")
-                    if len(result.table_schemas) == 0:
-                        logger.info("No tables found, using fallback method")
-                        # todo return self._execute_schema_linking_fallback(tool)
+                    logger.info(f"Search metric result: found {result} ")
+                    if not result:
+                        logger.info("No search result , please check your config or table data")
+                        return self.get_bad_result("No search result , please check your config or table data")
                     else:
                         return result
                 else:
                     logger.warning("Search metrics tool not found")
-                    # todo return self._execute_schema_linking_fallback(tool)
+                    return self.get_bad_result("Search metrics tool not found")
 
             except Exception as e:
                 logger.warning(f"Search metrics tool initialization failed: {e}")
-                # todo _execute_search_metrics_fallback
+                return self.get_bad_result(str(e))
+
+    def get_bad_result(self, error_msg:str):
+        return SearchMetricsResult(
+            success=False,
+            error=error_msg,
+            semantic_model_meta=self.input.semantic_model_meta,
+            metrics=[],
+            metrics_count=0
+        )
+
 
     def update_context(self, workflow: Workflow) -> Dict:
         """Update search metrics results to workflow context."""

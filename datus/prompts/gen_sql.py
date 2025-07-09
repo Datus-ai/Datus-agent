@@ -1,7 +1,8 @@
 # flake8：noqa
+import json
 from typing import List, Union
 
-from datus.schemas.node_models import TableSchema, TableValue
+from datus.schemas.node_models import TableSchema, TableValue, Metrics
 from datus.utils.loggings import get_logger
 
 from .prompt_manager import prompt_manager
@@ -13,7 +14,7 @@ def get_sql_prompt(
     database_type: str,
     table_schemas: Union[List[TableSchema], str],
     data_details: List[TableValue],
-    metrics: str,
+    metrics: List[Metrics],
     question: str,
     external_knowledge: str = "",
     prompt_version: str = "1.0",
@@ -67,6 +68,10 @@ def get_sql_prompt(
     elif database_type.lower() == "starrocks":
         database_notes = ""
 
+    processed_metrics = ""
+    if metrics:
+        processed_metrics = json.dumps([m.__dict__ for m in metrics], indent=2)
+
     system_content = prompt_manager.get_raw_template("gen_sql_system", version=prompt_version)
     user_content = prompt_manager.render_template(
         "gen_sql_user",
@@ -74,7 +79,7 @@ def get_sql_prompt(
         database_notes=database_notes,
         processed_schemas=processed_schemas,
         processed_details=processed_details,
-        metrics=metrics,
+        metrics=processed_metrics,
         knowledge_content=knowledge_content,
         question=question,
         version=prompt_version,

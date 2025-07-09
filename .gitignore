@@ -18,3 +18,4 @@ uv.lock
 /tests/output
 before_reflection_*.yaml
 /.history
+/benchmark

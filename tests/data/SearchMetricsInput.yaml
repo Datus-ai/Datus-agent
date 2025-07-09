@@ -1,0 +1,10 @@
+- input:
+    input_text: Calculate the cancellation rate by transaction type (Quick Buy or Not Quick Buy)
+    semantic_model_meta:
+        catalog_name: duckdb
+        database_name: mf_demo
+        schema_name: ""
+        layer1: duckdb
+        layer2: mf_demo
+        domain: RGM_voice
+    database_type: duckdb
