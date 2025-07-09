@@ -136,5 +136,5 @@ def sample_database_data():
     ]
 
 
-def load_acceptance_config(namespace: str = "") -> AgentConfig:
+def load_acceptance_config(namespace: str = "snowflake") -> AgentConfig:
     return load_agent_config(config="tests/conf/agent.yml", namespace=namespace)

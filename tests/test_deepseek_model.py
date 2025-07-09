@@ -10,6 +10,7 @@ from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.deepseek_model import DeepSeekModel
 from datus.tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
+from tests.conftest import load_acceptance_config
 
 logger = get_logger(__name__)
 
@@ -24,13 +25,11 @@ class TestDeepSeekModel:
         """Set up test environment before each test method."""
         load_dotenv()
 
-        config = load_agent_config()
-
-        model_config = config.active_model()
+        config = load_acceptance_config()
 
         # Initialize the model with default parameters
         self.model = DeepSeekModel(
-            model_config=model_config,
+            config.active_model(),
         )
 
     def test_initialization_ark_r1(self):
@@ -95,11 +94,6 @@ class TestDeepSeekModel:
     def test_basic_chat(self):
         """Test basic chat functionality with real API calls and logging."""
         try:
-            config = load_agent_config()
-            self.model = DeepSeekModel(
-                config.active_model(),
-            )
-
             # Call generate method with a basic chat prompt
             result = self.model.generate("Hello")
 

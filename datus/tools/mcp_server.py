@@ -207,10 +207,7 @@ class MCPServer:
                         },
                     )
                     logger.info(f"Snowflake MCP server params: {mcp_server_params}")
-                    cls._snowflake_mcp_server = MCPServerStdio(
-                        params=mcp_server_params,
-                        client_session_timeout_seconds=20,
-                    )
+                    cls._snowflake_mcp_server = MCPServerStdio(params=mcp_server_params)
         return cls._snowflake_mcp_server
 
     @classmethod
@@ -237,9 +234,7 @@ class MCPServer:
                             "STARROCKS_PASSWORD": db_config.password,
                         },
                     )
-                    cls._starrocks_mcp_server = MCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=20
-                    )
+                    cls._starrocks_mcp_server = MCPServerStdio(params=mcp_server_params)
         return cls._starrocks_mcp_server
 
     @classmethod
@@ -300,7 +295,7 @@ class MCPServer:
                         ],
                         env={},  # DuckDB doesn't need additional environment variables for local usage
                     )
-                    cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params, client_session_timeout_seconds=20)
+                    cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params)
         return cls._duckdb_mcp_server
 
     @classmethod
@@ -334,9 +329,7 @@ class MCPServer:
                             "MF_VERBOSE": mf_verbose,
                         },
                     )
-                    cls._metricflow_mcp_server = MCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=20
-                    )
+                    cls._metricflow_mcp_server = MCPServerStdio(params=mcp_server_params)
         return cls._metricflow_mcp_server
 
     @classmethod
@@ -353,7 +346,5 @@ class MCPServer:
                             filesystem_mcp_directory,
                         ],
                     )
-                    cls._filesystem_mcp_server = MCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=20
-                    )
+                    cls._filesystem_mcp_server = MCPServerStdio(params=mcp_server_params)
         return cls._filesystem_mcp_server
