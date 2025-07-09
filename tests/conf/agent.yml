@@ -3,7 +3,7 @@ agent:
   models:
     deepseek:
       type: deepseek
-      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      base_url: ${DEEPSEEK_BASE_URL}
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-v3
 

@@ -342,7 +342,7 @@ def resolve_env(value: str) -> str:
 def load_model_config(data: dict) -> ModelConfig:
     return ModelConfig(
         type=data["type"],
-        base_url=data["base_url"],
+        base_url=resolve_env(data["base_url"]),
         api_key=resolve_env(data["api_key"]),
         model=data["model"],
         save_llm_trace=data.get("save_llm_trace", False),
