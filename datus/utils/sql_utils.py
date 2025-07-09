@@ -212,6 +212,15 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
         - "database.schema.table" -> {"catalog_name": "", "database_name": "database",
                                       "schema_name": "schema", "table_name": "table"}
     """
+    # Database-specific field mapping configurations
+    # Each list represents the field order from left to right in the table name
+    DB_FIELD_MAPPINGS = {
+        "duckdb": ["database_name", "schema_name", "table_name"],  # max 3 parts
+        "sqlite": ["database_name", "table_name"],  # max 2 parts
+        "starrocks": ["catalog_name", "database_name", "table_name"],  # max 3 parts, no schema
+        "snowflake": ["catalog_name", "database_name", "schema_name", "table_name"],  # max 4 parts
+    }
+
     dialect = parse_dialect(dialect)
 
     # Split the table name by dots
@@ -220,88 +229,23 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
     # Initialize result with empty strings
     result = {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": ""}
 
-    if dialect == "duckdb":
-        # DuckDB: maximum 3 parts - database.schema.table
-        if len(parts) == 1:
-            # Only table name
-            result["table_name"] = parts[0]
-        elif len(parts) == 2:
-            # schema.table
-            result["schema_name"] = parts[0]
-            result["table_name"] = parts[1]
-        elif len(parts) == 3:
-            # database.schema.table
-            result["database_name"] = parts[0]
-            result["schema_name"] = parts[1]
-            result["table_name"] = parts[2]
-        else:
-            # More than 3 parts, take the last 3
-            result["database_name"] = parts[-3] if len(parts) > 2 else ""
-            result["schema_name"] = parts[-2] if len(parts) > 1 else ""
-            result["table_name"] = parts[-1]
+    # Get field mapping for the dialect, or use default mapping
+    if dialect in DB_FIELD_MAPPINGS:
+        field_mapping = DB_FIELD_MAPPINGS[dialect]
+        max_parts = len(field_mapping)
 
-    elif dialect == "sqlite":
-        # SQLite: maximum 2 parts - database.table
-        if len(parts) == 1:
-            # Only table name
-            result["table_name"] = parts[0]
-        elif len(parts) == 2:
-            # database.table
-            result["database_name"] = parts[0]
-            result["table_name"] = parts[1]
-        else:
-            # More than 2 parts, take the last 2
-            result["database_name"] = parts[-2] if len(parts) > 1 else ""
-            result["table_name"] = parts[-1]
+        # If we have more parts than expected, take the last N parts
+        if len(parts) > max_parts:
+            parts = parts[-max_parts:]
 
-    elif dialect == "starrocks":
-        # StarRocks: maximum 3 parts - catalog.database.table (no schema)
-        if len(parts) == 1:
-            # Only table name
-            result["table_name"] = parts[0]
-        elif len(parts) == 2:
-            # database.table
-            result["database_name"] = parts[0]
-            result["table_name"] = parts[1]
-        elif len(parts) == 3:
-            # catalog.database.table
-            result["catalog_name"] = parts[0]
-            result["database_name"] = parts[1]
-            result["table_name"] = parts[2]
-        else:
-            # More than 3 parts, take the last 3
-            result["catalog_name"] = parts[-3] if len(parts) > 2 else ""
-            result["database_name"] = parts[-2] if len(parts) > 1 else ""
-            result["table_name"] = parts[-1]
-
-    elif dialect == "snowflake":
-        # Snowflake: maximum 4 parts - catalog.database.schema.table
-        if len(parts) == 1:
-            # Only table name
-            result["table_name"] = parts[0]
-        elif len(parts) == 2:
-            # schema.table
-            result["schema_name"] = parts[0]
-            result["table_name"] = parts[1]
-        elif len(parts) == 3:
-            # database.schema.table
-            result["database_name"] = parts[0]
-            result["schema_name"] = parts[1]
-            result["table_name"] = parts[2]
-        elif len(parts) == 4:
-            # catalog.database.schema.table
-            result["catalog_name"] = parts[0]
-            result["database_name"] = parts[1]
-            result["schema_name"] = parts[2]
-            result["table_name"] = parts[3]
-        else:
-            # More than 4 parts, take the last 4
-            result["catalog_name"] = parts[-4] if len(parts) > 3 else ""
-            result["database_name"] = parts[-3] if len(parts) > 2 else ""
-            result["schema_name"] = parts[-2] if len(parts) > 1 else ""
-            result["table_name"] = parts[-1]
+        # Map parts to fields according to the configuration
+        # We map from right to left (table_name is always the last part)
+        for i, part in enumerate(reversed(parts)):
+            if i < len(field_mapping):
+                field_name = field_mapping[-(i + 1)]  # Get field name from right to left
+                result[field_name] = part
     else:
-        # Default behavior: assume last part is table name
+        # Default behavior for unknown dialects: assume last part is table name
         result["table_name"] = parts[-1]
         if len(parts) > 1:
             result["schema_name"] = parts[-2]
