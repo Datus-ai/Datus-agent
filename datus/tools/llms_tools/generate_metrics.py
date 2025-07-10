@@ -10,7 +10,7 @@ from datus.prompts.generate_metrics_with_mcp import get_generate_metrics_prompt
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult, Metrics
 from datus.tools.mcp_server import MCPServer
-from datus.utils.json_utils import strip_json_str
+from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -32,7 +32,7 @@ def generate_metrics_with_mcp(
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
 
     instruction = prompt_manager.get_raw_template("generate_metrics_system", input_data.prompt_version)
-    max_turns = tool_config.get("max_turns", 30)
+    max_turns = tool_config.get("max_turns", 20)
 
     prompt = get_generate_metrics_prompt(
         database_type=input_data.sql_task.database_type,
@@ -57,7 +57,7 @@ def generate_metrics_with_mcp(
 
         try:
             logger.info(f"exec_result: {exec_result['content']}")
-            content_dict = json.loads(strip_json_str(exec_result["content"]))
+            content_dict = json.loads(extract_json_str(exec_result["content"]))
             metrics = parse_metrics(content_dict)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse exec_result.content: {e}, exec_result: {exec_result}")

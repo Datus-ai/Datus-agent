@@ -4,6 +4,8 @@ from typing import Dict
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
+from datus.storage.metric.init_utils import gen_semantic_model_id
+from datus.storage.metric.store import rag_by_configuration
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.llms_tools import LLMTool
 from datus.utils.loggings import get_logger
@@ -86,6 +88,39 @@ class GenerateSemanticModelNode(Node):
                 f"current_namespace: {current_namespace}\n"
             )
 
+            # Generate semantic model ID
+            semantic_model_id = gen_semantic_model_id(
+                catalog_name,
+                database_name,
+                schema_name,
+                table_name,
+            )
+
+            # Check if semantic model already exists in lancedb
+            try:
+                semantic_metrics_rag = rag_by_configuration(self.agent_config)
+                existing_models = semantic_metrics_rag.semantic_model_storage.filter_by_id(semantic_model_id)
+
+                if existing_models:
+                    logger.info(f"Semantic model with ID {semantic_model_id} already exists, skipping generation")
+
+                    # Update input metadata with existing model info
+                    self.input.semantic_model_meta.table_name = table_name
+                    self.input.semantic_model_meta.schema_name = schema_name
+                    self.input.semantic_model_meta.catalog_name = catalog_name
+                    self.input.semantic_model_meta.database_name = database_name
+
+                    # Return success without generating new model
+                    return GenerateSemanticModelResult(
+                        success=True,
+                        error="",
+                        semantic_model_meta=self.input.semantic_model_meta,
+                        semantic_model_file=existing_models[0].get("semantic_file_path", ""),
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to check existing semantic model: {str(e)}, continuing with generation")
+
+            logger.info(f"Generating semantic model for {table_name} in {catalog_name}.{database_name}.{schema_name}")
             with get_db_connector(db_manager, current_namespace, db_type, database_name) as connector:
                 # Get tables with DDL
                 tables_with_ddl = connector.get_tables_with_ddl(
@@ -106,6 +141,8 @@ class GenerateSemanticModelNode(Node):
                 logger.debug(f"Tables with DDL: {tables_with_ddl}")
                 self.input.semantic_model_meta.table_name = table_name
                 self.input.semantic_model_meta.schema_name = schema_name
+                self.input.semantic_model_meta.catalog_name = catalog_name
+                self.input.semantic_model_meta.database_name = database_name
 
                 # Generate semantic model
                 tool = LLMTool(self.model)
@@ -125,7 +162,7 @@ class GenerateSemanticModelNode(Node):
             )
 
     def update_context(self, workflow: Workflow) -> Dict:
-        pass
+        return {}
 
     def setup_input(self, workflow: Workflow) -> Dict:
-        pass
+        return {}
