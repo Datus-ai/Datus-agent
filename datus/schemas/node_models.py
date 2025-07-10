@@ -275,8 +275,8 @@ class Metrics(BaseModel):
         return cls(
             metric_name=data["metric_name"],
             metric_value=data["metric_value"],
-            metric_sql_query=data["sql_query"],
-            # metric_type=data["metric_type"]
+            metric_sql_query=data["metric_sql_query"],
+            metric_type=data["metric_type"],
         )
 
 

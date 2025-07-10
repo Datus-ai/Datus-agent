@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 import pyarrow as pa
 
@@ -45,14 +45,15 @@ class SemanticModelStorage(BaseEmbeddingStore):
         )
 
     def create_indices(self):
-        self.table.create_scalar_index("id", replace=True)
-        self.table.create_scalar_index("catalog_name", replace=True)
-        self.table.create_scalar_index("database_name", replace=True)
-        self.table.create_scalar_index("schema_name", replace=True)
-        self.table.create_scalar_index("catalog_database_schema", replace=True)
-        self.table.create_scalar_index("table_name", replace=True)
-        self.table.create_scalar_index("domain", replace=True)
-        self.create_fts_index(["semantic_model_name", "semantic_model_desc", "identifiers", "dimensions", "measures"])
+        # self.table.create_scalar_index("id", replace=True)
+        # self.table.create_scalar_index("catalog_name", replace=True)
+        # self.table.create_scalar_index("database_name", replace=True)
+        # self.table.create_scalar_index("schema_name", replace=True)
+        # self.table.create_scalar_index("catalog_database_schema", replace=True)
+        # self.table.create_scalar_index("table_name", replace=True)
+        # self.table.create_scalar_index("domain", replace=True)
+        # self.create_fts_index(["semantic_model_name", "semantic_model_desc", "identifiers", "dimensions", "measures"])
+        pass
 
     def search_all(self, database_name: str = "") -> List[Dict[str, Any]]:
         """Search all schemas for a given database name."""
@@ -119,7 +120,7 @@ class MetricStorage(BaseEmbeddingStore):
         ]
 
 
-def qualify_name(input_names: List, delimiter:str = ".") -> str:
+def qualify_name(input_names: List, delimiter: str = "_") -> str:
     names = []
     for name in input_names:
         if not name:
@@ -186,7 +187,6 @@ class SemanticMetricsRAG:
                 input_param.semantic_model_meta.layer1,
                 input_param.semantic_model_meta.layer2,
             ],
-            delimiter="_",
         )
         metric_where = f"domain_layer1_layer2 = '{metric_full_name}'"
         if "%" in metric_where:
@@ -194,12 +194,12 @@ class SemanticMetricsRAG:
         logger.info(f"start to search metrics, metric_where: {metric_where}, query_text: {query_text}")
         metric_search_results = self.metric_storage.search(query_text, top_n=top_n, where=metric_where)
 
-        #get the intersection result in (semantic_results & metric_results)
+        # get the intersection result in (semantic_results & metric_results)
         metric_result = []
         if semantic_search_results and metric_search_results:
             try:
-                model_names_in_semantic = {result["semantic_model_name"]:result for result in semantic_search_results}
-                model_names_in_metric = {result["semantic_model_name"]:result for result in metric_search_results}
+                model_names_in_semantic = {result["semantic_model_name"]: result for result in semantic_search_results}
+                model_names_in_metric = {result["semantic_model_name"]: result for result in metric_search_results}
                 common_keys = model_names_in_semantic.keys() & model_names_in_metric.keys()
                 logger.info("get the common keys are: {common_keys}")
                 for key in common_keys:
@@ -212,7 +212,8 @@ class SemanticMetricsRAG:
                             "semantic_model_name": result["semantic_model_name"],
                             "metric_name": result["metric_name"],
                             "metric_value": result["metric_value"],
-                            "sql_query": result["sql_query"],
+                            "metric_type": result["metric_type"],
+                            "metric_sql_query": result["metric_sql_query"],
                             "created_at": result["created_at"],
                         }
                     )

@@ -134,47 +134,23 @@ class BaseEmbeddingStore(StorageBase):
 
     def _ensure_table(self, schema: Optional[Union[pa.Schema, LanceModel]] = None):
         try:
-            try:
-                self.table = self.db.open_table(self.table_name)
-            except Exception:
-                logger.info(f"Table {self.table_name} not exists, creating new table")
-                self.table = self.db.create_table(
-                    self.table_name,
-                    schema=schema,
-                    embedding_functions=[
-                        EmbeddingFunctionConfig(
-                            vector_column=self.vector_column_name,
-                            source_column=self.vector_source_name,
-                            function=self.model.model,
-                        )
-                    ],
-                    exist_ok=True,
-                )
+            self.table = self.db.create_table(
+                self.table_name,
+                schema=schema,
+                embedding_functions=[
+                    EmbeddingFunctionConfig(
+                        vector_column=self.vector_column_name,
+                        source_column=self.vector_source_name,
+                        function=self.model.model,
+                    )
+                ],
+                exist_ok=True,
+            )
         except Exception as e:
             raise DatusException(
                 ErrorCode.TOOL_STORE_FAILED,
                 message=f"Failed to create LanceDB table named {self.table_name} because {str(e)}",
             ) from e
-
-    # def _ensure_table(self, schema: Optional[Union[pa.Schema, LanceModel]] = None):
-    #     try:
-    #         self.table = self.db.create_table(
-    #             self.table_name,
-    #             schema=schema,
-    #             embedding_functions=[
-    #                 EmbeddingFunctionConfig(
-    #                     vector_column=self.vector_column_name,
-    #                     source_column=self.vector_source_name,
-    #                     function=self.model.model,
-    #                 )
-    #             ],
-    #             exist_ok=True,
-    #         )
-    #     except Exception as e:
-    #         raise DatusException(
-    #             ErrorCode.TOOL_STORE_FAILED,
-    #             message=f"Failed to create LanceDB table named {self.table_name} because {str(e)}",
-    #         ) from e
 
     def create_vector_index(
         self,

@@ -39,10 +39,12 @@ def test_duckdb_query():
 
 
 def test_lancedb_query():
-    db_path = str(HOME_DIR) + "/AIdeaProjects/Datus-agent/data/datus_db_local_duckdb"
+    db_path = Path(__file__).parent.parent.resolve() / "data/datus_db_local_duckdb/"
     conn = lancedb.connect(db_path)
     table_names = conn.table_names()
     for table_name in table_names:
+        # xx = conn.open_table(table_name)
+        # print(f"xx embedding function:{xx.embedding_functions.keys()}")
         result = conn.open_table(table_name).to_pandas().iterrows()
         # ascii_table = tabulate(result, headers="keys", tablefmt="pretty", showindex=False)
         # print(f'query the table:{table_name}, result:\n{ascii_table}')

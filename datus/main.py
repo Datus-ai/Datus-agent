@@ -194,23 +194,9 @@ def create_parser() -> argparse.ArgumentParser:
         help="Schema linking type for the task, (mv for materialized view, full for all types)",
     )
     run_parser.add_argument("--task_ext_knowledge", type=str, default="", help="External knowledge for the task")
-
-    # bootstrap-kb command
-    metric_to_sql_parser = subparsers.add_parser(
-        "metric-to-sql",
-        help="Generate sql according to metrics",
-        parents=[global_parser],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    metric_to_sql_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
-    metric_to_sql_parser.add_argument("--domain", type=str, default="", help="Domain of the success story")
-    metric_to_sql_parser.add_argument("--layer1", type=str, default="", help="Layer1 of the metrics")
-    metric_to_sql_parser.add_argument("--layer2", type=str, default="", help="Layer2 of the metrics")
-    metric_to_sql_parser.add_argument("--catalog_name", type=str, default="", help="Catalog name of the semantic model")
-    metric_to_sql_parser.add_argument(
-        "--database_name", type=str, default="", help="Database name of the semantic model"
-    )
-    metric_to_sql_parser.add_argument("--schema_name", type=str, default="", help="Database name of the semantic model")
+    run_parser.add_argument("--domain", type=str, default="", help="Domain of the success story")
+    run_parser.add_argument("--layer1", type=str, default="", help="Layer1 of the metrics")
+    run_parser.add_argument("--layer2", type=str, default="", help="Layer2 of the metrics")
 
     # Node configuration group (available for run and benchmark)
     for p in [run_parser, benchmark_parser]:
@@ -228,7 +214,7 @@ def create_parser() -> argparse.ArgumentParser:
         )
 
     # Workflow configuration group (available for run and benchmark)
-    for p in [run_parser, benchmark_parser, metric_to_sql_parser]:
+    for p in [run_parser, benchmark_parser]:
         workflow_group = p.add_argument_group("Workflow Configuration")
         workflow_group.add_argument(
             "--plan",
@@ -286,6 +272,9 @@ def main():
                     external_knowledge=args.task_ext_knowledge,
                     output_dir=agent_config.output_dir,
                     schema_linking_type=args.schema_linking_type,
+                    domain=args.domain,
+                    layer1=args.layer1,
+                    layer2=args.layer2,
                 ),
                 True,
             )

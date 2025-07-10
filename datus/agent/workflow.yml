@@ -23,7 +23,6 @@ workflow:
     - output
 
   metric2SQL:
-    - schema_linking
     - search_metrics
     - generate_sql
     - execute_sql

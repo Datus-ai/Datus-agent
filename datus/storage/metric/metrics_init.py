@@ -107,7 +107,7 @@ def process_line(
     logger.info(f"semantic model: {semantic_model}")
 
     if semantic_model["id"] not in all_semantic_models:
-        storage.semantic_model_storage.store([semantic_model], mode="overwrite")
+        storage.semantic_model_storage.store([semantic_model])
         all_semantic_models.add(semantic_model["id"])
     else:
         logger.info(f"semantic model {semantic_model['id']} already exists")
@@ -139,7 +139,7 @@ def process_line(
     logger.info(f"metrics: {metrics}")
     for metric in metrics:
         if metric["id"] not in all_metrics:
-            storage.metric_storage.store([metric], mode="overwrite")
+            storage.metric_storage.store([metric])
             all_metrics.add(metric["id"])
         else:
             logger.info(f"metric {metric['id']} already exists")
