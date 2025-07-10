@@ -12,6 +12,8 @@ from datus.agent.node import Node
 from datus.agent.workflow import Workflow
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput
+from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
+from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
@@ -272,6 +274,52 @@ class AgentCommands:
                     return
             else:
                 self.console.print("[bold red]Error:[/] No SQL context available")
+        elif isinstance(input, GenerateMetricsInput):
+            # Allow user to modify SQL query and prompt version
+            sql_query = Prompt.ask("[bold]Enter SQL query to generate metrics from[/]", default=input.sql_query)
+            input.sql_query = sql_query.strip()
+            prompt_version = Prompt.ask("[bold]Enter prompt version[/]", default=input.prompt_version)
+            input.prompt_version = prompt_version.strip()
+        elif isinstance(input, GenerateSemanticModelInput):
+            # Allow user to modify SQL query with multi-line support
+            if input.sql_query:
+                # Show current SQL query
+                self.console.print(f"[bold]Current SQL query:[/]\n{input.sql_query}")
+                use_current = Prompt.ask("[bold]Use current SQL query?[/]", choices=["y", "n"], default="y")
+                if use_current == "y":
+                    pass  # Keep current query
+                else:
+                    sql_query = Prompt.ask("[bold]Enter new SQL query[/]", default=input.sql_query)
+                    input.sql_query = sql_query.strip()
+            else:
+                sql_query = Prompt.ask("[bold]Enter SQL query to generate semantic model from[/]", default=input.sql_query)
+                input.sql_query = sql_query.strip()
+            
+            # Interactive prompts for semantic model metadata
+            self.console.print("[bold blue]Semantic Model Metadata:[/]")
+            catalog_name = Prompt.ask("[bold]Enter catalog name[/]", default=input.semantic_model_meta.catalog_name)
+            input.semantic_model_meta.catalog_name = catalog_name.strip()
+            
+            database_name = Prompt.ask("[bold]Enter database name[/]", default=input.semantic_model_meta.database_name)
+            input.semantic_model_meta.database_name = database_name.strip()
+            
+            schema_name = Prompt.ask("[bold]Enter schema name[/]", default=input.semantic_model_meta.schema_name)
+            input.semantic_model_meta.schema_name = schema_name.strip()
+            
+            table_name = Prompt.ask("[bold]Enter table name[/]", default=input.semantic_model_meta.table_name)
+            input.semantic_model_meta.table_name = table_name.strip()
+            
+            layer1 = Prompt.ask("[bold]Enter layer1 (business layer)[/]", default=input.semantic_model_meta.layer1)
+            input.semantic_model_meta.layer1 = layer1.strip()
+            
+            layer2 = Prompt.ask("[bold]Enter layer2 (sub-layer)[/]", default=input.semantic_model_meta.layer2)
+            input.semantic_model_meta.layer2 = layer2.strip()
+            
+            domain = Prompt.ask("[bold]Enter domain[/]", default=input.semantic_model_meta.domain)
+            input.semantic_model_meta.domain = domain.strip()
+            
+            prompt_version = Prompt.ask("[bold]Enter prompt version[/]", default=input.prompt_version)
+            input.prompt_version = prompt_version.strip()
 
     def cmd_gen(self, args: str):
         """Generate SQL for a task."""
@@ -341,6 +389,24 @@ class AgentCommands:
 
         # Run the reasoning node
         self.run_node(NodeType.TYPE_REASONING, args)
+
+    def cmd_gen_metrics(self, args: str):
+        """Generate metrics from SQL queries and tables."""
+        if not self.workflow:
+            self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
+            self.cmd_dastart()
+
+        # Run the generate metrics node
+        self.run_node(NodeType.TYPE_GENERATE_METRICS, args)
+
+    def cmd_gen_semantic_model(self, args: str):
+        """Generate semantic model for data modeling."""
+        if not self.workflow:
+            self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
+            self.cmd_dastart()
+
+        # Run the generate semantic model node
+        self.run_node(NodeType.TYPE_GENERATE_SEMANTIC_MODEL, args)
 
     def cmd_daend(self, args: str):
         """End the current agent session."""

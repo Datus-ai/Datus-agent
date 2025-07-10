@@ -149,7 +149,7 @@ class GenerateSemanticModelNode(Node):
                 return tool.generate_semantic_model(
                     tables_with_ddl[0]["definition"],
                     self.input,
-                    self.agent_config.current_db_config(),
+                    self.agent_config.current_db_config(database_name),
                 )
 
         except Exception as e:
@@ -165,4 +165,32 @@ class GenerateSemanticModelNode(Node):
         return {}
 
     def setup_input(self, workflow: Workflow) -> Dict:
-        return {}
+        try:
+            from datus.schemas.generate_semantic_model_node_models import SemanticModelMeta
+            
+            # Create default semantic model meta
+            semantic_model_meta = SemanticModelMeta(
+                catalog_name=getattr(workflow.task, 'catalog_name', ''),
+                database_name=workflow.task.database_name,
+                schema_name=getattr(workflow.task, 'schema_name', ''),
+                table_name='',  # Will be populated during execution
+                layer1='',
+                layer2='',
+                domain=''
+            )
+            
+            # Get SQL query from workflow context
+            sql_query = ''
+            if workflow.context.sql_contexts:
+                sql_query = workflow.get_last_sqlcontext().sql_query
+            
+            next_input = GenerateSemanticModelInput(
+                sql_task=workflow.task,
+                sql_query=sql_query,
+                semantic_model_meta=semantic_model_meta
+            )
+            self.input = next_input
+            return {"success": True, "message": "Semantic model input setup", "suggestions": [next_input]}
+        except Exception as e:
+            logger.error(f"Error in setup_input: {e}")
+            return {"success": False, "message": f"Setup input failed: {str(e)}", "suggestions": []}
