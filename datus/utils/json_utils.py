@@ -212,6 +212,27 @@ def strip_json_str(llm_str: str) -> str:
     return cleaned_string
 
 
+def extract_json_str(llm_str: str) -> str:
+    llm_str = llm_str.strip()
+    if not llm_str:
+        return ""
+
+    json_str = llm_str
+    if "```json" in llm_str:
+        start = llm_str.index("```json")
+        end = llm_str.rindex("```")
+        json_str = llm_str[start + len("```json") : end]
+
+    try:
+        start = json_str.find("{")
+        end = json_str.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json_str[start:end]
+    except Exception:
+        pass
+    return json_str
+
+
 def load_jsonl(file_path) -> List[Dict[str, Any]]:
     data = []
     with open(file_path, "r", encoding="utf-8") as file:

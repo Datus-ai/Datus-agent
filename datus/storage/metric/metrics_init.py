@@ -14,7 +14,7 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, SemanticModelMeta
 from datus.schemas.node_models import Metrics, SqlTask
-from datus.storage.metric.init_utils import exists_semantic_metrics
+from datus.storage.metric.init_utils import exists_semantic_metrics, gen_metric_id, gen_semantic_model_id
 from datus.utils.loggings import get_logger
 
 from .store import SemanticMetricsRAG
@@ -160,7 +160,7 @@ def gen_semantic_model(
             content = doc.get("data_source", {})
             if not content:
                 continue
-            semantic_model["id"] = f"{catalog_name}_{database_name}_{schema_name}_{table_name}"
+            semantic_model["id"] = gen_semantic_model_id(catalog_name, database_name, schema_name, table_name)
             semantic_model["catalog_name"] = catalog_name
             semantic_model["database_name"] = database_name
             semantic_model["schema_name"] = schema_name
@@ -188,7 +188,7 @@ def gen_metrics(
     metric_list = []
     for metric, sql_query in zip(metrics, sql_queries):
         metric_dict = {}
-        metric_dict["id"] = f"{domain}_{layer1}_{layer2}_{semantic_model_name}_{metric.metric_name}"
+        metric_dict["id"] = gen_metric_id(domain, layer1, layer2, semantic_model_name, metric.metric_name)
         metric_dict["semantic_model_name"] = semantic_model_name
         metric_dict["domain"] = domain
         metric_dict["layer1"] = layer1

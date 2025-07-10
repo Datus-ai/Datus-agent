@@ -43,6 +43,7 @@ class SemanticModelStorage(BaseEmbeddingStore):
             ),
             vector_source_name="dimensions",
         )
+        self.reranker = None
 
     def create_indices(self):
         self.table.create_scalar_index("id", replace=True)
@@ -70,6 +71,10 @@ class SemanticModelStorage(BaseEmbeddingStore):
             for result in search_result
         ]
 
+    def filter_by_id(self, id: str) -> List[Dict[str, Any]]:
+        search_result = self.table.search().where(f"id = '{id}'").limit(100).to_list()
+        return search_result
+
 
 class MetricStorage(BaseEmbeddingStore):
     def __init__(self, db_path: str, embedding_model: EmbeddingModel):
@@ -95,6 +100,7 @@ class MetricStorage(BaseEmbeddingStore):
             ),
             vector_source_name="metric_value",
         )
+        self.reranker = None
 
     def create_indices(self):
         self.table.create_scalar_index("id", replace=True)
@@ -139,8 +145,8 @@ class SemanticMetricsRAG:
     def store_batch(self, semantic_models: List[Dict[str, Any]], metrics: List[Dict[str, Any]]):
         logger.info(f"store semantic models: {semantic_models}")
         logger.info(f"store metrics: {metrics}")
-        self.semantic_model_storage.store_batch(semantic_models, mode="overwrite")
-        self.metric_storage.store_batch(metrics, mode="overwrite")
+        self.semantic_model_storage.store_batch(semantic_models)
+        self.metric_storage.store_batch(metrics)
 
     def search_all_semantic_models(self, database_name: str) -> List[Dict[str, Any]]:
         return self.semantic_model_storage.search_all(database_name)

@@ -10,7 +10,7 @@ from datus.prompts.generate_semantic_model import get_generate_semantic_model_pr
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.tools.mcp_server import MCPServer
-from datus.utils.json_utils import strip_json_str
+from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -54,7 +54,7 @@ def generate_semantic_model_with_mcp(
 
         try:
             logger.debug(f"exec_result: {exec_result['content']}")
-            content_dict = json.loads(strip_json_str(exec_result["content"]))
+            content_dict = json.loads(extract_json_str(exec_result["content"]))
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse exec_result.content: {e}, exec_result: {exec_result}")
             content_dict = {}
