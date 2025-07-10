@@ -17,7 +17,7 @@ from datus.models.base import LLMBaseModel
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.node_models import SQLContext
-from datus.utils.json_utils import strip_json_str
+from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -165,7 +165,7 @@ class ClaudeModel(LLMBaseModel):
 
         # Parse the JSON response
         try:
-            return json.loads(strip_json_str(response_text), strict=False)
+            return json.loads(extract_json_str(response_text), strict=False)
         except json.JSONDecodeError:
             # If parsing fails, try to extract JSON from the response
             fixed_response_text = self.fix_sql_in_json_string(response_text)
