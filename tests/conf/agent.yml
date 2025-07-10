@@ -5,7 +5,7 @@ agent:
       type: deepseek
       base_url: ${DEEPSEEK_BASE_URL}
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-v3
+      model: ${DEEPSEEK_MODEL_NAME}
 
   nodes:
     schema_linking:
