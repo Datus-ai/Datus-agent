@@ -58,9 +58,7 @@ def generate_semantic_model_with_mcp(
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse exec_result.content: {e}, exec_result: {exec_result}")
             content_dict = {}
-        semantic_model_meta = input_data.semantic_model_meta
-        semantic_model_meta.table_name = content_dict.get("table_name", "")
-        semantic_model_meta.schema_name = content_dict.get("schema_name", "")
+
         return GenerateSemanticModelResult(
             success=True,
             error="",

@@ -106,6 +106,8 @@ class GenerateSemanticModelNode(Node):
                 logger.debug(f"Tables with DDL: {tables_with_ddl}")
                 self.input.semantic_model_meta.table_name = table_name
                 self.input.semantic_model_meta.schema_name = schema_name
+                self.input.semantic_model_meta.catalog_name = catalog_name
+                self.input.semantic_model_meta.database_name = database_name
 
                 # Generate semantic model
                 tool = LLMTool(self.model)

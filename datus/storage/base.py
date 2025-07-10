@@ -225,7 +225,7 @@ class BaseEmbeddingStore(StorageBase):
             # Does not affect usage, so no exception is thrown.
             logger.warning(f"Failed to create fts index for {self.table_name} table: {str(e)}")
 
-    def store_batch(self, data: List[Dict[str, Any]], mode: str = "append"):
+    def store_batch(self, data: List[Dict[str, Any]]):
         """
         Store a batch of data in the database. The following steps are performed:
 
@@ -240,20 +240,20 @@ class BaseEmbeddingStore(StorageBase):
             return
         try:
             if len(data) <= self.batch_size:
-                self.table.add(pd.DataFrame(data), mode=mode)
+                self.table.add(pd.DataFrame(data))
                 return
             # split the data into batches and store them
             for i in range(0, len(data), self.batch_size):
                 batch = data[i : i + self.batch_size]
-                self.table.add(pd.DataFrame(batch), mode=mode)
+                self.table.add(pd.DataFrame(batch))
         except Exception as e:
             raise DatusException(
                 ErrorCode.TOOL_STORE_FAILED,
                 message=f"Failed to store batch because {str(e)}",
             ) from e
 
-    def store(self, data: List[Dict[str, Any]], mode: str = "append"):
-        self.table.add(pd.DataFrame(data), mode=mode)
+    def store(self, data: List[Dict[str, Any]]):
+        self.table.add(pd.DataFrame(data))
 
     def search(
         self,
