@@ -12,7 +12,6 @@ EXPORT_DIR = str(HOME_DIR) + "/duckdb_export"
 
 
 def test_import_from_file():
-    # conn db path（auto create a new versionf file）
     conn = duckdb.connect(NEW_DB_PATH)
     conn.execute("CREATE SCHEMA IF NOT EXISTS mf_demo;")
     # import all sql files
@@ -28,8 +27,7 @@ def test_import_from_file():
 
 def test_duckdb_query():
     conn = duckdb.connect(NEW_DB_PATH)
-    # result = conn.execute("SELECT * FROM mf_demo.mf_demo_countries")
-    # result = conn.execute("SELECT * FROM duckdb_tables()")
+    result = conn.execute("SELECT * FROM duckdb_tables()")
     result = conn.execute(
         "select database_name, schema_name, table_name, 'sql' from duckdb_tables() where database_name != 'system'"
     )
@@ -43,11 +41,7 @@ def test_lancedb_query():
     conn = lancedb.connect(db_path)
     table_names = conn.table_names()
     for table_name in table_names:
-        # xx = conn.open_table(table_name)
-        # print(f"xx embedding function:{xx.embedding_functions.keys()}")
         result = conn.open_table(table_name).to_pandas().iterrows()
-        # ascii_table = tabulate(result, headers="keys", tablefmt="pretty", showindex=False)
-        # print(f'query the table:{table_name}, result:\n{ascii_table}')
         for row in result:
             print(f"query the table:{table_name}, row:\n{row}")
     assert table_names is not None

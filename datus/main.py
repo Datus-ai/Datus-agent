@@ -282,8 +282,6 @@ def main():
         result = agent.benchmark()
     elif args.action == "generate-dataset":
         result = agent.generate_dataset()
-    elif args.action == "metric-to-sql":
-        result = agent.metric_to_sql()
 
     if agent.is_complete():
         logger.info(f"\nFinal Result: {result}")

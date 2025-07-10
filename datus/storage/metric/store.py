@@ -45,15 +45,14 @@ class SemanticModelStorage(BaseEmbeddingStore):
         )
 
     def create_indices(self):
-        # self.table.create_scalar_index("id", replace=True)
-        # self.table.create_scalar_index("catalog_name", replace=True)
-        # self.table.create_scalar_index("database_name", replace=True)
-        # self.table.create_scalar_index("schema_name", replace=True)
-        # self.table.create_scalar_index("catalog_database_schema", replace=True)
-        # self.table.create_scalar_index("table_name", replace=True)
-        # self.table.create_scalar_index("domain", replace=True)
-        # self.create_fts_index(["semantic_model_name", "semantic_model_desc", "identifiers", "dimensions", "measures"])
-        pass
+        self.table.create_scalar_index("id", replace=True)
+        self.table.create_scalar_index("catalog_name", replace=True)
+        self.table.create_scalar_index("database_name", replace=True)
+        self.table.create_scalar_index("schema_name", replace=True)
+        self.table.create_scalar_index("catalog_database_schema", replace=True)
+        self.table.create_scalar_index("table_name", replace=True)
+        self.table.create_scalar_index("domain", replace=True)
+        self.create_fts_index(["semantic_model_name", "semantic_model_desc", "identifiers", "dimensions", "measures"])
 
     def search_all(self, database_name: str = "") -> List[Dict[str, Any]]:
         """Search all schemas for a given database name."""
