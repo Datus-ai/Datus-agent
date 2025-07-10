@@ -41,6 +41,8 @@ def test_lancedb_query():
     conn = lancedb.connect(db_path)
     table_names = conn.table_names()
     for table_name in table_names:
+        # xx = conn.open_table(table_name)
+        # print(f"xx embedding function:{xx.embedding_functions.keys()}")
         result = conn.open_table(table_name).to_pandas().iterrows()
         for row in result:
             print(f"query the table:{table_name}, row:\n{row}")
