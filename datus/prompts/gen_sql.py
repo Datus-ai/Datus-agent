@@ -2,7 +2,7 @@
 import json
 from typing import List, Union
 
-from datus.schemas.node_models import TableSchema, TableValue, Metrics
+from datus.schemas.node_models import Metrics, TableSchema, TableValue
 from datus.utils.loggings import get_logger
 
 from .prompt_manager import prompt_manager
