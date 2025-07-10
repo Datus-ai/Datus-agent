@@ -75,7 +75,7 @@ def test_empty_vector_and_scalar_query(search_metrics_tool, build_empty_pure_sca
 def test_pure_scalar_query(search_metrics_tool):
     result = (
         search_metrics_tool.store.semantic_model_storage.table.search()
-        .where("catalog_database_schema like '%.%.%'")
+        .where("catalog_database_schema like '%_%_%'")
         .to_list()
     )
     print(f"result: {result}")
