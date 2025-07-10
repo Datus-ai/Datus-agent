@@ -105,12 +105,6 @@ def generate_semantic_model_input() -> List[Dict[str, Any]]:
     with open(yaml_path, "r") as f:
         return yaml.safe_load(f)
 
-@pytest.fixture
-def search_metrics_input() -> List[Dict[str, Any]]:
-    """Load test data from YAML file"""
-    yaml_path = Path(__file__).parent / "data" / "SearchMetricsInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
 
 @pytest.fixture
 def search_metrics_input() -> List[Dict[str, Any]]:
@@ -142,11 +136,6 @@ def search_metrics_agent_config() -> AgentConfig:
     agent_config = load_agent_config(namespace="local_duckdb")  # FIXME Modify it according to your configuration
     return agent_config
 
-@pytest.fixture
-def search_metrics_agent_config() -> AgentConfig:
-    # conf = Path(__file__).parent.parent / "conf" / "agent.yml"
-    agent_config = load_agent_config(namespace = 'local_duckdb')  # FIXME Modify it according to your configuration
-    return agent_config
 
 @pytest.fixture
 def db_manager(agent_config: AgentConfig) -> DBManager:
@@ -546,27 +535,27 @@ class TestNode:
             logger.error(f"Doc search node test failed: {str(e)}")
             raise
 
-        def test_generate_semantic_model_node(self, generate_semantic_model_input, agent_config):
-            """Test generate semantic model node"""
-            try:
-                # Create generate semantic model input from test data
-                for case in generate_semantic_model_input:
-                    input_data = GenerateSemanticModelInput(**case["input"])
-                    node = Node.new_instance(
-                        node_id="generate_semantic_model_test",
-                        description="Generate semantic model test",
-                        node_type=NodeType.TYPE_GENERATE_SEMANTIC_MODEL,
-                        input_data=input_data,
-                        agent_config=agent_config,
-                    )
-                    result = node.run()
-                    logger.debug(f"Generate semantic model node result: {result}")
-                    assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                    assert isinstance(result, GenerateSemanticModelResult), "Result type mismatch"
-                    assert result.success is True, f"Node execution failed: {result}"
-            except Exception as e:
-                logger.error(f"Generate semantic model node test failed: {str(e)}")
-                raise
+    def test_generate_semantic_model_node(self, generate_semantic_model_input, agent_config):
+        """Test generate semantic model node"""
+        try:
+            # Create generate semantic model input from test data
+            for case in generate_semantic_model_input:
+                input_data = GenerateSemanticModelInput(**case["input"])
+                node = Node.new_instance(
+                    node_id="generate_semantic_model_test",
+                    description="Generate semantic model test",
+                    node_type=NodeType.TYPE_GENERATE_SEMANTIC_MODEL,
+                    input_data=input_data,
+                    agent_config=agent_config,
+                )
+                result = node.run()
+                logger.debug(f"Generate semantic model node result: {result}")
+                assert node.status == "completed", f"Node execution failed with status: {node.status}"
+                assert isinstance(result, GenerateSemanticModelResult), "Result type mismatch"
+                assert result.success is True, f"Node execution failed: {result}"
+        except Exception as e:
+            logger.error(f"Generate semantic model node test failed: {str(e)}")
+            raise
 
     def test_generate_metrics_node(self, generate_metrics_input, agent_config):
         """Test generate metrics node"""
