@@ -1,13 +1,12 @@
 from contextlib import contextmanager
-from typing import Dict, AsyncGenerator, Optional
-import asyncio
+from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.storage.metric.init_utils import gen_semantic_model_id
 from datus.storage.metric.store import rag_by_configuration
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.llms_tools import LLMTool
 from datus.tools.llms_tools.generate_semantic_model import generate_semantic_model_with_mcp_stream
@@ -202,7 +201,7 @@ class GenerateSemanticModelNode(Node):
 
             # Parse table name parts
             table_parts = parse_table_name_parts(table_names[0], self.agent_config.db_type)
-            
+
             # Database connection action
             db_action = ActionHistory(
                 action_id="db_connect",
@@ -287,27 +286,25 @@ class GenerateSemanticModelNode(Node):
     def setup_input(self, workflow: Workflow) -> Dict:
         try:
             from datus.schemas.generate_semantic_model_node_models import SemanticModelMeta
-            
+
             # Create default semantic model meta
             semantic_model_meta = SemanticModelMeta(
-                catalog_name=getattr(workflow.task, 'catalog_name', ''),
+                catalog_name=getattr(workflow.task, "catalog_name", ""),
                 database_name=workflow.task.database_name,
-                schema_name=getattr(workflow.task, 'schema_name', ''),
-                table_name='',  # Will be populated during execution
-                layer1='',
-                layer2='',
-                domain=''
+                schema_name=getattr(workflow.task, "schema_name", ""),
+                table_name="",  # Will be populated during execution
+                layer1="",
+                layer2="",
+                domain="",
             )
-            
+
             # Get SQL query from workflow context
-            sql_query = ''
+            sql_query = ""
             if workflow.context.sql_contexts:
                 sql_query = workflow.get_last_sqlcontext().sql_query
-            
+
             next_input = GenerateSemanticModelInput(
-                sql_task=workflow.task,
-                sql_query=sql_query,
-                semantic_model_meta=semantic_model_meta
+                sql_task=workflow.task, sql_query=sql_query, semantic_model_meta=semantic_model_meta
             )
             self.input = next_input
             return {"success": True, "message": "Semantic model input setup", "suggestions": [next_input]}

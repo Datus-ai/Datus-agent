@@ -30,7 +30,9 @@ class GenerateMetricsNode(Node):
         try:
             tool = LLMTool(self.model)
             logger.debug(f"Generate metrics input: {type(self.input)} {self.input}")
-            return tool.generate_metrics(self.input, self.agent_config.current_db_config(self.input.sql_task.database_name))
+            return tool.generate_metrics(
+                self.input, self.agent_config.current_db_config(self.input.sql_task.database_name)
+            )
         except Exception as e:
             logger.error(f"Metrics generation execution error: {str(e)}")
             return GenerateMetricsResult(

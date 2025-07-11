@@ -2,7 +2,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional, AsyncGenerator
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from langsmith import traceable
 
@@ -10,8 +10,8 @@ from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.generate_semantic_model import get_generate_semantic_model_prompt
 from datus.prompts.prompt_manager import prompt_manager
-from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionType
+from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.tools.mcp_server import MCPServer
 from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger

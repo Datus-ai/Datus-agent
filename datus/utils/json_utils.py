@@ -80,7 +80,7 @@ def extract_json_object(text: str) -> str:
         return ""
 
     # Extract the JSON string
-    json_str = text[start : end + 1].strip()
+    json_str = text[start: end + 1].strip()
 
     # Check if there's another JSON object right after
     next_start = text.find("{", end + 1)
@@ -114,7 +114,7 @@ def extract_json_array(text: str) -> str:
         return ""
 
     # Extract the JSON string
-    json_str = text[start : end + 1].strip()
+    json_str = text[start: end + 1].strip()
 
     # Check if there's another JSON array right after
     next_start = text.find("[", end + 1)
@@ -148,7 +148,7 @@ def extract_code_block_content(text: str) -> str:
         return ""
 
     # Check if it's a ```json block
-    is_json_block = text[start : start + 7] == "```json"
+    is_json_block = text[start: start + 7] == "```json"
     if is_json_block:
         start += 7
     else:
@@ -205,9 +205,9 @@ def strip_json_str(llm_str: str) -> str:
         return ""
 
     if cleaned_string.startswith("```json") and cleaned_string.endswith("```"):
-        cleaned_string = cleaned_string[len("```json") : -len("```")].strip()
+        cleaned_string = cleaned_string[len("```json"): -len("```")].strip()
     elif cleaned_string.startswith("```") and cleaned_string.endswith("```"):
-        cleaned_string = cleaned_string[len("```") : -len("```")].strip()
+        cleaned_string = cleaned_string[len("```"): -len("```")].strip()
 
     return cleaned_string
 
@@ -221,7 +221,7 @@ def extract_json_str(llm_str: str) -> str:
     if "```json" in llm_str:
         start = llm_str.index("```json")
         end = llm_str.rindex("```")
-        json_str = llm_str[start + len("```json") : end]
+        json_str = llm_str[start + len("```json"): end]
 
     try:
         start = json_str.find("{")

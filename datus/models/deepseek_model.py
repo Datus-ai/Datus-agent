@@ -3,7 +3,7 @@ import os
 import uuid
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import yaml
 from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
@@ -389,31 +389,31 @@ class DeepSeekModel(LLMBaseModel):
                 # Start streaming execution
                 logger.debug(f"Running agent with streaming, max_turns: {max_turns}")
                 result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns)
-                
+
                 function_call_count = 0
-                
+
                 logger.debug("Starting streaming loop, checking if result is complete...")
                 while not result.is_complete:
                     logger.debug(f"Result not complete, entering stream_events() loop")
                     async for event in result.stream_events():
                         logger.debug(f"Received streaming event: {type(event).__name__}")
-                        
+
                         # Log event attributes for debugging
-                        if hasattr(event, 'type'):
+                        if hasattr(event, "type"):
                             logger.debug(f"Event type: {event.type}")
                         else:
                             logger.debug(f"Event has no 'type' attribute. Event attributes: {dir(event)}")
-                        
+
                         # Simplified logging - only log non-raw events
-                        if hasattr(event, 'type') and event.type != "raw_response_event":
+                        if hasattr(event, "type") and event.type != "raw_response_event":
                             logger.debug(f"NON_RAW_EVENT: {event.type}")
-                        
+
                         # Process different event types
-                        if hasattr(event, 'type'):
+                        if hasattr(event, "type"):
                             if event.type == "run_item_stream_event":
                                 logger.debug("Processing run_item_stream_event")
                                 # Check if this is a function call event
-                                if hasattr(event, 'item') and hasattr(event.item, 'type'):
+                                if hasattr(event, "item") and hasattr(event.item, "type"):
                                     logger.debug(f"Run item type: {event.item.type}")
                                     if event.item.type == "tool_call_item":
                                         logger.debug("Processing tool_call_item in run_item_stream_event")
@@ -422,16 +422,16 @@ class DeepSeekModel(LLMBaseModel):
                                         call_id = None
                                         function_name = None
                                         arguments = None
-                                        
-                                        if hasattr(event.item, 'raw_item'):
+
+                                        if hasattr(event.item, "raw_item"):
                                             raw_item = event.item.raw_item
-                                            if hasattr(raw_item, 'call_id'):
+                                            if hasattr(raw_item, "call_id"):
                                                 call_id = raw_item.call_id
-                                            if hasattr(raw_item, 'name'):
+                                            if hasattr(raw_item, "name"):
                                                 function_name = raw_item.name
-                                            if hasattr(raw_item, 'arguments'):
+                                            if hasattr(raw_item, "arguments"):
                                                 arguments = raw_item.arguments
-                                        
+
                                         tool_call_action = ActionHistory(
                                             action_id=call_id or str(uuid.uuid4()),
                                             role=ActionRole.MODEL,
@@ -440,62 +440,76 @@ class DeepSeekModel(LLMBaseModel):
                                             input={
                                                 "function_name": function_name,
                                                 "arguments": arguments,
-                                                "call_id": call_id
+                                                "call_id": call_id,
                                             },
                                             timestamp=datetime.now().isoformat(),
                                         )
                                         action_history_manager.add_action(tool_call_action)
-                                        logger.debug(f"Created and yielding tool_call_action: {tool_call_action.thought}")
+                                        logger.debug(
+                                            f"Created and yielding tool_call_action: {tool_call_action.thought}"
+                                        )
                                         yield tool_call_action
-                                        
+
                                     elif event.item.type == "tool_call_output_item":
                                         logger.debug("Processing tool_call_output_item in run_item_stream_event")
                                         # Function call completed - find matching action by call_id
                                         call_id = None
-                                        if hasattr(event.item, 'raw_item') and hasattr(event.item.raw_item, 'call_id'):
+                                        if hasattr(event.item, "raw_item") and hasattr(event.item.raw_item, "call_id"):
                                             call_id = event.item.raw_item.call_id
-                                        
+
                                         # Find the matching action by call_id
                                         matching_action = None
                                         if call_id:
                                             matching_action = action_history_manager.find_action_by_id(call_id)
-                                        
+
                                         if matching_action:
                                             # Update the action with the result
                                             output_data = self._extract_tool_call_output(event)
                                             matching_action.output = output_data
-                                            
+
                                             # Determine success and reflection
                                             success = output_data.get("success", True)
-                                            function_name = matching_action.input.get("function_name", "") if matching_action.input else ""
-                                            matching_action.reflection = f"{'✅ Function executed successfully' if success else '❌ Function failed'}: {function_name}"
-                                            
-                                            logger.debug(f"Updated matching action with output, yielding: {matching_action.reflection}")
+                                            function_name = (
+                                                matching_action.input.get("function_name", "")
+                                                if matching_action.input
+                                                else ""
+                                            )
+                                            matching_action.reflection = f"{
+                                                '✅ Function executed successfully' if success else '❌ Function failed'}: {function_name}"
+
+                                            logger.debug(
+                                                f"Updated matching action with output, yielding: {
+                                                    matching_action.reflection}")
                                             # Yield the updated action
                                             yield matching_action
                                         else:
-                                            logger.warning(f"Received tool_call_output but no matching action found for call_id: {call_id}")
-                                            
+                                            logger.warning(
+                                                f"Received tool_call_output but no matching action found for call_id: {call_id}")
+
                                     elif event.item.type == "message_output_item":
                                         logger.debug("Processing message_output_item - extracting final result")
                                         # This is the final message output, extract the actual SQL
-                                        if hasattr(event.item, 'raw_item') and hasattr(event.item.raw_item, 'content'):
+                                        if hasattr(event.item, "raw_item") and hasattr(event.item.raw_item, "content"):
                                             content = event.item.raw_item.content
                                             if content and len(content) > 0:
                                                 # content[0] is a ResponseOutputText object, access .text attribute
                                                 if isinstance(content, list) and len(content) > 0:
-                                                    text_content = content[0].text if hasattr(content[0], 'text') else str(content[0])
+                                                    text_content = (
+                                                        content[0].text
+                                                        if hasattr(content[0], "text")
+                                                        else str(content[0])
+                                                    )
                                                 else:
                                                     text_content = str(content)
                                                 logger.debug(f"Final message content: {text_content}")
-                                                
+
                                                 # Try to extract SQL from JSON content
                                                 try:
-                                                    if text_content.strip().startswith('{'):
+                                                    if text_content.strip().startswith("{"):
                                                         json_content = json.loads(text_content)
-                                                        final_sql = json_content.get('sql', '')
-                                                        explanation = json_content.get('explanation', '')
-                                                        
+                                                        final_sql = json_content.get("sql", "")
+                                                        explanation = json_content.get("explanation", "")
+
                                                         if final_sql:
                                                             # Create final result action with actual SQL
                                                             final_action = ActionHistory(
@@ -539,7 +553,7 @@ class DeepSeekModel(LLMBaseModel):
                                 logger.debug(f"Ignoring event type: {event.type}")
                         else:
                             logger.debug("Event has no type attribute, skipping")
-                
+
                 logger.debug("Exited streaming loop - result is complete")
 
                 # Final result is now handled in message_output_item processing above
@@ -547,7 +561,7 @@ class DeepSeekModel(LLMBaseModel):
 
         except Exception as e:
             logger.error(f"Error in streaming MCP execution: {str(e)}")
-            
+
             # Create error action
             error_action = ActionHistory(
                 action_id=str(uuid.uuid4()),
@@ -567,9 +581,9 @@ class DeepSeekModel(LLMBaseModel):
         """Extract input data from tool call event."""
         try:
             logger.debug(f"Extracting tool call input from event: {type(event).__name__}")
-            if hasattr(event, 'item'):
+            if hasattr(event, "item"):
                 logger.debug(f"Event has item: {type(event.item).__name__}")
-                if hasattr(event.item, 'input'):
+                if hasattr(event.item, "input"):
                     input_data = event.item.input
                     logger.debug(f"Input data type: {type(input_data)}, value: {input_data}")
                     if isinstance(input_data, dict):
@@ -587,7 +601,7 @@ class DeepSeekModel(LLMBaseModel):
                             logger.debug(f"Found SQL query as single value: {sql_query}")
                         else:
                             logger.debug(f"No SQL query found in input_data keys: {list(input_data.keys())}")
-                        
+
                         result = {
                             "sql_query": sql_query,
                             "raw_input": input_data,
@@ -611,9 +625,9 @@ class DeepSeekModel(LLMBaseModel):
         """Extract output data from tool call output event."""
         try:
             logger.debug(f"Extracting tool call output from event: {type(event).__name__}")
-            if hasattr(event, 'item'):
+            if hasattr(event, "item"):
                 logger.debug(f"Event has item: {type(event.item).__name__}")
-                if hasattr(event.item, 'output'):
+                if hasattr(event.item, "output"):
                     output_data = event.item.output
                     logger.debug(f"Output data type: {type(output_data)}, value: {output_data}")
                     if isinstance(output_data, dict):
@@ -648,9 +662,9 @@ class DeepSeekModel(LLMBaseModel):
         """Extract input data from function call event in run_item_stream_event format."""
         try:
             logger.debug(f"Extracting function call input from run_item_stream_event: {type(event).__name__}")
-            if hasattr(event, 'item'):
+            if hasattr(event, "item"):
                 logger.debug(f"Event has item: {type(event.item).__name__}")
-                if hasattr(event.item, 'input'):
+                if hasattr(event.item, "input"):
                     input_data = event.item.input
                     logger.debug(f"Input data type: {type(input_data)}, value: {input_data}")
                     if isinstance(input_data, dict):
@@ -668,7 +682,7 @@ class DeepSeekModel(LLMBaseModel):
                             logger.debug(f"Found SQL query as single value: {sql_query}")
                         else:
                             logger.debug(f"No SQL query found in input_data keys: {list(input_data.keys())}")
-                        
+
                         result = {
                             "sql_query": sql_query,
                             "raw_input": input_data,
@@ -692,9 +706,9 @@ class DeepSeekModel(LLMBaseModel):
         """Extract output data from function call output event in run_item_stream_event format."""
         try:
             logger.debug(f"Extracting function call output from run_item_stream_event: {type(event).__name__}")
-            if hasattr(event, 'item'):
+            if hasattr(event, "item"):
                 logger.debug(f"Event has item: {type(event.item).__name__}")
-                if hasattr(event.item, 'output'):
+                if hasattr(event.item, "output"):
                     output_data = event.item.output
                     logger.debug(f"Output data type: {type(output_data)}, value: {output_data}")
                     if isinstance(output_data, dict):
