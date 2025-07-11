@@ -31,13 +31,14 @@ dependencies = [
     "pyyaml==6.0.1",
     "langsmith>=0.0.77",
     "structlog>=23.1.0",
-    "openai>=1.12.0",
+    "openai>=1.95.0",
     "httpx[socks]==0.27.2",
     "tantivy>=0.22.2",
     "aiohttp>=3.11.16",
     "xlsxwriter>=3.2.2",
     "tiktoken>=0.9.0",
-    "openai-agents==0.0.11",
+    "openai-agents>=0.1.0",
+    "pydantic>=2.11.7",
     "Markdown==3.8",
     # "sqllineage>=0.20.0",
     "lancedb==0.18.0",
@@ -57,7 +58,7 @@ dependencies = [
     # Dependencies by snowflake-sqlalchemy
     "opentelemetry-api>=1.33.1",
     # MCP (Model Context Protocol) support
-    "mcp>=1.9.2",
+    "mcp>=1.11.0",
     "anyio>=4.9.0",
     # sentence-transformers and lancedb depends on the torch. 
     # For Apple Silicon (arm64) Macs, use latest torch version

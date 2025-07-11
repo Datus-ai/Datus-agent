@@ -12,14 +12,15 @@ mypy==1.8.0
 langsmith>=0.0.77
 lancedb==0.18.0
 structlog>=23.1.0
-openai>=1.12.0
+openai>=1.95.0
 httpx[socks]==0.27.2
 tantivy>=0.22.2
 aiohttp>=3.11.16
 xlsxwriter>=3.2.2
 tiktoken>=0.9.0
 pytest-asyncio>=0.23.8
-openai-agents==0.0.11
+openai-agents>=0.1.0
+pydantic>=2.11.7
 Markdown==3.8
 datasets==3.5.1
 pyarrow>=15.0.0,<19.0.0
