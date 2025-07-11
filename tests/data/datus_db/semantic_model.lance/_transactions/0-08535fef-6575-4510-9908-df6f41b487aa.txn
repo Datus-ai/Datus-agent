@@ -1,0 +1,5 @@
+$08535fef-6575-4510-9908-df6f41b487aa²ý$id ÿÿÿÿÿÿÿÿÿ*string08Zdefault0catalog_name ÿÿÿÿÿÿÿÿÿ*string08Zdefault1database_name ÿÿÿÿÿÿÿÿÿ*string08Zdefault/schema_name ÿÿÿÿÿÿÿÿÿ*string08Zdefault.
+table_name ÿÿÿÿÿÿÿÿÿ*string08Zdefault;catalog_database_schema ÿÿÿÿÿÿÿÿÿ*string08Zdefault*domain ÿÿÿÿÿÿÿÿÿ*string08Zdefault6semantic_file_path ÿÿÿÿÿÿÿÿÿ*string08Zdefault7semantic_model_name ÿÿÿÿÿÿÿÿÿ*string08Zdefault7semantic_model_desc	 ÿÿÿÿÿÿÿÿÿ*string08Zdefault/identifiers
+ ÿÿÿÿÿÿÿÿÿ*string08Zdefault.
+dimensions ÿÿÿÿÿÿÿÿÿ*string08Zdefault,measures ÿÿÿÿÿÿÿÿÿ*string08Zdefault.
+created_at ÿÿÿÿÿÿÿÿÿ*string08Zdefault=vector ÿÿÿÿÿÿÿÿÿ*fixed_size_list:float:38408Zdefault
