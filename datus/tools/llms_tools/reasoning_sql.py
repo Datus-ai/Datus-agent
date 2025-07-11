@@ -63,72 +63,16 @@ async def reasoning_sql_with_mcp_stream(
             knowledge_content=input_data.external_knowledge,
         )
         
-        # Execute the actual reasoning
-        exec_result = await model.generate_with_mcp(
+        # Use the new streaming method
+        async for action in model.generate_with_mcp_stream(
             prompt=prompt,
             mcp_servers={input_data.sql_task.database_name: mcp_server},
             instruction=instruction,
             output_type=str,
             max_turns=max_turns,
-        )
-        
-        # Convert each SQLContext into ActionHistory
-        if exec_result.get("sql_contexts"):
-            for i, sql_context in enumerate(exec_result["sql_contexts"], 1):
-                # Determine if this SQL execution was successful
-                success = not (hasattr(sql_context, 'sql_error') and sql_context.sql_error)
-                
-                # Create ActionHistory from SQLContext
-                sql_action = ActionHistory(
-                    action_id=str(uuid.uuid4()),
-                    role=ActionRole.MODEL,
-                    thought=f"SQL execution attempt {i} during reasoning",
-                    action_type=ActionType.FUNCTION_CALL,
-                    input={
-                        "sql_query": getattr(sql_context, 'sql_query', ''),
-                        "execution_step": i,
-                    },
-                    output={
-                        "success": success,
-                        "sql_return": getattr(sql_context, 'sql_return', '') if success else '',
-                        "sql_error": getattr(sql_context, 'sql_error', '') if not success else '',
-                        "row_count": getattr(sql_context, 'row_count', 0) if success else 0,
-                    },
-                    reflection=f"{'✅ Query executed successfully' if success else '❌ Query failed'}: {getattr(sql_context, 'sql_query', '')[:100]}{'...' if len(getattr(sql_context, 'sql_query', '')) > 100 else ''}",
-                    timestamp=datetime.now().isoformat(),
-                )
-                action_history_manager.add_action(sql_action)
-                yield sql_action
-        
-        # Parse final result
-        try:
-            logger.debug(f"exec_result: {exec_result['content']}")
-            content_dict = json.loads(strip_json_str(exec_result["content"]))
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse exec_result.content: {e}, exec_result: {exec_result}")
-            content_dict = {}
-        
-        # Final reasoning summary action
-        final_sql = content_dict.get("sql", "")
-        final_action = ActionHistory(
-            action_id=str(uuid.uuid4()),
-            role=ActionRole.MODEL,
-            thought="Final reasoning result",
-            action_type=ActionType.FUNCTION_CALL,
-            input={
-                "reasoning_task": input_data.sql_task.task,
-                "total_sql_attempts": len(exec_result.get("sql_contexts", [])),
-            },
-            output={
-                "success": True,
-                "final_sql_query": final_sql,
-                "reasoning_complete": True,
-            },
-            reflection=f"Reasoning completed. Final SQL: {final_sql[:100]}{'...' if len(final_sql) > 100 else ''}",
-            timestamp=datetime.now().isoformat(),
-        )
-        action_history_manager.add_action(final_action)
-        yield final_action
+            action_history_manager=action_history_manager,
+        ):
+            yield action
         
     except Exception as e:
         logger.error(f"Reasoning SQL with MCP failed: {e}")
