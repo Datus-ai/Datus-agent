@@ -1,0 +1,100 @@
+{
+  "index_settings": {
+    "docstore_compression": "lz4",
+    "docstore_blocksize": 16384
+  },
+  "segments": [
+    {
+      "segment_id": "c04439e1-4ffc-4eff-a7af-be70b534016a",
+      "max_doc": 14,
+      "deletes": null
+    },
+    {
+      "segment_id": "e1291a0d-11bc-48ad-b7dc-cf25d999b65e",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "04550321-fb48-45f1-93ea-e3a6d113847c",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "0da70b92-a6b1-4699-bae4-938b36097a11",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "70b996e1-4b8d-4e6a-af6d-0877b255b402",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "e6f8c056-1f19-478a-866c-1c7ca6b68554",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "f1a60650-d9fe-488f-aab9-9c741c906ebc",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "e541dd0d-ed9f-4089-aaa4-92359842a290",
+      "max_doc": 1,
+      "deletes": null
+    }
+  ],
+  "schema": [
+    {
+      "name": "doc_id",
+      "type": "i64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "metric_name",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "metric_value",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "metric_sql_query",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    }
+  ],
+  "opstamp": 29
+}
