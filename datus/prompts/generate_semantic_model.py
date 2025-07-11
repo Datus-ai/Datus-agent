@@ -17,6 +17,4 @@ def get_generate_semantic_model_prompt(
         table_definition=table_definition,
     )
 
-    return [
-        {"role": "user", "content": user_content},
-    ]
+    return user_content

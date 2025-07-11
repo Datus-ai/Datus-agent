@@ -295,32 +295,34 @@ class AgentCommands:
                     sql_query = Prompt.ask("[bold]Enter new SQL query[/]", default=input.sql_query)
                     input.sql_query = sql_query.strip()
             else:
-                sql_query = Prompt.ask("[bold]Enter SQL query to generate semantic model from[/]", default=input.sql_query)
+                sql_query = Prompt.ask(
+                    "[bold]Enter SQL query to generate semantic model from[/]", default=input.sql_query
+                )
                 input.sql_query = sql_query.strip()
-            
+
             # Interactive prompts for semantic model metadata
             self.console.print("[bold blue]Semantic Model Metadata:[/]")
             catalog_name = Prompt.ask("[bold]Enter catalog name[/]", default=input.semantic_model_meta.catalog_name)
             input.semantic_model_meta.catalog_name = catalog_name.strip()
-            
+
             database_name = Prompt.ask("[bold]Enter database name[/]", default=input.semantic_model_meta.database_name)
             input.semantic_model_meta.database_name = database_name.strip()
-            
+
             schema_name = Prompt.ask("[bold]Enter schema name[/]", default=input.semantic_model_meta.schema_name)
             input.semantic_model_meta.schema_name = schema_name.strip()
-            
+
             table_name = Prompt.ask("[bold]Enter table name[/]", default=input.semantic_model_meta.table_name)
             input.semantic_model_meta.table_name = table_name.strip()
-            
+
             layer1 = Prompt.ask("[bold]Enter layer1 (business layer)[/]", default=input.semantic_model_meta.layer1)
             input.semantic_model_meta.layer1 = layer1.strip()
-            
+
             layer2 = Prompt.ask("[bold]Enter layer2 (sub-layer)[/]", default=input.semantic_model_meta.layer2)
             input.semantic_model_meta.layer2 = layer2.strip()
-            
+
             domain = Prompt.ask("[bold]Enter domain[/]", default=input.semantic_model_meta.domain)
             input.semantic_model_meta.domain = domain.strip()
-            
+
             prompt_version = Prompt.ask("[bold]Enter prompt version[/]", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()
 
@@ -392,7 +394,7 @@ class AgentCommands:
 
         # Run the reasoning node
         self.run_node(NodeType.TYPE_REASONING, args)
-    
+
     def cmd_reason_stream(self, args: str):
         """Run SQL reasoning with streaming output and action history."""
         if not self.workflow:
@@ -417,7 +419,7 @@ class AgentCommands:
 
         # Run the generate semantic model node
         self.run_node(NodeType.TYPE_GENERATE_SEMANTIC_MODEL, args)
-    
+
     def cmd_gen_semantic_model_stream(self, args: str):
         """Generate semantic model with streaming output and action history."""
         if not self.workflow:
@@ -643,12 +645,12 @@ class AgentCommands:
 
     def cmd_compare(self, args: str):
         pass
-    
+
     def _run_node_stream(self, node_type: str, node_args: str):
         """Run a node with streaming output and action history display."""
         try:
             workflow = self.workflow
-            
+
             # Create a new node
             node_id = f"{node_type.lower()}_{str(uuid.uuid1())[:8]}"
             description = f"Execute {node_type} operation with streaming"
@@ -659,43 +661,43 @@ class AgentCommands:
                 input_data=node_args,
                 agent_config=self.cli.agent_config,
             )
-            
+
             # Setup input for the node
             setup_result = setup_node_input(node=next_node, workflow=workflow)
             workflow.add_node(next_node)
-            
+
             if not setup_result.get("success", False):
                 self.console.print(
                     "[bold red]Error:[/] Failed to setup node input: " f"{setup_result.get('message', 'Unknown error')}"
                 )
                 return {"success": False, "error": "Failed to setup node input"}
-            
+
             # Interactive input modification
             if isinstance(next_node.input, BaseInput):
                 edit_mode = self._modify_input(next_node.input)
                 if edit_mode == "cancel":
                     return {"success": False, "error": "Operation cancelled by user"}
-            
+
             # Initialize action history
             action_history_manager = ActionHistoryManager()
             action_display = ActionHistoryDisplay(self.console)
-            
+
             # Start streaming execution
             self.console.print(f"[bold green]Executing {node_type} node with streaming...[/]")
-            
+
             # Initialize the node first to set up the model
             next_node._initialize()
-            
+
             # Run the streaming method
             streaming_method = None
-            if hasattr(next_node, '_generate_semantic_model_stream'):
+            if hasattr(next_node, "_generate_semantic_model_stream"):
                 streaming_method = next_node._generate_semantic_model_stream
-            elif hasattr(next_node, '_reason_sql_stream'):
+            elif hasattr(next_node, "_reason_sql_stream"):
                 streaming_method = next_node._reason_sql_stream
-            
+
             if streaming_method:
                 actions = []
-                
+
                 # Create a live display
                 with action_display.display_streaming_actions(actions):
                     # Run the async streaming method
@@ -704,14 +706,14 @@ class AgentCommands:
                             actions.append(action)
                             # Longer delay to make the streaming visible and avoid caching
                             await asyncio.sleep(0.5)
-                    
+
                     # Execute the streaming
                     asyncio.run(run_stream())
-                
+
                 # Display final action history
                 self.console.print("\n[bold blue]Final Action History:[/]")
-                action_display.display_action_list(actions)
-                
+                action_display.display_final_action_history_with_full_sql(actions)
+
                 # Extract result from final action
                 if actions:
                     final_action = actions[-1]
@@ -724,12 +726,12 @@ class AgentCommands:
                             error_msg = final_action.output.get("error", "Unknown error")
                             self.console.print(f"[bold red]Streaming execution failed:[/] {error_msg}")
                             return {"success": False, "error": error_msg, "actions": actions}
-                
+
                 return {"success": True, "actions": actions}
             else:
                 self.console.print("[bold red]Error:[/] Node does not support streaming")
                 return {"success": False, "error": "Node does not support streaming"}
-                
+
         except Exception as e:
             logger.error(f"Streaming node execution error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
