@@ -1,6 +1,8 @@
 import asyncio
 import json
-from typing import Any, Dict
+import uuid
+from datetime import datetime
+from typing import Any, Dict, Optional, AsyncGenerator
 
 from langsmith import traceable
 
@@ -8,6 +10,7 @@ from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.prompts.reasoning_sql_with_mcp import get_reasoning_prompt
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionType
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.tools.mcp_server import MCPServer
@@ -16,6 +19,149 @@ from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+@traceable
+async def reasoning_sql_with_mcp_stream(
+    model: LLMBaseModel,
+    input_data: ReasoningInput,
+    db_config: DbConfig,
+    tool_config: Dict[str, Any],
+    action_history_manager: Optional[ActionHistoryManager] = None,
+) -> AsyncGenerator[ActionHistory, None]:
+    """Generate SQL reasoning with streaming support and action history tracking."""
+    if not isinstance(input_data, ReasoningInput):
+        logger.error(f"Input type error: expected ReasoningInput, got {type(input_data)}")
+        raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
+    
+    if action_history_manager is None:
+        action_history_manager = ActionHistoryManager()
+    
+    # Initialize reasoning action
+    action_id = str(uuid.uuid4())
+    timestamp = datetime.now().isoformat()
+    
+    try:
+        # Setup MCP server and prompt (no action history for setup)
+        mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+        instruction = prompt_manager.get_raw_template("reasoning_system", input_data.prompt_version)
+        max_turns = tool_config.get("max_turns", 10)
+        
+        prompt = get_reasoning_prompt(
+            database_type=input_data.get("database_type", "sqlite"),
+            table_schemas=input_data.table_schemas,
+            data_details=input_data.data_details,
+            metrics=input_data.metrics,
+            question=input_data.sql_task.task,
+            context=[sql_context.to_str(input_data.max_sql_return_length) for sql_context in input_data.contexts],
+            prompt_version=input_data.prompt_version,
+            max_table_schemas_length=input_data.max_table_schemas_length,
+            max_data_details_length=input_data.max_data_details_length,
+            max_context_length=input_data.max_context_length,
+            max_value_length=input_data.max_value_length,
+            max_text_mark_length=input_data.max_text_mark_length,
+            knowledge_content=input_data.external_knowledge,
+        )
+        
+        # Execute the actual reasoning
+        exec_result = await model.generate_with_mcp(
+            prompt=prompt,
+            mcp_servers={input_data.sql_task.database_name: mcp_server},
+            instruction=instruction,
+            output_type=str,
+            max_turns=max_turns,
+        )
+        
+        # Convert each SQLContext into ActionHistory
+        if exec_result.get("sql_contexts"):
+            for i, sql_context in enumerate(exec_result["sql_contexts"], 1):
+                # Determine if this SQL execution was successful
+                success = not (hasattr(sql_context, 'sql_error') and sql_context.sql_error)
+                
+                # Create ActionHistory from SQLContext
+                sql_action = ActionHistory(
+                    action_id=str(uuid.uuid4()),
+                    role=ActionRole.MODEL,
+                    thought=f"SQL execution attempt {i} during reasoning",
+                    action_type=ActionType.FUNCTION_CALL,
+                    input={
+                        "sql_query": getattr(sql_context, 'sql_query', ''),
+                        "execution_step": i,
+                    },
+                    output={
+                        "success": success,
+                        "sql_return": getattr(sql_context, 'sql_return', '') if success else '',
+                        "sql_error": getattr(sql_context, 'sql_error', '') if not success else '',
+                        "row_count": getattr(sql_context, 'row_count', 0) if success else 0,
+                    },
+                    reflection=f"{'✅ Query executed successfully' if success else '❌ Query failed'}: {getattr(sql_context, 'sql_query', '')[:100]}{'...' if len(getattr(sql_context, 'sql_query', '')) > 100 else ''}",
+                    timestamp=datetime.now().isoformat(),
+                )
+                action_history_manager.add_action(sql_action)
+                yield sql_action
+        
+        # Parse final result
+        try:
+            logger.debug(f"exec_result: {exec_result['content']}")
+            content_dict = json.loads(strip_json_str(exec_result["content"]))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse exec_result.content: {e}, exec_result: {exec_result}")
+            content_dict = {}
+        
+        # Final reasoning summary action
+        final_sql = content_dict.get("sql", "")
+        final_action = ActionHistory(
+            action_id=str(uuid.uuid4()),
+            role=ActionRole.MODEL,
+            thought="Final reasoning result",
+            action_type=ActionType.FUNCTION_CALL,
+            input={
+                "reasoning_task": input_data.sql_task.task,
+                "total_sql_attempts": len(exec_result.get("sql_contexts", [])),
+            },
+            output={
+                "success": True,
+                "final_sql_query": final_sql,
+                "reasoning_complete": True,
+            },
+            reflection=f"Reasoning completed. Final SQL: {final_sql[:100]}{'...' if len(final_sql) > 100 else ''}",
+            timestamp=datetime.now().isoformat(),
+        )
+        action_history_manager.add_action(final_action)
+        yield final_action
+        
+    except Exception as e:
+        logger.error(f"Reasoning SQL with MCP failed: {e}")
+        
+        # Determine error type for proper handling
+        error_msg = str(e)
+        is_permission_error = any(
+            indicator in error_msg.lower() 
+            for indicator in ["403", "forbidden", "not allowed", "permission"]
+        )
+        
+        # Error action
+        error_action = ActionHistory(
+            action_id=str(uuid.uuid4()),
+            role=ActionRole.WORKFLOW,
+            thought="Error occurred during SQL reasoning",
+            action_type=ActionType.FUNCTION_CALL,
+            input={"error": str(e), "error_type": "permission" if is_permission_error else "general"},
+            output={
+                "success": False,
+                "error": str(e),
+                "is_permission_error": is_permission_error,
+            },
+            reflection=f"Reasoning failed: {str(e)}. {'Will be re-raised for fallback handling.' if is_permission_error else 'General error occurred.'}",
+            timestamp=datetime.now().isoformat(),
+        )
+        action_history_manager.add_action(error_action)
+        yield error_action
+        
+        # Re-raise permission errors for fallback handling
+        if is_permission_error:
+            logger.info("Re-raising permission error for fallback handling")
+            raise
 
 
 @traceable
