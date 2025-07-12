@@ -17,7 +17,6 @@ from datus.models.claude_model import ClaudeModel
 from datus.models.deepseek_model import DeepSeekModel
 from datus.models.openai_model import OpenAIModel
 from datus.models.qwen_model import QwenModel
-from datus.schemas.generate_semantic_model_node_models import SemanticModelMeta
 
 # Import model implementations
 from datus.schemas.node_models import BaseResult, SqlTask
@@ -719,31 +718,3 @@ class Agent:
             "output_file": output_file,
             "format": output_format,
         }
-
-    def metric_to_sql(self):
-        """metric to sql"""
-        logger.info("Start metric to sql ")
-        self.global_config.check_init_storage_config()
-        semantic_model_meta = SemanticModelMeta(
-            catalog_name=self.args.catalog_name,
-            database_name=self.args.database_name,
-            schema_name=self.args.schema_name,
-            domain=self.args.domain,
-            layer1=self.args.layer1,
-            layer2=self.args.layer2,
-        )
-        self.run(
-            SqlTask(
-                database_type=self.global_config.db_type,
-                task="Calculate the cancellation rate by transaction type (Quick Buy or Not Quick Buy)",
-                external_knowledge="",
-                domain=semantic_model_meta.domain,
-                layer1=semantic_model_meta.layer1,
-                layer2=semantic_model_meta.layer2,
-                catalog_name=semantic_model_meta.catalog_name,
-                database_name=semantic_model_meta.database_name,
-                schema_name=semantic_model_meta.schema_name,
-                output_dir=self.global_config.output_dir,
-            )
-        )
-        return {"status": "success", "message": "metric-to-sql workflow completed"}
