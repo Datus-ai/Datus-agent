@@ -7,7 +7,7 @@ import sys
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -52,6 +52,7 @@ class DatusCLI:
         """Initialize the CLI with the given arguments."""
         self.args = args
         self.console = Console()
+        self.console_column_width = 16
         setup_exception_handler(
             console_logger=self.console.print, prefix_wrap_func=lambda x: f"[bold red]{x}[/bold red]"
         )
@@ -236,6 +237,66 @@ class DatusCLI:
         self.console.print(table)
         return
 
+    def _smart_display_table(
+        self,
+        data: List[Dict[str, Any]],
+        columns: Optional[List[str]] = None,
+    ) -> None:
+        """
+        Smart table display that handles wide tables by limiting columns and truncating content.
+
+        Args:
+            data: List of dictionaries representing table rows
+            columns: The columns to display, if not provided, all columns will be displayed
+        """
+        if not data:
+            self.console.print("[yellow]No data to display[/]")
+            return
+
+        if columns:
+            all_columns_list = columns
+        else:
+            # Get all unique column names
+            all_columns_list = []
+            for row in data:
+                all_columns_list.extend(list(row.keys()))
+        # Calculate the maximum number of columns based on the terminal width.
+        max_columns = max(4, self.console.width // self.console_column_width)
+
+        # Smart column selection: show front + back + ellipsis based on terminal width
+        if len(all_columns_list) > max_columns:
+            show_back = max_columns // 2
+            show_front = max_columns - show_back  # -1 for ellipsis
+
+            # Select columns to display
+            front_columns = all_columns_list[:show_front]
+            back_columns = all_columns_list[-show_back:] if show_back > 0 else []
+            display_columns = front_columns + ["..."] + back_columns
+        else:
+            display_columns = all_columns_list
+
+        table = Table(show_header=True, header_style="bold green")
+
+        # Add columns with width constraints
+        for col in display_columns:
+            if col == "...":
+                table.add_column(col, width=5, justify="center")
+            else:
+                # Calculate optimal column width based on terminal width
+                table.add_column(col, width=self.console_column_width)
+
+        # Add rows with truncated content
+        for row in data:
+            row_values: List[Any] = []
+            for col in display_columns:
+                if col == "...":
+                    row_values.append("...")
+                else:
+                    row_values.append(str(row.get(col)))
+            table.add_row(*row_values)
+
+        self.console.print(table)
+
     def _cmd_switch_namespace(self, args: str):
         if args.strip() == "":
             self._cmd_list_namespaces()
@@ -324,15 +385,9 @@ class DatusCLI:
 
             # Display results
             if result and result.success and hasattr(result.sql_return, "column_names"):
-                # Create a rich table for the results
-                table = Table(show_header=True, header_style="bold green")
-                # Add columns
-                for col in result.sql_return.column_names:
-                    table.add_column(col)
-                # Add rows
-                for row in result.sql_return.to_pylist():
-                    table.add_row(*[str(cell) for cell in row.values()])
-                self.console.print(table)
+                # Convert Arrow data to list of dictionaries for smart display
+                rows = result.sql_return.to_pylist()
+                self._smart_display_table(data=rows, columns=result.sql_return.column_names)
 
                 row_count = result.sql_return.num_rows
                 exec_time = end_time - start_time
