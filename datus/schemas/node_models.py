@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
 from datus.schemas.doc_search_node_models import DocSearchResult
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -106,7 +107,7 @@ class TableSchema(BaseTableSchema):
         schema_text = schema_text.replace("VARCHAR(16777216)", "VARCHAR")
         # schema_text = schema_text.replace('NUMBER(38,0)', 'NUMBER')
         # schema_text = schema_text.replace('create or replace TABLE', 'TABLE')
-        full_name = self.table_name if dialect == "sqlite" else self.identifier
+        full_name = self.table_name if dialect == DBType.SQLITE else self.identifier
         return f"{full_name}: {schema_text}"
 
     @classmethod
@@ -146,7 +147,7 @@ class TableValue(BaseTableSchema):
 
         values_str = str(self.table_values)
 
-        if processed_schemas and dialect == "sqlite":
+        if processed_schemas and dialect == DBType.SQLITE:
             table_schema = self._parse_table_schema(processed_schemas)
             if table_schema:
                 values_str = self._process_text_columns(values_str, max_text_mark_length, table_schema)
@@ -154,7 +155,7 @@ class TableValue(BaseTableSchema):
         if len(values_str) > max_value_length:
             logger.warning("table value is too long, truncating to %s characters" % max_value_length)
             values_str = values_str[:max_value_length] + "...(truncated)"
-        full_name = self.table_name if dialect == "sqlite" else self.identifier
+        full_name = self.table_name if dialect == DBType.SQLITE else self.identifier
         return f"{full_name} values: \n{values_str}"
 
     def _parse_table_schema(self, processed_schemas: str) -> Dict[str, str]:

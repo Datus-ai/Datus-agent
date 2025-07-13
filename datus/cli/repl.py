@@ -28,6 +28,7 @@ from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools import SQLiteConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.utils.constants import DBType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
 
@@ -249,7 +250,7 @@ class DatusCLI:
             self.console.print("[bold red]Error:[/] Database name is required")
             return
         self.current_db_name = new_db
-        if self.agent_config.db_type == "sqlite" or self.agent_config.db_type == "duckdb":
+        if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
             self.db_connector = self.db_manager.get_conn(
                 self.agent_config.current_namespace, self.agent_config.db_type, self.current_db_name
             )
@@ -417,7 +418,7 @@ class DatusCLI:
         logger.debug(f"Executing internal command: '{cmd}' with args: '{args}'")
         if cmd in self.commands:
             self.commands[cmd](args)
-        elif self.db_connector.get_type() == "sqlite":
+        elif self.db_connector.get_type() == DBType.SQLITE:
             self._execute_sqlite_internal_command(cmd, args)
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
@@ -553,7 +554,7 @@ class DatusCLI:
 
         try:
             # For SQLite, query the sqlite_master table
-            if self.db_connector.get_type() in ["sqlite", "starrocks", "duckdb"]:
+            if self.db_connector.get_type() in [DBType.SQLITE, DBType.STARROCKS, DBType.DUCKDB]:
                 result = self.db_connector.get_tables()
                 self.last_result = result
                 self.console.print(result)
@@ -839,10 +840,10 @@ Type '.help' for a list of commands or '.exit' to quit.
         # Display connection info
         if self.db_connector:
             db_info = f"Connected to [bold green]{self.args.db_type}[/]"
-            if self.args.db_type == "sqlite":
+            if self.args.db_type == DBType.SQLITE:
                 db_path = self.args.db_path or ":memory:"
                 db_info += f" at [bold]{db_path}[/]"
-            elif self.args.db_type == "snowflake":
+            elif self.args.db_type == DBType.SNOWFLAKE:
                 db_info += f" as [bold]{self.args.sf_user}[/]@[bold]{self.args.sf_account}[/]"
                 if self.args.sf_database:
                     db_info += f" using database [bold]{self.args.sf_database}[/]"

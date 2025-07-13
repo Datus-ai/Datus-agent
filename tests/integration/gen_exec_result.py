@@ -8,6 +8,8 @@ import sys
 
 import yaml
 
+from datus.utils.constants import DBType
+
 
 def load_config(config_path):
     """Load configuration file"""
@@ -194,7 +196,7 @@ def main():
 
             print(f"Processing task {task_id}: database={task_data['db_id']}")
 
-            if namespace_config.get("type") == "sqlite":
+            if namespace_config.get("type") == DBType.SQLITE:
                 path_pattern = namespace_config.get("path_pattern", "")
                 full_path_pattern = os.path.join(args.workdir, path_pattern)
                 db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])
@@ -221,7 +223,7 @@ def main():
                 print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
 
                 try:
-                    if namespace_config.get("type") == "sqlite":
+                    if namespace_config.get("type") == DBType.SQLITE:
                         path_pattern = namespace_config.get("path_pattern", "")
                         full_path_pattern = os.path.join(args.workdir, path_pattern)
                         db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])

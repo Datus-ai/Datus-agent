@@ -9,6 +9,7 @@ from datus.configuration.agent_config import DbConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.deepseek_model import DeepSeekModel
 from datus.tools.mcp_server import MCPServer
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
 
@@ -180,7 +181,7 @@ class TestDeepSeekModel:
             mcp_server = MCPServer.get_snowflake_mcp_server(
                 database_name="ETHEREUM_BLOCKCHAIN",
                 db_config=DbConfig(
-                    type="snowflake",
+                    type=DBType.SNOWFLAKE,
                     port=443,
                     database="ETHEREUM_BLOCKCHAIN",
                     schema="ETHEREUM_BLOCKCHAIN",

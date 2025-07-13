@@ -6,6 +6,7 @@ import pytest
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 log = get_logger(__name__)
@@ -190,7 +191,7 @@ def test_schema_linking_no_exist():
     res = tool.execute(
         SchemaLinkingInput(
             input_text="",
-            database_type="sqlite",
+            database_type=DBType.SQLITE,
             catalog_name="",
             database_name="",
             schema_name="",
@@ -208,7 +209,7 @@ def test_get_schema_from_db(schema_lineage_tool: SchemaLineageTool, sqlite_conne
         connector=sqlite_connector,
         input_param=SchemaLinkingInput(
             input_text="",
-            database_type="sqlite",
+            database_type=DBType.SQLITE,
             catalog_name="",
             database_name="",
             schema_name="",

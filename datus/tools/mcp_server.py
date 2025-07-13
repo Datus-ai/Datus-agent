@@ -7,6 +7,7 @@ from typing import Dict, Union
 from agents.mcp import MCPServerStdio, MCPServerStdioParams
 
 from datus.configuration.agent_config import DbConfig
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -59,21 +60,21 @@ class MCPServer:
         db_type = db_configs.type if isinstance(db_configs, DbConfig) else list(db_configs.values())[0].type
         # Snowflake and starrocks only have one Dbconfig, they can switch database internally
         # but duckdb and sqlite may have multiple databases
-        if db_type == "snowflake":
+        if db_type == DBType.SNOWFLAKE:
             logger.debug("Initializing Snowflake MCP server")
             if isinstance(db_configs, DbConfig):
                 return cls.get_snowflake_mcp_server(database, db_configs)
             else:
                 logger.warning(f"Snowflake MCP server only support one database, check {db_configs}")
                 return None
-        elif db_type == "starrocks":
+        elif db_type == DBType.STARROCKS:
             logger.debug("Initializing StarRocks MCP server")
             if isinstance(db_configs, DbConfig):
                 return cls.get_starrocks_mcp_server(database, db_configs)
             else:
                 logger.warning(f"StarRocks MCP server only support one database, check {db_configs}")
                 return None
-        elif db_type == "sqlite":
+        elif db_type == DBType.SQLITE:
             logger.debug("Initializing SQLite MCP server")
             db_config = None
 
@@ -106,7 +107,7 @@ class MCPServer:
             else:
                 logger.info("Initializing SQLite MCP server with default database")
                 return cls.get_sqlite_mcp_server()
-        elif db_type == "duckdb":
+        elif db_type == DBType.DUCKDB:
             logger.debug("Initializing DuckDB MCP server")
             db_config = None
 

@@ -27,16 +27,16 @@ from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
 from datus.storage.schema_metadata.local_init import init_local_schema
 from datus.storage.schema_metadata.store import rag_by_configuration
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
+from datus.utils.constants import DBType, LLMProvider
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 MODEL_TYPE_MAP = {
-    "deepseek": DeepSeekModel,
-    "qwen": QwenModel,
-    "openai": OpenAIModel,
-    "claude": ClaudeModel,
-    # "llama": LlamaModel,
+    LLMProvider.DEEPSEEK: DeepSeekModel,
+    LLMProvider.QWEN: QwenModel,
+    LLMProvider.OPENAI: OpenAIModel,
+    LLMProvider.CLAUDE: ClaudeModel,
 }
 
 
@@ -520,7 +520,7 @@ class Agent:
                 self.run(
                     SqlTask(
                         id=str(task["question_id"]),
-                        database_type="sqlite",
+                        database_type=DBType.SQLITE,
                         task=task["question"],
                         database_name=database_name,
                         external_knowledge="" if "evidence" not in task else task["evidence"],

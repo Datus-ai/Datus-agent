@@ -16,6 +16,7 @@ from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputI
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
 
@@ -142,7 +143,7 @@ class AgentCommands:
             task_id = str(uuid.uuid1())[:8]
 
             # Get database type from connector
-            database_type = self.cli.db_connector.get_type() if self.cli.db_connector else "sqlite"
+            database_type = self.cli.db_connector.get_type() if self.cli.db_connector else DBType.SQLITE
 
             # Task description - required input from user
             if args.strip():

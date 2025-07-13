@@ -1,3 +1,4 @@
+from datus.utils.constants import DBType
 from datus.utils.json_utils import llm_result2json
 from datus.utils.sql_utils import extract_table_names, parse_metadata
 
@@ -46,7 +47,7 @@ SQL = """create or replace TABLE GT.GT2.VARIANTS (
 
 
 def test_parse_sql():
-    table_meta = parse_metadata(SQL, "snowflake")
+    table_meta = parse_metadata(SQL, DBType.SNOWFLAKE)
     print(table_meta)
     assert table_meta["table"]["name"] == "VARIANTS"
     assert table_meta["columns"][0]["name"] == "reference_name"
@@ -78,7 +79,7 @@ def test_parse_mysql():
   FOREIGN KEY (`atom_id2`) REFERENCES `atom`(`atom_id`),
   FOREIGN KEY (`bond_id`) REFERENCES `bond`(`bond_id`)
 );""",
-        "mysql",
+        DBType.MYSQL,
     )
     assert table_meta["table"]["name"] == "connected"
     assert table_meta["columns"][0]["name"] == "atom_id"
@@ -101,7 +102,7 @@ account bigint NULL,
     PRIMARY KEY (trans_id),
     FOREIGN KEY (account_id) REFERENCES account(account_id)
 );""",
-        "postgres",
+        DBType.POSTGRES,
     )
     assert table_meta["table"]["name"] == "trans"
     assert table_meta["columns"][0]["name"] == "trans_id"
@@ -162,7 +163,7 @@ def test_parse_sqlserver():
 [LastUpdate] date NOT NULL,
   PRIMARY KEY ([CDSCode])
 );""",
-        "sqlserver",
+        DBType.SQLSERVER,
     )
     assert table_meta["table"]["name"] == "schools"
     assert table_meta["columns"][0]["name"] == "CDSCode"
@@ -388,7 +389,7 @@ def test_json_utils():
     )
 
 
-def parse_and_print(select_sql, except_tables, dialect="sqlite"):
+def parse_and_print(select_sql, except_tables, dialect=DBType.SQLITE):
     tables = extract_table_names(select_sql, dialect)
     for table in tables:
         print(f"  - {table}")
@@ -460,7 +461,7 @@ ORDER BY
             "TCGA.TCGA_VERSIONED.CLINICAL_GDC_R39",
             "TCGA.TCGA_VERSIONED.RNASEQ_HG19_GDC_2017_02",
         ],
-        dialect="snowflake",
+        dialect=DBType.SNOWFLAKE,
     )
 
     print("-" * 100)
@@ -471,7 +472,7 @@ ORDER BY
         SELECT * FROM cte;
         """,
         ["loan"],
-        dialect="postgres",
+        dialect=DBType.POSTGRES,
     )
 
 
@@ -482,7 +483,7 @@ id bigint primary key,
 account_id bigint null default '0',
 date date null,
 type text null)""",
-        dialect="duckdb",
+        dialect=DBType.DUCKDB,
     )
     print(table_meta)
 
@@ -509,7 +510,7 @@ def test_parse_sqlite():
           d_weekdayfl        INT,     -- 1 bit
           PRIMARY KEY (d_datekey)
           )""",
-        dialect="sqlite",
+        dialect=DBType.SQLITE,
     )
 
     print(table_meta)
@@ -526,6 +527,6 @@ def test_parse_sqlite_select():
     FROM atom AS T1 INNER JOIN molecule AS T2 ON T1.molecule_id = T2.molecule_id WHERE T2.molecule_id = 'TR006')
     SELECT CAST(COUNT(CASE WHEN element = 'h' THEN atom_id ELSE NULL END) AS REAL) / (CASE WHEN COUNT(atom_id) = 0
     THEN NULL ELSE COUNT(atom_id) END) AS ratio, label FROM SubQuery GROUP BY label"""
-    tables = extract_table_names(sql, dialect="sqlite")
+    tables = extract_table_names(sql, dialect=DBType.SQLITE)
     print(tables)
     assert tables == ["atom", "molecule"]

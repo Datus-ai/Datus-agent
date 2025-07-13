@@ -223,7 +223,7 @@ async def handle_read_query(arguments, db, write_detector, *_):
 
     data, data_id = await db.execute_query(arguments["query"])
 
-    # 处理日期类型数据
+    # Handle date type data
     processed_data = []
     for row in data:
         processed_row = {}

@@ -27,6 +27,7 @@ from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaL
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.llms_tools.llms import LLMTool
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
 
@@ -126,7 +127,7 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    agent_config = load_acceptance_config(namespace="local_duckdb")  # FIXME Modify it according to your configuration
+    agent_config = load_acceptance_config(namespace="duckdb")  # FIXME Modify it according to your configuration
     return agent_config
 
 
@@ -151,7 +152,7 @@ def sql_connector(db_manager: DBManager):
     load_dotenv()
 
     # Use connection info from environment variables
-    db = db_manager.get_conn("snowflake", db_type="snowflake")
+    db = db_manager.get_conn("snowflake", db_type=DBType.SNOWFLAKE)
 
     res = db.test_connection()
     logger.debug(f"connection test {res}")
@@ -258,7 +259,7 @@ class TestNode:
             node_type=NodeType.TYPE_SCHEMA_LINKING,
             input_data=SchemaLinkingInput(
                 input_text="",
-                database_type="sqlite",
+                database_type=DBType.SQLITE,
                 catalog_name="",
                 database_name="",
                 schema_name="",
@@ -291,7 +292,7 @@ class TestNode:
             assert node.type == NodeType.TYPE_GENERATE_SQL
             assert isinstance(node.input, GenerateSQLInput)
             assert node.input.sql_task.task == generate_sql_input[0]["input"]["sql_task"]["task"]
-            assert node.input.database_type == "sqlite"
+            assert node.input.database_type == DBType.SQLITE
             assert len(node.input.table_schemas) == 3
             assert node.input.table_schemas[0].table_name == "schools"
 

@@ -4,22 +4,24 @@ from typing import Any, Dict, List
 import sqlglot
 from sqlglot.expressions import CTE, Table
 
+from datus.utils.constants import DBType
+
 from .loggings import get_logger
 
 logger = get_logger(__name__)
 
 
-def parse_dialect(dialect: str = "snowflake") -> str:
+def parse_dialect(dialect: str = DBType.SNOWFLAKE) -> str:
     """Parse columns from SQL."""
     dialect = dialect.lower()
-    if dialect == "postgresql":
-        dialect = "postgres"
-    if dialect == "sqlserver" or dialect == "mssql":
-        return "mssql"
+    if dialect == DBType.POSTGRESQL:
+        dialect = DBType.POSTGRES
+    if dialect == DBType.SQLSERVER or dialect == DBType.MSSQL:
+        return DBType.MSSQL
     return dialect
 
 
-def parse_metadata(sql: str, dialect: str = "snowflake") -> Dict[str, Any]:
+def parse_metadata(sql: str, dialect: str = DBType.SNOWFLAKE) -> Dict[str, Any]:
     """
     Parse SQL CREATE TABLE statement and return structured table and column information.
 
@@ -44,7 +46,7 @@ def parse_metadata(sql: str, dialect: str = "snowflake") -> Dict[str, Any]:
         }
     """
     dialect = parse_dialect(dialect)
-    if dialect == "mssql":
+    if dialect == DBType.MSSQL:
         return parse_sqlserver_metadata(sql)
 
     try:
@@ -129,7 +131,7 @@ def parse_sqlserver_metadata(sql: str) -> Dict[str, Any]:
         return {"table": {"name": ""}, "columns": []}
 
 
-def extract_table_names(sql, dialect="snowflake") -> List[str]:
+def extract_table_names(sql, dialect=DBType.SNOWFLAKE) -> List[str]:
     """
     Extract fully qualified table names (database.schema.table) from SQL.
     Returns a list of unique table names with original case preserved.
@@ -155,9 +157,9 @@ def extract_table_names(sql, dialect="snowflake") -> List[str]:
         if table_name.lower() in cte_names:
             continue
 
-        if dialect == "sqlite":
+        if dialect == DBType.SQLITE:
             table_names.append(table_name)
-        elif dialect in ["mysql", "oracle", "postgres", "mssql"]:
+        elif dialect in [DBType.MYSQL, DBType.ORACLE, DBType.POSTGRES, DBType.MSSQL]:
             table_names.append(table_name if not db else f"{db}.{table_name}")
         else:
             table_names.append(f"{db}.{schema}.{table_name}")
@@ -170,20 +172,20 @@ def metadata_identifier(
     database_name: str = "",
     schema_name: str = "",
     table_name: str = "",
-    dialect: str = "snowflake",
+    dialect: str = DBType.SNOWFLAKE,
 ) -> str:
     """
     Generate a unique identifier for a table based on its metadata.
     """
-    if dialect == "sqlite":
+    if dialect == DBType.SQLITE:
         return f"{database_name}.{table_name}"
-    elif dialect == "duckdb":
+    elif dialect == DBType.DUCKDB:
         return f"{database_name}.{schema_name}.{table_name}"
-    elif dialect == "mysql":
+    elif dialect == DBType.MYSQL:
         return f"{catalog_name}.{database_name}.{table_name}" if catalog_name else f"{database_name}.{table_name}"
     elif dialect == "oracle" or dialect.startswith("postgre"):
         return f"{database_name}.{schema_name}.{table_name}"
-    elif dialect == "snowflake":
+    elif dialect == DBType.SNOWFLAKE:
         return (
             f"{catalog_name}.{database_name}.{schema_name}.{table_name}"
             if catalog_name
@@ -194,7 +196,7 @@ def metadata_identifier(
     return table_name
 
 
-def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> Dict[str, str]:
+def parse_table_name_parts(full_table_name: str, dialect: str = DBType.SNOWFLAKE) -> Dict[str, str]:
     """
     Parse a full table name into its component parts (catalog, database, schema, table).
 
@@ -215,10 +217,10 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
     # Database-specific field mapping configurations
     # Each list represents the field order from left to right in the table name
     DB_FIELD_MAPPINGS = {
-        "duckdb": ["database_name", "schema_name", "table_name"],  # max 3 parts
-        "sqlite": ["database_name", "table_name"],  # max 2 parts
-        "starrocks": ["catalog_name", "database_name", "table_name"],  # max 3 parts, no schema
-        "snowflake": ["catalog_name", "database_name", "schema_name", "table_name"],  # max 4 parts
+        DBType.DUCKDB.value: ["database_name", "schema_name", "table_name"],  # max 3 parts
+        DBType.SQLITE.value: ["database_name", "table_name"],  # max 2 parts
+        DBType.STARROCKS.value: ["catalog_name", "database_name", "table_name"],  # max 3 parts, no schema
+        DBType.SNOWFLAKE.value: ["catalog_name", "database_name", "schema_name", "table_name"],  # max 4 parts
     }
 
     dialect = parse_dialect(dialect)
@@ -257,7 +259,7 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
     return result
 
 
-def parse_table_names_parts(full_table_names: List[str], dialect: str = "snowflake") -> List[Dict[str, str]]:
+def parse_table_names_parts(full_table_names: List[str], dialect: str = DBType.SNOWFLAKE) -> List[Dict[str, str]]:
     """
     Parse a list of full table names into their component parts.
 

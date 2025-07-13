@@ -11,6 +11,7 @@ from datus.prompts.reasoning_sql_with_mcp import get_reasoning_prompt
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.tools.mcp_server import MCPServer
+from datus.utils.constants import DBType
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 
@@ -37,7 +38,7 @@ def reasoning_sql_with_mcp(
     max_turns = tool_config.get("max_turns", 10)
 
     prompt = get_reasoning_prompt(
-        database_type=input_data.get("database_type", "sqlite"),
+        database_type=input_data.get("database_type", DBType.SQLITE),
         table_schemas=input_data.table_schemas,
         data_details=input_data.data_details,
         metrics=input_data.metrics,

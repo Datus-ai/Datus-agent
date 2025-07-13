@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
 from datus.tools.db_tools.base import BaseSqlConnector
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -33,7 +34,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
             self.dialect = dialect
         else:
             if prefix == "mysql+pymysql":
-                self.dialect = "mysql"
+                self.dialect = DBType.MYSQL
             else:
                 self.dialect = prefix
         super().__init__(self.dialect, batch_size)

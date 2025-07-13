@@ -43,9 +43,9 @@ def load_gold_tables() -> dict[str, Set[str]]:
 
 def clean_query_text(text: str) -> str:
     """clean the query text"""
-    # 移除或替换可能导致语法错误的字符
+    # Remove or replace characters that may cause syntax errors
     cleaned = re.sub(r"[^a-zA-Z0-9\s.,?!-]", " ", text)
-    # 替换多个空格为单个空格
+    # Replace multiple spaces with single space
     cleaned = " ".join(cleaned.split())
     return cleaned
 
@@ -217,7 +217,8 @@ def test_unique():
     assert schema_size == len(parse_unique(all_schemas))
     assert value_size == len(parse_unique(all_values))
 
-    vectors = [(v) for v in rag.schema_store.table.to_pandas()["vector"].values]  # 假设嵌入列名为 "embedding"
+    # Assume the embedding column name is "embedding"
+    vectors = [(v) for v in rag.schema_store.table.to_pandas()["vector"].values]
     import numpy as np
 
     unique_vectors = np.unique(vectors, axis=0)

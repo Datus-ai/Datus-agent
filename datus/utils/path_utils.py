@@ -1,6 +1,8 @@
 import glob
 from typing import Dict, List
 
+from datus.utils.constants import DBType
+
 
 def has_glob_pattern(path: str) -> bool:
     """Check if a path contains glob patterns.
@@ -15,12 +17,12 @@ def has_glob_pattern(path: str) -> bool:
     return any(char in path for char in glob_chars)
 
 
-def get_files_from_glob_pattern(path_pattern: str, dialect: str = "sqlite") -> List[Dict[str, str]]:
+def get_files_from_glob_pattern(path_pattern: str, dialect: str = DBType.SQLITE) -> List[Dict[str, str]]:
     """Get files from glob pattern
 
     Args:
         path_pattern (str): glob pattern
-        dialect (str, optional): dialect of the database. Defaults to "sqlite".
+        dialect (str, optional): dialect of the database. Defaults to DBType.SQLITE.
 
     Returns:
         List[Dict[str, str]]: list of files with name and uri

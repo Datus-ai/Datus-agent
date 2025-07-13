@@ -12,7 +12,7 @@ class TestMetricFlowConfig:
         """Test default configuration values."""
         config = MetricFlowConfig()
 
-        assert config.mf_path == "/Users/zhaoheng/miniconda3/envs/metricflow/bin/mf"
+        assert config.mf_path == "/path/to/mf"
         assert config.project_dir is None
         assert config.verbose is False
 
@@ -38,6 +38,6 @@ class TestMetricFlowConfig:
 
         config = MetricFlowConfig.from_env()
 
-        assert config.mf_path == "/Users/zhaoheng/miniconda3/envs/metricflow/bin/mf"
+        assert config.mf_path == "/path/to/mf"
         assert config.project_dir is None
         assert config.verbose is False

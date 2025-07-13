@@ -9,6 +9,7 @@ from pathlib import Path
 
 from datus import __version__
 from datus.cli.repl import DatusCLI
+from datus.utils.constants import DBType
 from datus.utils.loggings import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -27,8 +28,8 @@ class ArgumentParser:
         self.parser.add_argument(
             "--db_type",
             dest="db_type",
-            choices=["sqlite", "snowflake", "duckdb"],
-            default="sqlite",
+            choices=[DBType.SQLITE, DBType.SNOWFLAKE, DBType.DUCKDB],
+            default=DBType.SQLITE,
             help="Database type to connect to",
         )
         self.parser.add_argument(

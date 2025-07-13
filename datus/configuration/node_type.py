@@ -103,7 +103,7 @@ class NodeType:
     # By default, Pydantic v2 validates required fields, but since we are using it as a config,
     # we don't need that strict validation. Therefore, we introduce this to relax the checks.
     def make_optional_model(base_model: type[BaseModel], name_suffix="_Relaxed"):
-        # 从类注解中获取字段类型
+        # Get field types from class annotations
         type_hints = get_type_hints(base_model)
 
         fields = {name: (Optional[typ], None) for name, typ in type_hints.items()}

@@ -10,6 +10,7 @@ from datus.schemas.node_models import ExecuteSQLInput, OutputInput
 from datus.storage.schema_metadata.store import rag_by_configuration
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.output_tools.benchmark_output import BenchmarkOutputTool
+from datus.utils.constants import DBType
 from datus.utils.sql_utils import extract_table_names
 
 
@@ -61,7 +62,7 @@ class TestBirdDevOutput:
             sql_connector = SQLiteConnector(db_path=f"{benchmark_path}/dev_databases/{db_name}/{db_name}.sqlite")
             for task in tasks:
                 task_gen_sql = task["gen_sql"]
-                table_names = extract_table_names(task_gen_sql, dialect="sqlite")
+                table_names = extract_table_names(task_gen_sql, dialect=DBType.SQLITE)
                 table_schemas, _ = rag_storage.search_tables(db_name, table_names)
                 sql_result = sql_connector.do_execute(ExecuteSQLInput(sql_query=task_gen_sql))
                 output_result = tool.execute(

@@ -1,6 +1,7 @@
 """Direct test for MetricFlow Server functionality."""
 
 import asyncio
+import os
 from pathlib import Path
 
 from src.mcp_metricflow_server.config import MetricFlowConfig
@@ -13,9 +14,8 @@ class MetricFlowDirectTester:
     def __init__(self):
         """Initialize the tester."""
         # Use the specific path and current directory
-        self.config = MetricFlowConfig(
-            mf_path="/Users/zhaoheng/miniconda3/envs/metricflow/bin/mf", project_dir=Path.cwd(), verbose=False
-        )
+        mf_path = os.getenv("MF_PATH", "/path/to/mf")
+        self.config = MetricFlowConfig(mf_path=mf_path, project_dir=Path.cwd(), verbose=False)
         self.server = MetricFlowServer(self.config)
         self.test_results = []
 

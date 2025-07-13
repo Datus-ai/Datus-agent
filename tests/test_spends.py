@@ -6,6 +6,7 @@ from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.storage.schema_metadata.store import rag_by_configuration
 from datus.tools.lineage_graph_tools import SchemaLineageTool
+from datus.utils.constants import DBType
 
 
 @pytest.mark.acceptance
@@ -29,7 +30,7 @@ def test_storage_spends():
             input_param=SchemaLinkingInput(
                 input_text="What is the publisher name of the superhero ID 38?",
                 database_name="superhero",
-                database_type="sqlite",
+                database_type=DBType.SQLITE,
                 matching_rate="medium",
             )
         )

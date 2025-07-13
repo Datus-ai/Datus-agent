@@ -9,6 +9,7 @@ from datus.tools.db_tools.snowflake_connector import SnowflakeConnector
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.db_tools.starrocks_connector import StarRocksConnector
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -19,12 +20,12 @@ def gen_uri(db_config: DbConfig) -> str:
     if db_config.uri:
         return db_config.uri
 
-    elif db_config.type == "snowflake":
+    elif db_config.type == DBType.SNOWFLAKE:
         return (
             f"snowflake://{quote_plus(db_config.username)}:{quote_plus(str(db_config.password))}"
             f"@{db_config.account}/?warehouse={db_config.warehouse}"
         )
-    elif db_config.type == "starrocks":
+    elif db_config.type == DBType.STARROCKS:
         catalog = getattr(db_config, "catalog", "default_catalog") or "default_catalog"
         return (
             f"starrocks://{quote_plus(db_config.username)}:{quote_plus(str(db_config.password))}"
@@ -107,11 +108,11 @@ class DBManager:
         return result
 
     def _init_conn(self, name: str, db_config: Dict[str, str]) -> BaseSqlConnector:
-        if db_config["type"] == "sqlite":
+        if db_config["type"] == DBType.SQLITE:
             conn = SQLiteConnector(db_config["uri"])
-        elif db_config["type"] == "duckdb":
+        elif db_config["type"] == DBType.DUCKDB:
             conn = DuckdbConnector(db_config["uri"])
-        elif db_config["type"] == "snowflake":
+        elif db_config["type"] == DBType.SNOWFLAKE:
             conn = SnowflakeConnector(
                 account=self._db_configs[name]["account"],
                 user=self._db_configs[name]["username"],
@@ -119,7 +120,7 @@ class DBManager:
                 warehouse=self._db_configs[name]["warehouse"],
                 database=self._db_configs[name]["database"],
             )
-        elif db_config["type"] == "mysql":
+        elif db_config["type"] == DBType.MYSQL:
             conn = MySQLConnector(
                 host=self._db_configs[name]["host"],
                 port=self._db_configs[name]["port"],
@@ -127,7 +128,7 @@ class DBManager:
                 password=self._db_configs[name]["password"],
                 database=self._db_configs[name].get("database", ""),
             )
-        elif db_config["type"] == "starrocks":
+        elif db_config["type"] == DBType.STARROCKS:
             conn = StarRocksConnector(
                 host=self._db_configs[name]["host"],
                 port=self._db_configs[name]["port"],
@@ -171,7 +172,7 @@ class DBManager:
 
 
 def db_config_name(namespace: str, db_type: str, name: str = "") -> str:
-    if db_type == "sqlite" or db_type == "duckdb":
+    if db_type == DBType.SQLITE or db_type == DBType.DUCKDB:
         return f"{namespace}::{name}"
     # fix local snowflake
     return f"{namespace}::{namespace}"

@@ -5,6 +5,7 @@ from langsmith import traceable
 from datus.models.base import LLMBaseModel
 from datus.prompts.gen_sql import get_sql_prompt
 from datus.schemas.node_models import GenerateSQLInput, GenerateSQLResult
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -19,7 +20,7 @@ def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateS
     try:
         # Format the prompt with schema list
         prompt = get_sql_prompt(
-            database_type=input_data.get("database_type", "sqlite"),
+            database_type=input_data.get("database_type", DBType.SQLITE),
             table_schemas=input_data.table_schemas,
             data_details=input_data.data_details,
             metrics=input_data.metrics,

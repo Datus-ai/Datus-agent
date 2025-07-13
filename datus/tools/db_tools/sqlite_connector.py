@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional, override
 
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -14,7 +15,7 @@ class SQLiteConnector(SQLAlchemyConnector):
     def __init__(self, db_path: str, **kwargs):
         super().__init__(
             connection_string=(db_path if db_path.startswith("sqlite:///") else f"sqlite:///{db_path}"),
-            dialect="sqlite",
+            dialect=DBType.SQLITE,
         )
         self.db_path = db_path
 
@@ -102,7 +103,7 @@ class SQLiteConnector(SQLAlchemyConnector):
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert connector to serializable dictionary with only essential info."""
-        return {"db_type": "sqlite", "db_path": self.db_path}  # 假设类中有db_path属性存储数据库路径
+        return {"db_type": DBType.SQLITE, "db_path": self.db_path}
 
     def get_type(self) -> str:
-        return "sqlite"
+        return DBType.SQLITE

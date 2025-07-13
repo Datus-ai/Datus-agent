@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Dict
 from agents.mcp import MCPServerStdio
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
+from datus.utils.constants import LLMProvider
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -16,10 +17,10 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     """
 
     MODEL_TYPE_MAP: ClassVar[Dict[str, str]] = {
-        "deepseek": "DeepSeekModel",
-        "qwen": "QwenModel",
-        "openai": "OpenAIModel",
-        "claude": "ClaudeModel",
+        LLMProvider.DEEPSEEK: "DeepSeekModel",
+        LLMProvider.QWEN: "QwenModel",
+        LLMProvider.OPENAI: "OpenAIModel",
+        LLMProvider.CLAUDE: "ClaudeModel",
     }
 
     def __init__(self, model_config: ModelConfig):
