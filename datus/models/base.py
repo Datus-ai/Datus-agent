@@ -20,6 +20,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         "qwen": "QwenModel",
         "openai": "OpenAIModel",
         "claude": "ClaudeModel",
+        "gemini": "GeminiModel",
     }
 
     def __init__(self, model_config: ModelConfig):
