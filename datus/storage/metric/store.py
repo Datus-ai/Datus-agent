@@ -222,7 +222,7 @@ class SemanticMetricsRAG:
                             }
                         )
             except Exception as e:
-                # the main purpose is to catch the key:semantic_model_name not in search_results
+                # the main purpose is to catch the key:semantic_model_name not in the search_results
                 logger.warning(f"Failed to get the intersection set, exception: {str(e)}")
 
         logger.info(f"Success to get the metric_result size: {len(metric_result)}, query_text: {query_text}")
