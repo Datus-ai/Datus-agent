@@ -105,12 +105,6 @@ def generate_semantic_model_input() -> List[Dict[str, Any]]:
     with open(yaml_path, "r") as f:
         return yaml.safe_load(f)
 
-@pytest.fixture
-def search_metrics_input() -> List[Dict[str, Any]]:
-    """Load test data from YAML file"""
-    yaml_path = Path(__file__).parent / "data" / "SearchMetricsInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
 
 @pytest.fixture
 def search_metrics_input() -> List[Dict[str, Any]]:
@@ -142,11 +136,6 @@ def search_metrics_agent_config() -> AgentConfig:
     agent_config = load_agent_config(namespace="local_duckdb")  # FIXME Modify it according to your configuration
     return agent_config
 
-@pytest.fixture
-def search_metrics_agent_config() -> AgentConfig:
-    # conf = Path(__file__).parent.parent / "conf" / "agent.yml"
-    agent_config = load_agent_config(namespace = 'local_duckdb')  # FIXME Modify it according to your configuration
-    return agent_config
 
 @pytest.fixture
 def db_manager(agent_config: AgentConfig) -> DBManager:
