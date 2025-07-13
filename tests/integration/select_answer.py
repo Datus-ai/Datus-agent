@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# flake8: noqa
 """
 Agent Answer Selection Tool
 
@@ -21,11 +21,11 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.utils.loggings import get_logger
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 logger = get_logger(__name__)
 
