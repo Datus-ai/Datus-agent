@@ -1,41 +1,28 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.1.4"
-description = "Datus Agent"
+version = "0.1.5a1" # this is a alpha version, use for testing only
+description = "AI-powered SQL Agent for data engineering (Compiled Version)"
+readme = "README.md"
 requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
 authors = [
-    {name = "Datus Team"}
+    {name = "Datus Team", email = "harrison.zhao@datus.ai"}
 ]
-
-[[tool.uv.index]]
-url = "http://mirrors.aliyun.com/pypi/simple"
-default = true
-[tool.uv.pip]
-index-url = "https://test.pypi.org/simple"
-
-# uv tool run black
-[tool.black]
-line-length = 120
-target-version = ["py312"]
-
-[tool.flake8]
-max-line-length = 120
-ignore = "E203, E266, E501, W503"
-max-complexity = 10
-select = "B,C,E,F,W,T4,B9"
-exclude = "mcp/"
-
-[tool.pytest]
-pythonpath = "."
-testpaths = ["tests"]
-
-[tool.uv]
-default-groups = ["core"]
-
-[dependency-groups]
-# default dependencies
-core = [
+maintainers = [
+    {name = "Datus Team", email = "harrison.zhao@datus.ai"}
+]
+keywords = ["sql", "ai", "agent", "database", "nlp", "natural-language"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
     "python-dotenv==1.0.0",
     "pandas==2.1.4",
     "sqlalchemy==2.0.23",
@@ -52,7 +39,7 @@ core = [
     "tiktoken>=0.9.0",
     "openai-agents==0.0.11",
     "Markdown==3.8",
-    "sqllineage>=0.20.0",
+    # "sqllineage>=0.20.0",
     "lancedb==0.18.0",
     "pylance==0.22.0",
     "datasets>=3.5.1",
@@ -72,12 +59,66 @@ core = [
     # MCP (Model Context Protocol) support
     "mcp>=1.9.2",
     "anyio>=4.9.0",
-    # sentence-transformers and lancedb depends on the torch. If your mac is not an arm chip, then version 2.2.2 should be used under python 3.12.
-    # otherwise, you can use the latest version of torch(2.7.0).
-    "torch==2.2.2",
+    # sentence-transformers and lancedb depends on the torch. 
+    # For Apple Silicon (arm64) Macs, use latest torch version
+    # For Intel Macs or other platforms, use torch 2.2.2 for Python 3.12 compatibility
+    "torch==2.2.2; sys_platform != 'darwin' or platform_machine != 'arm64'",
+    "torch>=2.3.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "pymysql>=1.1.1",
     "json-repair>=0.47.6",
 ]
+
+
+[project.urls]
+Homepage = "https://datus.ai/"
+Documentation = "https://github.com/datus-ai/datus-agent#readme"
+Repository = "https://github.com/datus-ai/datus-agent"
+"Bug Tracker" = "https://github.com/datus-ai/datus-agent/issues"
+
+[project.scripts]
+datus-agent = "datus.main:main"
+datus-cli = "datus.cli.main:main"
+datus = "datus.cli.main:main"
+datus-init = "datus.cli.init:main"
+
+[build-system]
+requires = ["setuptools>=80.9.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["datus*", "mcp*"]
+exclude = ["tests*", "benchmark*", "docs*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt", "*.pyc", "*.j2"]
+"datus" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt"]
+"datus.prompts" = ["*.txt", "*.md", "*.j2"]
+"datus.prompts.prompt_templates" = ["*.j2"]
+
+[[tool.uv.index]]
+url = "http://mirrors.aliyun.com/pypi/simple"
+default = true
+[tool.uv.pip]
+index-url = "https://pypi.org/simple"
+
+# uv tool run black
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.flake8]
+max-line-length = 120
+ignore = "E203, E266, E501, W503"
+max-complexity = 10
+select = "B,C,E,F,W,T4,B9"
+exclude = "mcp/"
+
+[tool.pytest]
+pythonpath = "."
+testpaths = ["tests"]
+
+[dependency-groups]
 # uv sync --dev
 dev = [
     "pytest==8.0.2",
@@ -87,4 +128,8 @@ dev = [
     "tqdm>=4.27.0",
     "pytest-xdist>=3.7.0",
     "pre-commit>=4.2.0",
+    "setuptools>=80.9.0",
+    "pip>=25.1.1",
+    "build>=1.2.0",
+    "twine>=6.1.0",
 ]
