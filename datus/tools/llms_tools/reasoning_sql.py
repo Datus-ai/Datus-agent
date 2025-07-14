@@ -1,7 +1,5 @@
 import asyncio
 import json
-import uuid
-from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from langsmith import traceable
@@ -10,9 +8,10 @@ from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.prompts.reasoning_sql_with_mcp import get_reasoning_prompt
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionType
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
+from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
 from datus.utils.constants import DBType
 from datus.utils.json_utils import llm_result2json
@@ -34,20 +33,11 @@ async def reasoning_sql_with_mcp_stream(
         logger.error(f"Input type error: expected ReasoningInput, got {type(input_data)}")
         raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
 
-    if action_history_manager is None:
-        action_history_manager = ActionHistoryManager()
+    def get_db_mcp_server():
+        return MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
 
-    # Initialize reasoning action
-    str(uuid.uuid4())
-    datetime.now().isoformat()
-
-    try:
-        # Setup MCP server and prompt (no action history for setup)
-        mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
-        instruction = prompt_manager.get_raw_template("reasoning_system", input_data.prompt_version)
-        max_turns = tool_config.get("max_turns", 10)
-
-        prompt = get_reasoning_prompt(
+    def generate_reasoning_prompt(input_data, db_config):
+        return get_reasoning_prompt(
             database_type=input_data.get("database_type", "sqlite"),
             table_schemas=input_data.table_schemas,
             data_details=input_data.data_details,
@@ -63,53 +53,17 @@ async def reasoning_sql_with_mcp_stream(
             knowledge_content=input_data.external_knowledge,
         )
 
-        # Use the new streaming method
-        async for action in model.generate_with_mcp_stream(
-            prompt=prompt,
-            mcp_servers={input_data.sql_task.database_name: mcp_server},
-            instruction=instruction,
-            output_type=str,
-            max_turns=max_turns,
-            action_history_manager=action_history_manager,
-        ):
-            yield action
-
-    except Exception as e:
-        logger.error(f"Reasoning SQL with MCP failed: {e}")
-
-        # Determine error type for proper handling
-        error_msg = str(e)
-        is_permission_error = any(
-            indicator in error_msg.lower() for indicator in ["403", "forbidden", "not allowed", "permission"]
-        )
-
-        # Error action
-        error_action = ActionHistory(
-            action_id=str(
-                uuid.uuid4()),
-            role=ActionRole.WORKFLOW,
-            thought="Error occurred during SQL reasoning",
-            action_type=ActionType.FUNCTION_CALL,
-            input={
-                "error": str(e),
-                "error_type": "permission" if is_permission_error else "general"},
-            output={
-                "success": False,
-                "error": str(e),
-                "is_permission_error": is_permission_error,
-            },
-            reflection=f"Reasoning failed: {
-                str(e)}. {
-                'Will be re-raised for fallback handling.' if is_permission_error else 'General error occurred.'}",
-            timestamp=datetime.now().isoformat(),
-        )
-        action_history_manager.add_action(error_action)
-        yield error_action
-
-        # Re-raise permission errors for fallback handling
-        if is_permission_error:
-            logger.info("Re-raising permission error for fallback handling")
-            raise
+    async for action in base_mcp_stream(
+        model=model,
+        input_data=input_data,
+        db_config=db_config,
+        tool_config=tool_config,
+        mcp_server_getter=get_db_mcp_server,
+        prompt_generator=generate_reasoning_prompt,
+        instruction_template="reasoning_system",
+        action_history_manager=action_history_manager,
+    ):
+        yield action
 
 
 @traceable

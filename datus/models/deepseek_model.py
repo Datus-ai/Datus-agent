@@ -306,9 +306,6 @@ class DeepSeekModel(LLMBaseModel):
                 return final_result
         except Exception as e:
             logger.error(f"Error in run_agent: {str(e)}")
-            reasoning_steps.append("=== Error Occurred ===")
-            reasoning_steps.append(f"Error: {str(e)}")
-
             # Save trace even on error
             full_reasoning_content = "\n".join(reasoning_steps)
             self._save_llm_trace(
@@ -446,7 +443,7 @@ class DeepSeekModel(LLMBaseModel):
                                         )
                                         action_history_manager.add_action(tool_call_action)
                                         logger.debug(
-                                            f"Created and yielding tool_call_action: {tool_call_action.thought}"
+                                            "Created and yielding tool_call_action: {}".format(tool_call_action.thought)
                                         )
                                         yield tool_call_action
 
@@ -474,17 +471,22 @@ class DeepSeekModel(LLMBaseModel):
                                                 if matching_action.input
                                                 else ""
                                             )
-                                            matching_action.reflection = f"{
-                                                '✅ Function executed successfully' if success else '❌ Function failed'}: {function_name}"
+                                            matching_action.reflection = (
+                                                ("✅ Function executed successfully" if success else "❌ Function failed")
+                                                + ": "
+                                                + str(function_name)
+                                            )
 
                                             logger.debug(
-                                                f"Updated matching action with output, yielding: {
-                                                    matching_action.reflection}")
+                                                "Updated matching action with output, yielding: {}".format(
+                                                    matching_action.reflection
+                                                )
+                                            )
                                             # Yield the updated action
                                             yield matching_action
                                         else:
                                             logger.warning(
-                                                f"Received tool_call_output but no matching action found for call_id: {call_id}")
+                                                "Received tool_call_output but no matching action found for call_id: {}".format(call_id))
 
                                     elif event.item.type == "message_output_item":
                                         logger.debug("Processing message_output_item - extracting final result")
@@ -501,7 +503,7 @@ class DeepSeekModel(LLMBaseModel):
                                                     )
                                                 else:
                                                     text_content = str(content)
-                                                logger.debug(f"Final message content: {text_content}")
+                                                logger.debug("Final message content: {}".format(text_content))
 
                                                 # Try to extract SQL from JSON content
                                                 try:
@@ -562,7 +564,7 @@ class DeepSeekModel(LLMBaseModel):
         except Exception as e:
             logger.error(f"Error in streaming MCP execution: {str(e)}")
 
-            # Create error action
+            # Create error action for streaming output
             error_action = ActionHistory(
                 action_id=str(uuid.uuid4()),
                 role=ActionRole.WORKFLOW,
@@ -575,6 +577,8 @@ class DeepSeekModel(LLMBaseModel):
             )
             action_history_manager.add_action(error_action)
             yield error_action
+
+            # Re-raise the exception for proper error handling
             raise
 
     def _extract_tool_call_input(self, event) -> Dict[str, Any]:
