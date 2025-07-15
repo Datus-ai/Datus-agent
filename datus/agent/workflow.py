@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.node_models import Context, SQLContext, SqlTask
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -74,10 +75,18 @@ class Workflow:
         logger.info(f"Added node '{node.description}' to workflow")
         return node.id
 
-    def get_last_sqlcontext(self) -> Optional[SQLContext]:
+    def get_last_sqlcontext(self) -> SQLContext:
+        """Get the last SQL context from the workflow.
+
+        Returns:
+            SQLContext: The last SQL context
+
+        Raises:
+            DatusException: If no SQL context is available
+        """
         if len(self.context.sql_contexts) > 0:
             return self.context.sql_contexts[-1]
-        return None
+        raise DatusException(ErrorCode.NODE_NO_SQL_CONTEXT)
 
     def remove_node(self, node_id: str) -> bool:
         """
