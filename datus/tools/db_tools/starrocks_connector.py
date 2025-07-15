@@ -4,6 +4,7 @@ import weakref
 from typing import Any, Dict, List, Optional, override
 
 from datus.tools.db_tools.mysql_connector import MySQLConnectorBase
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -227,7 +228,7 @@ class StarRocksConnector(MySQLConnectorBase):
     def to_dict(self) -> Dict[str, Any]:
         """Convert connector to serializable dictionary with only essential info."""
         return {
-            "db_type": "starrocks",
+            "db_type": DBType.STARROCKS,
             "host": self.host,
             "port": self.port,
             "user": self.user,
@@ -236,7 +237,7 @@ class StarRocksConnector(MySQLConnectorBase):
 
     def get_type(self) -> str:
         """Return the database type."""
-        return "starrocks"
+        return DBType.STARROCKS
 
     def get_databases(self) -> List[str]:
         """Get list of available databases."""

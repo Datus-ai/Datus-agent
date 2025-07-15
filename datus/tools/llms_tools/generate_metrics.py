@@ -94,7 +94,7 @@ def parse_metrics(content_dict: Dict[str, Any]) -> List[Metrics]:
         metrics.append(
             Metrics(
                 metric_name=metric.get("name", ""),
-                metric_value=metric.get("value", ""),
+                metric_value=json.dumps(metric),
                 metric_type=metric.get("type", ""),
                 metric_sql_query=query,
             )

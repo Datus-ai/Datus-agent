@@ -4,6 +4,7 @@ import snowflake.connector
 
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.db_tools.base import BaseSqlConnector
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -23,7 +24,7 @@ class SnowflakeConnector(BaseSqlConnector):
         database: str = "",
         schema: str = "",
     ):
-        super().__init__(dialect="snowflake")
+        super().__init__(dialect=DBType.SNOWFLAKE)
         self.connection = snowflake.connector.Connect(
             account=account,
             user=user,
@@ -51,7 +52,7 @@ class SnowflakeConnector(BaseSqlConnector):
         """Execute SQL query on Snowflake."""
         try:
             with self.connection.cursor() as cursor:
-                # 设置游标返回字典格式的结果
+                # Set cursor to return dictionary format results
                 cursor.execute(
                     input_params["sql_query"],
                     input_params["params"] if "params" in input_params else None,
@@ -222,7 +223,7 @@ class SnowflakeConnector(BaseSqlConnector):
             return schema_list
 
     def get_type(self) -> str:
-        return "snowflake"
+        return DBType.SNOWFLAKE
 
     def execute_arrow(self, query: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results in Arrow format.

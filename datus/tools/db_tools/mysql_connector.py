@@ -3,6 +3,7 @@ from urllib.parse import quote_plus
 
 from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -45,7 +46,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         self.connection_string = (
             f"mysql+pymysql://{user}:{encoded_password}@{host}:{self.port}/{database}?charset=utf8mb4&autocommit=true"
         )
-        super().__init__(self.connection_string, dialect="mysql")
+        super().__init__(self.connection_string, dialect=DBType.MYSQL)
 
     def _get_metadatas(
         self, meta_table_name: META_TABLE_NAMES = "TABLES", inner_table_type: Optional[str] = None, **kwargs

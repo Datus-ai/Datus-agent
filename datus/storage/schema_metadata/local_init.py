@@ -5,6 +5,7 @@ from datus.schemas.base import TABLE_TYPE
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.db_tools.db_manager import DBManager
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 from .init_utils import exists_table_value
@@ -28,7 +29,7 @@ def init_local_schema(
     if isinstance(db_configs, DbConfig):
         # Single database configuration (like StarRocks, MySQL, PostgreSQL, etc.)
         logger.info(f"Processing single database configuration: {db_configs.type}")
-        if db_configs.type == "sqlite":
+        if db_configs.type == DBType.SQLITE:
             init_sqlite_schema(
                 table_lineage_store,
                 agent_config,
@@ -37,7 +38,7 @@ def init_local_schema(
                 table_type=table_type,
                 build_mode=build_mode,
             )
-        elif db_configs.type == "duckdb":
+        elif db_configs.type == DBType.DUCKDB:
             init_duckdb_schema(
                 table_lineage_store,
                 agent_config,
@@ -47,7 +48,7 @@ def init_local_schema(
                 table_type=table_type,
                 build_mode=build_mode,
             )
-        elif db_configs.type in ["mysql", "postgres", "postgresql", "sqlserver"]:
+        elif db_configs.type in [DBType.MYSQL, DBType.POSTGRES, DBType.POSTGRESQL, DBType.SQLSERVER]:
             init_other_two_level_schema(
                 table_lineage_store,
                 agent_config,
@@ -82,7 +83,7 @@ def init_local_schema(
                 logger.info(f"Skip database: {database_name} because it is not the same as {init_database_name}")
                 continue
             # only sqlite and duckdb support multiple databases
-            if db_config.type == "sqlite":
+            if db_config.type == DBType.SQLITE:
                 init_sqlite_schema(
                     table_lineage_store,
                     agent_config,

@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from datus.schemas.node_models import ExecuteSQLResult, GenerateSQLResult, SqlTask, TableSchema, TableValue
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -15,31 +16,31 @@ class TestSchemaLinkingInput:
             SchemaLinkingInput(
                 input_text="test query",
                 matching_rate="123",
-                database_type="sqlite",
+                database_type=DBType.SQLITE,
                 database_name="test_db",
             )
 
         input = SchemaLinkingInput(
             input_text="test query",
             matching_rate="fast",
-            database_type="sqlite",
+            database_type=DBType.SQLITE,
             database_name="test_db",
         )
         assert input.input_text == "test query"
         assert input.matching_rate == "fast"
-        assert input.database_type == "sqlite"
+        assert input.database_type == DBType.SQLITE
         assert input.database_name == "test_db"
 
     def test_from_sql_task(self):
-        sql_task = SqlTask(task="test task", database_type="sqlite", database_name="test_db")
+        sql_task = SqlTask(task="test task", database_type=DBType.SQLITE, database_name="test_db")
         input = SchemaLinkingInput.from_sql_task(sql_task)
         assert input.input_text == "test task"
-        assert input.database_type == "sqlite"
+        assert input.database_type == DBType.SQLITE
         assert input.database_name == "test_db"
 
     def test_validation(self):
         with pytest.raises(ValueError):
-            SchemaLinkingInput(input_text="test", max_num_tables="111", database_type="sqlite", database_name="")
+            SchemaLinkingInput(input_text="test", max_num_tables="111", database_type=DBType.SQLITE, database_name="")
 
 
 class TestSqlTask:
@@ -47,13 +48,13 @@ class TestSqlTask:
         task = SqlTask(
             id="123",
             task="test task",
-            database_type="sqlite",
+            database_type=DBType.SQLITE,
             database_name="test_db",
             output_dir="output",
         )
         assert task.id == "123"
         assert task.task == "test task"
-        assert task.database_type == "sqlite"
+        assert task.database_type == DBType.SQLITE
         assert task.database_name == "test_db"
         assert task.output_dir == "output"
 
@@ -63,7 +64,7 @@ class TestSqlTask:
         data = {
             "id": "123",
             "task": "test task",
-            "database_type": "sqlite",
+            "database_type": DBType.SQLITE,
             "database_name": "test_db",
             "output_dir": "output",
         }
@@ -75,7 +76,7 @@ class TestSqlTask:
         task = SqlTask(
             id="12345",
             task="test task",
-            database_type="snowflake",
+            database_type=DBType.SNOWFLAKE,
             database_name="test_db",
             output_dir="output",
         )
@@ -125,7 +126,7 @@ class TestSqlTask:
         )
         task = SqlTask.from_str(data)
         assert task.id == "sf001"
-        assert task.database_type == "snowflake"
+        assert task.database_type == DBType.SNOWFLAKE
         assert task.database_name == "GLOBAL_WEATHER__CLIMATE_DATA_FOR_BI"
         assert task.output_dir == "output"
 
@@ -134,7 +135,7 @@ class TestSqlTask:
 
     def test_validation(self):
         with pytest.raises(ValueError):
-            SqlTask(task=" ", database_type="sqlite", database_name="")
+            SqlTask(task=" ", database_type=DBType.SQLITE, database_name="")
 
 
 class TestSchemaLinkingResult:

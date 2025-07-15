@@ -8,6 +8,7 @@ from datus.schemas.base import BaseInput
 from datus.schemas.node_models import StrategyType
 from datus.storage.embedding_models import init_embedding_models
 from datus.storage.storage_cfg import check_storage_config
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_utils import get_files_from_glob_pattern
@@ -123,7 +124,7 @@ class AgentConfig:
         self.namespaces: Dict[str, Dict[str, DbConfig]] = defaultdict(dict)
         for namespace, db_config in kwargs.get("namespace", {}).items():
             db_type = db_config.get("type", "")
-            if db_type == "sqlite" or db_type == "duckdb":
+            if db_type == DBType.SQLITE or db_type == DBType.DUCKDB:
                 self.namespaces[namespace] = {}
                 # sqlite and duckdb support path_pattern
                 if "path_pattern" in db_config:
@@ -134,7 +135,9 @@ class AgentConfig:
                         self.namespaces.pop(namespace)
                         continue
                     for db_path in db_paths:
-                        database_name = db_path["name"] if db_type == "sqlite" else duckdb_database_name(db_path["uri"])
+                        database_name = (
+                            db_path["name"] if db_type == DBType.SQLITE else duckdb_database_name(db_path["uri"])
+                        )
                         self.namespaces[namespace][db_path["name"]] = DbConfig(
                             type=db_type, uri=db_path["uri"], database=database_name, schema=db_path.get("schema", "")
                         )
@@ -158,9 +161,9 @@ class AgentConfig:
                             schema=db_config.get("schema", ""),
                         )
             else:
-                if db_type == "duckdb":
+                if db_type == DBType.DUCKDB:
                     db_config["database"] = duckdb_database_name(db_config["uri"])
-                if db_type == "duckdb" or db_type == "sqlite":
+                if db_type == DBType.DUCKDB or db_type == DBType.SQLITE:
                     self.namespaces[namespace] = {db_config["name"]: DbConfig.filter_kwargs(DbConfig, db_config)}
                 else:
                     self.namespaces[namespace] = {namespace: DbConfig.filter_kwargs(DbConfig, db_config)}
@@ -242,9 +245,9 @@ class AgentConfig:
                     code=ErrorCode.COMMON_UNSUPPORTED,
                     message_args={"field_name": "benchmark", "your_value": benchmark_platform},
                 )
-            if benchmark_platform == "spider2" and self.db_type != "snowflake":
+            if benchmark_platform == "spider2" and self.db_type != DBType.SNOWFLAKE:
                 raise DatusException(code=ErrorCode.COMMON_UNSUPPORTED, message="spider2 only support snowflake")
-            if benchmark_platform == "bird_dev" and self.db_type != "sqlite":
+            if benchmark_platform == "bird_dev" and self.db_type != DBType.SQLITE:
                 raise DatusException(code=ErrorCode.COMMON_UNSUPPORTED, message="bird_dev only support sqlite")
             benchmark_path = kwargs.get("benchmark_path", "")
             if benchmark_path:

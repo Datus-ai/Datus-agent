@@ -16,6 +16,7 @@ from datus.tools.db_tools.snowflake_connector import SnowflakeConnector
 from datus.tools.db_tools.starrocks_connector import StarRocksConnector
 from datus.tools.lineage_graph_tools import SchemaLineageTool
 from datus.tools.llms_tools import LLMTool
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -77,7 +78,7 @@ class TestLLMsTools:
         input_data = SchemaLinkingInput(
             input_text="Describe the information about rulings for card named 'Sublime Epiphany' with number 74s.",
             matching_rate="fast",
-            database_type="sqlite",
+            database_type=DBType.SQLITE,
             database_name="card_games",
         )
         match_result = setup_tool.match_schema(input_data=input_data, rag_storage=rag_storage)
@@ -361,7 +362,7 @@ class TestLineageTools:
                 SchemaLinkingInput(
                     input_text=123,
                     matching_rate="fast",
-                    database_type="sqlite",
+                    database_type=DBType.SQLITE,
                     database_name="test",
                 )
             )
@@ -372,7 +373,7 @@ class TestLineageTools:
                 SchemaLinkingInput(
                     input_text="CREATE TABLE test (id INTEGER)",
                     matching_rate="abc",
-                    database_type="sqlite",
+                    database_type=DBType.SQLITE,
                     database_name="test",
                 )
             )
@@ -381,7 +382,7 @@ class TestLineageTools:
         """Test get table and values functionality"""
         # Use test data from YAML
         input_data = {
-            "database_type": "snowflake",
+            "database_type": DBType.SNOWFLAKE,
             "database_name": "ETHEREUM_BLOCKCHAIN",
             "table_names": [
                 "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES",
@@ -399,7 +400,7 @@ class TestLineageTools:
         """Test get table and values functionality"""
         # Use test data from YAML
         input_data = {
-            "database_type": "snowflake",
+            "database_type": DBType.SNOWFLAKE,
             "database_name": "GLOBAL_WEATHER__CLIMATE_DATA_FOR_BI",
             "table_names": ["GLOBAL_WEATHER__CLIMATE_DATA_FOR_BI.STANDARD_TILE.HISTORY_DAY"],
         }

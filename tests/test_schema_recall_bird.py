@@ -9,6 +9,7 @@ from pandas import DataFrame
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.utils.constants import DBType
 from datus.utils.sql_utils import extract_table_names
 from tests.conftest import PROJECT_ROOT
 
@@ -73,7 +74,7 @@ def test_recall(task_ids: List[str], rag: SchemaWithValueRAG, agent_config: Agen
 def _do_recall(rag: SchemaWithValueRAG, item: dict[str, Any], top_n: int = 5) -> dict[str, Any]:
     task_id = item["question_id"]
     db_id = item["db_id"]
-    target_schema = set(extract_table_names(item["SQL"], dialect="sqlite"))
+    target_schema = set(extract_table_names(item["SQL"], dialect=DBType.SQLITE))
     schema_tables, schema_values = rag.search_similar(query_text=item["question"], database_name=db_id, top_n=top_n)
     table_count = len(rag.search_all_schemas(database_name=db_id))
     if len(schema_tables) == 0:

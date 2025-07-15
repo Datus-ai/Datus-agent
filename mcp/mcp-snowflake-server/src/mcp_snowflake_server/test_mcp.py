@@ -91,17 +91,18 @@ async def run(model_name, max_turns=10, question=None):
 
     model = get_model(model_name)
     json._default_encoder = CustomJSONEncoder()
+    snowflake_server_path = os.getenv("SNOWFLAKE_SERVER_PATH", "/path/to/snowflake-server")
 
     async with MCPServerStdio(
         params={
             "command": "uv",
             "args": [
                 "--directory",
-                "/Users/zhaoheng/src/mcp-snowflake-server",
+                snowflake_server_path,
                 "run",
                 "mcp_snowflake_server",
                 "--log_dir",
-                "/Users/zhaoheng/src/mcp-snowflake-server/logs/",
+                f"{snowflake_server_path}/logs/",
                 "--log_level",
                 "DEBUG",
             ],

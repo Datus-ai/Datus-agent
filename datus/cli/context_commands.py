@@ -6,6 +6,7 @@ This module provides context-related commands for the Datus CLI.
 from rich.table import Table
 from rich.tree import Tree
 
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
 
@@ -158,7 +159,7 @@ class ContextCommands:
 
         try:
             # For SQLite, query the sqlite_master table
-            if self.cli.db_connector.get_type() == "sqlite":
+            if self.cli.db_connector.get_type() == DBType.SQLITE:
                 sql = "SELECT type, name FROM sqlite_master WHERE type='table' ORDER BY name"
                 result = self.cli.db_connector.execute_arrow(sql)
                 self.cli.last_result = result

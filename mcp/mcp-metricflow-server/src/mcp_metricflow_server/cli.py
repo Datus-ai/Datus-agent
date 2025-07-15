@@ -1,6 +1,7 @@
 """CLI for testing MetricFlow Server functionality."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -15,7 +16,7 @@ class MetricFlowCli:
         """Initialize the CLI with MetricFlow server."""
         # Use the specific path provided by the user
         config = MetricFlowConfig(
-            mf_path="/Users/zhaoheng/miniconda3/envs/metricflow/bin/mf",
+            mf_path=os.getenv("MF_PATH", "/path/to/mf"),
             project_dir=Path.cwd(),
             verbose=False,  # Disable verbose mode by default
         )

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# flake8: noqa
 """
 Agent Answer Selection Tool
 
@@ -6,34 +6,165 @@ This script compares answers from different agents and uses a large language mod
 to select the best answer for each task.
 
 Usage:
-    python select_answer.py --workdir=/path/to/workdir --namespace=bird_sqlite --agent=3 --task_id=0
+    python select_answer.py --workdir=/path/to/workdir --namespace=bird_sqlite --agent=3
+    --task-id=0 --gold-path=benchmark/bird/dev_20240627/gold
 """
 
 import argparse
 import json
+import math
 import os
 import shutil
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.utils.loggings import get_logger
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-
 logger = get_logger(__name__)
+
+
+def load_csv_data(filepath):
+    """Load CSV data and return pandas DataFrame"""
+    try:
+        df = pd.read_csv(filepath)
+        return df, None
+    except Exception as e:
+        return None, f"Error loading CSV: {str(e)}"
+
+
+def compare_pandas_table(pred, gold, ignore_order=False):
+    """
+    Smart comparison of two pandas tables, based on spider_evaluation.py implementation
+
+    Args:
+        pred (DataFrame): Predicted result table
+        gold (DataFrame): Gold standard table
+        ignore_order (bool, optional): Whether to ignore row order. Defaults to False.
+
+    Returns:
+        int: 1 for match, 0 for no match
+    """
+    tolerance = 1e-2
+
+    def vectors_match(v1, v2, tol=tolerance, ignore_order_=False):
+        if ignore_order_:
+            v1, v2 = (
+                sorted(v1, key=lambda x: (x is None, str(x), isinstance(x, (int, float)))),
+                sorted(v2, key=lambda x: (x is None, str(x), isinstance(x, (int, float)))),
+            )
+        if len(v1) != len(v2):
+            return False
+        for a, b in zip(v1, v2):
+            if pd.isna(a) and pd.isna(b):
+                continue
+            elif isinstance(a, (int, float)) and isinstance(b, (int, float)):
+                if not math.isclose(float(a), float(b), abs_tol=tol):
+                    return False
+            elif a != b:
+                return False
+        return True
+
+    gold_cols = gold
+    pred_cols = pred
+
+    # Transpose and convert to lists for comparison
+    t_gold_list = gold_cols.transpose().values.tolist()
+    t_pred_list = pred_cols.transpose().values.tolist()
+
+    score = 1
+    for _, gold_col in enumerate(t_gold_list):
+        if not any(vectors_match(gold_col, pred_col, ignore_order_=ignore_order) for pred_col in t_pred_list):
+            score = 0
+            break
+        else:
+            for _, pred_col in enumerate(t_pred_list):
+                if vectors_match(gold_col, pred_col, ignore_order_=ignore_order):
+                    break
+
+    return score
+
+
+def compare_csv_results(actual_path, expected_path):
+    """Use smart comparison method to compare CSV results"""
+    comparison_result = {
+        "match": False,
+        "actual_file_exists": True,
+        "expected_file_exists": True,
+        "actual_shape": None,
+        "expected_shape": None,
+        "error": None,
+    }
+
+    try:
+        # Load actual results
+        actual_df, actual_error = load_csv_data(actual_path)
+        if actual_error:
+            comparison_result["error"] = f"Actual file error: {actual_error}"
+            comparison_result["actual_file_exists"] = False
+            return comparison_result
+
+        # Load expected results
+        expected_df, expected_error = load_csv_data(expected_path)
+        if expected_error:
+            comparison_result["error"] = f"Expected file error: {expected_error}"
+            comparison_result["expected_file_exists"] = False
+            return comparison_result
+
+        comparison_result["actual_shape"] = actual_df.shape
+        comparison_result["expected_shape"] = expected_df.shape
+
+        # Use smart comparison method
+        score = compare_pandas_table(actual_df, expected_df, ignore_order=True)
+        comparison_result["match"] = score == 1
+
+    except Exception as e:
+        comparison_result["error"] = f"Comparison error: {str(e)}"
+
+    return comparison_result
+
+
+def compare_with_gold_standard(task_id, workdir, namespace, gold_path, result_dir="output"):
+    """Compare execution results with gold standard"""
+    actual_csv = os.path.join(workdir, result_dir, namespace, f"{task_id}.csv")
+    gold_csv = os.path.join(workdir, gold_path, "exec_result", f"{task_id}.csv")
+
+    comparison_result = {
+        "task_id": task_id,
+        "actual_file_exists": os.path.exists(actual_csv),
+        "gold_file_exists": os.path.exists(gold_csv),
+        "actual_path": actual_csv,
+        "gold_path": gold_csv,
+        "comparison": None,
+    }
+
+    if not comparison_result["actual_file_exists"]:
+        comparison_result["comparison"] = {"error": f"Actual result file not found: {actual_csv}"}
+        return comparison_result
+
+    if not comparison_result["gold_file_exists"]:
+        comparison_result["comparison"] = {"error": f"Gold standard file not found: {gold_csv}"}
+        return comparison_result
+
+    comparison_result["comparison"] = compare_csv_results(actual_csv, gold_csv)
+
+    return comparison_result
 
 
 class AgentAnswerSelector:
     """Tool for selecting the best answer from different agents"""
 
-    def __init__(self, workdir: str, namespace: str, agent_count: int):
+    def __init__(self, workdir: str, namespace: str, agent_count: int, gold_path: str = None):
         self.workdir = Path(workdir)
         self.namespace = namespace
         self.agent_count = agent_count
+        self.gold_path = gold_path
         self.multi_dir = self.workdir / "multi"
 
         config_path = self.workdir / "conf" / "agent.yml"
@@ -46,6 +177,7 @@ class AgentAnswerSelector:
             os.chdir(original_cwd)
 
         self.model = LLMBaseModel.create_model(self.agent_config)
+        print("Using Select Model:" + self.model.model_config.model)
 
     def load_agent_outputs(self, task_id: str) -> Dict[str, Dict]:
         agent_outputs = {}
@@ -66,6 +198,35 @@ class AgentAnswerSelector:
                 logger.warning(f"Output file not found for agent{i}: {json_file}")
 
         return agent_outputs
+
+    def check_agent_gold_matches(self, task_id: str) -> Dict[str, bool]:
+        """Check which agents match with gold standard"""
+        agent_matches = {}
+
+        if not self.gold_path:
+            logger.warning("Gold path not provided, skipping gold comparison")
+            return agent_matches
+
+        for i in range(1, self.agent_count + 1):
+            agent_name = f"agent{i}"
+            result_dir = f"multi/agent{i}_output"
+
+            try:
+                comparison_result = compare_with_gold_standard(
+                    task_id, str(self.workdir), self.namespace, self.gold_path, result_dir
+                )
+
+                if comparison_result["comparison"] and not comparison_result["comparison"].get("error"):
+                    agent_matches[agent_name] = comparison_result["comparison"]["match"]
+                else:
+                    agent_matches[agent_name] = False
+                    logger.warning(f"Gold comparison failed for {agent_name}: {comparison_result['comparison']}")
+
+            except Exception as e:
+                logger.error(f"Error comparing {agent_name} with gold: {e}")
+                agent_matches[agent_name] = False
+
+        return agent_matches
 
     def truncate_sql_result(self, sql_result: str, max_length: int = 2000) -> str:
         if len(sql_result) <= max_length:
@@ -137,15 +298,26 @@ Please return results in JSON format, including:
             logger.error(f"No agent outputs found for task {task_id}")
             return None
 
+        # Check which agents match with gold standard
+        agent_gold_matches = self.check_agent_gold_matches(task_id)
+
+        # Determine answer_found
+        answer_found = any(agent_gold_matches.values()) if agent_gold_matches else False
+
         if len(agent_outputs) == 1:
             logger.info(f"Only one agent output found for task {task_id}, returning directly")
             agent_name = list(agent_outputs.keys())[0]
+            is_selected_agent_right = agent_gold_matches.get(agent_name, False)
+
             return {
                 "task_id": task_id,
                 "best_agent": agent_name,
                 "reason": "Only one agent output available",
                 "agent_outputs": agent_outputs,
                 "score_analysis": {agent_name: {"score": 10, "reason": "Single output"}},
+                "agent_gold_matches": agent_gold_matches,
+                "answer_found": answer_found,
+                "is_selected_agent_right": is_selected_agent_right,
             }
 
         prompt = self.create_comparison_prompt(task_id, agent_outputs)
@@ -154,9 +326,22 @@ Please return results in JSON format, including:
             logger.info(f"Calling LLM to compare answers for task {task_id}...")
             response = self.model.generate_with_json_output(prompt)
 
-            result = {"task_id": task_id, "agent_outputs": agent_outputs, **response}
+            best_agent = response.get("best_agent", "Unknown")
+            is_selected_agent_right = agent_gold_matches.get(best_agent, False)
 
-            logger.info(f"Best answer for task {task_id}: {response.get('best_agent', 'Unknown')}")
+            result = {
+                "task_id": task_id,
+                "agent_outputs": agent_outputs,
+                "agent_gold_matches": agent_gold_matches,
+                "answer_found": answer_found,
+                "is_selected_agent_right": is_selected_agent_right,
+                **response,
+            }
+
+            logger.info(f"Best answer for task {task_id}: {best_agent}")
+            logger.info(f"Answer found: {answer_found}")
+            logger.info(f"Selected agent is right: {is_selected_agent_right}")
+
             return result
 
         except Exception as e:
@@ -220,7 +405,8 @@ def main():
     parser.add_argument("--workdir", required=True, help="Working directory path")
     parser.add_argument("--namespace", required=True, help="Dataset namespace (e.g., bird_sqlite)")
     parser.add_argument("--agent", type=int, required=True, help="Number of agents")
-    parser.add_argument("--task_id", required=True, help="Task ID (required)")
+    parser.add_argument("--task-id", required=True, help="Task ID (required)")
+    parser.add_argument("--gold-path", help="Path to gold standard files")
     parser.add_argument(
         "--output",
         default="selection_results.json",
@@ -239,25 +425,32 @@ def main():
         logger.error(f"Multi directory does not exist: {multi_dir}")
         sys.exit(1)
 
-    selector = AgentAnswerSelector(workdir=str(workdir), namespace=args.namespace, agent_count=args.agent)
+    task_id = args.task_id
+    gold_path = args.gold_path
 
-    result = selector.select_best_answer(args.task_id)
+    selector = AgentAnswerSelector(
+        workdir=str(workdir), namespace=args.namespace, agent_count=args.agent, gold_path=gold_path
+    )
+
+    result = selector.select_best_answer(task_id)
 
     if result:
         best_agent = result.get("best_agent", "Unknown")
 
-        best_output_dir, best_save_dir = selector.copy_best_agent_files(args.task_id, best_agent)
+        best_output_dir, best_save_dir = selector.copy_best_agent_files(task_id, best_agent)
 
         if args.output == "selection_results.json":
-            output_filename = f"selection_results_{args.task_id}.json"
+            output_filename = f"selection_results_{task_id}.json"
         else:
             output_filename = args.output
         output_file = best_output_dir / output_filename
         selector.save_results([result], str(output_file))
 
-        print(f"\n=== Task {args.task_id} Selection Results ===")
+        print(f"\n=== Task {task_id} Selection Results ===")
         print(f"Best Agent: {result.get('best_agent', 'Unknown')}")
         print(f"Selection Reason: {result.get('reason', 'Not provided')}")
+        print(f"Answer Found: {result.get('answer_found', False)}")
+        print(f"Selected Agent is Right: {result.get('is_selected_agent_right', False)}")
 
         score_analysis = result.get("score_analysis", {})
         if score_analysis:
@@ -265,12 +458,18 @@ def main():
             for agent, analysis in score_analysis.items():
                 print(f"{agent}: {analysis.get('score', 0)}/10 - {analysis.get('reason', 'No reason')}")
 
+        agent_gold_matches = result.get("agent_gold_matches", {})
+        if agent_gold_matches:
+            print("\n=== Gold Standard Matches ===")
+            for agent, match in agent_gold_matches.items():
+                print(f"{agent}: {'✓' if match else '✗'}")
+
         print("\nBest agent files copied to:")
         print(f"  Output: {best_output_dir}")
         print(f"  Save: {best_save_dir}")
         print(f"Results saved to: {output_file}")
     else:
-        print(f"Failed to process task {args.task_id}")
+        print(f"Failed to process task {task_id}")
         sys.exit(1)
 
 

@@ -19,3 +19,5 @@ uv.lock
 before_reflection_*.yaml
 /.history
 /benchmark
+/dist
+*.egg-info

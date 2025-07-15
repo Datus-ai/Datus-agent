@@ -24,9 +24,11 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Copy config file
+      - name: Setup config file
         run: |
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
+          cp /home/datus_ci/ci_template/ci.env .env
+          source .env
 
       - name: run pytest
         run: |

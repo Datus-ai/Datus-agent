@@ -5,6 +5,7 @@ import pytest
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.storage_cfg import check_storage_config
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException
 
 
@@ -69,7 +70,7 @@ def test_configuration_load(namespace: str, agent_config: AgentConfig):
 
 
 def test_benchmark_db_check(agent_config: AgentConfig, namespace: str = "snowflake"):
-    agent_config.namespaces[namespace][namespace].type = "sqlite"
+    agent_config.namespaces[namespace][namespace].type = DBType.SQLITE
 
     with pytest.raises(DatusException, match="spider2 only support snowflake"):
         agent_config.override_by_args(

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Optional
 
+from datus.utils.constants import EmbeddingProvider
 from datus.utils.device_utils import get_device
 from datus.utils.loggings import get_logger
 
@@ -18,7 +19,7 @@ class EmbeddingModel:
         self,
         model_name: str,
         dim_size: int,
-        registry_name: str = "sentence-transformers",
+        registry_name: str = EmbeddingProvider.SENTENCE_TRANSFORMERS,
         openai_config: Optional[dict[str, Any]] = None,
         batch_size: int = 32,
     ):
@@ -53,7 +54,7 @@ class EmbeddingModel:
     def init_model(self):
         """Pre-download the model to local cache. Now we only support sentence-transformers and openai."""
 
-        if self.registry_name == "sentence-transformers":
+        if self.registry_name == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             logger.info(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")
             from lancedb.embeddings import SentenceTransformerEmbeddings
 
@@ -63,7 +64,7 @@ class EmbeddingModel:
             self._model.generate_embeddings(["foo"])
             logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
 
-        elif self.registry_name == "openai":
+        elif self.registry_name == EmbeddingProvider.OPENAI:
             logger.info(f"Initializing model {self.registry_name}/{self.model_name}")
             from datus.storage.embedding_openai import OpenAIEmbeddings
 
@@ -107,7 +108,7 @@ def init_embedding_models(
             target_model = EmbeddingModel(
                 model_name=config["model_name"],
                 dim_size=config["dim_size"],
-                registry_name=config.get("registry_name", "sentence-transformers"),
+                registry_name=config.get("registry_name", EmbeddingProvider.SENTENCE_TRANSFORMERS),
                 batch_size=config.get("batch_size", 32),
                 openai_config=openai_config,
             )

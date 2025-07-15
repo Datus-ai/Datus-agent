@@ -7,7 +7,7 @@ import sys
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -28,6 +28,7 @@ from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools import SQLiteConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.utils.constants import DBType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
 
@@ -52,6 +53,7 @@ class DatusCLI:
         """Initialize the CLI with the given arguments."""
         self.args = args
         self.console = Console()
+        self.console_column_width = 16
         setup_exception_handler(
             console_logger=self.console.print, prefix_wrap_func=lambda x: f"[bold red]{x}[/bold red]"
         )
@@ -236,6 +238,66 @@ class DatusCLI:
         self.console.print(table)
         return
 
+    def _smart_display_table(
+        self,
+        data: List[Dict[str, Any]],
+        columns: Optional[List[str]] = None,
+    ) -> None:
+        """
+        Smart table display that handles wide tables by limiting columns and truncating content.
+
+        Args:
+            data: List of dictionaries representing table rows
+            columns: The columns to display, if not provided, all columns will be displayed
+        """
+        if not data:
+            self.console.print("[yellow]No data to display[/]")
+            return
+
+        if columns:
+            all_columns_list = columns
+        else:
+            # Get all unique column names
+            all_columns_list = []
+            for row in data:
+                all_columns_list.extend(list(row.keys()))
+        # Calculate the maximum number of columns based on the terminal width.
+        max_columns = max(4, self.console.width // self.console_column_width)
+
+        # Smart column selection: show front + back + ellipsis based on terminal width
+        if len(all_columns_list) > max_columns:
+            show_back = max_columns // 2
+            show_front = max_columns - show_back  # -1 for ellipsis
+
+            # Select columns to display
+            front_columns = all_columns_list[:show_front]
+            back_columns = all_columns_list[-show_back:] if show_back > 0 else []
+            display_columns = front_columns + ["..."] + back_columns
+        else:
+            display_columns = all_columns_list
+
+        table = Table(show_header=True, header_style="bold green")
+
+        # Add columns with width constraints
+        for col in display_columns:
+            if col == "...":
+                table.add_column(col, width=5, justify="center")
+            else:
+                # Calculate optimal column width based on terminal width
+                table.add_column(col, width=self.console_column_width)
+
+        # Add rows with truncated content
+        for row in data:
+            row_values: List[Any] = []
+            for col in display_columns:
+                if col == "...":
+                    row_values.append("...")
+                else:
+                    row_values.append(str(row.get(col)))
+            table.add_row(*row_values)
+
+        self.console.print(table)
+
     def _cmd_switch_namespace(self, args: str):
         if args.strip() == "":
             self._cmd_list_namespaces()
@@ -249,7 +311,7 @@ class DatusCLI:
             self.console.print("[bold red]Error:[/] Database name is required")
             return
         self.current_db_name = new_db
-        if self.agent_config.db_type == "sqlite" or self.agent_config.db_type == "duckdb":
+        if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
             self.db_connector = self.db_manager.get_conn(
                 self.agent_config.current_namespace, self.agent_config.db_type, self.current_db_name
             )
@@ -324,15 +386,9 @@ class DatusCLI:
 
             # Display results
             if result and result.success and hasattr(result.sql_return, "column_names"):
-                # Create a rich table for the results
-                table = Table(show_header=True, header_style="bold green")
-                # Add columns
-                for col in result.sql_return.column_names:
-                    table.add_column(col)
-                # Add rows
-                for row in result.sql_return.to_pylist():
-                    table.add_row(*[str(cell) for cell in row.values()])
-                self.console.print(table)
+                # Convert Arrow data to list of dictionaries for smart display
+                rows = result.sql_return.to_pylist()
+                self._smart_display_table(data=rows, columns=result.sql_return.column_names)
 
                 row_count = result.sql_return.num_rows
                 exec_time = end_time - start_time
@@ -417,7 +473,7 @@ class DatusCLI:
         logger.debug(f"Executing internal command: '{cmd}' with args: '{args}'")
         if cmd in self.commands:
             self.commands[cmd](args)
-        elif self.db_connector.get_type() == "sqlite":
+        elif self.db_connector.get_type() == DBType.SQLITE:
             self._execute_sqlite_internal_command(cmd, args)
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
@@ -553,7 +609,7 @@ class DatusCLI:
 
         try:
             # For SQLite, query the sqlite_master table
-            if self.db_connector.get_type() in ["sqlite", "starrocks", "duckdb"]:
+            if self.db_connector.get_type() in [DBType.SQLITE, DBType.STARROCKS, DBType.DUCKDB]:
                 result = self.db_connector.get_tables()
                 self.last_result = result
                 self.console.print(result)
@@ -839,10 +895,10 @@ Type '.help' for a list of commands or '.exit' to quit.
         # Display connection info
         if self.db_connector:
             db_info = f"Connected to [bold green]{self.args.db_type}[/]"
-            if self.args.db_type == "sqlite":
+            if self.args.db_type == DBType.SQLITE:
                 db_path = self.args.db_path or ":memory:"
                 db_info += f" at [bold]{db_path}[/]"
-            elif self.args.db_type == "snowflake":
+            elif self.args.db_type == DBType.SNOWFLAKE:
                 db_info += f" as [bold]{self.args.sf_user}[/]@[bold]{self.args.sf_account}[/]"
                 if self.args.sf_database:
                     db_info += f" using database [bold]{self.args.sf_database}[/]"

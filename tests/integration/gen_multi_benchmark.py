@@ -108,9 +108,10 @@ def generate_multi_benchmark_scripts(workdir, namespace, benchmark, instance_ids
         f.write(f"# task count: {len(instance_ids)}\n\n")
 
         for task_id in range(len(instance_ids)):
+            # TODO gold-path
             command = (
-                f"python select_answer.py --workdir={workdir} "
-                f"--namespace {namespace} --agent={agent_num} --task_id={task_id}\n"
+                f"python select_answer.py --workdir={workdir} --gold-path=benchmark/bird/dev_20240627/gold "
+                f"--namespace {namespace} --agent={agent_num} --task-id={task_id}\n"
             )
             f.write(command)
 

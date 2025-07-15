@@ -4,6 +4,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -204,7 +205,7 @@ class DuckdbConnector(SQLAlchemyConnector):
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert connector to serializable dictionary with only essential info."""
-        return {"db_type": "duckdb", "db_path": self.db_path}
+        return {"db_type": DBType.DUCKDB, "db_path": self.db_path}
 
     def get_type(self) -> str:
-        return "duckdb"
+        return DBType.DUCKDB

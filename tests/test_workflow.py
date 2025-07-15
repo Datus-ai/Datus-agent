@@ -2,6 +2,7 @@ from datus.agent.node import Node
 from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
 from datus.schemas.node_models import SqlTask
+from datus.utils.constants import LLMProvider
 
 
 class TestNode:
@@ -224,7 +225,7 @@ class TestNode:
                 }
             ],
             "count": 1,
-            "llm": "deepseek",
+            "llm": LLMProvider.DEEPSEEK,
         }
 
         # Create and run SQL generation node

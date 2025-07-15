@@ -8,12 +8,11 @@ WORKDIR /app
 RUN apt-get update && \
   apt-get install -y build-essential && \
   apt-get install -y git wget unzip libsqlite3-dev default-libmysqlclient-dev pkg-config &&\
+  apt-get install -y --reinstall gcc&&\
   rm -rf /var/lib/apt/lists/*
 
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 RUN pip config set install.trusted-host mirrors.aliyun.com
-# Install uv
-RUN pip install uv
 
 RUN pip install -U huggingface_hub
 ENV HF_ENDPOINT=https://hf-mirror.com
@@ -27,13 +26,8 @@ RUN huggingface-cli download intfloat/multilingual-e5-large-instruct
 # RUN git clone --recursive https://github.com/Louis-Law/Datus-agent.git .
 
 # Copy source code to the container (excluding tests directory)
-COPY ./datus /app/datus
+
 COPY ./benchmark /app/benchmark
-COPY ./mcp /app/mcp
-COPY ./pyproject.toml /app/pyproject.toml
-COPY ./README.md /app/README.md
-COPY ./LICENSE /app/LICENSE
-COPY ./requirements.txt /app/requirements.txt
 COPY ./conf/agent.yml.example /app/.datus/agent.example.yml
 
 
@@ -49,29 +43,28 @@ RUN mkdir -p /app/benchmark && \
 
 RUN cd /app
 # Create .datus directory and agent.yml
-RUN mkdir -p .datus && \
-    echo 'agent:\n\
+RUN mkdir -p /app/.datus && echo 'agent:\n\
   target: deepseek\n\
   models:\n\
     deepseek:\n\
       type: deepseek\n\
-      base_url: https://api.deepseek.com\n\
+      base_url: ${DEEPSEEK_BASE_URL}\n\
       api_key: ${DEEPSEEK_API_KEY}\n\
-      model: deepseek-v3\n\
+      model: ${DEEPSEEK_MODEL_NAME}\n\
   nodes:\n\
     schema_linking:\n\
-      model: qwen3\n\
+      model: deepseek\n\
       matching_rate: fast\n\
       prompt_version: "1.0"\n\
     generate_sql:\n\
-      model: qwen3\n\
+      model: deepseek\n\
       prompt_version: "1.0"\n\
       max_table_schemas_length: 10000\n\
       max_data_details_length: 8000\n\
       max_context_length: 8000\n\
       max_value_length: 500\n\
     reasoning:\n\
-      model: qwen3\n\
+      model: deepseek\n\
       prompt_version: "1.0"\n\
       max_table_schemas_length: 10000\n\
       max_data_details_length: 8000\n\
@@ -99,7 +92,7 @@ RUN mkdir -p .datus && \
       type: sqlite\n\
       path_pattern: /app/benchmark/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern\n\
   storage:\n\
-    base_path: data\n\
+    base_path: /app/.datus/data\n\
     database:\n\
       registry_name: sentence-transformers\n\
       model_name: intfloat/multilingual-e5-large-instruct\n\
@@ -111,17 +104,21 @@ RUN mkdir -p .datus && \
       model_name: intfloat/multilingual-e5-small\n\
       dim_size: 384' > .datus/agent.yml
 
-RUN apt-get install --reinstall gcc
 # Run uv sync
-RUN uv venv -p 3.12 && uv sync
+RUN pip install datus-agent
 
-RUN uv run datus/main.py bootstrap-kb --config .datus/agent.yml --namespace bird_dev --benchmark bird_dev --kb_update_strategy overwrite --pool_size 6
+RUN datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite --pool_size 6
 
-RUN uv run datus/main.py bootstrap-kb --config .datus/agent.yml --namespace snowflake --benchmark spider2 --kb_update_strategy overwrite --pool_size 8
+RUN datus-agent bootstrap-kb --namespace snowflake --benchmark spider2 --kb_update_strategy overwrite --pool_size 8
 
 # Set the working directory
 WORKDIR /app
-
+ENV DEEPSEEK_API_KEY=""
+ENV DEEPSEEK_BASE_URL="https://api.deepseek.com"
+ENV DEEPSEEK_MODEL_NAME="deepseek-reasoner"
+ENV SNOWFLAKE_ACCOUNT=""
+ENV SNOWFLAKE_USERNAME=""
+ENV SNOWFLAKE_PASSWORD=""
 # Keep the container running
 CMD ["tail", "-f", "/dev/null"]
 

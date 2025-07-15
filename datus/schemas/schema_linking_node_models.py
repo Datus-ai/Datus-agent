@@ -6,6 +6,7 @@ from pydantic import Field, field_validator
 
 from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
 from datus.schemas.node_models import SQLContext, SqlTask, TableSchema, TableValue
+from datus.utils.constants import DBType
 
 
 class SchemaLinkingInput(BaseInput):
@@ -15,7 +16,7 @@ class SchemaLinkingInput(BaseInput):
     """
 
     input_text: str = Field(..., description="The query text to analyze for schema linking")
-    database_type: str = Field("sqlite", description="Database type: sqlite, duckdb snowflake, etc ")
+    database_type: str = Field(DBType.SQLITE, description="Database type: sqlite, duckdb snowflake, etc ")
     catalog_name: str = Field("", description="Catalog name for context")
     database_name: str = Field("", description="Database name for context")
     schema_name: str = Field("", description="Schema name for context")
