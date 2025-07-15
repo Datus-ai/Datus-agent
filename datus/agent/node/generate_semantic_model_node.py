@@ -196,6 +196,7 @@ class GenerateSemanticModelNode(Node):
                     "database_type": self.agent_config.db_type,
                     "namespace": self.agent_config.current_namespace,
                 },
+                status=ActionStatus.SUCCESS,
             )
             yield db_action
 

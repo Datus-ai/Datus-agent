@@ -41,7 +41,7 @@ class SchemaLinkingNode(Node):
             matching_rate=final_matching_rate,
             database_type=workflow.task.database_type,
             database_name=workflow.task.database_name,
-            sql_context=workflow.get_last_sqlcontext(),
+            sql_context=None,
             table_type=workflow.task.schema_linking_type,
         )
         self.input = next_input
