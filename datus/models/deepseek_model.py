@@ -366,58 +366,14 @@ class DeepSeekModel(LLMBaseModel):
                         elif item_type == "tool_call_output_item":
                             action = self._process_tool_call_complete(event, action_history_manager)
                         elif item_type == "message_output_item":
-                            action = self._process_message_output(event, function_call_count, action_history_manager)
+                            action = self._process_message_output(event, action_history_manager)
 
                         if action:
                             yield action
 
         except Exception as e:
             logger.error(f"Error in streaming MCP execution: {str(e)}")
-            error_action = ActionHistory.create_action(
-                ActionRole.WORKFLOW,
-                "error",
-                f"Error occurred during MCP streaming: {str(e)}",
-                {"error_type": type(e).__name__},
-                {"error": str(e), "success": False},
-                ActionStatus.FAILED,
-            )
-            error_action.end_time = datetime.now()
-            action_history_manager.add_action(error_action)
-            yield error_action
             raise
-
-    def _extract_tool_call_data(self, event, data_type: str) -> Dict[str, Any]:
-        """Extract input or output data from tool call event."""
-        try:
-            if not hasattr(event, "item") or not hasattr(event.item, data_type):
-                return {} if data_type == "input" else {"success": False, "error": f"No {data_type} data found"}
-
-            data = getattr(event.item, data_type)
-
-            if data_type == "input":
-                if isinstance(data, dict):
-                    sql_query = (
-                        data.get("query") or data.get("sql") or (list(data.values())[0] if len(data) == 1 else "")
-                    )
-                    return {"sql_query": sql_query, "raw_input": data}
-                return {"raw_input": str(data)}
-            else:  # output
-                if isinstance(data, dict):
-                    return {
-                        "success": True,
-                        "sql_return": data.get("result", ""),
-                        "row_count": data.get("row_count", 0),
-                        "raw_output": data,
-                    }
-                return {"success": True, "sql_return": str(data), "raw_output": data}
-
-        except Exception as e:
-            logger.error(f"Error extracting tool call {data_type}: {e}")
-            return {"extraction_error": str(e)} if data_type == "input" else {"success": False, "error": str(e)}
-
-    def _extract_tool_call_output(self, event) -> Dict[str, Any]:
-        """Extract output data from tool call output event."""
-        return self._extract_tool_call_data(event, "output")
 
     def _setup_async_agent(self, instruction: str, mcp_servers: Dict, output_type: dict, **kwargs):
         """Setup async client and agent."""
@@ -437,46 +393,55 @@ class DeepSeekModel(LLMBaseModel):
 
     def _process_tool_call_start(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
         """Process tool_call_item events."""
-        call_id = function_name = arguments = None
 
-        if hasattr(event.item, "raw_item"):
-            raw_item = event.item.raw_item
-            call_id = getattr(raw_item, "call_id", None)
-            function_name = getattr(raw_item, "name", None)
-            arguments = getattr(raw_item, "arguments", None)
+        raw_item = event.item.raw_item
+        call_id = getattr(raw_item, "call_id", None)
+        function_name = getattr(raw_item, "name", None)
+        arguments = getattr(raw_item, "arguments", None)
 
-        action = ActionHistory.create_action(
-            ActionRole.TOOL,
-            function_name or "unknown",
-            f"Database function call: {function_name or 'unknown'}",
-            {"function_name": function_name, "arguments": arguments, "call_id": call_id},
+        # Check if action with this call_id already exists
+        if call_id and action_history_manager.find_action_by_id(call_id):
+            return None
+
+        action = ActionHistory(
+            action_id=call_id,
+            role=ActionRole.TOOL,
+            messages="MCP function call",
+            action_type=function_name or "unknown",
+            input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
             status=ActionStatus.PROCESSING,
         )
-        action.action_id = call_id or action.action_id
         action_history_manager.add_action(action)
         return action
 
     def _process_tool_call_complete(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
         """Process tool_call_output_item events."""
-        call_id = getattr(event.item.raw_item, "call_id", None) if hasattr(event.item, "raw_item") else None
+        # try to find the action by call_id, but it seems deepseek doesn't have call_id in the raw_item sometimes
+        call_id = getattr(event.item.raw_item, "call_id", None)
         matching_action = action_history_manager.find_action_by_id(call_id) if call_id else None
 
         if not matching_action:
-            logger.warning(f"No matching action found for call_id: {call_id}")
-            return None
+            # Try to match by the most recent PROCESSING action as fallback
+            processing_actions = [a for a in action_history_manager.actions if a.status == ActionStatus.PROCESSING]
+            if processing_actions:
+                matching_action = processing_actions[-1]  # Get the most recent
+            else:
+                return None
 
-        output_data = self._extract_tool_call_output(event)
-        matching_action.output = output_data
-        matching_action.end_time = datetime.now()
+        output_data = {
+            "call_id": call_id,
+            "success": True,
+            "raw_output": event.item.output,
+        }
 
-        success = output_data.get("success", True)
-        matching_action.status = ActionStatus.SUCCESS if success else ActionStatus.FAILED
+        action_history_manager.update_action_by_id(
+            matching_action.action_id, output=output_data, end_time=datetime.now(), status=ActionStatus.SUCCESS
+        )
 
-        return matching_action
+        # Don't return the action to avoid duplicate yield
+        return None
 
-    def _process_message_output(
-        self, event, function_call_count: int, action_history_manager: ActionHistoryManager
-    ) -> ActionHistory:
+    def _process_message_output(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
         """Process message_output_item events."""
         if not (hasattr(event.item, "raw_item") and hasattr(event.item.raw_item, "content")):
             return None
@@ -484,42 +449,33 @@ class DeepSeekModel(LLMBaseModel):
         content = event.item.raw_item.content
         if not content:
             return None
-
+        logger.debug(f"Processing message output: {content}")
         # Extract text content
         if isinstance(content, list) and content:
             text_content = content[0].text if hasattr(content[0], "text") else str(content[0])
         else:
             text_content = str(content)
 
-        # Try to parse JSON content
-        try:
-            if text_content.strip().startswith("{"):
-                json_content = json.loads(text_content)
-                final_sql = json_content.get("sql", "")
-                explanation = json_content.get("explanation", "")
-
-                if final_sql:
-                    action = ActionHistory.create_action(
-                        ActionRole.ASSISTANT,
-                        "message",
-                        f"Final SQL query generated: {final_sql}",
-                        {
-                            "reasoning_task": "SQL generation from natural language",
-                            "total_function_calls": function_call_count,
-                        },
-                        {
-                            "success": True,
-                            "final_sql_query": final_sql,
-                            "explanation": explanation,
-                            "reasoning_complete": True,
-                        },
-                        ActionStatus.SUCCESS,
-                    )
-                    action.end_time = datetime.now()
-                    action_history_manager.add_action(action)
-                    return action
-        except Exception:
-            pass
+        # Create action with raw content
+        if len(text_content) > 0:
+            action = ActionHistory(
+                action_id=str(uuid.uuid4()),
+                role=ActionRole.ASSISTANT,
+                messages=(f"Thinking: {text_content}"),
+                action_type="message",
+                input={},
+                output={
+                    "success": True,
+                    "raw_output": text_content,
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action.end_time = datetime.now()
+            action_history_manager.add_action(action)
+        else:
+            action = None
+            logger.debug(f"No text content found in message output: {content}")
+        return action
 
     def token_count(self, prompt: str) -> int:
         """Estimate the number of tokens in a text using the deepseek tokenizer.

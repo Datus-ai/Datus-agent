@@ -4,6 +4,10 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
 
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
 
 class ActionRole(str, Enum):
     """Role of the action creator
@@ -77,6 +81,7 @@ class ActionHistoryManager:
 
     def add_action(self, action: ActionHistory) -> None:
         """Add an action to the history"""
+        logger.debug(f"Adding action: {action}")
         self.actions.append(action)
         self.current_action_id = action.action_id
 
@@ -108,6 +113,7 @@ class ActionHistoryManager:
     def update_action_by_id(self, action_id: str, **kwargs) -> bool:
         """Update an action by its action_id"""
         action = self.find_action_by_id(action_id)
+        logger.debug(f"Updating action: {action_id} with kwargs: {kwargs}")
         if action:
             for key, value in kwargs.items():
                 if hasattr(action, key):

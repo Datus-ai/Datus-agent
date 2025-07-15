@@ -712,7 +712,7 @@ class AgentCommands:
 
                 # Display final action history
                 self.console.print("\n[bold blue]Final Action History:[/]")
-                action_display.display_final_action_history_with_full_sql(actions)
+                action_display.display_final_action_history(actions)
 
                 # Extract result from final action
                 if actions:

@@ -3,12 +3,14 @@ from typing import List, Optional
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
+
+logger = get_logger(__name__)
 
 
 class ActionHistoryDisplay:
@@ -36,7 +38,7 @@ class ActionHistoryDisplay:
         }
         self.role_dots = {
             ActionRole.TOOL: "🔧",  # Cyan for tools
-            ActionRole.ASSISTANT: "⚫",  # Grey for thinking/messages
+            ActionRole.ASSISTANT: "💬",  # Grey for thinking/messages
             ActionRole.SYSTEM: "🟣",  # Purple for system
             ActionRole.USER: "🟢",  # Green for user
             ActionRole.WORKFLOW: "🟡",  # Yellow for workflow
@@ -190,25 +192,29 @@ class ActionHistoryDisplay:
 
         # Add status info for tools
         if action.role == ActionRole.TOOL:
+            if action.input and isinstance(action.input, dict):
+                function_name = action.input.get("function_name", "unknown")
+                args_preview = self._get_tool_args_preview(action.input)
+                text += f" - {function_name}({args_preview})"
             if action.status == ActionStatus.PROCESSING:
-                # Show input for processing tools
-                if action.input and isinstance(action.input, dict):
-                    function_name = action.input.get("function_name", "unknown")
-                    args_preview = self._get_tool_args_preview(action.input)
-                    text += f" - {function_name}({args_preview})"
+                pass
             else:
-                # Show completion status
+                # Show completion status with output preview
                 status_text = "✓" if action.status == ActionStatus.SUCCESS else "✗"
                 duration = ""
                 if action.end_time and action.start_time:
                     duration_sec = (action.end_time - action.start_time).total_seconds()
                     duration = f" ({duration_sec:.1f}s)"
-                text += f" - {status_text}{duration}"
 
-        # Add duration for completed actions
-        elif action.status != ActionStatus.PROCESSING and action.end_time and action.start_time:
-            duration_sec = (action.end_time - action.start_time).total_seconds()
-            text += f" [dim]({duration_sec:.1f}s)[/dim]"
+                # Add output preview for successful tool calls on next line
+                output_preview = ""
+                if action.status == ActionStatus.SUCCESS and action.output:
+                    function_name = action.input.get("function_name", "") if action.input else ""
+                    preview = self._get_tool_output_preview(action.output, function_name)
+                    if preview:
+                        output_preview = f"\n    {preview}"
+
+                text += f" - {status_text}{output_preview}{duration}"
 
         return text
 
@@ -224,11 +230,70 @@ class ActionHistoryDisplay:
                 elif args:
                     key, value = next(iter(args.items()))
                     value_str = str(value)
-                    return f"{key}='{value_str[:20]}...'" if len(value_str) > 20 else f"{key}='{value_str}'"
+                    return f"{key}='{value_str[:50]}...'" if len(value_str) > 50 else f"{key}='{value_str}'"
             else:
                 args_str = str(args)
-                return f"'{args_str[:30]}...'" if len(args_str) > 30 else f"'{args_str}'"
+                return f"'{args_str[:50]}...'" if len(args_str) > 50 else f"'{args_str}'"
         return ""
+
+    def _get_tool_output_preview(self, output_data: dict, function_name: str = "") -> str:
+        """Get a brief preview of tool output results"""
+        if not output_data:
+            return ""
+
+        # Normalize output_data to dict format
+        if isinstance(output_data, str):
+            try:
+                import json
+
+                output_data = json.loads(output_data)
+            except Exception:
+                return "✗ Failed"
+
+        if not isinstance(output_data, dict):
+            return "✓ Success"
+
+        # Use raw_output if available, otherwise use the data directly
+        data = output_data.get("raw_output", output_data)
+
+        # If data is a string, parse it as JSON first
+        if isinstance(data, str):
+            try:
+                import json
+
+                data = json.loads(data)
+            except Exception:
+                return "✗ Failed"
+
+        # Parse data.text as JSON array for counting items
+        try:
+            import json
+
+            if "text" in data and isinstance(data["text"], str):
+                # Convert Python dict format to JSON format
+                text_content = data["text"]
+                cleaned_text = text_content.replace("'", '"').replace("None", "null")
+                items = json.loads(cleaned_text)
+
+                if isinstance(items, list):
+                    count = len(items)
+                    # Return appropriate label based on function name
+                    if function_name in ["list_tables", "table_overview"]:
+                        return f"✓ {count} tables"
+                    elif function_name in ["describe_table"]:
+                        return f"✓ {count} columns"
+                    elif function_name in ["read_query", "query"]:
+                        return f"✓ {count} rows"
+                    else:
+                        return f"✓ {count} items"
+        except Exception:
+            pass
+
+        # Generic fallback
+        if "success" in output_data:
+            return "✓ Success" if output_data["success"] else "✗ Failed"
+
+        return "✓ Completed"
 
     def display_streaming_actions(self, actions: List[ActionHistory]) -> Live:
         """Create a live display for streaming actions with simplified list format"""
@@ -266,7 +331,7 @@ class ActionHistoryDisplay:
         # Create Live display with the updatable content
         return Live(content, refresh_per_second=4)
 
-    def display_final_action_history_with_full_sql(self, actions: List[ActionHistory]) -> None:
+    def display_final_action_history(self, actions: List[ActionHistory]) -> None:
         """Display the final action history with complete SQL queries and reasoning results"""
         if not actions:
             self.console.print("[dim]No actions to display[/dim]")
@@ -274,7 +339,7 @@ class ActionHistoryDisplay:
 
         tree = Tree("[bold]Action History[/bold]")
 
-        for i, action in enumerate(actions, 1):
+        for action in actions:
             status_icon = self.status_icons.get(action.status, "⚡")
             role_color = self.role_colors.get(action.role, "white")
 
@@ -289,56 +354,24 @@ class ActionHistoryDisplay:
 
             # Add details as child nodes using rich_util formatting
             if action.input:
-                input_tree = dict_to_tree(action.input, console=self.console)
-                input_node = action_node.add("[cyan]📥 Input:[/cyan]")
-                for child in input_tree.children:
-                    input_node.add(child.label)
+                if isinstance(action.input, dict):
+                    input_tree = dict_to_tree(action.input, console=self.console)
+                    input_node = action_node.add("[cyan]📥 Input:[/cyan]")
+                    for child in input_tree.children:
+                        input_node.add(child.label)
+                else:
+                    input_node = action_node.add(f"[cyan]📥 Input:[/cyan] {str(action.input)}")
 
             if action.output:
-                output_tree = dict_to_tree(action.output, console=self.console)
-                output_node = action_node.add("[green]📤 Output:[/green]")
-                for child in output_tree.children:
-                    output_node.add(child.label)
+                if isinstance(action.output, dict):
+                    output_tree = dict_to_tree(action.output, console=self.console)
+                    output_node = action_node.add("[green]📤 Output:[/green]")
+                    for child in output_tree.children:
+                        output_node.add(child.label)
+                else:
+                    output_node = action_node.add(f"[green]📤 Output:[/green] {str(action.output)}")
 
         self.console.print(tree)
-
-        # Show complete final reasoning result with full SQL query
-        final_action = actions[-1] if actions else None
-        if final_action and final_action.output and isinstance(final_action.output, dict):
-            self._display_final_reasoning_result(final_action)
-
-    def _display_final_reasoning_result(self, final_action: ActionHistory) -> None:
-        """Display the complete final reasoning result with proper SQL formatting"""
-        self.console.print("\n[bold green]🔧 Complete Final Reasoning Result:[/]")
-
-        # Create a panel for the final reasoning result
-        content_parts = []
-
-        # Add the messages
-        if final_action.messages:
-            content_parts.append(Text(f"💬 {final_action.messages}", style="bold blue"))
-
-        # Add status and timing
-        status_info = f"Status: {final_action.status.upper()}"
-        if final_action.end_time and final_action.start_time:
-            duration = (final_action.end_time - final_action.start_time).total_seconds()
-            status_info += f" (Duration: {duration:.2f}s)"
-        content_parts.append(Text(f"📊 {status_info}", style="bold yellow"))
-
-        # Add the complete output using rich_util formatting
-        if final_action.output:
-            output_tree = dict_to_tree(final_action.output, console=self.console)
-            content_parts.append(Text("📤 Complete Output:", style="bold green"))
-            content_parts.append(output_tree)
-
-        # Display content parts separately since they contain mixed types
-        if content_parts:
-            for part in content_parts:
-                if isinstance(part, Text):
-                    self.console.print(part)
-                else:
-                    # This is a Tree object, print it directly
-                    self.console.print(part)
 
     def _get_data_summary_with_full_sql(self, data) -> str:
         """Get a data summary with full SQL queries for final display"""
