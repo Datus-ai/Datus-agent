@@ -43,10 +43,22 @@ class DynamicLogManager:
             log_file_base + ".log", when="midnight", interval=1, backupCount=30, encoding="utf-8"
         )
         self.file_handler.suffix = "%Y-%m-%d"
-        file_formatter = logging.Formatter("%(message)s")
+
+        # Use a custom formatter for the file handler that removes color codes
+        class PlainTextFormatter(logging.Formatter):
+            def format(self, record):
+                # Get the original message
+                msg = super().format(record)
+                # Remove ANSI color codes
+                import re
+
+                ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
+                return ansi_escape.sub("", msg)
+
+        file_formatter = PlainTextFormatter("%(message)s")
         self.file_handler.setFormatter(file_formatter)
 
-        # Create console handler
+        # Create console handler with normal formatter
         self.console_handler = logging.StreamHandler(sys.stdout)
         console_formatter = logging.Formatter("%(message)s")
         self.console_handler.setFormatter(console_formatter)
@@ -171,6 +183,19 @@ def log_context(target: Literal["both", "file", "console", "none"]):
         yield
 
 
+class AdaptiveRenderer:
+    """Adaptive renderer that uses colored output by default"""
+
+    def __init__(self):
+        self.colored_renderer = structlog.dev.ConsoleRenderer(
+            colors=True, exception_formatter=structlog.dev.plain_traceback
+        )
+
+    def __call__(self, logger, name, event_dict):
+        """Always use colored renderer - file handler will strip colors with its formatter"""
+        return self.colored_renderer(logger, name, event_dict)
+
+
 if not structlog.is_configured():
     # Initialize event dict to avoid NoneType errors
     structlog.configure_once(
@@ -184,7 +209,7 @@ if not structlog.is_configured():
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
-            structlog.dev.ConsoleRenderer(colors=True, exception_formatter=structlog.dev.plain_traceback),
+            AdaptiveRenderer(),
         ],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),

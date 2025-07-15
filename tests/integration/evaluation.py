@@ -210,7 +210,7 @@ def analyze_yaml_file(
             return {"error": "file format error: empty or invalid YAML"}
 
         if "workflow" not in data:
-            return {"error": "file format error：miss workflow field"}
+            return {"error": "file format error: missing workflow field"}
 
         workflow = data["workflow"]
         if workflow is None:

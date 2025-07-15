@@ -135,13 +135,22 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     benchmark_parser.add_argument(
-        "--benchmark", type=str, required=True, choices=["spider2", "bird_dev"], help="Benchmark type to run"
+        "--benchmark",
+        type=str,
+        required=True,
+        choices=["spider2", "bird_dev", "semantic_layer"],
+        help="Benchmark type to run",
     )
     benchmark_parser.add_argument("--benchmark_path", type=str, help="Path to benchmark configuration")
     benchmark_parser.add_argument(
         "--benchmark_task_ids", type=str, nargs="+", help="Specific benchmark task IDs to run"
     )
     benchmark_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
+    benchmark_parser.add_argument("--task_db_name", type=str, help="Database name for the task")
+    benchmark_parser.add_argument("--task_schema", type=str, help="Schema name for the task")
+    benchmark_parser.add_argument("--domain", type=str, help="Domain for the task")
+    benchmark_parser.add_argument("--layer1", type=str, help="Layer1 for the task")
+    benchmark_parser.add_argument("--layer2", type=str, help="Layer2 for the task")
 
     # generate-dataset command
     generate_dataset_parser = subparsers.add_parser(

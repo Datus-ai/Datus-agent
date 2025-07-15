@@ -1,0 +1,225 @@
+question,sql
+Which country has the highest number of transactions? (Using transactions aggregated by country.),"SELECT
+c.country,
+c.region,
+SUM(1) as transactions
+FROM mf_demo.mf_demo_transactions t
+JOIN mf_demo.mf_demo_customers cust ON t.id_customer = cust.id_customer
+JOIN mf_demo.mf_demo_countries c ON cust.country = c.country
+GROUP BY c.country, c.region
+ORDER BY transactions DESC;"
+What percentage of transactions were cancellations? (Use the cancellation_rate metric defined as cancellations_usd divided by transaction_amount_usd.),"SELECT
+SUM(CASE WHEN transaction_type_name = 'cancellation' THEN transaction_amount_usd ELSE 0 END) as cancellations_usd,
+SUM(transaction_amount_usd) as total_transaction_amount_usd,
+(SUM(CASE WHEN transaction_type_name = 'cancellation' THEN transaction_amount_usd ELSE 0 END) /
+SUM(transaction_amount_usd)) * 100 as cancellation_rate_percent
+FROM mf_demo.mf_demo_transactions;"
+"What is the total transaction amount (USD) by region (NA, EU, SA)? (Use the mf_demo_countries table to map country to region and aggregate transaction amounts accordingly.)","SELECT
+c.region,
+SUM(t.transaction_amount_usd) as total_transaction_amount_usd,
+COUNT(t.id_transaction) as transaction_count
+FROM mf_demo.mf_demo_transactions t
+JOIN mf_demo.mf_demo_customers cust ON t.id_customer = cust.id_customer
+JOIN mf_demo.mf_demo_countries c ON cust.country = c.country
+GROUP BY c.region
+ORDER BY total_transaction_amount_usd DESC;"
+"What is the 7-day rolling sum of transaction amount (USD) for the region 'NA', and how does it compare with the same period for ""EU""? (Use the transaction_usd_na_l7d metric concept, extending it to create a similar one for EU.) (What is the 7-day rolling sum of transaction amount (USD) for the region NorthAmerican, and how does it compare with the same period for Europe?)","WITH daily_amounts AS (
+    SELECT 
+        DATE(t.ds) as transaction_date,
+        c.region,
+        SUM(t.transaction_amount_usd) as daily_amount
+    FROM mf_demo.mf_demo_transactions t
+    JOIN mf_demo.mf_demo_customers cust ON t.id_customer = cust.id_customer
+    JOIN mf_demo.mf_demo_countries c ON cust.country = c.country
+    WHERE c.region IN ('NA', 'EU')
+    GROUP BY DATE(t.ds), c.region
+),
+rolling_sums AS (
+    SELECT 
+        transaction_date,
+        region,
+        daily_amount,
+        SUM(daily_amount) OVER (
+            PARTITION BY region 
+            ORDER BY transaction_date 
+            ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+        ) as rolling_7day_sum
+    FROM daily_amounts
+)
+SELECT 
+    transaction_date,
+    MAX(CASE WHEN region = 'NA' THEN rolling_7day_sum END) as na_7day_rolling_sum,
+    MAX(CASE WHEN region = 'EU' THEN rolling_7day_sum END) as eu_7day_rolling_sum
+FROM rolling_sums
+GROUP BY transaction_date
+ORDER BY transaction_date;"
+"If a customer from 'MX' region has made a quick-buy transaction, what is the likelihood (probability) that they also had at least one cancellation? (Calculate the proportion of MX customers with at least one quick-buy who also have at least one cancellation.) (If a customer from maxigo region has made a quick-buy transaction, what is the likelihood (probability) that they also had at least one cancellation?)","WITH mx_customers AS (
+SELECT DISTINCT t.id_customer
+FROM mf_demo.mf_demo_transactions t
+JOIN mf_demo.mf_demo_customers cust ON t.id_customer = cust.id_customer
+WHERE cust.country = 'MX'
+),
+quick_buy_customers AS (
+SELECT DISTINCT t.id_customer
+FROM mf_demo.mf_demo_transactions t
+JOIN mx_customers mx ON t.id_customer = mx.id_customer
+WHERE t.transaction_type_name = 'quick-buy'
+),
+cancellation_customers AS (
+SELECT DISTINCT t.id_customer
+FROM mf_demo.mf_demo_transactions t
+JOIN mx_customers mx ON t.id_customer = mx.id_customer
+WHERE t.transaction_type_name = 'cancellation'
+)
+SELECT
+COUNT(qb.id_customer) as quick_buy_customers,
+COUNT(CASE WHEN c.id_customer IS NOT NULL THEN 1 END) as quick_buy_with_cancellation,
+(COUNT(CASE WHEN c.id_customer IS NOT NULL THEN 1 END) * 1.0 / COUNT(qb.id_customer)) as probability
+FROM quick_buy_customers qb
+LEFT JOIN cancellation_customers c ON qb.id_customer = c.id_customer;"
+"What is the month-to-date (MTD) transaction amount (USD) up to 2022-03-31, and how does it compare with the 7-day rolling total for the same date? Use transaction_usd_mtd versus a window-based cumulative metric.","WITH march_data AS (
+SELECT
+DATE(ds) as transaction_date,
+SUM(transaction_amount_usd) as daily_amount
+FROM mf_demo.mf_demo_transactions
+WHERE DATE(ds) >= '2022-03-01' AND DATE(ds) <= '2022-03-31'
+GROUP BY DATE(ds)
+),
+cumulative_data AS (
+SELECT
+transaction_date,
+daily_amount,
+SUM(daily_amount) OVER (ORDER BY transaction_date) as mtd_amount,
+SUM(daily_amount) OVER (
+ORDER BY transaction_date
+ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+) as rolling_7day_amount
+FROM march_data
+)
+SELECT
+transaction_date,
+daily_amount,
+mtd_amount,
+rolling_7day_amount
+FROM cumulative_data
+WHERE transaction_date = '2022-03-31';"
+"For each region (NA, EU, SA), what is the cumulative 7-day quick-buy amount (USD) as of 2022-04-04?","WITH quick_buy_by_region AS (
+SELECT
+DATE(t.ds) as transaction_date,
+c.region,
+SUM(CASE WHEN t.transaction_type_name = 'quick-buy' THEN t.transaction_amount_usd ELSE 0 END) as daily_quick_buy_amount
+FROM mf_demo.mf_demo_transactions t
+JOIN mf_demo.mf_demo_customers cust ON t.id_customer = cust.id_customer
+JOIN mf_demo.mf_demo_countries c ON cust.country = c.country
+WHERE DATE(t.ds) >= '2022-03-29' AND DATE(t.ds) <= '2022-04-04' -- 7 days window
+GROUP BY DATE(t.ds), c.region
+)
+SELECT
+region,
+SUM(daily_quick_buy_amount) as cumulative_7day_quick_buy_amount_usd
+FROM quick_buy_by_region
+GROUP BY region
+ORDER BY cumulative_7day_quick_buy_amount_usd DESC;"
+Which customers generated the top-10 highest net revenue (using the revenue_usd metric) during March 2022?,"SELECT
+t.id_customer,
+SUM(t.transaction_amount_usd) -
+SUM(CASE WHEN t.transaction_type_name = 'cancellation' THEN t.transaction_amount_usd ELSE 0 END) +
+SUM(CASE WHEN t.transaction_type_name = 'alteration' THEN t.transaction_amount_usd ELSE 0 END) as revenue_usd,
+COUNT(t.id_transaction) as total_transactions
+FROM mf_demo.mf_demo_transactions t
+WHERE DATE(t.ds) >= '2022-03-01' AND DATE(t.ds) < '2022-04-01'
+GROUP BY t.id_customer
+ORDER BY revenue_usd DESC
+LIMIT 10;"
+What is the daily cancellation rate trend in NA versus EU from 2022-03-07 to 2022-04-04? Plot or tabulate cancellation_rate by ds and region.,"SELECT
+DATE(t.ds) as transaction_date,
+c.region,
+SUM(CASE WHEN t.transaction_type_name = 'cancellation' THEN t.transaction_amount_usd ELSE 0 END) as cancellations_usd,
+SUM(t.transaction_amount_usd) as total_transaction_amount_usd,
+(SUM(CASE WHEN t.transaction_type_name = 'cancellation' THEN t.transaction_amount_usd ELSE 0 END) /
+NULLIF(SUM(t.transaction_amount_usd), 0)) * 100 as cancellation_rate_percent
+FROM mf_demo.mf_demo_transactions t
+JOIN mf_demo.mf_demo_customers cust ON t.id_customer = cust.id_customer
+JOIN mf_demo.mf_demo_countries c ON cust.country = c.country
+WHERE c.region IN ('NA', 'EU')
+AND DATE(t.ds) >= '2022-03-07'
+AND DATE(t.ds) <= '2022-04-04'
+GROUP BY DATE(t.ds), c.region
+ORDER BY transaction_date, c.region;"
+Identify any days where the number of distinct transacting customers spiked more than two standard deviations above the March 2022 average. What were the corresponding total transaction amounts? Use transacting_customers as the metric and an anomaly-detection threshold.,"WITH daily_customers AS (
+SELECT
+DATE(ds) as transaction_date,
+COUNT(DISTINCT id_customer) as transacting_customers,
+SUM(transaction_amount_usd) as total_transaction_amount
+FROM mf_demo.mf_demo_transactions
+GROUP BY DATE(ds)
+),
+march_stats AS (
+SELECT
+AVG(transacting_customers) as avg_customers,
+STDDEV(transacting_customers) as stddev_customers
+FROM daily_customers
+WHERE transaction_date >= '2022-03-01' AND transaction_date < '2022-04-01'
+)
+SELECT
+dc.transaction_date,
+dc.transacting_customers,
+dc.total_transaction_amount,
+ms.avg_customers,
+ms.stddev_customers,
+(dc.transacting_customers - ms.avg_customers) / ms.stddev_customers as z_score
+FROM daily_customers dc
+CROSS JOIN march_stats ms
+WHERE (dc.transacting_customers - ms.avg_customers) > (2 * ms.stddev_customers)
+ORDER BY dc.transaction_date;"
+"For MX customers, how did the 7-day rolling sum of transaction amount (USD) change before and after their first cancellation event? Combine transaction_usd_l7d_mx logic with customer-level windows keyed on the first cancellation date.","WITH mx_customers AS (
+SELECT DISTINCT cust.id_customer
+FROM mf_demo.mf_demo_customers cust
+WHERE cust.country = 'MX'
+),
+first_cancellations AS (
+SELECT
+t.id_customer,
+MIN(DATE(t.ds)) as first_cancellation_date
+FROM mf_demo.mf_demo_transactions t
+JOIN mx_customers mx ON t.id_customer = mx.id_customer
+WHERE t.transaction_type_name = 'cancellation'
+GROUP BY t.id_customer
+),
+mx_daily_amounts AS (
+SELECT
+t.id_customer,
+DATE(t.ds) as transaction_date,
+SUM(t.transaction_amount_usd) as daily_amount
+FROM mf_demo.mf_demo_transactions t
+JOIN mx_customers mx ON t.id_customer = mx.id_customer
+GROUP BY t.id_customer, DATE(t.ds)
+),
+rolling_amounts AS (
+SELECT
+da.id_customer,
+da.transaction_date,
+da.daily_amount,
+fc.first_cancellation_date,
+SUM(da.daily_amount) OVER (
+PARTITION BY da.id_customer
+ORDER BY da.transaction_date
+ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+) as rolling_7day_sum,
+CASE
+WHEN da.transaction_date < fc.first_cancellation_date THEN 'Before'
+WHEN da.transaction_date >= fc.first_cancellation_date THEN 'After'
+END as period
+FROM mx_daily_amounts da
+LEFT JOIN first_cancellations fc ON da.id_customer = fc.id_customer
+WHERE fc.first_cancellation_date IS NOT NULL
+)
+SELECT
+id_customer,
+period,
+AVG(rolling_7day_sum) as avg_7day_rolling_sum,
+COUNT(*) as days_count
+FROM rolling_amounts
+WHERE period IS NOT NULL
+GROUP BY id_customer, period
+ORDER BY id_customer, period;"

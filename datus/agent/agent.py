@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import os
 import shutil
@@ -465,6 +466,8 @@ class Agent:
             return self.benchmark_spider2(benchmark_path, target_task_ids)
         elif benchmark_platform == "bird_dev":
             return self.benchmark_bird_dev(benchmark_path, target_task_ids)
+        elif benchmark_platform == "semantic_layer":
+            return self.benchmark_semantic_layer(benchmark_path, target_task_ids)
         elif benchmark_platform == "bird_critic":
             logger.info(f"Benchmark {benchmark_platform} not support now, please wait for update.")
         return {"status": "success", "message": "Benchmarking completed"}
@@ -533,6 +536,48 @@ class Agent:
                     f"database: {database_name}, "
                     f"file saved in {self.global_config.output_dir}/{task_id}.csv."
                 )
+
+    def benchmark_semantic_layer(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
+        task_file = os.path.join(benchmark_path, "testing_set.csv")
+        self._check_benchmark_file(task_file)
+
+        tasks = []
+        with open(task_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for line_no, row in enumerate(reader, 1):
+                logger.debug(f"line {line_no}: {row}")
+                if "question" in row and "sql" in row and row["question"].strip() and row["sql"].strip():
+                    tasks.append(
+                        {"question_id": line_no, "question": row["question"].strip(), "sql": row["sql"].strip()}
+                    )
+
+        logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
+
+        for task in tasks:
+            task_id = str(task["question_id"])
+            if target_task_ids and task_id not in target_task_ids:
+                continue
+
+            question = task["question"]
+            logger.info(f"start benchmark with {task_id}: {question}")
+
+            self.run(
+                SqlTask(
+                    id=task_id,
+                    database_type=DBType.DUCKDB,
+                    task=question,
+                    database_name=self.args.task_db_name,
+                    schema_name=self.args.task_schema,
+                    domain=self.args.domain,
+                    layer1=self.args.layer1,
+                    layer2=self.args.layer2,
+                    output_dir=self.global_config.output_dir,
+                )
+            )
+
+            logger.info(
+                f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
+            )
 
     def _check_benchmark_file(self, file_path: str):
         if not os.path.exists(file_path):

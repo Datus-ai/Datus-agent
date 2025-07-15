@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import List, Set
@@ -56,7 +57,7 @@ def process_line(
     all_semantic_models: Set[str],
     all_metrics: Set[str],
 ):
-    logger.info(f"process line: {row}")
+    logger.info(f"processing line: {row}")
 
     sql_task = SqlTask(
         id=f"sql_task_{index}",
@@ -77,11 +78,11 @@ def process_line(
         schema_name=sql_task.schema_name,
     )
 
-    logger.info(f"sql task: {sql_task}")
+    logger.debug(f"sql task: {sql_task}")
     semantic_model_input_data = GenerateSemanticModelInput(
         sql_task=sql_task, semantic_model_meta=semantic_model_meta, sql_query=row["sql"], prompt_version="1.0"
     )
-    logger.info(f"semantic model input data: {semantic_model_input_data}")
+    logger.debug(f"semantic model input data: {semantic_model_input_data}")
     semantic_model_node = GenerateSemanticModelNode(
         node_id=f"semantic_model_node_{index}",
         description=f"Generate semantic model for {row['question']}",
@@ -89,7 +90,6 @@ def process_line(
         input_data=semantic_model_input_data,
         agent_config=agent_config,
     )
-    logger.info(f"semantic model node: {semantic_model_node}")
     semantic_model_result = semantic_model_node.run()
     logger.info(f"semantic model result: {semantic_model_result}")
     if not semantic_model_result.success:
@@ -104,16 +104,16 @@ def process_line(
         semantic_model_meta.catalog_name,
         args.domain,
     )
-    logger.info(f"semantic model: {semantic_model}")
+    logger.debug(f"semantic model: {semantic_model}")
 
-    if semantic_model["id"] not in all_semantic_models:
+    if semantic_model.get("id", "") not in all_semantic_models:
         storage.semantic_model_storage.store([semantic_model])
-        all_semantic_models.add(semantic_model["id"])
+        all_semantic_models.add(semantic_model.get("id", ""))
     else:
         logger.info(f"semantic model {semantic_model['id']} already exists")
 
     metric_input_data = GenerateMetricsInput(sql_task=sql_task, sql_query=row["sql"], prompt_version="1.0")
-    logger.info(f"metric input data: {metric_input_data}")
+    logger.debug(f"metric input data: {metric_input_data}")
     metric_node = GenerateMetricsNode(
         node_id=f"metric_node_{index}",
         description=f"Generate metrics for {row['question']}",
@@ -121,7 +121,6 @@ def process_line(
         input_data=metric_input_data,
         agent_config=agent_config,
     )
-    logger.info(f"metric node: {metric_node}")
     metric_result = metric_node.run()
     logger.info(f"metric node result: {metric_result}")
     if not metric_result.success:
@@ -136,13 +135,13 @@ def process_line(
         layer1,
         layer2,
     )
-    logger.info(f"metrics: {metrics}")
+    logger.debug(f"metrics: {metrics}")
     for metric in metrics:
-        if metric["id"] not in all_metrics:
+        if metric.get("id", "") not in all_metrics:
             storage.metric_storage.store([metric])
-            all_metrics.add(metric["id"])
+            all_metrics.add(metric.get("id", ""))
         else:
-            logger.info(f"metric {metric['id']} already exists")
+            logger.info(f"metric {metric.get('id', '')} already exists")
 
 
 def gen_semantic_model(
@@ -154,10 +153,13 @@ def gen_semantic_model(
     domain: str,
 ):
     semantic_model = {}
+    if not os.path.exists(semantic_model_file):
+        logger.error(f"semantic model file {semantic_model_file} not found")
+        return semantic_model
     with open(semantic_model_file, "r") as f:
         docs = yaml.safe_load_all(f)
         for doc in docs:
-            content = doc.get("data_source", {})
+            content = doc.get("data_source", {}) or doc.get("semantic_model", {})
             if not content:
                 continue
             semantic_model["id"] = gen_semantic_model_id(catalog_name, database_name, schema_name, table_name)

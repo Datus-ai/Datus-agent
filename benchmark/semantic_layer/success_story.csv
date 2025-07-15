@@ -1,0 +1,67 @@
+question,sql
+How many customers have been added per day?,"SELECT ds AS date, SUM(1) AS new_customers FROM mf_demo.mf_demo_customers GROUP BY ds ORDER BY ds;"
+What is the total transaction amount (USD) recorded in the dataset?,SELECT SUM(transaction_amount_usd) as total_transaction_amount_usd FROM mf_demo.mf_demo_transactions;
+What is the total revenue (USD) after accounting for cancellations and alterations? (Use the revenue_usd metric which is calculated as transaction_amount_usd - cancellations_usd + alterations_usd.),"SELECT
+SUM(transaction_amount_usd) as transaction_amount_usd,
+SUM(CASE WHEN transaction_type_name = 'cancellation' THEN transaction_amount_usd ELSE 0 END) as cancellations_usd,
+SUM(CASE WHEN transaction_type_name = 'alteration' THEN transaction_amount_usd ELSE 0 END) as alterations_usd,
+SUM(transaction_amount_usd) -
+SUM(CASE WHEN transaction_type_name = 'cancellation' THEN transaction_amount_usd ELSE 0 END) +
+SUM(CASE WHEN transaction_type_name = 'alteration' THEN transaction_amount_usd ELSE 0 END) as revenue_usd
+FROM mf_demo.mf_demo_transactions;"
+What percentage of transactions were cancellations? (Use the cancellation_rate metric defined as cancellations_usd divided by transaction_amount_usd.),"SELECT
+SUM(CASE WHEN transaction_type_name = 'cancellation' THEN transaction_amount_usd ELSE 0 END) as cancellations_usd,
+SUM(transaction_amount_usd) as total_transaction_amount_usd,
+(SUM(CASE WHEN transaction_type_name = 'cancellation' THEN transaction_amount_usd ELSE 0 END) /
+SUM(transaction_amount_usd)) * 100 as cancellation_rate_percent
+FROM mf_demo.mf_demo_transactions;"
+"What is the total quick-buy transaction amount in USD for the past 7 days, and how does it compare to the total transaction amount in the same period? (Use the transaction_usd_na_l7d and transaction_usd_l7d_mx metrics as examples.)","
+WITH latest_7_days AS (
+SELECT
+SUM(CASE WHEN transaction_type_name = 'quick-buy' THEN transaction_amount_usd ELSE 0 END) as quick_buy_amount_usd,
+SUM(transaction_amount_usd) as total_transaction_amount_usd
+FROM mf_demo.mf_demo_transactions
+WHERE ds >= (SELECT MAX(ds) - INTERVAL '6 days' FROM mf_demo.mf_demo_transactions)
+)
+SELECT
+quick_buy_amount_usd,
+total_transaction_amount_usd,
+(quick_buy_amount_usd / total_transaction_amount_usd) * 100 as quick_buy_percentage
+FROM latest_7_days;"
+"Which customers had more than 3 cancellation transactions in March 2022, and what was their total cancelled amount (USD)? (Combine mf_demo_transactions filtering on transaction_type_name = 'cancellation' and date range, grouped by id_customer with a HAVING clause.)","SELECT 
+    t.id_customer,
+    COUNT(t.id_transaction) as cancellation_count,
+    SUM(t.transaction_amount_usd) as total_cancelled_amount_usd
+FROM mf_demo.mf_demo_transactions t
+WHERE t.transaction_type_name = 'cancellation'
+    AND DATE(t.ds) >= '2022-03-01' 
+    AND DATE(t.ds) < '2022-04-01'
+GROUP BY t.id_customer
+HAVING COUNT(t.id_transaction) > 3
+ORDER BY total_cancelled_amount_usd DESC;"
+How many transactions were classified as “quick-buy” overall? Use the quick_buy_transactions measure.,"SELECT
+SUM(CASE WHEN transaction_type_name = 'quick-buy' THEN 1 ELSE 0 END) as quick_buy_transactions
+FROM mf_demo.mf_demo_transactions;"
+"What is the average (mean) transaction amount (USD) for each transaction type (“buy”, “quick-buy”, “cancellation”, “alteration”)?","SELECT
+transaction_type_name,
+COUNT(id_transaction) as transaction_count,
+AVG(transaction_amount_usd) as avg_transaction_amount_usd,
+SUM(transaction_amount_usd) as total_transaction_amount_usd
+FROM mf_demo.mf_demo_transactions
+GROUP BY transaction_type_name
+ORDER BY avg_transaction_amount_usd DESC;"
+Which day in March 2022 had the highest single-day transaction amount (USD)? Aggregate transaction_amount_usd by ds.,"SELECT
+DATE(ds) as transaction_date,
+SUM(transaction_amount_usd) as daily_transaction_amount_usd,
+COUNT(id_transaction) as daily_transaction_count
+FROM mf_demo.mf_demo_transactions
+WHERE DATE(ds) >= '2022-03-01' AND DATE(ds) < '2022-04-01'
+GROUP BY DATE(ds)
+ORDER BY daily_transaction_amount_usd DESC
+LIMIT 1;"
+What proportion of total revenue comes from “large” transactions?,"SELECT
+SUM(CASE WHEN transaction_amount_usd >= 30 THEN transaction_amount_usd ELSE 0 END) as large_transaction_revenue,
+SUM(transaction_amount_usd) as total_revenue,
+(SUM(CASE WHEN transaction_amount_usd >= 30 THEN transaction_amount_usd ELSE 0 END) /
+SUM(transaction_amount_usd)) * 100 as large_transaction_percentage
+FROM mf_demo.mf_demo_transactions;"

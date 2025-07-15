@@ -6,8 +6,10 @@ import os
 import sqlite3
 import sys
 
+import pandas as pd
 import yaml
 
+from datus.tools.db_tools.duckdb_connector import DuckdbConnector
 from datus.utils.constants import DBType
 
 
@@ -80,6 +82,27 @@ def parse_dev_sql(dev_sql_path):
     return sql_data
 
 
+def parse_success_story_csv(csv_path):
+    """Parse success_story.csv file and return SQL statements"""
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"success_story.csv file not found: {csv_path}")
+
+    sql_data = []
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for line_no, row in enumerate(reader, 1):
+            if "sql" in row and row["sql"].strip():
+                sql_data.append(
+                    {
+                        "question_id": line_no,
+                        "sql": row["sql"].strip(),
+                        "question": row.get("question", "").strip() if "question" in row else "",
+                    }
+                )
+
+    return sql_data
+
+
 def find_sqlite_database(path_pattern, db_id):
     """Find SQLite database file based on path pattern and database ID"""
     sqlite_files = glob.glob(path_pattern, recursive=True)
@@ -121,25 +144,57 @@ def execute_sql_query(db_path, sql_query):
         return {"success": False, "columns": [], "results": [], "error": str(e)}
 
 
+def execute_duckdb_query(namespace_config, sql_query):
+    """Execute DuckDB query and return results"""
+    try:
+        db_path = namespace_config.get("uri", "")
+        if not db_path:
+            raise Exception("DuckDB URI not found in namespace config")
+
+        # Create DuckDB connector
+        connector = DuckdbConnector(db_path)
+
+        # Execute query and get results as DataFrame
+        result_df = connector.execute_query(sql_query)
+
+        # Convert DataFrame to the expected format
+        if result_df is not None and not result_df.empty:
+            column_names = result_df.columns.tolist()
+            results = result_df.values.tolist()
+            return {"success": True, "columns": column_names, "results": results, "error": None}
+        else:
+            return {"success": True, "columns": [], "results": [], "error": None}
+
+    except Exception as e:
+        return {"success": False, "columns": [], "results": [], "error": str(e)}
+
+
 def save_results_to_csv(results, output_path):
-    """Save results to CSV file"""
+    """Save results to CSV file using pandas DataFrame"""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
-        if results["success"] and results["results"]:
-            writer = csv.writer(csvfile)
-
-            if results["columns"]:
-                writer.writerow(results["columns"])
-
-            for row in results["results"]:
-                writer.writerow(row)
+    if results["success"] and results["results"]:
+        # Create DataFrame from results
+        if results["columns"] and results["results"]:
+            df = pd.DataFrame(results["results"], columns=results["columns"])
+        elif results["results"]:
+            # If no column names, create generic column names
+            num_cols = len(results["results"][0]) if results["results"] else 0
+            df = pd.DataFrame(results["results"], columns=[f"col_{i}" for i in range(num_cols)])
         else:
-            writer = csv.writer(csvfile)
-            if results["error"]:
-                writer.writerow(["error", results["error"]])
-            else:
-                writer.writerow(["message", "no results"])
+            # Empty results but successful
+            df = pd.DataFrame()
+
+        # Save DataFrame to CSV
+        df.to_csv(output_path, index=False, encoding="utf-8")
+    else:
+        # Handle error cases
+        if results["error"]:
+            error_df = pd.DataFrame([["error", results["error"]]], columns=["status", "message"])
+        else:
+            error_df = pd.DataFrame([["message", "no results"]], columns=["status", "message"])
+
+        error_df.to_csv(output_path, index=False, encoding="utf-8")
 
 
 def main():
@@ -175,6 +230,14 @@ def main():
                 print(f"Using dev.sql with {len(sql_data)} questions")
             else:
                 raise FileNotFoundError("Neither dev.json nor dev.sql found")
+        elif args.type == "semantic_layer":
+            # Parse success_story.csv file
+            success_story_path = os.path.join(full_benchmark_path, "testing_set.csv")
+            if not os.path.exists(success_story_path):
+                raise FileNotFoundError(f"success_story.csv file not found: {success_story_path}")
+
+            sql_data = parse_success_story_csv(success_story_path)
+            print(f"Using success_story.csv with {len(sql_data)} questions")
         else:
             raise Exception(f"Unsupported type: {args.type}")
 
@@ -194,17 +257,22 @@ def main():
                 print(f"Error: Task ID {task_id} not found")
                 return
 
-            print(f"Processing task {task_id}: database={task_data['db_id']}")
+            if args.type == "semantic_layer":
+                print(f"Processing task {task_id}")
+            else:
+                print(f"Processing task {task_id}: database={task_data['db_id']}")
 
             if namespace_config.get("type") == DBType.SQLITE:
                 path_pattern = namespace_config.get("path_pattern", "")
                 full_path_pattern = os.path.join(args.workdir, path_pattern)
                 db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])
+                print(f"Executing SQL: {task_data['sql'][:100]}...")
+                results = execute_sql_query(db_path, task_data["sql"])
+            elif namespace_config.get("type") == DBType.DUCKDB:
+                print(f"Executing SQL: {task_data['sql'][:100]}...")
+                results = execute_duckdb_query(namespace_config, task_data["sql"])
             else:
                 raise Exception(f"Unsupported database type: {namespace_config.get('type')}")
-
-            print(f"Executing SQL: {task_data['sql'][:100]}...")
-            results = execute_sql_query(db_path, task_data["sql"])
 
             output_path = os.path.join(gold_dir, f"{task_id}.csv")
             save_results_to_csv(results, output_path)
@@ -220,17 +288,21 @@ def main():
 
             for task_data in sql_data:
                 task_id = task_data["question_id"]
-                print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
+                if args.type == "semantic_layer":
+                    print(f"Processing task {task_id}/{len(sql_data)}")
+                else:
+                    print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
 
                 try:
                     if namespace_config.get("type") == DBType.SQLITE:
                         path_pattern = namespace_config.get("path_pattern", "")
                         full_path_pattern = os.path.join(args.workdir, path_pattern)
                         db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])
+                        results = execute_sql_query(db_path, task_data["sql"])
+                    elif namespace_config.get("type") == DBType.DUCKDB:
+                        results = execute_duckdb_query(namespace_config, task_data["sql"])
                     else:
                         raise Exception(f"Unsupported database type: {namespace_config.get('type')}")
-
-                    results = execute_sql_query(db_path, task_data["sql"])
 
                     output_path = os.path.join(gold_dir, f"{task_id}.csv")
                     save_results_to_csv(results, output_path)

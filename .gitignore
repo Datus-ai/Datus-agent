@@ -18,6 +18,9 @@ uv.lock
 /tests/output
 before_reflection_*.yaml
 /.history
-/benchmark
+/benchmark/bird
+/benchmark/spider2
+/benchmark/semantic_layer/gold
+/benchmark/semantic_layer/semantic_models
 /dist
 *.egg-info
