@@ -93,7 +93,7 @@ class ContextCommands:
         context_type = args.strip().lower()
 
         try:
-            from cli.context_screen import show_workflow_context_screen
+            from datus.cli.context_screen import show_workflow_context_screen
 
             # Get all context data from the workflow
             context_data = {
