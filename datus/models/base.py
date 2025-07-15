@@ -108,7 +108,11 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             prompt: The input prompt to send to the model
             mcp_servers: Dictionary of MCP servers to use for execution
             instruction: The instruction for the agent
-            output_type: The type of output expected from the agent
+            output_type: The type of output expected from the agent.
+                Note: DeepSeek and Qwen models don't support structured output,
+                so they will force this to 'str' regardless of the provided type.
+                Claude and OpenAI models support structured output and will use
+                the provided output_type.
             max_turns: Maximum number of conversation turns
             **kwargs: Additional parameters for the agent
 

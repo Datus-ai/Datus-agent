@@ -15,7 +15,7 @@ from pydantic import AnyUrl
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
 from datus.models.mcp_result_extractors import extract_sql_contexts
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionType
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -268,11 +268,12 @@ class DeepSeekModel(LLMBaseModel):
             async with multiple_mcp_servers(mcp_servers) as connected_servers:
                 logger.debug("MCP servers started successfully")
 
+                # DeepSeek doesn't support structured output, force to str
                 agent = Agent(
                     name=kwargs.pop("agent_name", "MCP_Agent"),
                     instructions=instruction,
                     mcp_servers=list(connected_servers.values()),
-                    output_type=output_type,
+                    output_type=str,
                     model=async_model,
                 )
                 logger.debug(f"Agent created with name: {agent.name}, {output_type}")
@@ -373,13 +374,14 @@ class DeepSeekModel(LLMBaseModel):
         except Exception as e:
             logger.error(f"Error in streaming MCP execution: {str(e)}")
             error_action = self._create_action(
-                ActionType.FUNCTION_CALL,
-                "Error occurred during MCP streaming",
+                ActionRole.WORKFLOW,
+                "error",
+                f"Error occurred during MCP streaming: {str(e)}",
                 {"error_type": type(e).__name__},
                 {"error": str(e), "success": False},
-                f"❌ Streaming execution failed: {str(e)}",
+                ActionStatus.FAILED,
             )
-            error_action.role = ActionRole.WORKFLOW
+            error_action.end_time = datetime.now()
             action_history_manager.add_action(error_action)
             yield error_action
             raise
@@ -418,18 +420,23 @@ class DeepSeekModel(LLMBaseModel):
         return self._extract_tool_call_data(event, "output")
 
     def _create_action(
-        self, action_type: ActionType, thought: str, input_data: Dict, output_data: Dict = None, reflection: str = None
+        self,
+        role: ActionRole,
+        action_type: str,
+        messages: str,
+        input_data: Dict,
+        output_data: Dict = None,
+        status: ActionStatus = ActionStatus.PENDING,
     ) -> ActionHistory:
-        """Create ActionHistory with common patterns."""
+        """Create ActionHistory with new schema."""
         return ActionHistory(
             action_id=str(uuid.uuid4()),
-            role=ActionRole.MODEL,
-            thought=thought,
+            role=role,
+            messages=messages,
             action_type=action_type,
             input=input_data,
             output=output_data,
-            reflection=reflection or "",  # Ensure reflection is never None
-            timestamp=datetime.now().isoformat(),
+            status=status,
         )
 
     def _setup_async_agent(self, instruction: str, mcp_servers: Dict, output_type: dict, **kwargs):
@@ -438,11 +445,12 @@ class DeepSeekModel(LLMBaseModel):
         model_params = {"model": self.model_name}
         async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
+        # DeepSeek doesn't support structured output, force to str
         agent = Agent(
             name=kwargs.pop("agent_name", "MCP_Agent"),
             instructions=instruction,
             mcp_servers=list(mcp_servers.values()),
-            output_type=output_type,
+            output_type=str,
             model=async_model,
         )
         return agent
@@ -458,9 +466,11 @@ class DeepSeekModel(LLMBaseModel):
             arguments = getattr(raw_item, "arguments", None)
 
         action = self._create_action(
-            ActionType.FUNCTION_CALL,
+            ActionRole.TOOL,
+            function_name or "unknown",
             f"Database function call: {function_name or 'unknown'}",
             {"function_name": function_name, "arguments": arguments, "call_id": call_id},
+            status=ActionStatus.PENDING,
         )
         action.action_id = call_id or action.action_id
         action_history_manager.add_action(action)
@@ -477,12 +487,10 @@ class DeepSeekModel(LLMBaseModel):
 
         output_data = self._extract_tool_call_output(event)
         matching_action.output = output_data
+        matching_action.end_time = datetime.now()
 
         success = output_data.get("success", True)
-        function_name = matching_action.input.get("function_name", "") if matching_action.input else ""
-        matching_action.reflection = (
-            f"{'✅ Function executed successfully' if success else '❌ Function failed'}: {function_name}"
-        )
+        matching_action.status = ActionStatus.SUCCESS if success else ActionStatus.FAILED
 
         return matching_action
 
@@ -512,8 +520,9 @@ class DeepSeekModel(LLMBaseModel):
 
                 if final_sql:
                     action = self._create_action(
-                        ActionType.FUNCTION_CALL,
-                        "Final SQL query generated",
+                        ActionRole.ASSISTANT,
+                        "message",
+                        f"Final SQL query generated: {final_sql}",
                         {
                             "reasoning_task": "SQL generation from natural language",
                             "total_function_calls": function_call_count,
@@ -524,8 +533,9 @@ class DeepSeekModel(LLMBaseModel):
                             "explanation": explanation,
                             "reasoning_complete": True,
                         },
-                        f"✅ Generated final SQL: {final_sql}",
+                        ActionStatus.SUCCESS,
                     )
+                    action.end_time = datetime.now()
                     action_history_manager.add_action(action)
                     return action
         except Exception:
@@ -533,12 +543,14 @@ class DeepSeekModel(LLMBaseModel):
 
         # Fallback to text content
         action = self._create_action(
-            ActionType.CHAT,
-            "Final reasoning output",
+            ActionRole.ASSISTANT,
+            "message",
+            f"reasoning output: {text_content[:200]}...",
             {"reasoning_task": "SQL generation"},
             {"success": True, "content": text_content},
-            "Reasoning completed with text output",
+            ActionStatus.SUCCESS,
         )
+        action.end_time = datetime.now()
         action_history_manager.add_action(action)
         return action
 

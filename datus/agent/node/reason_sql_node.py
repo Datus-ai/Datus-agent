@@ -1,8 +1,9 @@
+from datetime import datetime
 from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionType
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.tools.llms_tools import LLMTool
@@ -93,16 +94,7 @@ class ReasonSQLNode(Node):
     ) -> AsyncGenerator[ActionHistory, None]:
         """Reasoning and Exploring the database with streaming support and action history tracking."""
         if not self.model:
-            error_action = ActionHistory(
-                action_id="error",
-                role=ActionRole.WORKFLOW,
-                thought="Model not available for SQL reasoning",
-                action_type=ActionType.FUNCTION_CALL,
-                input={"error": "No model provided"},
-                output={"success": False, "error": "SQL reasoning model not provided"},
-                reflection="Reasoning failed due to missing model configuration",
-            )
-            yield error_action
+            logger.error("Model not available for SQL reasoning")
             return
 
         try:
@@ -110,8 +102,8 @@ class ReasonSQLNode(Node):
             setup_action = ActionHistory(
                 action_id="setup_reasoning",
                 role=ActionRole.WORKFLOW,
-                thought="Setting up reasoning context with database schemas and data",
-                action_type=ActionType.SCHEMA_LINKING,
+                messages="Setting up reasoning context with database schemas and data",
+                action_type="schema_linking",
                 input={
                     "database_type": self.input.database_type,
                     "task": self.input.sql_task.task,
@@ -121,6 +113,7 @@ class ReasonSQLNode(Node):
                     "contexts_count": len(self.input.contexts),
                     "external_knowledge_available": bool(self.input.external_knowledge),
                 },
+                status=ActionStatus.SUCCESS,
             )
             yield setup_action
 
@@ -131,7 +124,7 @@ class ReasonSQLNode(Node):
                 "database_name": self.input.sql_task.database_name,
                 "max_turns": self.input.max_turns,
             }
-            setup_action.reflection = f"Successfully prepared reasoning context for {self.input.sql_task.database_name}"
+            setup_action.end_time = datetime.now()
 
             # Stream the reasoning process
             async for action in reasoning_sql_with_mcp_stream(
@@ -145,16 +138,7 @@ class ReasonSQLNode(Node):
 
         except Exception as e:
             logger.error(f"SQL reasoning streaming error: {str(e)}")
-            error_action = ActionHistory(
-                action_id="reasoning_error",
-                role="workflow",
-                thought="Error occurred during SQL reasoning",
-                action_type="function_call",
-                input={"error": str(e)},
-                output={"success": False, "error": str(e)},
-                reflection=f"Reasoning failed with exception: {str(e)}",
-            )
-            yield error_action
+            raise
 
     def _reason_sql(self) -> ReasoningResult:
         """Reasoning and Exploring the database to refine SQL query.

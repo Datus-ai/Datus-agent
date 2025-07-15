@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 from typing import Any, List, Optional
 
@@ -5,34 +6,41 @@ from pydantic import BaseModel, Field
 
 
 class ActionRole(str, Enum):
-    """Role of the action"""
+    """Role of the action creator
+    - SYSTEM: The system prompt use this role
+    - ASSISTANT: The AI assistant role is used to create the response for the user.
+    - USER: The user role is used to call the node or send the message
+    - TOOL: The tool role is used to create the input for the assistant, it's a MCP tool.
+    - WORKFLOW: The workflow role is
+    """
 
-    MODEL = "model"
-    HUMAN = "human"
+    SYSTEM = "system"
+    ASSISTANT = "assistant"
+    USER = "user"
+    TOOL = "tool"
     WORKFLOW = "workflow"
 
 
-class ActionType(str, Enum):
-    """Type of action"""
+class ActionStatus(str, Enum):
+    """Status of the action"""
 
-    START_NODE = "start_node"
-    FUNCTION_CALL = "function_call"
-    SCHEMA_LINKING = "schema_linking"
-    EXECUTE_SQL = "execute_sql"
-    CHAT = "chat"
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILED = "failed"
 
 
 class ActionHistory(BaseModel):
     """History of actions during LLM execution with streaming support"""
 
     action_id: str = Field(..., description="Unique identifier for the action")
-    role: ActionRole = Field(..., description="Role of the action: model, human, or workflow")
-    thought: str = Field(default="", description="Thought or reasoning behind the action")
-    action_type: ActionType = Field(..., description="Type of action performed")
+    role: ActionRole = Field(..., description="Role of the action creator")
+    messages: str = Field(default="", description="Thought or reasoning behind the action (AI or human message)")
+    action_type: str = Field(..., description="Type of action performed (NodeType / MCP tool name / message)")
     input: Any = Field(default=None, description="Input data for the action")
     output: Any = Field(default=None, description="Output data from the action")
-    reflection: str = Field(default="", description="Reflection or commentary on the action")
-    timestamp: Optional[str] = Field(default=None, description="Timestamp of the action")
+    status: ActionStatus = Field(..., description="Status of the action")
+    start_time: datetime = Field(default_factory=datetime.now, description="Start time of the action")
+    end_time: Optional[datetime] = Field(default=None, description="End time of the action")
 
     class Config:
         use_enum_values = True

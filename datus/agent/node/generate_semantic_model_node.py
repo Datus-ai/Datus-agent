@@ -1,9 +1,10 @@
 from contextlib import contextmanager
+from datetime import datetime
 from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.storage.metric.init_utils import gen_semantic_model_id
 from datus.storage.metric.store import rag_by_configuration
@@ -171,32 +172,14 @@ class GenerateSemanticModelNode(Node):
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate semantic model with streaming support and action history tracking."""
         if not self.model:
-            error_action = ActionHistory(
-                action_id="error",
-                role="workflow",
-                thought="Model not available for semantic model generation",
-                action_type="function_call",
-                input={"error": "No model provided"},
-                output={"success": False, "error": "Semantic model generation model not provided"},
-                reflection="Generation failed due to missing model configuration",
-            )
-            yield error_action
+            logger.error("Model not available for semantic model generation")
             return
 
         try:
             # Extract table names from SQL
             table_names = extract_table_names(self.input.sql_query, self.agent_config.db_type)
             if len(table_names) == 0:
-                error_action = ActionHistory(
-                    action_id="no_tables",
-                    role="workflow",
-                    thought="No tables found in SQL query",
-                    action_type="schema_linking",
-                    input={"sql_query": self.input.sql_query},
-                    output={"success": False, "error": "No tables found in SQL query"},
-                    reflection="SQL query analysis failed to identify any tables",
-                )
-                yield error_action
+                logger.error(f"No tables found in SQL query: {self.input.sql_query}")
                 return
 
             # Parse table name parts
@@ -205,8 +188,8 @@ class GenerateSemanticModelNode(Node):
             # Database connection action
             db_action = ActionHistory(
                 action_id="db_connect",
-                role="workflow",
-                thought="Connecting to database and retrieving table schema",
+                role=ActionRole.WORKFLOW,
+                messages="Connecting to database and retrieving table schema",
                 action_type="schema_linking",
                 input={
                     "table_names": table_names,
@@ -236,16 +219,7 @@ class GenerateSemanticModelNode(Node):
                 )
 
                 if len(tables_with_ddl) == 0:
-                    error_action = ActionHistory(
-                        action_id="no_ddl",
-                        role="workflow",
-                        thought="No tables with DDL found",
-                        action_type="schema_linking",
-                        input={"table_name": table_name, "schema_name": schema_name},
-                        output={"success": False, "error": "No tables with DDL found"},
-                        reflection="Database schema retrieval failed",
-                    )
-                    yield error_action
+                    logger.error(f"No tables with DDL found for table: {table_name}, schema: {schema_name}")
                     return
 
                 # Update the action with success
@@ -254,7 +228,8 @@ class GenerateSemanticModelNode(Node):
                     "tables_found": len(tables_with_ddl),
                     "table_definition": tables_with_ddl[0]["definition"][:100] + "...",
                 }
-                db_action.reflection = f"Successfully retrieved schema for {len(tables_with_ddl)} table(s)"
+                db_action.status = ActionStatus.SUCCESS
+                db_action.end_time = datetime.now()
 
                 self.input.semantic_model_meta.table_name = table_name
                 self.input.semantic_model_meta.schema_name = schema_name
@@ -272,16 +247,7 @@ class GenerateSemanticModelNode(Node):
 
         except Exception as e:
             logger.error(f"Semantic model generation error: {str(e)}")
-            error_action = ActionHistory(
-                action_id="generation_error",
-                role="workflow",
-                thought="Error occurred during semantic model generation",
-                action_type="function_call",
-                input={"error": str(e)},
-                output={"success": False, "error": str(e)},
-                reflection=f"Generation failed with exception: {str(e)}",
-            )
-            yield error_action
+            raise
 
     def setup_input(self, workflow: Workflow) -> Dict:
         try:

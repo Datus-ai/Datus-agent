@@ -710,9 +710,20 @@ class AgentCommands:
                     # Execute the streaming
                     asyncio.run(run_stream())
 
-                # Display final action history
+                # Display final action history with option to view details
                 self.console.print("\n[bold blue]Final Action History:[/]")
-                action_display.display_final_action_history_with_full_sql(actions)
+                from rich.prompt import Prompt
+                view_choice = Prompt.ask(
+                    "[dim]View mode[/dim]", 
+                    choices=["simple", "detailed"], 
+                    default="simple",
+                    show_choices=True
+                )
+                
+                if view_choice == "detailed":
+                    action_display.display_detailed_actions(actions)
+                else:
+                    action_display.display_final_action_history_with_full_sql(actions)
 
                 # Extract result from final action
                 if actions:
