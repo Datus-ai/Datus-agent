@@ -24,7 +24,7 @@ class ActionRole(str, Enum):
 class ActionStatus(str, Enum):
     """Status of the action"""
 
-    PENDING = "pending"
+    PROCESSING = "processing"
     SUCCESS = "success"
     FAILED = "failed"
 
@@ -41,6 +41,28 @@ class ActionHistory(BaseModel):
     status: ActionStatus = Field(..., description="Status of the action")
     start_time: datetime = Field(default_factory=datetime.now, description="Start time of the action")
     end_time: Optional[datetime] = Field(default=None, description="End time of the action")
+
+    @classmethod
+    def create_action(
+        cls,
+        role: ActionRole,
+        action_type: str,
+        messages: str,
+        input_data: dict,
+        output_data: dict = None,
+        status: ActionStatus = ActionStatus.PROCESSING,
+    ) -> "ActionHistory":
+        import uuid
+
+        return cls(
+            action_id=str(uuid.uuid4()),
+            role=role,
+            messages=messages,
+            action_type=action_type,
+            input=input_data,
+            output=output_data,
+            status=status,
+        )
 
     class Config:
         use_enum_values = True

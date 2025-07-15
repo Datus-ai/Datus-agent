@@ -373,7 +373,7 @@ class DeepSeekModel(LLMBaseModel):
 
         except Exception as e:
             logger.error(f"Error in streaming MCP execution: {str(e)}")
-            error_action = self._create_action(
+            error_action = ActionHistory.create_action(
                 ActionRole.WORKFLOW,
                 "error",
                 f"Error occurred during MCP streaming: {str(e)}",
@@ -419,26 +419,6 @@ class DeepSeekModel(LLMBaseModel):
         """Extract output data from tool call output event."""
         return self._extract_tool_call_data(event, "output")
 
-    def _create_action(
-        self,
-        role: ActionRole,
-        action_type: str,
-        messages: str,
-        input_data: Dict,
-        output_data: Dict = None,
-        status: ActionStatus = ActionStatus.PENDING,
-    ) -> ActionHistory:
-        """Create ActionHistory with new schema."""
-        return ActionHistory(
-            action_id=str(uuid.uuid4()),
-            role=role,
-            messages=messages,
-            action_type=action_type,
-            input=input_data,
-            output=output_data,
-            status=status,
-        )
-
     def _setup_async_agent(self, instruction: str, mcp_servers: Dict, output_type: dict, **kwargs):
         """Setup async client and agent."""
         async_client = wrap_openai(AsyncOpenAI(api_key=self.api_key, base_url=self.api_base))
@@ -465,12 +445,12 @@ class DeepSeekModel(LLMBaseModel):
             function_name = getattr(raw_item, "name", None)
             arguments = getattr(raw_item, "arguments", None)
 
-        action = self._create_action(
+        action = ActionHistory.create_action(
             ActionRole.TOOL,
             function_name or "unknown",
             f"Database function call: {function_name or 'unknown'}",
             {"function_name": function_name, "arguments": arguments, "call_id": call_id},
-            status=ActionStatus.PENDING,
+            status=ActionStatus.PROCESSING,
         )
         action.action_id = call_id or action.action_id
         action_history_manager.add_action(action)
@@ -519,7 +499,7 @@ class DeepSeekModel(LLMBaseModel):
                 explanation = json_content.get("explanation", "")
 
                 if final_sql:
-                    action = self._create_action(
+                    action = ActionHistory.create_action(
                         ActionRole.ASSISTANT,
                         "message",
                         f"Final SQL query generated: {final_sql}",
@@ -540,19 +520,6 @@ class DeepSeekModel(LLMBaseModel):
                     return action
         except Exception:
             pass
-
-        # Fallback to text content
-        action = self._create_action(
-            ActionRole.ASSISTANT,
-            "message",
-            f"reasoning output: {text_content[:200]}...",
-            {"reasoning_task": "SQL generation"},
-            {"success": True, "content": text_content},
-            ActionStatus.SUCCESS,
-        )
-        action.end_time = datetime.now()
-        action_history_manager.add_action(action)
-        return action
 
     def token_count(self, prompt: str) -> int:
         """Estimate the number of tokens in a text using the deepseek tokenizer.
