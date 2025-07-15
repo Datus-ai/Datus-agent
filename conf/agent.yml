@@ -1,0 +1,75 @@
+agent:
+  target: deepseek-v3
+  models:
+    deepseek-v3:
+      type: deepseek
+      vendor: deepseek
+      base_url: https://api.deepseek.com
+      api_key: sk-c1a94b918b964682a1c59b9617257330
+      model: deepseek-chat
+
+    deepseek-r1:
+      type: deepseek
+      vendor: deepseek
+      base_url: https://api.deepseek.com
+      api_key: ${DEEPSEEK_API_KEY}
+      model: deepseek-reasoner
+  
+  storage:
+    base_path: ~/.datus/data #rag storage base path, meta data path is 'data/datus_db_{namespace}'
+
+  # benchmark configuration
+  benchmark:
+    bird_dev: # this is namespace of benchmark
+      benchmark_path: benchmark/bird/dev_20240627
+    spider2:
+      benchmark_path: benchmark/spider2/spider2-snow
+
+  namespace:
+    spidersnow:
+      type: snowflake
+      username: ${SNOWFLAKE_USER}
+      account: ${SNOWFLAKE_ACCOUNT}  
+      warehouse: ${SNOWFLAKE_WAREHOUSE}
+      password: ${SNOWFLAKE_PASSWORD}
+    bird_sqlite:
+      type: sqlite
+      dbs:
+        - name: debit_card_specializing
+          uri: ./benchmark/bird/dev_20240627/dev_databases/debit_card_specializing/debit_card_specializing.sqlite
+        - name: california_schools
+          uri: ./benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite
+        - name: card_games
+          uri: ./benchmark/bird/dev_20240627/dev_databases/card_games/card_games.sqlite
+        - name: codebase_community
+          uri: ./benchmark/bird/dev_20240627/dev_databases/codebase_community/codebase_community.sqlite
+        - name: european_football_2
+          uri: ./benchmark/bird/dev_20240627/dev_databases/european_football_2/european_football_2.sqlite
+        - name: financial
+          uri: ./benchmark/bird/dev_20240627/dev_databases/financial/financial.sqlite
+        - name: formula_1
+          uri: ./benchmark/bird/dev_20240627/dev_databases/formula_1/formula_1.sqlite
+        - name: student_club
+          uri: ./benchmark/bird/dev_20240627/dev_databases/student_club/student_club.sqlite
+        - name: superhero
+          uri: ./benchmark/bird/dev_20240627/dev_databases/superhero/superhero.sqlite
+        - name: thrombosis_prediction
+          uri: ./benchmark/bird/dev_20240627/dev_databases/thrombosis_prediction/thrombosis_prediction.sqlite
+        - name: toxicology
+          uri: ./benchmark/bird/dev_20240627/dev_databases/toxicology/toxicology.sqlite
+    local_duckdb:
+      type: duckdb
+      name: demo
+      uri: ./tests/duckdb-demo.duckdb
+
+  nodes:
+    schema_linking:
+      model: deepseek-v3
+      matching_rate: fast
+    generate_sql:
+      model: deepseek-v3
+      prompt_version: "1.0"
+    reasoning:
+      model: deepseek-v3
+    reflect:
+      prompt_version: "2.1"
