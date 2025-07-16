@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 from typing import Dict, Union
 
+from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdio, MCPServerStdioParams
 
 from datus.configuration.agent_config import DbConfig
@@ -64,6 +65,10 @@ class MCPServer:
             logger.debug("Initializing Snowflake MCP server")
             if isinstance(db_configs, DbConfig):
                 return cls.get_snowflake_mcp_server(database, db_configs)
+            elif isinstance(db_configs, dict):
+                # Extract the first (and typically only) Snowflake config from dictionary
+                db_config = list(db_configs.values())[0]
+                return cls.get_snowflake_mcp_server(database, db_config)
             else:
                 logger.warning(f"Snowflake MCP server only support one database, check {db_configs}")
                 return None
@@ -71,6 +76,10 @@ class MCPServer:
             logger.debug("Initializing StarRocks MCP server")
             if isinstance(db_configs, DbConfig):
                 return cls.get_starrocks_mcp_server(database, db_configs)
+            elif isinstance(db_configs, dict):
+                # Extract the first (and typically only) StarRocks config from dictionary
+                db_config = list(db_configs.values())[0]
+                return cls.get_starrocks_mcp_server(database, db_config)
             else:
                 logger.warning(f"StarRocks MCP server only support one database, check {db_configs}")
                 return None
@@ -161,7 +170,10 @@ class MCPServer:
                     logger.info(f"{db_type} MCP Server connected successfully")
 
                     if hasattr(mcp_server, "list_tools"):
-                        tools = await mcp_server.list_tools()
+                        # Create minimal agent and run context for the new interface
+                        agent = Agent(name="test-agent")
+                        run_context = RunContextWrapper(context=None, usage=Usage())
+                        tools = await mcp_server.list_tools(run_context, agent)
                         tool_count = len(tools) if tools else 0
                         logger.info(
                             f"{db_type} MCP Server has {tool_count} tools available: {[tool.name for tool in tools]}"
@@ -208,7 +220,10 @@ class MCPServer:
                         },
                     )
                     logger.info(f"Snowflake MCP server params: {mcp_server_params}")
-                    cls._snowflake_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._snowflake_mcp_server = MCPServerStdio(
+                        params=mcp_server_params,
+                        client_session_timeout_seconds=10,
+                    )
         return cls._snowflake_mcp_server
 
     @classmethod
@@ -235,7 +250,9 @@ class MCPServer:
                             "STARROCKS_PASSWORD": db_config.password,
                         },
                     )
-                    cls._starrocks_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._starrocks_mcp_server = MCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=10  # Increase timeout for StarRocks
+                    )
         return cls._starrocks_mcp_server
 
     @classmethod

@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import anthropic
 import httpx
-from agents import Agent, OpenAIChatCompletionsModel, Runner
+from agents import Agent, OpenAIChatCompletionsModel, Runner, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_anthropic, wrap_openai
 from openai import AsyncOpenAI, OpenAI
@@ -319,7 +319,10 @@ class ClaudeModel(LLMBaseModel):
 
                                 for server_name, connected_server in connected_servers.items():
                                     try:
-                                        tmp_tools = await connected_server.list_tools()
+                                        # Create minimal agent and run context for the new interface
+                                        agent = Agent(name='mcp-claude-agent')
+                                        run_context = RunContextWrapper(context=None, usage=Usage())
+                                        tmp_tools = await connected_server.list_tools(run_context, agent)
                                         if any(tool.name == block.name for tool in tmp_tools):
                                             tool_result = await connected_server.call_tool(
                                                 tool_name=block.name,
