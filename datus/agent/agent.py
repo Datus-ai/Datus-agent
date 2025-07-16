@@ -425,7 +425,9 @@ class Agent:
                         logger.info(f"Deleted existing directory {metrics_path}")
 
                 self.metrics_store = SemanticMetricsRAG(dir_path)
-                init_success_story_metrics(self.metrics_store, self.args, self.global_config)
+                init_success_story_metrics(
+                    self.metrics_store, self.args, self.global_config, build_mode=kb_update_strategy
+                )
                 return {
                     "status": "success",
                     "message": f"metrics bootstrap completed, "
@@ -572,6 +574,7 @@ class Agent:
                     layer1=self.args.layer1,
                     layer2=self.args.layer2,
                     output_dir=self.global_config.output_dir,
+                    external_knowledge=self.args.task_ext_knowledge,
                 )
             )
 

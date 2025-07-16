@@ -17,7 +17,7 @@ cd ${path to datus project dir} && python -m datus.main bootstrap-kb --namespace
 ```
 ## generate semantic layer test commands
 ```shell
-python gen_benchmark.py --namespace duckdb --benchmark semantic_layer --workdir=${path to datus agent} --extra_option '--plan metric2SQL --task_db_name duck --task_schema mf_demo --domain sale --layer1 duck --layer2 mf_demo'
+python gen_benchmark.py --namespace duckdb --benchmark semantic_layer --workdir=${path to datus agent} --extra_option '--plan metric2SQL --task_db_name duck --task_schema mf_demo --domain sale --layer1 duck --layer2 mf_demo --task_ext_knowledge "${external knowledge}"'
 ```
 
 # Generate bird gold sql result.

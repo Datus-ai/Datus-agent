@@ -65,6 +65,7 @@ class SemanticModelStorage(BaseEmbeddingStore):
         )
         return [
             {
+                "id": result["id"],
                 "catalog_database_schema": result["catalog_database_schema"],
                 "semantic_model_name": result["semantic_model_name"],
             }
@@ -118,6 +119,7 @@ class MetricStorage(BaseEmbeddingStore):
         )
         return [
             {
+                "id": result["id"],
                 "semantic_model_name": result["semantic_model_name"],
                 "metric_name": result["metric_name"],
             }
