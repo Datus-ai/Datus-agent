@@ -244,7 +244,7 @@ class BaseEmbeddingStore(StorageBase):
                 return
             # split the data into batches and store them
             for i in range(0, len(data), self.batch_size):
-                batch = data[i: i + self.batch_size]
+                batch = data[i : i + self.batch_size]
                 self.table.add(pd.DataFrame(batch))
         except Exception as e:
             raise DatusException(
