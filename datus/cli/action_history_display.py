@@ -7,8 +7,8 @@ from rich.text import Text
 from rich.tree import Tree
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
+from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
@@ -237,7 +237,7 @@ class ActionHistoryDisplay:
         return ""
 
     def _get_tool_output_preview(self, output_data: dict, function_name: str = "") -> str:
-        """Get a brief preview of tool output results"""
+        """Try to get a brief preview of tool output results."""
         if not output_data:
             return ""
 
@@ -248,35 +248,26 @@ class ActionHistoryDisplay:
 
                 output_data = json.loads(output_data)
             except Exception:
-                return "✗ Failed"
+                return "✓ Compeleted but not parsed"
 
         if not isinstance(output_data, dict):
-            return "✓ Success"
+            return "✓ Compeleted but not parsed"
 
         # Use raw_output if available, otherwise use the data directly
         data = output_data.get("raw_output", output_data)
-
-        # If data is a string, parse it as JSON first
-        if isinstance(data, str):
-            try:
-                import json
-
-                data = json.loads(data)
-            except Exception:
-                return "✗ Failed"
-
-        # Parse data.text as JSON array for counting items
+        logger.debug(f"raw_output for extracting text: {data}")
+        # Parse data as JSON and extract text field for counting items
         try:
             import json
 
+            # Try to parse data.text as JSON array
             if "text" in data and isinstance(data["text"], str):
-                # Convert Python dict format to JSON format
                 text_content = data["text"]
-                cleaned_text = text_content.replace("'", '"').replace("None", "null")
-                items = json.loads(cleaned_text)
+                items = json.loads(text_content)
 
                 if isinstance(items, list):
                     count = len(items)
+
                     # Return appropriate label based on function name
                     if function_name in ["list_tables", "table_overview"]:
                         return f"✓ {count} tables"
@@ -288,10 +279,6 @@ class ActionHistoryDisplay:
                         return f"✓ {count} items"
         except Exception:
             pass
-
-        # Generic fallback
-        if "success" in output_data:
-            return "✓ Success" if output_data["success"] else "✗ Failed"
 
         return "✓ Completed"
 
