@@ -8,7 +8,7 @@ autoflake --in-place --remove-unused-variables --remove-all-unused-imports --rem
 
 # 2. Format with Black (must run before autopep8 as Black is more strict)
 echo "2. Formatting with Black..."
-black --line-length=120 datus/
+black --line-length=120 --extend-exclude="/(mcp)/"
 
 # 3. Sort imports
 echo "3. Sorting imports..."
