@@ -222,7 +222,7 @@ class AgentCommands:
             self.agent.workflow = workflow
             self.workflow = workflow
             self.console.print(f"[bold green]Started new agent session (ID: {sql_task.id})[/]")
-            self.console.print(f"[dim]Next node: {workflow.get_current_node().type}[/]")
+            # self.console.print(f"[dim]Next node: {workflow.get_current_node().type}[/]")
 
         except Exception as e:
             logger.error(f"Failed to start agent session: {str(e)}")
@@ -410,6 +410,14 @@ class AgentCommands:
 
         # Run the generate metrics node
         self.run_node(NodeType.TYPE_GENERATE_METRICS, args)
+
+    def cmd_gen_metrics_stream(self, args: str):
+        """Generate metrics with streaming output and action history."""
+        if not self.workflow:
+            self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
+            self.cmd_dastart()
+
+        self._run_node_stream(NodeType.TYPE_GENERATE_METRICS, args)
 
     def cmd_gen_semantic_model(self, args: str):
         """Generate semantic model for data modeling."""
@@ -692,6 +700,8 @@ class AgentCommands:
             streaming_method = None
             if hasattr(next_node, "_generate_semantic_model_stream"):
                 streaming_method = next_node._generate_semantic_model_stream
+            elif hasattr(next_node, "_generate_metrics_stream"):
+                streaming_method = next_node._generate_metrics_stream
             elif hasattr(next_node, "_reason_sql_stream"):
                 streaming_method = next_node._reason_sql_stream
 
@@ -734,5 +744,41 @@ class AgentCommands:
 
         except Exception as e:
             logger.error(f"Streaming node execution error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            
+            # Import DatusException for proper error handling
+            from datus.utils.exceptions import DatusException, ErrorCode
+            
+            # Handle DatusException with structured error codes
+            if isinstance(e, DatusException):
+                error_code = e.code
+                
+                if error_code in [ErrorCode.MODEL_OVERLOADED, ErrorCode.MODEL_RATE_LIMIT]:
+                    self.console.print(f"[bold red]API Error:[/] {error_code.desc}")
+                    self.console.print(f"[yellow]Suggestion:[/] Please wait a moment and try again with the same command.")
+                    self.console.print(f"[dim]Error code: {error_code.code}[/]")
+                elif error_code == ErrorCode.MODEL_CONNECTION_ERROR:
+                    self.console.print(f"[bold red]Connection Error:[/] {error_code.desc}")
+                    self.console.print(f"[yellow]Suggestion:[/] Check your internet connection and try again.")
+                    self.console.print(f"[dim]Error code: {error_code.code}[/]")
+                elif error_code == ErrorCode.MODEL_AUTHENTICATION_ERROR:
+                    self.console.print(f"[bold red]Authentication Error:[/] {error_code.desc}")
+                    self.console.print(f"[yellow]Suggestion:[/] Check your API key configuration.")
+                    self.console.print(f"[dim]Error code: {error_code.code}[/]")
+                else:
+                    self.console.print(f"[bold red]Error:[/] {error_code.desc}")
+                    self.console.print(f"[dim]Error code: {error_code.code}[/]")
+            else:
+                # Fallback for non-DatusException errors
+                error_msg = str(e).lower()
+                if any(indicator in error_msg for indicator in ["overloaded", "rate limit", "timeout"]):
+                    self.console.print(f"[bold red]API Error:[/] The API is temporarily overloaded or rate limited.")
+                    self.console.print(f"[yellow]Suggestion:[/] Please wait a moment and try again with the same command.")
+                    self.console.print(f"[dim]Original error: {str(e)}[/]")
+                elif any(indicator in error_msg for indicator in ["connection", "network"]):
+                    self.console.print(f"[bold red]Connection Error:[/] Unable to connect to the API.")
+                    self.console.print(f"[yellow]Suggestion:[/] Check your internet connection and try again.")
+                    self.console.print(f"[dim]Original error: {str(e)}[/]")
+                else:
+                    self.console.print(f"[bold red]Error:[/] {str(e)}")
+            
             return {"success": False, "error": str(e)}

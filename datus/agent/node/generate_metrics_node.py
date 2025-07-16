@@ -1,9 +1,11 @@
-from typing import Dict
+from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult
 from datus.tools.llms_tools import LLMTool
+from datus.tools.llms_tools.generate_metrics import generate_metrics_with_mcp_stream
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -41,6 +43,29 @@ class GenerateMetricsNode(Node):
                 sql_queries=[],
                 metrics=[],
             )
+
+    async def _generate_metrics_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Generate metrics with streaming support and action history tracking."""
+        if not self.model:
+            logger.error("Model not available for metrics generation")
+            return
+
+        try:
+            # Stream the metrics generation
+            async for action in generate_metrics_with_mcp_stream(
+                model=self.model,
+                input_data=self.input,
+                db_config=self.agent_config.current_db_config(self.input.sql_task.database_name),
+                tool_config={},
+                action_history_manager=action_history_manager,
+            ):
+                yield action
+
+        except Exception as e:
+            logger.error(f"Metrics generation streaming error: {str(e)}")
+            raise
 
     def update_context(self, workflow: Workflow) -> Dict:
         pass

@@ -1,7 +1,9 @@
+import asyncio
 import copy
 import json
 import os
 import re
+import time
 import uuid
 from datetime import date, datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -12,6 +14,7 @@ from agents import Agent, OpenAIChatCompletionsModel, Runner, RunContextWrapper,
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_anthropic, wrap_openai
 from openai import AsyncOpenAI, OpenAI
+from openai import APIError, RateLimitError, APIConnectionError, APITimeoutError
 from pydantic import AnyUrl
 
 from datus.models.base import LLMBaseModel
@@ -19,10 +22,44 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def classify_api_error(error: Exception) -> tuple[ErrorCode, bool]:
+    """Classify API errors and return error code and whether it's retryable."""
+    error_msg = str(error).lower()
+    
+    if isinstance(error, APIError):
+        # Handle specific HTTP status codes and error types
+        if any(indicator in error_msg for indicator in ["overloaded", "529"]):
+            return ErrorCode.MODEL_OVERLOADED, True
+        elif any(indicator in error_msg for indicator in ["rate limit", "429"]):
+            return ErrorCode.MODEL_RATE_LIMIT, True
+        elif any(indicator in error_msg for indicator in ["401", "unauthorized", "authentication"]):
+            return ErrorCode.MODEL_AUTHENTICATION_ERROR, False
+        elif any(indicator in error_msg for indicator in ["403", "forbidden", "permission"]):
+            return ErrorCode.MODEL_PERMISSION_ERROR, False
+        elif any(indicator in error_msg for indicator in ["404", "not found"]):
+            return ErrorCode.MODEL_NOT_FOUND, False
+        elif any(indicator in error_msg for indicator in ["413", "too large", "request size"]):
+            return ErrorCode.MODEL_REQUEST_TOO_LARGE, False
+        elif any(indicator in error_msg for indicator in ["500", "internal", "server error"]):
+            return ErrorCode.MODEL_API_ERROR, True
+        elif any(indicator in error_msg for indicator in ["400", "bad request", "invalid"]):
+            return ErrorCode.MODEL_INVALID_RESPONSE, False
+    
+    if isinstance(error, RateLimitError):
+        return ErrorCode.MODEL_RATE_LIMIT, True
+    
+    if isinstance(error, (APIConnectionError, APITimeoutError)):
+        return ErrorCode.MODEL_CONNECTION_ERROR, True
+    
+    # Default to general request failure
+    return ErrorCode.MODEL_REQUEST_FAILED, False
 
 
 def wrap_prompt_cache(messages):
@@ -271,7 +308,7 @@ class ClaudeModel(LLMBaseModel):
                     for server_name, connected_server in connected_servers.items():
                         try:
                             # Create minimal agent and run context for the new interface
-                            agent = Agent(name='mcp-tools-agent')
+                            agent = Agent(name="mcp-tools-agent")
                             run_context = RunContextWrapper(context=None, usage=Usage())
                             mcp_tools = await connected_server.list_tools(run_context, agent)
                             all_tools.extend(mcp_tools)
@@ -432,37 +469,57 @@ class ClaudeModel(LLMBaseModel):
 
         json._default_encoder = CustomJSONEncoder()
 
-        try:
-            async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                agent = self._setup_async_agent(instruction, connected_servers, output_type, **kwargs)
-                result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns)
-                function_call_count = 0
+        max_retries = 3
+        base_delay = 1.0
+        
+        for attempt in range(max_retries + 1):
+            try:
+                async with multiple_mcp_servers(mcp_servers) as connected_servers:
+                    agent = self._setup_async_agent(instruction, connected_servers, output_type, **kwargs)
+                    result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns)
+                    function_call_count = 0
 
-                while not result.is_complete:
-                    async for event in result.stream_events():
-                        if not hasattr(event, "type") or event.type != "run_item_stream_event":
-                            continue
+                    while not result.is_complete:
+                        async for event in result.stream_events():
+                            if not hasattr(event, "type") or event.type != "run_item_stream_event":
+                                continue
 
-                        if not (hasattr(event, "item") and hasattr(event.item, "type")):
-                            continue
+                            if not (hasattr(event, "item") and hasattr(event.item, "type")):
+                                continue
 
-                        action = None
-                        item_type = event.item.type
+                            action = None
+                            item_type = event.item.type
 
-                        if item_type == "tool_call_item":
-                            function_call_count += 1
-                            action = self._process_tool_call_start(event, action_history_manager)
-                        elif item_type == "tool_call_output_item":
-                            action = self._process_tool_call_complete(event, action_history_manager)
-                        elif item_type == "message_output_item":
-                            action = self._process_message_output(event, action_history_manager)
+                            if item_type == "tool_call_item":
+                                function_call_count += 1
+                                action = self._process_tool_call_start(event, action_history_manager)
+                            elif item_type == "tool_call_output_item":
+                                action = self._process_tool_call_complete(event, action_history_manager)
+                            elif item_type == "message_output_item":
+                                action = self._process_message_output(event, action_history_manager)
 
-                        if action:
-                            yield action
-
-        except Exception as e:
-            logger.error(f"Error in streaming MCP execution: {str(e)}")
-            raise
+                            if action:
+                                yield action
+                    
+                    # If we reach here, streaming completed successfully
+                    break
+                    
+            except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
+                error_code, is_retryable = classify_api_error(e)
+                
+                if is_retryable and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"API error (attempt {attempt + 1}/{max_retries + 1}): {error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    # Max retries reached or non-retryable error
+                    logger.error(f"API error after {attempt + 1} attempts: {error_code.code} - {error_code.desc}")
+                    raise DatusException(error_code)
+                    
+            except Exception as e:
+                logger.error(f"Error in streaming MCP execution: {str(e)}")
+                raise
 
     def token_count(self, prompt: str) -> int:
         """Estimate the number of tokens in a text using a simple approximation.
@@ -511,7 +568,7 @@ class ClaudeModel(LLMBaseModel):
         action = ActionHistory(
             action_id=call_id,
             role=ActionRole.TOOL,
-            messages="MCP function call",
+            messages="MCP call",
             action_type=function_name or "unknown",
             input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
             status=ActionStatus.PROCESSING,

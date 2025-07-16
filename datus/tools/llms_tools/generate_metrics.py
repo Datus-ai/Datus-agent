@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import Any, Dict, List
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from langsmith import traceable
 
@@ -8,12 +8,57 @@ from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.generate_metrics_with_mcp import get_generate_metrics_prompt
 from datus.prompts.prompt_manager import prompt_manager
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult, Metrics
+from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
 from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+@traceable
+async def generate_metrics_with_mcp_stream(
+    model: LLMBaseModel,
+    input_data: GenerateMetricsInput,
+    db_config: DbConfig,
+    tool_config: Dict[str, Any],
+    action_history_manager: Optional[ActionHistoryManager] = None,
+) -> AsyncGenerator[ActionHistory, None]:
+    """Generate metrics with streaming support and action history tracking."""
+    if not isinstance(input_data, GenerateMetricsInput):
+        raise ValueError("Input must be a GenerateMetricsInput instance")
+
+    def generate_metrics_prompt(input_data, db_config):
+        return get_generate_metrics_prompt(
+            database_type=input_data.sql_task.database_type,
+            sql_query=input_data.sql_query,
+            description=input_data.sql_task.task,
+            prompt_version=input_data.prompt_version,
+        )
+
+    # Setup MCP servers
+    db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server()
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
+    mcp_servers = {
+        "db_mcp_server": db_mcp_server,
+        "metricflow_mcp_server": metricflow_mcp_server,
+        "filesystem_mcp_server": filesystem_mcp_server,
+    }
+
+    async for action in base_mcp_stream(
+        model=model,
+        input_data=input_data,
+        db_config=db_config,
+        tool_config=tool_config,
+        mcp_servers=mcp_servers,
+        prompt_generator=generate_metrics_prompt,
+        instruction_template="generate_metrics_system",
+        action_history_manager=action_history_manager,
+    ):
+        yield action
 
 
 @traceable

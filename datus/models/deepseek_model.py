@@ -406,7 +406,7 @@ class DeepSeekModel(LLMBaseModel):
         action = ActionHistory(
             action_id=call_id,
             role=ActionRole.TOOL,
-            messages="MCP function call",
+            messages="MCP call",
             action_type=function_name or "unknown",
             input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
             status=ActionStatus.PROCESSING,

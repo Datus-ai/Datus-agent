@@ -31,9 +31,6 @@ async def generate_semantic_model_with_mcp_stream(
     if not isinstance(input_data, GenerateSemanticModelInput):
         raise ValueError("Input must be a GenerateSemanticModelInput instance")
 
-    def get_filesystem_mcp_server():
-        return MCPServer.get_filesystem_mcp_server()
-
     def generate_semantic_model_prompt(input_data, db_config):
         return get_generate_semantic_model_prompt(
             database_type=db_config.type,
@@ -41,12 +38,16 @@ async def generate_semantic_model_with_mcp_stream(
             prompt_version=input_data.prompt_version,
         )
 
+    # Setup MCP servers
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
+    mcp_servers = {"filesystem_mcp_server": filesystem_mcp_server}
+
     async for action in base_mcp_stream(
         model=model,
         input_data=input_data,
         db_config=db_config,
         tool_config=tool_config,
-        mcp_server_getter=get_filesystem_mcp_server,
+        mcp_servers=mcp_servers,
         prompt_generator=generate_semantic_model_prompt,
         instruction_template="generate_semantic_model_system",
         action_history_manager=action_history_manager,

@@ -33,9 +33,6 @@ async def reasoning_sql_with_mcp_stream(
         logger.error(f"Input type error: expected ReasoningInput, got {type(input_data)}")
         raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
 
-    def get_db_mcp_server():
-        return MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
-
     def generate_reasoning_prompt(input_data, db_config):
         return get_reasoning_prompt(
             database_type=input_data.get("database_type", "sqlite"),
@@ -53,12 +50,16 @@ async def reasoning_sql_with_mcp_stream(
             knowledge_content=input_data.external_knowledge,
         )
 
+    # Setup MCP servers
+    db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+    mcp_servers = {input_data.sql_task.database_name: db_mcp_server}
+
     async for action in base_mcp_stream(
         model=model,
         input_data=input_data,
         db_config=db_config,
         tool_config=tool_config,
-        mcp_server_getter=get_db_mcp_server,
+        mcp_servers=mcp_servers,
         prompt_generator=generate_reasoning_prompt,
         instruction_template="reasoning_system",
         action_history_manager=action_history_manager,

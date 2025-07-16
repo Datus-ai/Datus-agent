@@ -237,37 +237,44 @@ class ActionHistoryDisplay:
         return ""
 
     def _get_tool_output_preview(self, output_data: dict, function_name: str = "") -> str:
-        """Try to get a brief preview of tool output results."""
+        """Get a brief preview of tool output results"""
+        import json
+
         if not output_data:
             return ""
 
         # Normalize output_data to dict format
         if isinstance(output_data, str):
             try:
-                import json
-
                 output_data = json.loads(output_data)
             except Exception:
-                return "✓ Compeleted but not parsed"
+                return "✓ Completed (preview unavailable)"
 
         if not isinstance(output_data, dict):
-            return "✓ Compeleted but not parsed"
+            return "✓ Completed (preview unavailable)"
 
         # Use raw_output if available, otherwise use the data directly
         data = output_data.get("raw_output", output_data)
         logger.debug(f"raw_output for extracting text: {data}")
-        # Parse data as JSON and extract text field for counting items
-        try:
-            import json
 
-            # Try to parse data.text as JSON array
-            if "text" in data and isinstance(data["text"], str):
-                text_content = data["text"]
-                items = json.loads(text_content)
+        # If data is a string, parse it as JSON first
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                return "✓ Completed (preview unavailable)"
+
+        # Parse data.text for counting items or showing text preview
+        if "text" in data and isinstance(data["text"], str):
+            text_content = data["text"]
+
+            # First try to parse as JSON array for counting
+            try:
+                cleaned_text = text_content.replace("'", '"').replace("None", "null")
+                items = json.loads(cleaned_text)
 
                 if isinstance(items, list):
                     count = len(items)
-
                     # Return appropriate label based on function name
                     if function_name in ["list_tables", "table_overview"]:
                         return f"✓ {count} tables"
@@ -277,8 +284,13 @@ class ActionHistoryDisplay:
                         return f"✓ {count} rows"
                     else:
                         return f"✓ {count} items"
-        except Exception:
-            pass
+            except Exception:
+                # If JSON parsing fails, treat as plain text and show preview
+                return f"{text_content[:50]}..." if len(text_content) > 50 else text_content
+
+        # Generic fallback
+        if "success" in output_data:
+            return "✓ Success" if output_data["success"] else "✗ Failed"
 
         return "✓ Completed"
 

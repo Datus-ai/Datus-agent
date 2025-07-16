@@ -17,7 +17,7 @@ async def base_mcp_stream(
     input_data: Any,
     db_config: DbConfig,
     tool_config: Dict[str, Any],
-    mcp_server_getter: Callable,
+    mcp_servers: Dict[str, Any],
     prompt_generator: Callable,
     instruction_template: str,
     action_history_manager: Optional[ActionHistoryManager] = None,
@@ -29,7 +29,7 @@ async def base_mcp_stream(
         input_data: Input data for the operation
         db_config: Database configuration
         tool_config: Tool configuration, which tools do you want to use, and max_truns
-        mcp_server_getter: Function to get MCP server
+        mcp_servers: Dictionary of MCP servers
         prompt_generator: Function to generate prompt
         instruction_template: Template name for instruction
         action_history_manager: Optional action history manager
@@ -41,20 +41,14 @@ async def base_mcp_stream(
         action_history_manager = ActionHistoryManager()
 
     try:
-        # Setup MCP server
-        mcp_server = mcp_server_getter()
-
         # Get instruction and generate prompt
         instruction = prompt_manager.get_raw_template(instruction_template, input_data.prompt_version)
         max_turns = tool_config.get("max_turns", 10)
         prompt = prompt_generator(input_data, db_config)
 
-        # Determine MCP servers dict based on server type
-        if hasattr(input_data, "sql_task") and hasattr(input_data.sql_task, "database_name"):
-            mcp_servers = {input_data.sql_task.database_name: mcp_server}
-        else:
-            mcp_servers = {"filesystem_mcp_server": mcp_server}
-
+        logger.info(f"Starting MCP stream with {len(mcp_servers)} servers, max_turns={max_turns}")
+        logger.debug(f"MCP servers: {list(mcp_servers.keys())}")
+        
         # Stream function calls only
         async for action in model.generate_with_mcp_stream(
             prompt=prompt,
@@ -64,12 +58,22 @@ async def base_mcp_stream(
             max_turns=max_turns,
             action_history_manager=action_history_manager,
         ):
+            logger.debug(f"Yielding action: {action.action_id}")
             yield action
 
     except Exception as e:
         logger.error(f"Base MCP stream failed: {e}")
         # Re-raise permission errors for fallback handling
-        error_msg = str(e)
-        if any(indicator in error_msg.lower() for indicator in ["403", "forbidden", "not allowed", "permission"]):
+        error_msg = str(e).lower()
+        if any(indicator in error_msg for indicator in ["403", "forbidden", "not allowed", "permission"]):
             logger.info("Re-raising permission error for fallback handling")
             raise
+        
+        # Handle OpenAI API errors with user-friendly messages
+        if any(indicator in error_msg for indicator in ["overloaded", "rate limit", "timeout", "connection error", "server error"]):
+            logger.info("Re-raising OpenAI API error for retry handling")
+            raise
+        
+        # For other errors, provide generic error message
+        logger.error(f"Unexpected error in MCP stream: {e}")
+        raise

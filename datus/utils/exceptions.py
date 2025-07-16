@@ -29,8 +29,18 @@ class ErrorCode(Enum):
     NODE_NO_SQL_CONTEXT = ("200002", "No SQL context available. Please run a SQL generation node first.")
     # Model errors
     MODEL_REQUEST_FAILED = ("300001", "LLM request failed")
-    MODEL_INVALID_RESPONSE = ("300002", "Invalid model response")
+    MODEL_INVALID_RESPONSE = ("300002", "Invalid request format, content, or model response (HTTP 400)")
     MODEL_TIMEOUT = ("300003", "Model request timeout")
+    
+    # API errors following Anthropic/OpenAI standards
+    MODEL_AUTHENTICATION_ERROR = ("300011", "Authentication failed - check your API key (HTTP 401)")
+    MODEL_PERMISSION_ERROR = ("300012", "API key lacks required permissions (HTTP 403)")
+    MODEL_NOT_FOUND = ("300013", "Requested resource not found (HTTP 404)")
+    MODEL_REQUEST_TOO_LARGE = ("300014", "Request exceeds size limit (HTTP 413)")
+    MODEL_RATE_LIMIT = ("300015", "Rate limit exceeded - please wait before retrying (HTTP 429)")
+    MODEL_API_ERROR = ("300016", "Unexpected API internal error (HTTP 500)")
+    MODEL_OVERLOADED = ("300017", "API temporarily overloaded - please try again later (HTTP 529)")
+    MODEL_CONNECTION_ERROR = ("300018", "Connection error - check your network connection")
     # ...
     # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
