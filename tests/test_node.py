@@ -473,6 +473,7 @@ class TestNode:
     def test_execution_node(self, execute_sql_input, sql_connector, agent_config):
         """Test SQL execution node with Snowflake database"""
         try:
+            agent_config.current_namespace = "snowflake"
             # Create execution input from test data
             test_cases = [0, 1]
             for test_case_num in test_cases:
@@ -498,7 +499,6 @@ class TestNode:
                 with pytest.raises(ValidationError):
                     ExecuteSQLInput(**{"invalid": "data"})
 
-                print(f"execute sql {exec_input['sql_query']}", sql_connector)
                 # Execute node with valid database connection
                 result = node.run()
                 logger.debug(f"Execution node result: {result}")

@@ -104,7 +104,7 @@ class TestDeepSeekModel:
             assert len(result) > 0, "Response should not be empty"
 
             # Log the successful response
-            print(f"\nReceived response: {result}")
+            # print(f"\nReceived response: {result}")
 
         except Exception as e:
             pytest.fail(f"Failed to get response from API: {str(e)}")
@@ -144,7 +144,7 @@ class TestDeepSeekModel:
             assert isinstance(result, dict), "Response should be a dict"
             assert len(result) > 0, "Response should not be empty"
 
-            print(f"\nReceived response: {result}")
+            # print(f"\nReceived response: {result}")
 
         except Exception as e:
             pytest.fail(f"Failed to get response from API: {str(e)}")
@@ -182,7 +182,7 @@ class TestDeepSeekModel:
                 database_name="ETHEREUM_BLOCKCHAIN",
                 db_config=DbConfig(
                     type=DBType.SNOWFLAKE,
-                    port=443,
+                    port="443",
                     database="ETHEREUM_BLOCKCHAIN",
                     schema="ETHEREUM_BLOCKCHAIN",
                     username=os.environ.get("SNOWFLAKE_USER"),

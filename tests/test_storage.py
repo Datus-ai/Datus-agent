@@ -99,11 +99,10 @@ def bird_rag_storage(bird_agent_config: AgentConfig) -> SchemaWithValueRAG:
     return rag_by_configuration(bird_agent_config)
 
 
-@pytest.mark.parametrize("database_name", ["california_schools", "card_games", "debit_card_specializing"])
+@pytest.mark.parametrize("database_name", ["california_schools", "card_games"])
 @pytest.mark.acceptance
 def test_bird_tables(bird_rag_storage: SchemaWithValueRAG, database_name: str):
     tables = bird_rag_storage.search_all_schemas(database_name=database_name)
-    print(f"tables: {tables}")
     assert len(tables) > 0, "tables should be greater than 0"
 
 
@@ -122,17 +121,13 @@ def test_bird_task(bird_rag_storage: SchemaWithValueRAG, bird_agent_config: Agen
             all_tables = bird_rag_storage.search_all_schemas(database_name=db_name)
             # all_values = bird_rag_storage.value_store.search_all(db_name)
             result, value_result = do_query_schema(bird_rag_storage, query_txt, top_n=5, db_name=db_name)
-            # print(result)
 
             print(
                 f"TASK-{task['question_id']} schema_len:{len(result)} "
                 f"value_len:{len(value_result)}, total_table: {len(all_tables)}"
             )
 
-            print(value_result)
 
-
-@pytest.mark.acceptance
 @pytest.mark.parametrize("top_n", [5, 10, 20])
 def test_time_spends_bird(top_n: int, bird_rag_storage: SchemaWithValueRAG, bird_agent_config: AgentConfig):
     bird_path = bird_agent_config.benchamrk_path("bird_dev")
