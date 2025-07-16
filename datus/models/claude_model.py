@@ -3,18 +3,16 @@ import copy
 import json
 import os
 import re
-import time
 import uuid
 from datetime import date, datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import anthropic
 import httpx
-from agents import Agent, OpenAIChatCompletionsModel, Runner, RunContextWrapper, Usage
+from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, Usage
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_anthropic, wrap_openai
-from openai import AsyncOpenAI, OpenAI
-from openai import APIError, RateLimitError, APIConnectionError, APITimeoutError
+from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from pydantic import AnyUrl
 
 from datus.models.base import LLMBaseModel
@@ -32,7 +30,7 @@ logger = get_logger(__name__)
 def classify_api_error(error: Exception) -> tuple[ErrorCode, bool]:
     """Classify API errors and return error code and whether it's retryable."""
     error_msg = str(error).lower()
-    
+
     if isinstance(error, APIError):
         # Handle specific HTTP status codes and error types
         if any(indicator in error_msg for indicator in ["overloaded", "529"]):
@@ -51,13 +49,13 @@ def classify_api_error(error: Exception) -> tuple[ErrorCode, bool]:
             return ErrorCode.MODEL_API_ERROR, True
         elif any(indicator in error_msg for indicator in ["400", "bad request", "invalid"]):
             return ErrorCode.MODEL_INVALID_RESPONSE, False
-    
+
     if isinstance(error, RateLimitError):
         return ErrorCode.MODEL_RATE_LIMIT, True
-    
+
     if isinstance(error, (APIConnectionError, APITimeoutError)):
         return ErrorCode.MODEL_CONNECTION_ERROR, True
-    
+
     # Default to general request failure
     return ErrorCode.MODEL_REQUEST_FAILED, False
 
@@ -471,7 +469,7 @@ class ClaudeModel(LLMBaseModel):
 
         max_retries = 3
         base_delay = 1.0
-        
+
         for attempt in range(max_retries + 1):
             try:
                 async with multiple_mcp_servers(mcp_servers) as connected_servers:
@@ -500,23 +498,26 @@ class ClaudeModel(LLMBaseModel):
 
                             if action:
                                 yield action
-                    
+
                     # If we reach here, streaming completed successfully
                     break
-                    
+
             except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
                 error_code, is_retryable = classify_api_error(e)
-                
+
                 if is_retryable and attempt < max_retries:
-                    delay = base_delay * (2 ** attempt)  # Exponential backoff
-                    logger.warning(f"API error (attempt {attempt + 1}/{max_retries + 1}): {error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s...")
+                    delay = base_delay * (2**attempt)  # Exponential backoff
+                    logger.warning(
+                        f"API error (attempt {attempt + 1}/{max_retries + 1}): {error_code.code} - "
+                        f"{error_code.desc}. Retrying in {delay:.1f}s..."
+                    )
                     await asyncio.sleep(delay)
                     continue
                 else:
                     # Max retries reached or non-retryable error
                     logger.error(f"API error after {attempt + 1} attempts: {error_code.code} - {error_code.desc}")
                     raise DatusException(error_code)
-                    
+
             except Exception as e:
                 logger.error(f"Error in streaming MCP execution: {str(e)}")
                 raise

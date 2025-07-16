@@ -744,25 +744,27 @@ class AgentCommands:
 
         except Exception as e:
             logger.error(f"Streaming node execution error: {str(e)}")
-            
+
             # Import DatusException for proper error handling
             from datus.utils.exceptions import DatusException, ErrorCode
-            
+
             # Handle DatusException with structured error codes
             if isinstance(e, DatusException):
                 error_code = e.code
-                
+
                 if error_code in [ErrorCode.MODEL_OVERLOADED, ErrorCode.MODEL_RATE_LIMIT]:
                     self.console.print(f"[bold red]API Error:[/] {error_code.desc}")
-                    self.console.print(f"[yellow]Suggestion:[/] Please wait a moment and try again with the same command.")
+                    self.console.print(
+                        "[yellow]Suggestion:[/] Please wait a moment and try again with the same command."
+                    )
                     self.console.print(f"[dim]Error code: {error_code.code}[/]")
                 elif error_code == ErrorCode.MODEL_CONNECTION_ERROR:
                     self.console.print(f"[bold red]Connection Error:[/] {error_code.desc}")
-                    self.console.print(f"[yellow]Suggestion:[/] Check your internet connection and try again.")
+                    self.console.print("[yellow]Suggestion:[/] Check your internet connection and try again.")
                     self.console.print(f"[dim]Error code: {error_code.code}[/]")
                 elif error_code == ErrorCode.MODEL_AUTHENTICATION_ERROR:
                     self.console.print(f"[bold red]Authentication Error:[/] {error_code.desc}")
-                    self.console.print(f"[yellow]Suggestion:[/] Check your API key configuration.")
+                    self.console.print("[yellow]Suggestion:[/] Check your API key configuration.")
                     self.console.print(f"[dim]Error code: {error_code.code}[/]")
                 else:
                     self.console.print(f"[bold red]Error:[/] {error_code.desc}")
@@ -771,14 +773,16 @@ class AgentCommands:
                 # Fallback for non-DatusException errors
                 error_msg = str(e).lower()
                 if any(indicator in error_msg for indicator in ["overloaded", "rate limit", "timeout"]):
-                    self.console.print(f"[bold red]API Error:[/] The API is temporarily overloaded or rate limited.")
-                    self.console.print(f"[yellow]Suggestion:[/] Please wait a moment and try again with the same command.")
+                    self.console.print("[bold red]API Error:[/] The API is temporarily overloaded or rate limited.")
+                    self.console.print(
+                        "[yellow]Suggestion:[/] Please wait a moment and try again with the same command."
+                    )
                     self.console.print(f"[dim]Original error: {str(e)}[/]")
                 elif any(indicator in error_msg for indicator in ["connection", "network"]):
-                    self.console.print(f"[bold red]Connection Error:[/] Unable to connect to the API.")
-                    self.console.print(f"[yellow]Suggestion:[/] Check your internet connection and try again.")
+                    self.console.print("[bold red]Connection Error:[/] Unable to connect to the API.")
+                    self.console.print("[yellow]Suggestion:[/] Check your internet connection and try again.")
                     self.console.print(f"[dim]Original error: {str(e)}[/]")
                 else:
                     self.console.print(f"[bold red]Error:[/] {str(e)}")
-            
+
             return {"success": False, "error": str(e)}

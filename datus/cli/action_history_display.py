@@ -7,8 +7,8 @@ from rich.text import Text
 from rich.tree import Tree
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-from datus.utils.rich_util import dict_to_tree
 from datus.utils.loggings import get_logger
+from datus.utils.rich_util import dict_to_tree
 
 logger = get_logger(__name__)
 

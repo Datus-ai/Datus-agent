@@ -31,7 +31,7 @@ class ErrorCode(Enum):
     MODEL_REQUEST_FAILED = ("300001", "LLM request failed")
     MODEL_INVALID_RESPONSE = ("300002", "Invalid request format, content, or model response (HTTP 400)")
     MODEL_TIMEOUT = ("300003", "Model request timeout")
-    
+
     # API errors following Anthropic/OpenAI standards
     MODEL_AUTHENTICATION_ERROR = ("300011", "Authentication failed - check your API key (HTTP 401)")
     MODEL_PERMISSION_ERROR = ("300012", "API key lacks required permissions (HTTP 403)")

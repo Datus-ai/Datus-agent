@@ -48,7 +48,7 @@ async def base_mcp_stream(
 
         logger.info(f"Starting MCP stream with {len(mcp_servers)} servers, max_turns={max_turns}")
         logger.debug(f"MCP servers: {list(mcp_servers.keys())}")
-        
+
         # Stream function calls only
         async for action in model.generate_with_mcp_stream(
             prompt=prompt,
@@ -68,12 +68,15 @@ async def base_mcp_stream(
         if any(indicator in error_msg for indicator in ["403", "forbidden", "not allowed", "permission"]):
             logger.info("Re-raising permission error for fallback handling")
             raise
-        
+
         # Handle OpenAI API errors with user-friendly messages
-        if any(indicator in error_msg for indicator in ["overloaded", "rate limit", "timeout", "connection error", "server error"]):
+        if any(
+            indicator in error_msg
+            for indicator in ["overloaded", "rate limit", "timeout", "connection error", "server error"]
+        ):
             logger.info("Re-raising OpenAI API error for retry handling")
             raise
-        
+
         # For other errors, provide generic error message
         logger.error(f"Unexpected error in MCP stream: {e}")
         raise

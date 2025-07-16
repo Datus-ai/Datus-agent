@@ -50,7 +50,7 @@ agent:
     bird_sqlite:
       type: sqlite
       path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
-    local_duckdb:
+    duckdb:
       type: duckdb
       name: ssb
       uri: duckdb:///tests/duckdb-demo.duckdb # absolute path: sqlite:////full/path/to/example.db
