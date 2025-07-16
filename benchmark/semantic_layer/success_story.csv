@@ -65,3 +65,40 @@ SUM(transaction_amount_usd) as total_revenue,
 (SUM(CASE WHEN transaction_amount_usd >= 30 THEN transaction_amount_usd ELSE 0 END) /
 SUM(transaction_amount_usd)) * 100 as large_transaction_percentage
 FROM mf_demo.mf_demo_transactions;"
+"What is the month-to-date (MTD) transaction amount (USD) up to 2022-03-31, and how does it compare with the 7-day rolling total for the same date? Use transaction_usd_mtd versus a window-based cumulative metric.","WITH march_data AS (
+SELECT
+DATE(ds) as transaction_date,
+SUM(transaction_amount_usd) as daily_amount
+FROM mf_demo.mf_demo_transactions
+WHERE DATE(ds) >= '2022-03-01' AND DATE(ds) <= '2022-03-31'
+GROUP BY DATE(ds)
+),
+cumulative_data AS (
+SELECT
+transaction_date,
+daily_amount,
+SUM(daily_amount) OVER (ORDER BY transaction_date) as mtd_amount,
+SUM(daily_amount) OVER (
+ORDER BY transaction_date
+ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+) as rolling_7day_amount
+FROM march_data
+)
+SELECT
+transaction_date,
+daily_amount,
+mtd_amount,
+rolling_7day_amount
+FROM cumulative_data
+WHERE transaction_date = '2022-03-31';"
+Which customers generated the top-10 highest net revenue (using the revenue_usd metric) during March 2022?,"SELECT
+t.id_customer,
+SUM(t.transaction_amount_usd) -
+SUM(CASE WHEN t.transaction_type_name = 'cancellation' THEN t.transaction_amount_usd ELSE 0 END) +
+SUM(CASE WHEN t.transaction_type_name = 'alteration' THEN t.transaction_amount_usd ELSE 0 END) as revenue_usd,
+COUNT(t.id_transaction) as total_transactions
+FROM mf_demo.mf_demo_transactions t
+WHERE DATE(t.ds) >= '2022-03-01' AND DATE(t.ds) < '2022-04-01'
+GROUP BY t.id_customer
+ORDER BY revenue_usd DESC
+LIMIT 10;"

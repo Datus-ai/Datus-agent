@@ -192,7 +192,9 @@ def save_results_to_csv(results, output_path):
         if results["error"]:
             error_df = pd.DataFrame([["error", results["error"]]], columns=["status", "message"])
         else:
-            error_df = pd.DataFrame([["message", "no results"]], columns=["status", "message"])
+            # there are columns but no data, pandas dataframe will ignore header when comparing,
+            # so column names don't matter
+            error_df = pd.DataFrame(columns=["status", "message"])
 
         error_df.to_csv(output_path, index=False, encoding="utf-8")
 
