@@ -270,7 +270,10 @@ class ClaudeModel(LLMBaseModel):
                     # Get all tools
                     for server_name, connected_server in connected_servers.items():
                         try:
-                            mcp_tools = await connected_server.list_tools()
+                            # Create minimal agent and run context for the new interface
+                            agent = Agent(name='mcp-tools-agent')
+                            run_context = RunContextWrapper(context=None, usage=Usage())
+                            mcp_tools = await connected_server.list_tools(run_context, agent)
                             all_tools.extend(mcp_tools)
                             logger.debug(f"Retrieved {len(mcp_tools)} tools from {server_name}")
                         except Exception as e:
@@ -320,7 +323,7 @@ class ClaudeModel(LLMBaseModel):
                                 for server_name, connected_server in connected_servers.items():
                                     try:
                                         # Create minimal agent and run context for the new interface
-                                        agent = Agent(name='mcp-claude-agent')
+                                        agent = Agent(name="mcp-claude-agent")
                                         run_context = RunContextWrapper(context=None, usage=Usage())
                                         tmp_tools = await connected_server.list_tools(run_context, agent)
                                         if any(tool.name == block.name for tool in tmp_tools):

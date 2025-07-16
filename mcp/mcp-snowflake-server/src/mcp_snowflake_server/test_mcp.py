@@ -7,6 +7,8 @@ from agents import (
     Agent,
     OpenAIChatCompletionsModel,
     Runner,
+    RunContextWrapper,
+    Usage,
     set_default_openai_client,
     set_trace_processors,
     set_tracing_disabled,
@@ -108,7 +110,10 @@ async def run(model_name, max_turns=10, question=None):
             ],
         },
     ) as server:
-        tools = await server.list_tools()
+        # Create minimal agent and run context for the new interface
+        temp_agent = Agent(name='test-agent')
+        run_context = RunContextWrapper(context=None, usage=Usage())
+        tools = await server.list_tools(run_context, temp_agent)
 
         sql_agent = Agent(
             name="MCP_snowflake_test", instructions=SQL_AGENT_INSTRUCTIONS, mcp_servers=[server], model=model
