@@ -18,10 +18,13 @@ class CompareNode(Node):
         self.result = self._execute_compare()
 
     def setup_input(self, workflow: Workflow) -> Dict:
+        # Use the expectation from input_data if provided, otherwise empty string
+        expectation = self.input if isinstance(self.input, str) and self.input.strip() else ""
+        
         next_input = CompareInput(
             sql_task=workflow.task,
             sql_context=workflow.get_last_sqlcontext(),
-            expectation="",  # Will be set by user input in CLI
+            expectation=expectation,
         )
         self.input = next_input
         return {"success": True, "message": "Compare input setup complete", "suggestions": [next_input]}
@@ -33,7 +36,7 @@ class CompareNode(Node):
             # Add comparison result as a new SQL context for reference
             new_record = SQLContext(
                 sql_query=self.input.sql_context.sql_query,
-                explanation=f"Comparison Analysis: {result.explanation}. Suggestions: {result.suggest}"
+                explanation=f"Comparison Analysis: {result.explanation}. Suggestions: {result.suggest}",
             )
             workflow.context.sql_contexts.append(new_record)
             return {"success": True, "message": "Updated comparison context"}

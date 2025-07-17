@@ -15,12 +15,13 @@ def compare_sql_prompt(
     sql_error: str = "",
     expectation: str = "",
 ) -> str:
-    system_content = prompt_manager.get_raw_template("compare_sql_system", version=prompt_version)
+    system_content = prompt_manager.get_raw_template("compare_sql_system_mcp", version=prompt_version)
     user_content = prompt_manager.render_template(
         "compare_sql_user",
         database_type=sql_task.database_type,
         database_name=sql_task.database_name,
         sql_task=sql_task.task,
+        external_knowledge=sql_task.external_knowledge,
         sql_query=sql_query,
         sql_explanation=sql_explanation,
         sql_result=sql_result,

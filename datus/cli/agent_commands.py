@@ -699,7 +699,7 @@ class AgentCommands:
             self.console.print("[bold red]Error:[/] Expectation cannot be empty")
             return
 
-        # Run compare node with streaming
+        # Run compare node with streaming, passing expectation as args
         self._run_node_stream(NodeType.TYPE_COMPARE, expectation)
 
     def _run_node_stream(self, node_type: str, node_args: str):
@@ -781,6 +781,11 @@ class AgentCommands:
                         success = final_action.output.get("success", False)
                         if success:
                             self.console.print("[bold green]Streaming execution completed successfully![/]")
+                            
+                            # For _reason_sql_stream, extract SQL from the final action and add to workflow context
+                            if node_type == NodeType.TYPE_REASONING and hasattr(next_node, '_reason_sql_stream'):
+                                self._extract_sql_from_streaming_actions(actions, workflow, next_node)
+                            
                             return {"success": True, "actions": actions}
                         else:
                             error_msg = final_action.output.get("error", "Unknown error")
