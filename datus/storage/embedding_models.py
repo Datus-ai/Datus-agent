@@ -8,6 +8,8 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+EMBEDDING_DEVICE_TYPE = ""
+
 
 @dataclass
 class EmbeddingModel:
@@ -26,7 +28,7 @@ class EmbeddingModel:
         self.registry_name = registry_name
         self.model_name = model_name
         self._dim_size = dim_size
-        self.device = get_device()
+        self.device = "cpu" if EMBEDDING_DEVICE_TYPE and "cpu" == EMBEDDING_DEVICE_TYPE else get_device()
         self._model = None
         self.batch_size = batch_size
         self.openai_config = openai_config
@@ -95,9 +97,11 @@ DEFAULT_MODEL_CONFIG = {"model_name": "all-MiniLM-L6-v2", "dim_size": 384}
 
 
 def init_embedding_models(
-    storage_config: dict[str, dict[str, any]], openai_config: Optional[dict[str, Any]] = None
+    storage_config: dict[str, dict[str, Any]], openai_config: Optional[dict[str, Any]] = None
 ) -> dict[str, EmbeddingModel]:
     # ensure model just load once
+    global EMBEDDING_DEVICE_TYPE
+    EMBEDDING_DEVICE_TYPE = str(storage_config.get("embedding_device_type", ""))
     models = {}
     for name, config in storage_config.items():
         if not isinstance(config, dict):
@@ -130,7 +134,7 @@ def get_embedding_model(store_name: str) -> EmbeddingModel:
     if target_model is not None:
         EMBEDDING_MODELS[store_name] = target_model
         return target_model
-    target_model = EmbeddingModel(model_name=model_name, dim_size=DEFAULT_MODEL_CONFIG["dim_size"])
+    target_model = EmbeddingModel(model_name=str(model_name), dim_size=DEFAULT_MODEL_CONFIG["dim_size"])
     EMBEDDING_MODELS[store_name] = target_model
     return target_model
 
