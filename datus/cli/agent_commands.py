@@ -153,8 +153,8 @@ class AgentCommands:
             # Task description - required input from user
             if args.strip():
                 task_description = args
-                # Use current_database from CLI args, fallback to db_path
-                database_name = self.current_database or self.cli.args.db_path
+                # Use current_db_name from CLI (updated by .database command), fallback to current_database from args, then db_path
+                database_name = self.cli.current_db_name or self.current_database or self.cli.args.db_path
                 output_dir = "output"
                 external_knowledge = ""
             else:  # If no input, use a prompt to get the task info
@@ -163,9 +163,11 @@ class AgentCommands:
                 if not task_description.strip():
                     self.console.print("[bold red]Error:[/] Task description is required")
                     return
-                # Database name - optional input, use current_database as default
-                default_db = self.current_database or (
-                    self.cli.args.db_path if hasattr(self.cli.args, "db_path") else ""
+                # Database name - optional input, use current_db_name from CLI as default
+                default_db = (
+                    self.cli.current_db_name
+                    or self.current_database
+                    or (self.cli.args.db_path if hasattr(self.cli.args, "db_path") else "")
                 )
                 database_name = Prompt.ask("[bold]Enter database name[/]", default=default_db)
                 # Output directory - optional input
