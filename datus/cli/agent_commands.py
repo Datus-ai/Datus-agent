@@ -781,12 +781,11 @@ class AgentCommands:
 
                             # For _reason_sql_stream, extract SQL from the final action and add to workflow context
                             if node_type == NodeType.TYPE_REASONING and hasattr(next_node, "_reason_sql_stream"):
-                                logger.debug(f"Detected _reason_sql_stream node, calling SQL extraction...")
+                                logger.debug("Detected _reason_sql_stream node, calling SQL extraction...")
                                 self._extract_sql_from_streaming_actions(actions, workflow, next_node)
                             else:
-                                logger.debug(
-                                    f"Not a _reason_sql_stream node (type: {node_type}, has_method: {hasattr(next_node, '_reason_sql_stream') if next_node else 'no_node'})"
-                                )
+                                has_method = hasattr(next_node, "_reason_sql_stream") if next_node else False
+                                logger.debug(f"Not a _reason_sql_stream node (type: {node_type}, method: {has_method})")
 
                             return {"success": True, "actions": actions}
                         else:
@@ -880,9 +879,11 @@ class AgentCommands:
                 # Look for SQL execution results in actions
                 read_query_count = 0
                 for i, action in enumerate(actions):
-                    logger.debug(f"Action {i}: type={action.action_type}, status={action.status.value}")
+                    # Handle both string and enum status
+                    status_value = action.status.value if hasattr(action.status, "value") else action.status
+                    logger.debug(f"Action {i}: type={action.action_type}, status={status_value}")
 
-                    if action.action_type == "read_query" and action.status.value == "success":
+                    if action.action_type == "read_query" and status_value == "success":
                         read_query_count += 1
                         # This is a SQL execution result, create SQLContext from it
                         sql_input = action.input or {}
@@ -912,7 +913,9 @@ class AgentCommands:
                 # Look for final message with SQL result
                 assistant_message_count = 0
                 for action in reversed(actions):  # Start from the last action
-                    if action.action_type == "message" and action.role.value == "assistant":
+                    # Handle both string and enum role
+                    role_value = action.role.value if hasattr(action.role, "value") else action.role
+                    if action.action_type == "message" and role_value == "assistant":
                         assistant_message_count += 1
                         logger.debug(f"Processing assistant message {assistant_message_count}")
 
