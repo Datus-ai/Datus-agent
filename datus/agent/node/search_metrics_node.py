@@ -78,24 +78,14 @@ class SearchMetricsNode(Node):
                 logger.warning(f"Search metrics tool initialization failed: {e}")
                 return self.get_bad_result(str(e))
 
-<<<<<<< HEAD
     def get_bad_result(self, error_msg: str):
-=======
-    def get_bad_result(self, error_msg:str):
->>>>>>> 1027f39 (search_metric node & its workflow)
         return SearchMetricsResult(
             success=False,
             error=error_msg,
             semantic_model_meta=self.input.semantic_model_meta,
             metrics=[],
-<<<<<<< HEAD
             metrics_count=0,
         )
-=======
-            metrics_count=0
-        )
-
->>>>>>> 1027f39 (search_metric node & its workflow)
 
     def update_context(self, workflow: Workflow) -> Dict:
         """Update search metrics results to workflow context."""
