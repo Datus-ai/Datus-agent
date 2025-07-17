@@ -6,11 +6,9 @@ import os
 import sqlite3
 import sys
 
+import duckdb
 import pandas as pd
 import yaml
-
-from datus.tools.db_tools.duckdb_connector import DuckdbConnector
-from datus.utils.constants import DBType
 
 
 def load_config(config_path):
@@ -151,11 +149,14 @@ def execute_duckdb_query(namespace_config, sql_query):
         if not db_path:
             raise Exception("DuckDB URI not found in namespace config")
 
-        # Create DuckDB connector
-        connector = DuckdbConnector(db_path)
+        # Connect to DuckDB directly
+        conn = duckdb.connect(db_path)
 
         # Execute query and get results as DataFrame
-        result_df = connector.execute_query(sql_query)
+        result_df = conn.execute(sql_query).df()
+
+        # Close connection
+        conn.close()
 
         # Convert DataFrame to the expected format
         if result_df is not None and not result_df.empty:
@@ -264,13 +265,13 @@ def main():
             else:
                 print(f"Processing task {task_id}: database={task_data['db_id']}")
 
-            if namespace_config.get("type") == DBType.SQLITE:
+            if namespace_config.get("type") == "sqlite":
                 path_pattern = namespace_config.get("path_pattern", "")
                 full_path_pattern = os.path.join(args.workdir, path_pattern)
                 db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])
                 print(f"Executing SQL: {task_data['sql'][:100]}...")
                 results = execute_sql_query(db_path, task_data["sql"])
-            elif namespace_config.get("type") == DBType.DUCKDB:
+            elif namespace_config.get("type") == "duckdb":
                 print(f"Executing SQL: {task_data['sql'][:100]}...")
                 results = execute_duckdb_query(namespace_config, task_data["sql"])
             else:
@@ -296,12 +297,12 @@ def main():
                     print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
 
                 try:
-                    if namespace_config.get("type") == DBType.SQLITE:
+                    if namespace_config.get("type") == "sqlite":
                         path_pattern = namespace_config.get("path_pattern", "")
                         full_path_pattern = os.path.join(args.workdir, path_pattern)
                         db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])
                         results = execute_sql_query(db_path, task_data["sql"])
-                    elif namespace_config.get("type") == DBType.DUCKDB:
+                    elif namespace_config.get("type") == "duckdb":
                         results = execute_duckdb_query(namespace_config, task_data["sql"])
                     else:
                         raise Exception(f"Unsupported database type: {namespace_config.get('type')}")

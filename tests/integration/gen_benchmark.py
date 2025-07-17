@@ -5,8 +5,6 @@ import os
 
 import yaml
 
-from datus.main import logger
-
 
 def load_config(config_path):
     if not os.path.exists(config_path):
@@ -50,7 +48,6 @@ def load_benchmark_data(benchmark_path):
         with open(benchmark_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for line_no, row in enumerate(reader, 1):
-                logger.debug(f"line {line_no}: {row}")
                 if "question" in row and "sql" in row and row["question"].strip() and row["sql"].strip():
                     instance_ids.append(str(line_no))
         return instance_ids
