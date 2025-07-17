@@ -223,6 +223,14 @@ def create_parser() -> argparse.ArgumentParser:
             help="Schema linking node strategy",
         )
 
+        node_group.add_argument(
+            "--search_metrics_rate",
+            type=str,
+            choices=["fast", "medium", "slow"],
+            default="fast",
+            help="Search metrics node query strategy",
+        )
+
     # Workflow configuration group (available for run and benchmark)
     for p in [run_parser, benchmark_parser]:
         workflow_group = p.add_argument_group("Workflow Configuration")

@@ -86,6 +86,7 @@ class AgentConfig:
     nodes: Dict[str, NodeConfig]
     rag_base_path: str
     schema_linking_rate: str
+    search_metrics_rate: str
     _reflection_nodes: Dict[str, List[str]]
     _output_dir: str
     _current_namespace: str
@@ -109,6 +110,7 @@ class AgentConfig:
 
         self._init_storage_config(kwargs.get("storage", {}))
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
+        self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
         self._output_dir = kwargs.get("output_dir", "output")
         self.db_type = ""
 
@@ -234,6 +236,8 @@ class AgentConfig:
             self.rag_base_path = os.path.expanduser(kwargs["storage_path"])
         if kwargs.get("schema_linking_rate", ""):
             self.schema_linking_rate = kwargs["schema_linking_rate"]
+        if kwargs.get("search_metrics_rate", ""):
+            self.search_metrics_rate = kwargs["search_metrics_rate"]
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]
         if kwargs.get("action", "") not in ["probe-llm", "generate-dataset"]:
