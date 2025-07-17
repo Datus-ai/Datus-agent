@@ -17,7 +17,7 @@ class ReasonSQLNode(Node):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.action_history_manager = None
-        
+
     def execute(self):
         self.result = self._reason_sql()
 
@@ -39,20 +39,20 @@ class ReasonSQLNode(Node):
         """Update reasoning results to workflow context."""
         try:
             # Check if we have streaming results from action history manager
-            if self.action_history_manager and hasattr(self.action_history_manager, 'sql_contexts'):
+            if self.action_history_manager and hasattr(self.action_history_manager, "sql_contexts"):
                 # Use sql_contexts from streaming execution
                 sql_contexts = self.action_history_manager.sql_contexts
                 logger.info(f"Using streaming results: {len(sql_contexts)} SQL contexts found")
-                
+
                 # Add successful SQL contexts to workflow context
                 for sql_ctx in sql_contexts:
                     if sql_ctx.sql_error == "":  # only add the successful sql context
                         workflow.context.sql_contexts.append(sql_ctx)
                     else:
                         logger.warning(f"Failed context, skip it: {sql_ctx.sql_query}, {sql_ctx.sql_error}")
-                        
+
                 return {"success": True, "message": "Updated reasoning context from streaming results"}
-            
+
             # Fall back to non-streaming result
             result = self.result
             if result and result.success:
@@ -62,7 +62,7 @@ class ReasonSQLNode(Node):
                         workflow.context.sql_contexts.append(sql_ctx)
                     else:
                         logger.warning(f"Failed context, skip it: {sql_ctx.sql_query}, {sql_ctx.sql_error}")
-                        
+
                 # Add the reasoning result to the sql context
                 new_record = SQLContext(
                     sql_query=result.sql_query, sql_return=result.sql_return

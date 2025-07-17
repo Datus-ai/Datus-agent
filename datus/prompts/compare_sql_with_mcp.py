@@ -15,7 +15,7 @@ def get_compare_prompt(
     prompt_version: str = "1.0",
 ) -> str:
     """Generate comparison prompt for MCP streaming."""
-    
+
     system_content = prompt_manager.get_raw_template("compare_sql_system_mcp", version=prompt_version)
     user_content = prompt_manager.render_template(
         "compare_sql_user",

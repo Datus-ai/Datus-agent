@@ -93,7 +93,7 @@ class AgentCommands:
 
             while not hasattr(self.agent, "workflow") or not self.agent.workflow_ready:
                 self.console.print("[bold yellow]Waiting for workflow to be initialized...[/]")
-                time.sleep(7)
+                time.sleep(1)
 
             # Store the new workflow
             self.workflow = self.agent.workflow
@@ -154,7 +154,7 @@ class AgentCommands:
             # Task description - required input from user
             if args.strip():
                 task_description = args
-                # Use current_db_name from CLI (updated by .database command), fallback to current_database from args, then db_path
+                # Use current_db_name from CLI (updated by .database command), fallback to current_database from args
                 database_name = self.cli.current_db_name or self.current_database or self.cli.args.db_path
                 output_dir = "output"
                 external_knowledge = ""
@@ -688,13 +688,10 @@ class AgentCommands:
         if not self.workflow:
             self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
             self.cmd_dastart()
-        
+
         # Get expectation from user
-        expectation = Prompt.ask(
-            "[bold blue]Enter expectation[/] (SQL query or expected data format)",
-            default=""
-        )
-        
+        expectation = Prompt.ask("[bold blue]Enter expectation[/] (SQL query or expected data format)", default="")
+
         if not expectation.strip():
             self.console.print("[bold red]Error:[/] Expectation cannot be empty")
             return
@@ -781,11 +778,16 @@ class AgentCommands:
                         success = final_action.output.get("success", False)
                         if success:
                             self.console.print("[bold green]Streaming execution completed successfully![/]")
-                            
+
                             # For _reason_sql_stream, extract SQL from the final action and add to workflow context
-                            if node_type == NodeType.TYPE_REASONING and hasattr(next_node, '_reason_sql_stream'):
+                            if node_type == NodeType.TYPE_REASONING and hasattr(next_node, "_reason_sql_stream"):
+                                logger.debug(f"Detected _reason_sql_stream node, calling SQL extraction...")
                                 self._extract_sql_from_streaming_actions(actions, workflow, next_node)
-                            
+                            else:
+                                logger.debug(
+                                    f"Not a _reason_sql_stream node (type: {node_type}, has_method: {hasattr(next_node, '_reason_sql_stream') if next_node else 'no_node'})"
+                                )
+
                             return {"success": True, "actions": actions}
                         else:
                             error_msg = final_action.output.get("error", "Unknown error")
@@ -841,3 +843,153 @@ class AgentCommands:
                     self.console.print(f"[bold red]Error:[/] {str(e)}")
 
             return {"success": False, "error": str(e)}
+
+    def _extract_sql_from_streaming_actions(self, actions, workflow, node):
+        """
+        Extract SQL from streaming actions and add to workflow context.
+        This method handles the _reason_sql_stream case where we need to update
+        the workflow context with the SQL from the final action.
+        """
+        try:
+            from datus.schemas.node_models import SQLContext
+            from datus.utils.json_utils import llm_result2json
+
+            logger.debug(f"Starting SQL extraction from streaming actions. Total actions: {len(actions)}")
+            logger.debug(f"Workflow context before extraction: {len(workflow.context.sql_contexts)} SQL contexts")
+
+            # Look for actions that contain SQL execution results or final message
+            sql_contexts = []
+
+            # First, check if the node has an action_history_manager with sql_contexts
+            if hasattr(node, "action_history_manager") and node.action_history_manager:
+                logger.debug("Node has action_history_manager")
+                if hasattr(node.action_history_manager, "sql_contexts"):
+                    sql_contexts.extend(node.action_history_manager.sql_contexts)
+                    logger.info(f"Found {len(sql_contexts)} SQL contexts from action history manager")
+                    for i, ctx in enumerate(sql_contexts):
+                        logger.debug(f"SQL context {i}: query={ctx.sql_query[:100]}..., error={ctx.sql_error}")
+                else:
+                    logger.debug("Action history manager has no sql_contexts attribute")
+            else:
+                logger.debug("Node has no action_history_manager")
+
+            # If no SQL contexts found, try to extract from actions
+            if not sql_contexts:
+                logger.debug("No SQL contexts from action history manager, extracting from actions...")
+
+                # Look for SQL execution results in actions
+                read_query_count = 0
+                for i, action in enumerate(actions):
+                    logger.debug(f"Action {i}: type={action.action_type}, status={action.status.value}")
+
+                    if action.action_type == "read_query" and action.status.value == "success":
+                        read_query_count += 1
+                        # This is a SQL execution result, create SQLContext from it
+                        sql_input = action.input or {}
+                        sql_output = action.output or {}
+
+                        sql_query = sql_input.get("sql", "")
+                        sql_result = sql_output.get("result", "")
+                        sql_error = sql_output.get("error", "")
+
+                        logger.debug(
+                            f"Read query {read_query_count}: sql={sql_query[:100]}..., "
+                            f"result_len={len(str(sql_result))}, error={sql_error}"
+                        )
+
+                        sql_context = SQLContext(
+                            sql_query=sql_query,
+                            explanation="",
+                            sql_return=sql_result,
+                            sql_error=sql_error,
+                            row_count=0,
+                        )
+                        sql_contexts.append(sql_context)
+                        logger.info(f"Added SQL context from read_query action: {sql_context.sql_query[:100]}...")
+
+                logger.debug(f"Found {read_query_count} read_query actions")
+
+                # Look for final message with SQL result
+                assistant_message_count = 0
+                for action in reversed(actions):  # Start from the last action
+                    if action.action_type == "message" and action.role.value == "assistant":
+                        assistant_message_count += 1
+                        logger.debug(f"Processing assistant message {assistant_message_count}")
+
+                        # This could be the final reasoning result
+                        if action.output and action.output.get("raw_output"):
+                            raw_output = action.output.get("raw_output", "")
+                            logger.debug(f"Raw output length: {len(raw_output)}")
+                            logger.debug(f"Raw output preview: {raw_output[:200]}...")
+
+                            try:
+                                # Parse the final result to extract SQL
+                                content_dict = llm_result2json(raw_output)
+                                sql_query = content_dict.get("sql", "")
+                                explanation = content_dict.get("explanation", "")
+
+                                logger.debug(
+                                    f"Parsed content: sql_query_len={len(sql_query)}, "
+                                    f"explanation_len={len(explanation)}"
+                                )
+
+                                if sql_query:
+                                    # Create SQLContext with the final result SQL
+                                    final_sql_context = SQLContext(
+                                        sql_query=sql_query,
+                                        explanation=explanation,
+                                        sql_return="",  # Will be filled by execution
+                                        sql_error="",
+                                        row_count=0,
+                                    )
+                                    sql_contexts.append(final_sql_context)
+                                    logger.info(f"Added final result SQL to SQLContext: {sql_query[:100]}...")
+                                    break  # Only take the first (last) valid final result
+                                else:
+                                    logger.debug("No SQL query found in parsed content")
+
+                            except Exception as e:
+                                logger.debug(f"Could not parse final message as JSON: {e}")
+                        else:
+                            logger.debug("No raw_output in action output")
+
+                logger.debug(f"Processed {assistant_message_count} assistant messages")
+
+            logger.debug(f"Total SQL contexts found: {len(sql_contexts)}")
+
+            # Add successful SQL contexts to workflow context
+            added_count = 0
+            for i, sql_ctx in enumerate(sql_contexts):
+                logger.debug(
+                    f"Processing SQL context {i}: error='{sql_ctx.sql_error}', " f"query={sql_ctx.sql_query[:100]}..."
+                )
+
+                if sql_ctx.sql_error == "":  # only add the successful sql context
+                    workflow.context.sql_contexts.append(sql_ctx)
+                    added_count += 1
+                    logger.info(f"✓ Added SQL context to workflow: {sql_ctx.sql_query[:100]}...")
+                else:
+                    logger.warning(
+                        f"✗ Skipping failed SQL context: {sql_ctx.sql_query[:100]}..., error: {sql_ctx.sql_error}"
+                    )
+
+            logger.debug(f"Workflow context after extraction: {len(workflow.context.sql_contexts)} SQL contexts")
+            logger.debug(f"Added {added_count} new SQL contexts")
+
+            if added_count > 0:
+                self.console.print(
+                    f"[bold green]Added {added_count} SQL context(s) to workflow from streaming execution[/]"
+                )
+                # Show the last added SQL context for verification
+                if workflow.context.sql_contexts:
+                    last_ctx = workflow.context.sql_contexts[-1]
+                    logger.info(f"Last added SQL context: {last_ctx.sql_query[:200]}...")
+            else:
+                logger.warning("No successful SQL contexts found in streaming execution")
+
+        except Exception as e:
+            logger.error(f"Failed to extract SQL from streaming actions: {str(e)}")
+            import traceback
+
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Don't fail the entire process, just log the error

@@ -20,7 +20,7 @@ class CompareNode(Node):
     def setup_input(self, workflow: Workflow) -> Dict:
         # Use the expectation from input_data if provided, otherwise empty string
         expectation = self.input if isinstance(self.input, str) and self.input.strip() else ""
-        
+
         next_input = CompareInput(
             sql_task=workflow.task,
             sql_context=workflow.get_last_sqlcontext(),

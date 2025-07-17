@@ -90,12 +90,8 @@ class LLMTool(BaseTool):
     def compare_sql(self, input_data: CompareInput) -> CompareResult:
         return compare_sql(self.model, input_data)
 
-    def compare_sql_with_mcp_stream(
-        self, input_data: CompareInput, db_config: DbConfig, tool_config=None
-    ):
+    def compare_sql_with_mcp_stream(self, input_data: CompareInput, db_config: DbConfig, tool_config=None):
         """Compare SQL with MCP streaming support."""
         if tool_config is None:
             tool_config = {}
-        return compare_sql_with_mcp_stream(
-            self.model, input_data, db_config=db_config, tool_config=tool_config
-        )
+        return compare_sql_with_mcp_stream(self.model, input_data, db_config=db_config, tool_config=tool_config)
