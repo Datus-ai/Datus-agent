@@ -13,11 +13,11 @@ python gen_benchmark.py --namespace bird_sqlite --benchmark bird_dev --workdir=$
 
 ## generate semantic models and metrics
 ```shell
-cd ${path to datus project dir} && python -m datus.main bootstrap-kb --namespace duckdb --components metrics --success_story benchmark/semantic_layer/success_story.csv --domain RGM_voice --kb_update_strategy overwrite
+cd ${path to datus project dir} && python -m datus.main bootstrap-kb --namespace duckdb --components metrics --success_story benchmark/semantic_layer/success_story.csv --domain sale --kb_update_strategy overwrite
 ```
 ## generate semantic layer test commands
 ```shell
-python gen_benchmark.py --namespace duckdb --benchmark semantic_layer --workdir=${path to datus agent} --extra_option '--plan metric2SQL --task_db_name duck --task_schema mf_demo --domain RGM_voice --layer1 duckdb --layer2 duck --task_ext_knowledge "${external knowledge}"'
+python gen_benchmark.py --namespace duckdb --benchmark semantic_layer --workdir=${path to datus agent} --extra_option '--plan metric2SQL --task_db_name duck --task_schema mf_demo --domain sale --layer1 duckdb --layer2 duck --task_ext_knowledge "${external knowledge}"'
 ```
 
 # Generate bird gold sql result.
