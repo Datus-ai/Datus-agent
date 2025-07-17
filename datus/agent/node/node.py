@@ -50,6 +50,7 @@ class Node(ABC):
     ):
         from datus.agent.node import (
             BeginNode,
+            CompareNode,
             DocSearchNode,
             ExecuteSQLNode,
             FixNode,
@@ -90,6 +91,8 @@ class Node(ABC):
             return GenerateSemanticModelNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_SEARCH_METRICS:
             return SearchMetricsNode(node_id, description, node_type, input_data, agent_config)
+        elif node_type == NodeType.TYPE_COMPARE:
+            return CompareNode(node_id, description, node_type, input_data, agent_config)
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 

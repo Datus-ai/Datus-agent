@@ -15,6 +15,7 @@ from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.base import BaseInput
+from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
@@ -327,6 +328,19 @@ class AgentCommands:
 
             prompt_version = Prompt.ask("[bold]Enter prompt version[/]", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()
+        elif isinstance(input, CompareInput):
+            # Allow user to modify expectation
+            if input.expectation:
+                self.console.print(f"[bold]Current expectation:[/]\n{input.expectation}")
+                use_current = Prompt.ask("[bold]Use current expectation?[/]", choices=["y", "n"], default="y")
+                if use_current == "y":
+                    pass  # Keep current expectation
+                else:
+                    expectation = Prompt.ask("[bold]Enter new expectation[/]", default=input.expectation)
+                    input.expectation = expectation.strip()
+            else:
+                expectation = Prompt.ask("[bold]Enter expectation (SQL query or expected data)[/]", default="")
+                input.expectation = expectation.strip()
 
     def cmd_gen(self, args: str):
         """Generate SQL for a task."""
@@ -606,19 +620,19 @@ class AgentCommands:
 
     def cmd_set_context(self, context_type: str = "sql"):
         """Set the context for the agent."""
-        if not self.agent.workflow:
+        if not self.workflow:
             self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
             self.cmd_dastart()
 
         # get lastest sql context
         if context_type == "sql":
-            if not self.agent.workflow.context.sql_contexts:
+            if not self.workflow.context.sql_contexts:
                 self.console.print("[yellow]No SQL contexts available[/]")
                 return
 
             # Display all SQL contexts
             self.console.print("[bold blue]SQL Contexts:[/]")
-            for i, sql_context in enumerate(self.agent.workflow.context.sql_contexts):
+            for i, sql_context in enumerate(self.workflow.context.sql_contexts):
                 self.console.print(f"\n[bold]Context {i + 1}:[/]")
                 self.console.print(sql_context.to_dict())
 
@@ -630,7 +644,7 @@ class AgentCommands:
             # update context
         elif context_type == "schema":
             self.console.print("[bold blue]Table Context:[/]")
-            for i, table_schema in enumerate(self.agent.workflow.context.table_schemas):
+            for i, table_schema in enumerate(self.workflow.context.table_schemas):
                 self.console.print(f"{i + 1}. {table_schema.to_dict()}")
 
             tables = Prompt.ask("[bold]Enter table names you want to update the context for[/]", default="")
@@ -638,11 +652,11 @@ class AgentCommands:
                 self.console.print("[bold red]Error:[/] Table names are required")
                 return
 
-            schema_tool = SchemaLineageTool(agent_config=self.agent.global_config)
+            schema_tool = SchemaLineageTool(agent_config=self.cli.agent_config)
             table_schemas, table_values = schema_tool.get_table_and_values(
-                self.agent.workflow.task.database_name, tables.strip().split(",")
+                self.workflow.task.database_name, tables.strip().split(",")
             )
-            self.agent.workflow.context.update_schema_and_values(table_schemas, table_values)
+            self.workflow.context.update_schema_and_values(table_schemas, table_values)
             self.console.print(f"[bold green]Table context updated to {tables}[/]")
 
         elif context_type == "metrics":
@@ -654,7 +668,39 @@ class AgentCommands:
         self.console.print("[yellow]Feature not implemented in MVP.[/]")
 
     def cmd_compare(self, args: str):
-        pass
+        """Compare SQL with expectations - interactive analysis."""
+        if not self.workflow:
+            self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
+            self.cmd_dastart()
+
+        # Get expectation from user
+        expectation = Prompt.ask("[bold blue]Enter expectation[/] (SQL query or expected data format)", default="")
+
+        if not expectation.strip():
+            self.console.print("[bold red]Error:[/] Expectation cannot be empty")
+            return
+
+        # Run compare node with expectation
+        self.run_node(NodeType.TYPE_COMPARE, expectation)
+
+    def cmd_compare_stream(self, args: str):
+        """Compare SQL with streaming output and action history."""
+        if not self.workflow:
+            self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
+            self.cmd_dastart()
+        
+        # Get expectation from user
+        expectation = Prompt.ask(
+            "[bold blue]Enter expectation[/] (SQL query or expected data format)",
+            default=""
+        )
+        
+        if not expectation.strip():
+            self.console.print("[bold red]Error:[/] Expectation cannot be empty")
+            return
+
+        # Run compare node with streaming
+        self._run_node_stream(NodeType.TYPE_COMPARE, expectation)
 
     def _run_node_stream(self, node_type: str, node_args: str):
         """Run a node with streaming output and action history display."""
@@ -706,6 +752,8 @@ class AgentCommands:
                 streaming_method = next_node._generate_metrics_stream
             elif hasattr(next_node, "_reason_sql_stream"):
                 streaming_method = next_node._reason_sql_stream
+            elif hasattr(next_node, "_compare_sql_stream"):
+                streaming_method = next_node._compare_sql_stream
 
             if streaming_method:
                 actions = []

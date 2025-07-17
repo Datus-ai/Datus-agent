@@ -54,6 +54,10 @@ async def reasoning_sql_with_mcp_stream(
     db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
     mcp_servers = {input_data.sql_task.database_name: db_mcp_server}
 
+    # If no action history manager provided, create one to track the final result
+    if action_history_manager is None:
+        action_history_manager = ActionHistoryManager()
+
     async for action in base_mcp_stream(
         model=model,
         input_data=input_data,
@@ -65,6 +69,37 @@ async def reasoning_sql_with_mcp_stream(
         action_history_manager=action_history_manager,
     ):
         yield action
+
+    # After streaming completes, extract final result and add to SQLContext
+    try:
+        # Get the final result from action history manager
+        final_result = action_history_manager.get_final_result()
+        
+        if final_result and hasattr(final_result, 'content'):
+            # Parse the final result to extract SQL
+            content_dict = llm_result2json(final_result.content)
+            sql_query = content_dict.get("sql", "")
+            
+            if sql_query:
+                # Create SQLContext with the final result SQL
+                from datus.schemas.node_models import SQLContext
+                sql_context = SQLContext(
+                    sql_query=sql_query,
+                    explanation=content_dict.get("explanation", ""),
+                    sql_return="",  # Will be filled by execution
+                    sql_error="",
+                    row_count=0
+                )
+                
+                # Add to action history manager's sql_contexts if it exists
+                if hasattr(action_history_manager, 'sql_contexts'):
+                    action_history_manager.sql_contexts.append(sql_context)
+                
+                logger.info(f"Added final result SQL to SQLContext: {sql_query[:100]}...")
+                
+    except Exception as e:
+        logger.warning(f"Failed to extract final result SQL for SQLContext: {e}")
+        # Don't fail the entire process, just log the warning
 
 
 @traceable
