@@ -12,7 +12,7 @@ class SearchMetricsInput(BaseInput):
     input_text: str = Field(..., description="The query text to analyze for schema linking")
     semantic_model_meta: SemanticModelMeta = Field(..., description="The semantic model meta of this request")
     database_type: str = Field(DBType.SQLITE, description="Database type: sqlite, duckdb snowflake, etc ")
-    sql_context: Optional[SQLContext] = Field(None, description="The SQL context")
+    sql_contexts: Optional[List[SQLContext]] = Field(default=[], description="The SQL context")
 
 
 class SearchMetricsResult(BaseResult):

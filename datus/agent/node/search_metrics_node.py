@@ -25,7 +25,7 @@ class SearchMetricsNode(Node):
             input_text=workflow.task.task,
             semantic_model_meta=semantic_model_meta,
             database_type=workflow.task.database_type,
-            sql_context=workflow.get_last_sqlcontext(),
+            sql_contexts=workflow.context.sql_contexts,
         )
         self.input = next_input
         return {"success": True, "message": "Search Metrics appears valid"}
