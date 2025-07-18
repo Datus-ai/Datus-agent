@@ -48,6 +48,8 @@ async def generate_metrics_with_mcp_stream(
         "filesystem_mcp_server": filesystem_mcp_server,
     }
 
+    tool_config["max_turns"] = 30
+
     async for action in base_mcp_stream(
         model=model,
         input_data=input_data,
