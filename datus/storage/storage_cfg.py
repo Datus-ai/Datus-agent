@@ -1,5 +1,6 @@
 import os
 from configparser import ConfigParser
+from enum import Enum
 from typing import Any, Dict, List
 
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -13,7 +14,10 @@ def save_storage_config(config: Dict[str, Any], rag_base_path: str) -> None:
     parser = ConfigParser()
     for store_type in ["database", "document", "metric"]:
         if store_type in config:
-            parser[store_type] = {str(k): str(v) for k, v in config[store_type].items()}
+            save_config = {}
+            for k, v in config[store_type].items():
+                save_config[str(k)] = str(v) if not isinstance(v, Enum) else v.value
+            parser[store_type] = save_config
 
     with open(config_path, "w", encoding="utf-8") as f:
         parser.write(f)
