@@ -104,7 +104,7 @@ class DatusCLI:
             # "!rf": self.agent_commands.cmd_reflect,
             "!compare": self.agent_commands.cmd_compare_stream,
             # "!compare_stream": self.agent_commands.cmd_compare_stream,
-            "!reason": self.agent_commands.cmd_reason,
+            "!reason": self.agent_commands.cmd_reason_stream,
             # "!reason_stream": self.agent_commands.cmd_reason_stream,
             "!gen_metrics": self.agent_commands.cmd_gen_metrics_stream,
             # "!gen_metrics_stream": self.agent_commands.cmd_gen_metrics_stream,
