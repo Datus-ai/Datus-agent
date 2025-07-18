@@ -1,3 +1,5 @@
+import multiprocessing
+import os
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Optional
@@ -6,6 +8,19 @@ from datus.utils.constants import EmbeddingProvider
 from datus.utils.device_utils import get_device
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+
+# Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
+try:
+    multiprocessing.set_start_method('fork', force=True)
+except RuntimeError:
+    # set_start_method can only be called once
+    pass
+
+# Set environment variables to prevent multiprocessing issues
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 logger = get_logger(__name__)
 
@@ -56,13 +71,12 @@ class EmbeddingModel:
 
     def init_model(self):
         """Pre-download the model to local cache. Now we only support sentence-transformers and openai."""
-        import os
-        
-        # Disable multiprocessing in sentence-transformers and related libraries to avoid threading issues
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        os.environ["OMP_NUM_THREADS"] = "1"
-        os.environ["MKL_NUM_THREADS"] = "1"
-        os.environ["NUMEXPR_NUM_THREADS"] = "1"
+        # Additional PyTorch-specific threading controls
+        try:
+            import torch
+            torch.set_num_threads(1)
+        except ImportError:
+            pass
 
         if self.registry_name == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             logger.info(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")

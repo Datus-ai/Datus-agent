@@ -760,9 +760,9 @@ class AgentCommands:
                     # Execute the streaming
                     asyncio.run(run_stream())
 
-                show_details = Prompt.ask("\n[bold blue]Show Full Action History? (y/N): [/]").strip().lower()
+                show_details = Prompt.ask("\n[bold blue]Show Full Action History? (y/N):[/]").strip().lower()
                 if show_details == "y":
-                    self.console.print("\n[bold blue]Final Action History:[/]")
+                    self.console.print("\n[bold blue]Full Action History:[/]")
                     action_display.display_final_action_history(actions)
 
                 # Extract result from final action

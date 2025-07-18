@@ -15,10 +15,10 @@ logger = get_logger(__name__)
 
 
 class SilentMCPServerStdio(MCPServerStdio):
-    """Enhanced MCP server wrapper that reduces output from MCP servers
+    """Enhanced MCP server wrapper that redirects stdout and stderr to suppress all output
     
-    Note: The filesystem MCP server startup message 'Secure MCP Filesystem Server running on stdio' 
-    will remain as it's printed to stdout and cannot be suppressed without breaking MCP protocol.
+    WARNING: This redirects both stdout and stderr, which may break MCP protocol communication.
+    Use with caution and test thoroughly.
     """
     
     def __init__(self, params: MCPServerStdioParams, **kwargs):
@@ -33,13 +33,30 @@ class SilentMCPServerStdio(MCPServerStdio):
                 'RUST_LOG': 'error',  # Reduce Rust logging
             })
             
-            # Additional variables for filesystem MCP server to suppress "Allowed directories" output
+            # Additional variables for filesystem MCP server
             if hasattr(params, 'args') and any('server-filesystem' in str(arg) for arg in (params.args or [])):
                 params.env.update({
                     'NODE_OPTIONS': '--no-warnings --quiet',
                     'NPM_CONFIG_LOGLEVEL': 'silent',
                     'SUPPRESS_NO_CONFIG_WARNING': '1',
                 })
+        
+        # Redirect both stdout and stderr using shell redirection
+        if hasattr(params, 'command') and hasattr(params, 'args'):
+            original_command = params.command
+            original_args = params.args or []
+            
+            # Create shell command to redirect both stdout and stderr
+            import sys
+            if sys.platform == 'win32':
+                # Windows: redirect both stdout and stderr to nul
+                params.command = 'cmd'
+                params.args = ['/c', f'"{original_command}" {" ".join(original_args)} >nul 2>&1']
+            else:
+                # Unix/Linux/macOS: redirect both stdout and stderr to /dev/null
+                args_str = " ".join(f'"{arg}"' for arg in original_args)
+                params.command = 'sh'
+                params.args = ['-c', f'"{original_command}" {args_str} >/dev/null 2>&1']
         
         super().__init__(params, **kwargs)
 
