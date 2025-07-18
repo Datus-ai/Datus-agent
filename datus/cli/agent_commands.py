@@ -172,7 +172,8 @@ class AgentCommands:
                 )
                 database_name = Prompt.ask("[bold]Enter database name[/]", default=default_db)
                 # Output directory - optional input
-                output_dir = Prompt.ask("[bold]Enter output directory[/]", default="output")
+                output_dir = "output"
+                # output_dir = Prompt.ask("[bold]Enter output directory[/]", default="output")
                 # External knowledge - optional input
                 external_knowledge = Prompt.ask("[bold]Enter external knowledge (optional)[/]", default="")
 
