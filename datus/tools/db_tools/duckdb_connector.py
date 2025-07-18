@@ -17,9 +17,10 @@ class DuckdbConnector(SQLAlchemyConnector):
     """
 
     def __init__(self, db_path: str, **kwargs):
-        super().__init__(
-            connection_string=(db_path if db_path.startswith("duckdb:///") else f"duckdb:///{db_path}"),
-        )
+        # Force read-only mode for DuckDB to avoid lock conflicts
+        connection_string = db_path if db_path.startswith("duckdb:///") else f"duckdb:///{db_path}"
+        connection_string += "?access_mode=read_only"
+        super().__init__(connection_string=connection_string)
         self.db_path = db_path
 
     @override

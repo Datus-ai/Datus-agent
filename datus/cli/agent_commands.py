@@ -769,8 +769,12 @@ class AgentCommands:
                     asyncio.run(run_stream())
 
                 # Display final action history
-                self.console.print("\n[bold blue]Final Action History:[/]")
-                action_display.display_final_action_history(actions)
+                from prompt_toolkit import prompt
+
+                show_details = prompt("\n[bold blue]Show Final Action History? (y/N): [/]").strip().lower()
+                if show_details == "y":
+                    self.console.print("\n[bold blue]Final Action History:[/]")
+                    action_display.display_final_action_history(actions)
 
                 # Extract result from final action
                 if actions:
