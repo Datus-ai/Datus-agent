@@ -134,21 +134,18 @@ class BaseEmbeddingStore(StorageBase):
 
     def _ensure_table(self, schema: Optional[Union[pa.Schema, LanceModel]] = None):
         try:
-            if self.table_name not in self.db.table_names(limit=100):
-                self.table = self.db.create_table(
-                    self.table_name,
-                    schema=schema,
-                    embedding_functions=[
-                        EmbeddingFunctionConfig(
-                            vector_column=self.vector_column_name,
-                            source_column=self.vector_source_name,
-                            function=self.model.model,
-                        )
-                    ],
-                    exist_ok=True,
-                )
-            else:
-                self.table = self.db.open_table(self.table_name)
+            self.table = self.db.create_table(
+                self.table_name,
+                schema=schema,
+                embedding_functions=[
+                    EmbeddingFunctionConfig(
+                        vector_column=self.vector_column_name,
+                        source_column=self.vector_source_name,
+                        function=self.model.model,
+                    )
+                ],
+                exist_ok=True,
+            )
         except DatusException as e:
             raise e
         except Exception as e:
