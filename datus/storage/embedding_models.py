@@ -89,7 +89,10 @@ class EmbeddingModel:
             self._model.generate_embeddings(["foo"])
             logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
         else:
-            raise DatusException(ErrorCode.MODEL_EMBEDDING_ERROR, message=f"Unsupported registry: {self.registry_name}")
+            raise DatusException(
+                ErrorCode.MODEL_EMBEDDING_ERROR,
+                message=f"Unsupported EmbeddingModel registration by `{self.registry_name}`",
+            )
 
     @property
     def dim_size(self):
