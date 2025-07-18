@@ -56,6 +56,13 @@ class EmbeddingModel:
 
     def init_model(self):
         """Pre-download the model to local cache. Now we only support sentence-transformers and openai."""
+        import os
+        
+        # Disable multiprocessing in sentence-transformers and related libraries to avoid threading issues
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
         if self.registry_name == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             logger.info(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")
