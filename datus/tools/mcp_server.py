@@ -14,6 +14,34 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+class SilentMCPServerStdio(MCPServerStdio):
+    """Enhanced MCP server wrapper that reduces output from MCP servers
+    
+    Note: The filesystem MCP server startup message 'Secure MCP Filesystem Server running on stdio' 
+    will remain as it's printed to stdout and cannot be suppressed without breaking MCP protocol.
+    """
+    
+    def __init__(self, params: MCPServerStdioParams, **kwargs):
+        # Set environment variables to reduce output
+        if hasattr(params, 'env'):
+            if params.env is None:
+                params.env = {}
+            
+            # Basic environment variables for all MCP servers
+            params.env.update({
+                'UV_QUIET': '1',  # Quiet uv tool output
+                'RUST_LOG': 'error',  # Reduce Rust logging
+            })
+            
+            # Additional variables for filesystem MCP server to suppress "Allowed directories" output
+            if hasattr(params, 'args') and any('server-filesystem' in str(arg) for arg in (params.args or [])):
+                params.env.update({
+                    'NODE_OPTIONS': '--no-warnings --quiet',
+                    'NPM_CONFIG_LOGLEVEL': 'silent',
+                    'SUPPRESS_NO_CONFIG_WARNING': '1',
+                })
+        
+        super().__init__(params, **kwargs)
 
 def find_mcp_directory(mcp_name: str) -> str:
     """Find the MCP directory, whether in development or installed package"""
@@ -221,7 +249,7 @@ class MCPServer:
                         },
                     )
                     logger.info(f"Snowflake MCP server params: {mcp_server_params}")
-                    cls._snowflake_mcp_server = MCPServerStdio(
+                    cls._snowflake_mcp_server = SilentMCPServerStdio(
                         params=mcp_server_params,
                         client_session_timeout_seconds=10,
                     )
@@ -253,6 +281,7 @@ class MCPServer:
                     )
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
                     cls._starrocks_mcp_server = MCPServerStdio(
                         params=mcp_server_params, client_session_timeout_seconds=120  # Increase timeout for StarRocks
 =======
@@ -260,6 +289,9 @@ class MCPServer:
 =======
                     cls._starrocks_mcp_server = MCPServerStdio(
 >>>>>>> fcd6618 (rollback SilentMCPServerStdio)
+=======
+                    cls._starrocks_mcp_server = SilentMCPServerStdio(
+>>>>>>> 686e3c8 (bugfixs)
                         params=mcp_server_params, client_session_timeout_seconds=10  # Increase timeout for StarRocks
 >>>>>>> 1becbfa (remove some debugging logs, fix Unhandled exception in event loop, Create a slient mcp server)
                     )
@@ -292,7 +324,7 @@ class MCPServer:
                         ],
                         env={},  # SQLite doesn't need additional environment variables
                     )
-                    cls._sqlite_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._sqlite_mcp_server = SilentMCPServerStdio(params=mcp_server_params)
         return cls._sqlite_mcp_server
 
     @classmethod
@@ -325,6 +357,7 @@ class MCPServer:
                     )
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
                     cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params, client_session_timeout_seconds=10)
 =======
                     cls._duckdb_mcp_server = SilentMCPServerStdio(params=mcp_server_params)
@@ -332,6 +365,9 @@ class MCPServer:
 =======
                     cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params)
 >>>>>>> fcd6618 (rollback SilentMCPServerStdio)
+=======
+                    cls._duckdb_mcp_server = SilentMCPServerStdio(params=mcp_server_params)
+>>>>>>> 686e3c8 (bugfixs)
         return cls._duckdb_mcp_server
 
     @classmethod
@@ -379,10 +415,15 @@ class MCPServer:
                     mcp_server_params = MCPServerStdioParams(
                         command="npx",
                         args=[
+                            "--silent",
                             "-y",
                             "@modelcontextprotocol/server-filesystem",
                             filesystem_mcp_directory,
                         ],
+                        env={
+                            'NODE_OPTIONS': '--no-warnings',
+                            'NPM_CONFIG_LOGLEVEL': 'silent',
+                        },
                     )
                     cls._filesystem_mcp_server = MCPServerStdio(
                         params=mcp_server_params, client_session_timeout_seconds=10

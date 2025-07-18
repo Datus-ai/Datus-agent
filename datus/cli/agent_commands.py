@@ -331,15 +331,7 @@ class AgentCommands:
             input.prompt_version = prompt_version.strip()
         elif isinstance(input, CompareInput):
             # Allow user to modify expectation
-            if input.expectation:
-                self.console.print(f"[bold]Current expectation:[/]\n{input.expectation}")
-                use_current = Prompt.ask("[bold]Use current expectation?[/]", choices=["y", "n"], default="y")
-                if use_current == "y":
-                    pass  # Keep current expectation
-                else:
-                    expectation = Prompt.ask("[bold]Enter new expectation[/]", default=input.expectation)
-                    input.expectation = expectation.strip()
-            else:
+            if not input.expectation:
                 expectation = Prompt.ask("[bold]Enter expectation (SQL query or expected data)[/]", default="")
                 input.expectation = expectation.strip()
 
@@ -765,32 +757,10 @@ class AgentCommands:
                             # Longer delay to make the streaming visible and avoid caching
                             await asyncio.sleep(0.5)
 
-                #    # Execute the streaming - handle existing event loop
-                #    try:
-                #        loop = asyncio.get_event_loop()
-                #        if loop.is_running():
-                #            # If already in an event loop, use threading
-                #            import threading
+                    # Execute the streaming
+                    asyncio.run(run_stream())
 
-                #            def run_in_thread():
-                #                new_loop = asyncio.new_event_loop()
-                #                asyncio.set_event_loop(new_loop)
-                #                try:
-                #                    new_loop.run_until_complete(run_stream())
-                #                finally:
-                #                    new_loop.close()
-
-                #            thread = threading.Thread(target=run_in_thread)
-                #            thread.start()
-                #            thread.join()
-                #        else:
-                #            # No running loop, safe to use asyncio.run
-                #            asyncio.run(run_stream())
-                #    except RuntimeError:
-                #        # No event loop exists, safe to use asyncio.run
-                #        asyncio.run(run_stream())
-
-                show_details = Prompt.ask("\n[bold blue]Show Final Action History? (y/N):", default="N").strip().lower()
+                show_details = Prompt.ask("\n[bold blue]Show Full Action History? (y/N): [/]").strip().lower()
                 if show_details == "y":
                     self.console.print("\n[bold blue]Final Action History:[/]")
                     action_display.display_final_action_history(actions)
