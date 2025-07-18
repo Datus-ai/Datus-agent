@@ -149,6 +149,8 @@ class BaseEmbeddingStore(StorageBase):
                 )
             else:
                 self.table = self.db.open_table(self.table_name)
+        except DatusException as e:
+            raise e
         except Exception as e:
             raise DatusException(
                 ErrorCode.TOOL_STORE_FAILED,

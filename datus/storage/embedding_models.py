@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from datus.utils.constants import EmbeddingProvider
 from datus.utils.device_utils import get_device
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -60,11 +61,16 @@ class EmbeddingModel:
             logger.info(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")
             from lancedb.embeddings import SentenceTransformerEmbeddings
 
-            # Method `get_registry` has a multi-threading problem
-            self._model = SentenceTransformerEmbeddings.create(name=self.model_name, device=self.device)
-            # first download
-            self._model.generate_embeddings(["foo"])
-            logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
+            try:
+                # Method `get_registry` has a multi-threading problem
+                self._model = SentenceTransformerEmbeddings.create(name=self.model_name, device=self.device)
+                # first download
+                self._model.generate_embeddings(["foo"])
+                logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
+            except Exception as e:
+                raise DatusException(
+                    ErrorCode.MODEL_EMBEDDING_ERROR, message=f"Embedding Model initialized faield because of {str(e)}"
+                ) from e
 
         elif self.registry_name == EmbeddingProvider.OPENAI:
             logger.info(f"Initializing model {self.registry_name}/{self.model_name}")
@@ -83,7 +89,7 @@ class EmbeddingModel:
             self._model.generate_embeddings(["foo"])
             logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
         else:
-            raise ValueError(f"Unsupported registry: {self.registry_name}")
+            raise DatusException(ErrorCode.MODEL_EMBEDDING_ERROR, message=f"Unsupported registry: {self.registry_name}")
 
     @property
     def dim_size(self):

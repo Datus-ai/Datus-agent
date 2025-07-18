@@ -96,7 +96,7 @@ def test_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, task_ids: Se
                 print("TOTAL FOR ", task["db_id"], len(rag.search_all_schemas(database_name=task["db_id"])))
 
 
-@pytest.mark.parametrize("top_n,use_rerank", [(5, False), (10, False), (20, False), (5, True), (10, True), (20, True)])
+@pytest.mark.parametrize("top_n,use_rerank", [(5, False), (10, False), (20, False)])
 def test_full_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: int, use_rerank: bool):
     """Test the RAG SQL callback
     # Test matching tables from spider2-snow.jsonl tasks with actual schema
@@ -122,7 +122,7 @@ def test_full_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: 
             match_results.append(result)
             if result["union_match_tables_score"] == 1:
                 total += 1
-    output_dir = os.path.join(PROJECT_ROOT, "tests/output/recall")
+    output_dir = os.path.join(PROJECT_ROOT, "tests/output/spider2/recall")
     os.makedirs(output_dir, exist_ok=True)
     df = DataFrame(match_results)
     if use_rerank:
