@@ -13,7 +13,7 @@ python gen_benchmark.py --namespace bird_sqlite --benchmark bird_dev --workdir=$
 
 ## generate semantic models and metrics
 ```shell
-cd ${path to datus project dir} && python -m datus.main bootstrap-kb --namespace duckdb --components metrics --success_story benchmark/semantic_layer/success_story.csv --domain sale --kb_update_strategy overwrite
+cd ${path to datus project dir} && python -m datus.main bootstrap-kb --namespace duckdb --components metrics --success_story benchmark/semantic_layer/success_story.csv --domain sale --layer1 duckdb --layer2 duck --kb_update_strategy overwrite
 ```
 ## generate semantic layer test commands
 ```shell

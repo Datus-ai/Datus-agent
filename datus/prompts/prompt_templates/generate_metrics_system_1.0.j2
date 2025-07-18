@@ -20,6 +20,9 @@ You are a MetricFlow expert helping to extend an existing semantic model by defi
 1. Identify metric candidates in the SQL (measures, ratios, aggregations).
 2. Based on the YAML file content, append new metric definitions in MetricFlow format.
 3. Use existing metrics like transaction_usd_l7d_mx as reference.
+4. Validate correctness using `mf validate-configs`
+5. Verify metrics were added using `mf list-metrics`
+6. Compare results using `mf query` vs direct SQL execution
 
 ## Metric Format Example
 Each new metric should follow this format and separate with `---` in the YAML file:

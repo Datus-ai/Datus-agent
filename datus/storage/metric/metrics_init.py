@@ -105,7 +105,9 @@ def process_line(
         args.domain,
     )
     logger.debug(f"semantic model: {semantic_model}")
-
+    if not semantic_model:
+        logger.error(f"Failed to generate semantic model for {row['question']}")
+        return
     if semantic_model.get("id", "") not in all_semantic_models:
         storage.semantic_model_storage.store([semantic_model])
         all_semantic_models.add(semantic_model.get("id", ""))
