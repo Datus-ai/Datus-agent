@@ -1,9 +1,6 @@
 import asyncio
 import os
-import subprocess
-import sys
 import threading
-from io import StringIO
 from pathlib import Path
 from typing import Dict, Union
 
@@ -16,122 +13,6 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-
-class LoggingStringIO(StringIO):
-    """Custom StringIO that redirects writes to logger"""
-    
-    def __init__(self, logger_instance, log_level="INFO"):
-        super().__init__()
-        self.logger = logger_instance
-        self.log_level = log_level
-    
-    def write(self, s):
-        if s.strip():  # Only log non-empty strings
-            if self.log_level == "ERROR":
-                self.logger.error(f"MCP Server: {s.strip()}")
-            else:
-                self.logger.debug(f"MCP Server: {s.strip()}")
-        return len(s)
-    
-    def flush(self):
-        pass
-
-
-class SilentMCPServerStdio(MCPServerStdio):
-    """Custom MCPServerStdio that redirects stderr to logs"""
-    
-    def __init__(self, params: MCPServerStdioParams, **kwargs):
-        # Create a custom stderr handler that logs to our logger
-        self._stderr_handler = LoggingStringIO(logger, "ERROR")
-        # Modify the params to include stderr redirection via environment
-        self._setup_silent_params(params)
-        super().__init__(params, **kwargs)
-    
-    def _setup_silent_params(self, params: MCPServerStdioParams):
-        """Setup parameters to minimize MCP server output"""
-        # Handle both dict and object-style params
-        if isinstance(params, dict):
-            # Handle dict-style params
-            if 'env' not in params or params['env'] is None:
-                params['env'] = {}
-            
-            # Set environment variables to minimize output
-            silent_env = {
-                'PYTHONUNBUFFERED': '0',  # Disable unbuffered output
-                'PYTHON_LOGGING_LEVEL': 'ERROR',  # Set logging level to ERROR
-                'UV_QUIET': '1',  # Quiet uv output
-                'RUST_LOG': 'error',  # Set Rust logging to error only
-                'SILENCE_WARNINGS': '1',  # Custom silence flag
-            }
-            
-            # Update params env with silent settings
-            params['env'].update(silent_env)
-            
-            # For shell-based redirection, we can modify the command to redirect stderr
-            if 'command' in params and 'args' in params:
-                original_command = params['command']
-                original_args = params.get('args', [])
-                
-                # Create the full command with stderr redirection
-                if sys.platform == 'win32':
-                    # Windows: redirect stderr to NUL
-                    full_command = f'"{original_command}" {" ".join(original_args)} 2>NUL'
-                    params['command'] = 'cmd'
-                    params['args'] = ['/c', full_command]
-                else:
-                    # Unix/Linux/macOS: redirect stderr to /dev/null
-                    args_str = " ".join(f'"{arg}"' for arg in original_args)
-                    full_command = f'"{original_command}" {args_str} 2>/dev/null'
-                    params['command'] = 'sh'
-                    params['args'] = ['-c', full_command]
-        else:
-            # Handle object-style params
-            if not hasattr(params, 'env') or params.env is None:
-                params.env = {}
-            
-            # Set environment variables to minimize output
-            silent_env = {
-                'PYTHONUNBUFFERED': '0',  # Disable unbuffered output
-                'PYTHON_LOGGING_LEVEL': 'ERROR',  # Set logging level to ERROR
-                'UV_QUIET': '1',  # Quiet uv output
-                'RUST_LOG': 'error',  # Set Rust logging to error only
-                'SILENCE_WARNINGS': '1',  # Custom silence flag
-            }
-            
-            # Update params.env with silent settings
-            params.env.update(silent_env)
-            
-            # For shell-based redirection, we can modify the command to redirect stderr
-            if hasattr(params, 'command') and hasattr(params, 'args'):
-                # Create a shell command that redirects stderr
-                original_command = params.command
-                original_args = params.args or []
-                
-                # Create the full command with stderr redirection
-                if sys.platform == 'win32':
-                    # Windows: redirect stderr to NUL
-                    full_command = f'"{original_command}" {" ".join(original_args)} 2>NUL'
-                    params.command = 'cmd'
-                    params.args = ['/c', full_command]
-                else:
-                    # Unix/Linux/macOS: redirect stderr to /dev/null
-                    args_str = " ".join(f'"{arg}"' for arg in original_args)
-                    full_command = f'"{original_command}" {args_str} 2>/dev/null'
-                    params.command = 'sh'
-                    params.args = ['-c', full_command]
-    
-    async def connect(self):
-        """Override connect to use custom stderr handling"""
-        # Store original stderr
-        original_stderr = sys.stderr
-        
-        try:
-            # Temporarily redirect stderr during connection
-            sys.stderr = self._stderr_handler
-            return await super().connect()
-        finally:
-            # Restore original stderr
-            sys.stderr = original_stderr
 
 
 def find_mcp_directory(mcp_name: str) -> str:
@@ -340,7 +221,7 @@ class MCPServer:
                         },
                     )
                     logger.info(f"Snowflake MCP server params: {mcp_server_params}")
-                    cls._snowflake_mcp_server = SilentMCPServerStdio(
+                    cls._snowflake_mcp_server = MCPServerStdio(
                         params=mcp_server_params,
                         client_session_timeout_seconds=10,
                     )
@@ -371,10 +252,14 @@ class MCPServer:
                         },
                     )
 <<<<<<< HEAD
+<<<<<<< HEAD
                     cls._starrocks_mcp_server = MCPServerStdio(
                         params=mcp_server_params, client_session_timeout_seconds=120  # Increase timeout for StarRocks
 =======
                     cls._starrocks_mcp_server = SilentMCPServerStdio(
+=======
+                    cls._starrocks_mcp_server = MCPServerStdio(
+>>>>>>> fcd6618 (rollback SilentMCPServerStdio)
                         params=mcp_server_params, client_session_timeout_seconds=10  # Increase timeout for StarRocks
 >>>>>>> 1becbfa (remove some debugging logs, fix Unhandled exception in event loop, Create a slient mcp server)
                     )
@@ -407,7 +292,7 @@ class MCPServer:
                         ],
                         env={},  # SQLite doesn't need additional environment variables
                     )
-                    cls._sqlite_mcp_server = SilentMCPServerStdio(params=mcp_server_params)
+                    cls._sqlite_mcp_server = MCPServerStdio(params=mcp_server_params)
         return cls._sqlite_mcp_server
 
     @classmethod
@@ -439,10 +324,14 @@ class MCPServer:
                         env={},  # DuckDB doesn't need additional environment variables for local usage
                     )
 <<<<<<< HEAD
+<<<<<<< HEAD
                     cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params, client_session_timeout_seconds=10)
 =======
                     cls._duckdb_mcp_server = SilentMCPServerStdio(params=mcp_server_params)
 >>>>>>> 1becbfa (remove some debugging logs, fix Unhandled exception in event loop, Create a slient mcp server)
+=======
+                    cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params)
+>>>>>>> fcd6618 (rollback SilentMCPServerStdio)
         return cls._duckdb_mcp_server
 
     @classmethod
