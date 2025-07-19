@@ -7,6 +7,7 @@ from datus.schemas.fix_node_models import FixInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, ReflectionInput
+from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
@@ -18,9 +19,11 @@ class NodeType:
     # TYPE_EVALUATE = "evaluate"
     TYPE_HITL = "hitl"
     TYPE_REFLECT = "reflect"
+    TYPE_PARALLEL = "parallel"
+    TYPE_SELECTION = "selection"
 
     # Control node types list
-    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT]
+    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT, TYPE_PARALLEL, TYPE_SELECTION]
 
     # SQL workflow action types
     TYPE_SCHEMA_LINKING = "schema_linking"  # For database schema analysis
@@ -61,6 +64,8 @@ class NodeType:
         TYPE_GENERATE_METRICS: "Generate metrics",
         TYPE_GENERATE_SEMANTIC_MODEL: "Generate semantic model",
         TYPE_SEARCH_METRICS: "Search metrics",
+        TYPE_PARALLEL: "Execute child nodes in parallel",
+        TYPE_SELECTION: "Select best result from multiple candidates",
     }
 
     @classmethod
@@ -92,6 +97,10 @@ class NodeType:
             input_data_cls = GenerateSemanticModelInput
         elif node_type == NodeType.TYPE_SEARCH_METRICS:
             input_data_cls = SearchMetricsInput
+        elif node_type == NodeType.TYPE_PARALLEL:
+            input_data_cls = ParallelInput
+        elif node_type == NodeType.TYPE_SELECTION:
+            input_data_cls = SelectionInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 
