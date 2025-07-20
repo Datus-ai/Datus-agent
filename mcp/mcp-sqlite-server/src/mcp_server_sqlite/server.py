@@ -12,8 +12,6 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from pydantic import AnyUrl
 
-from datus.utils.constants import DBType
-
 # reconfigure UnicodeEncodeError prone default (i.e. windows-1252) to utf-8
 if sys.platform == "win32" and os.environ.get("PYTHONIOENCODING") is None:
     sys.stdin.reconfigure(encoding="utf-8")
@@ -373,7 +371,7 @@ async def main(db_path: str):
             read_stream,
             write_stream,
             InitializationOptions(
-                server_name=DBType.SQLITE,
+                server_name="sqlite",
                 server_version="0.1.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
