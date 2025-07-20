@@ -1,11 +1,26 @@
 agent:
-  target: deepseek
+  # target: deepseek-v3
+  target: anthropic
   models:
-    deepseek:
+    anthropic:
+      type: claude
+      vendor: anthropic
+      base_url: https://api.anthropic.com
+      api_key: ${ANTHROPIC_API_KEY}
+      #model: claude-3-7-sonnet-latest
+      model: claude-sonnet-4-20250514
+
+    deepseek-v3:
       type: deepseek
-      base_url: ${DEEPSEEK_BASE_URL}
+      base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
-      model: ${DEEPSEEK_MODEL_NAME}
+      model: deepseek-chat
+
+    deepseek-r1:
+      type: deepseek
+      base_url: https://api.deepseek.com
+      api_key: ${DEEPSEEK_API_KEY}
+      model: deepseek-reasoner
 
   nodes:
     schema_linking:
@@ -52,8 +67,8 @@ agent:
       path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
     duckdb:
       type: duckdb
-      name: ssb
-      uri: duckdb:///tests/duckdb-demo.duckdb # absolute path: sqlite:////full/path/to/example.db
+      name: duck
+      uri: tests/data/datus_metricflow_db/duck.db # absolute path: sqlite:////full/path/to/example.db
     starrocks:
       type: starrocks
       host: ${STARROCKS_HOST}

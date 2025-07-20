@@ -11,11 +11,11 @@
 /output*
 /tests/*.xlsx
 /tests/llm_find_tables
+tests/data/datus*
 /conf/agent.yml
 /save
 uv.lock
 /logs
-/datus/logs/*
 /tests/output
 before_reflection_*.yaml
 /.history

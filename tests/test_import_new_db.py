@@ -26,8 +26,8 @@ def test_import_from_file():
 
 
 def test_duckdb_query():
+    NEW_DB_PATH = Path(__file__).parent / "data" / "datus_metricflow_db" / "duck.db"
     conn = duckdb.connect(NEW_DB_PATH)
-    result = conn.execute("SELECT * FROM duckdb_tables()")
     result = conn.execute(
         "select database_name, schema_name, table_name, 'sql' from duckdb_tables() where database_name != 'system'"
     )
@@ -41,8 +41,6 @@ def test_lancedb_query():
     conn = lancedb.connect(db_path)
     table_names = conn.table_names()
     for table_name in table_names:
-        # xx = conn.open_table(table_name)
-        # print(f"xx embedding function:{xx.embedding_functions.keys()}")
         result = conn.open_table(table_name).to_pandas().iterrows()
         for row in result:
             print(f"query the table:{table_name}, row:\n{row}")

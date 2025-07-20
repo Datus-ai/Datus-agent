@@ -1,6 +1,8 @@
+import glob
 from pathlib import Path
 from typing import Any, Dict, List
 
+import duckdb
 import pytest
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -133,8 +135,8 @@ def agent_config() -> AgentConfig:
 
 @pytest.fixture
 def search_metrics_agent_config() -> AgentConfig:
-    # conf = Path(__file__).parent.parent / "conf" / "agent.yml"
-    agent_config = load_agent_config(namespace="local_duckdb")  # FIXME Modify it according to your configuration
+    # agent_config = load_agent_config(namespace="local_duckdb")  # FIXME Modify it according to your configuration
+    agent_config = load_acceptance_config(namespace="duckdb")  # FIXME Modify it according to your configuration
     return agent_config
 
 
@@ -183,8 +185,30 @@ def save_to_yaml(content: BaseModel, filename: str):
         yaml.dump(content.to_dict(), f)
 
 
+def init_metricflow_db() -> None:
+    db_dir = Path(__file__).parent / "data" / "datus_metricflow_db"
+    db_path = db_dir / "duck.db"
+    if not db_dir.exists():
+        db_dir.mkdir(parents=True, exist_ok=True)
+    csv_path: Path = Path(__file__).parent / "data/metricflow_csv" / "*.csv"
+    print(f"Creating db_path: {db_path}")
+    conn = duckdb.connect(db_path)
+    conn.execute("CREATE SCHEMA IF NOT EXISTS mf_demo;")
+    csv_files = glob.glob(str(csv_path))
+    for csv_file in csv_files:
+        full_file_name = Path(csv_file).name
+        file_name = full_file_name.split(".")[0]
+        table_name = f"mf_demo.{file_name}"
+        conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto('{csv_file}', header=TRUE)")
+        print(f"finish the import of {csv_file}")
+    conn.close()
+
+
 class TestNode:
     """Test suite for Node class"""
+
+    def setup_method(self) -> None:
+        init_metricflow_db()
 
     def test_node_initialization(self, agent_config):
         """Test node initialization"""

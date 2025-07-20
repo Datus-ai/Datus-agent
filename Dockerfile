@@ -75,7 +75,7 @@ RUN mkdir -p /app/.datus && echo 'agent:\n\
     output:\n\
       prompt_version: "1.0"\n\
       check_result: true\n\
-  : medium\n\
+  schema_linking_rate:: medium\n\
   benchmark:\n\
     bird_dev: # this is namespace of benchmark\n\
       benchmark_path: /app/benchmark/dev_20240627\n\

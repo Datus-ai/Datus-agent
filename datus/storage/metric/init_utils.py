@@ -6,7 +6,6 @@ from datus.storage.metric.store import SemanticMetricsRAG
 def exists_semantic_metrics(storage: SemanticMetricsRAG, build_mode: str = "overwrite") -> tuple[Set[str], Set[str]]:
     all_semantic_models, all_metrics = set(), set()
     if build_mode == "overwrite":
-        # return set([]), set([])
         return all_semantic_models, all_metrics
     if build_mode == "incremental":
         for semantic_model in storage.search_all_semantic_models(""):
