@@ -251,7 +251,7 @@ class MCPServer:
                         },
                     )
                     cls._starrocks_mcp_server = MCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=10  # Increase timeout for StarRocks
+                        params=mcp_server_params, client_session_timeout_seconds=120  # Increase timeout for StarRocks
                     )
         return cls._starrocks_mcp_server
 
@@ -313,7 +313,7 @@ class MCPServer:
                         ],
                         env={},  # DuckDB doesn't need additional environment variables for local usage
                     )
-                    cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params, client_session_timeout_seconds=10)
         return cls._duckdb_mcp_server
 
     @classmethod
@@ -347,7 +347,9 @@ class MCPServer:
                             "MF_VERBOSE": mf_verbose,
                         },
                     )
-                    cls._metricflow_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._metricflow_mcp_server = MCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=20
+                    )
         return cls._metricflow_mcp_server
 
     @classmethod
@@ -364,5 +366,7 @@ class MCPServer:
                             filesystem_mcp_directory,
                         ],
                     )
-                    cls._filesystem_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._filesystem_mcp_server = MCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=10
+                    )
         return cls._filesystem_mcp_server
