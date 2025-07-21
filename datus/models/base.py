@@ -102,7 +102,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         max_turns: int = 10,
         **kwargs,
     ) -> Dict:
-        """Generate a response using multiple MCP (Machine Conversation Protocol) servers.
+        """Generate a response using multiple MCP (Model Context Protocol) servers.
 
         Args:
             prompt: The input prompt to send to the model

@@ -1,21 +1,14 @@
-import json
-import os
-import uuid
-from datetime import date, datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
 import yaml
-from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
-from agents.mcp import MCPServerStdio
-from langsmith.wrappers import wrap_openai
-from openai import AsyncOpenAI, OpenAI
-from pydantic import AnyUrl
+from agents import set_tracing_disabled
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
-from datus.models.mcp_result_extractors import extract_sql_contexts
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.models.client_factory import ClientFactory, ModelConfigHelper
+from datus.models.common_mixins import JSONParsingMixin, MCPMixin, StreamingMixin
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -24,42 +17,29 @@ MAX_INPUT_DEEPSEEK = 52000  # 57344 - buffer of ~5000 tokens
 set_tracing_disabled(True)
 
 
-class DeepSeekModel(LLMBaseModel):
-    """
-    Implementation of the BaseModel for DeepSeek's API.
-    """
+class DeepSeekModel(LLMBaseModel, JSONParsingMixin, MCPMixin, StreamingMixin):
+    """Implementation of the BaseModel for DeepSeek's API."""
 
-    def __init__(
-        self,
-        model_config: ModelConfig,
-        **kwargs,
-    ):
+    def __init__(self, model_config: ModelConfig, **kwargs):
         super().__init__(model_config, **kwargs)
 
-        self.api_key = model_config.api_key or os.environ.get("DEEPSEEK_API_KEY")
-        if not self.api_key:
-            raise ValueError("DeepSeek API key must be provided or set as DEEPSEEK_API_KEY environment variable")
-
-        self.api_base = model_config.base_url or os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+        self.api_key = ModelConfigHelper.get_api_key(model_config, "DEEPSEEK_API_KEY")
+        self.api_base = ModelConfigHelper.get_base_url(model_config, "https://api.deepseek.com")
         self.model_name = model_config.model
-        # Initialize OpenAI client and langsmith wrapper
-        logger.debug(f"Using DeepSeek model: {self.model_name} base Url: {self.api_base}")
-        from langsmith.wrappers import wrap_openai
 
-        self.client = wrap_openai(OpenAI(api_key=self.api_key, base_url=self.api_base))
+        logger.debug(f"Using DeepSeek model: {self.model_name} base Url: {self.api_base}")
+
+        self.client = ClientFactory.create_openai_client(
+            api_key=self.api_key,
+            base_url=self.api_base,
+        )
 
         # Store reference to workflow and current node for trace saving
         self.workflow = None
         self.current_node = None
 
     def _save_llm_trace(self, prompt: Any, response_content: str, reasoning_content: Any = None):
-        """Save LLM input/output trace to YAML file if tracing is enabled.
-
-        Args:
-            prompt: The input prompt (str or list of messages)
-            response_content: The response content from the model
-            reasoning_content: Optional reasoning content for reasoning models
-        """
+        """Save LLM input/output trace to YAML file if tracing is enabled."""
         if not self.model_config.save_llm_trace:
             return
 
@@ -85,14 +65,14 @@ class DeepSeekModel(LLMBaseModel):
             user_prompt = ""
 
             if isinstance(prompt, list):
-                # Handle message format like [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
+                # Handle message format
                 for message in prompt:
                     if message.get("role") == "system":
                         system_prompt = message.get("content", "")
                     elif message.get("role") == "user":
                         user_prompt = message.get("content", "")
             else:
-                # Handle string prompt - put it all in user_prompt
+                # Handle string prompt
                 user_prompt = str(prompt)
 
             # Create trace data
@@ -114,39 +94,20 @@ class DeepSeekModel(LLMBaseModel):
             logger.error(f"Failed to save LLM trace: {str(e)}")
 
     def set_context(self, workflow=None, current_node=None):
-        """Set workflow and node context for trace saving.
-
-        Args:
-            workflow: Current workflow instance
-            current_node: Current node instance
-        """
+        """Set workflow and node context for trace saving."""
         self.workflow = workflow
         self.current_node = current_node
 
     def generate(self, prompt: Any, **kwargs) -> str:
-        """Generate a response from the DeepSeek model.
-
-        Args:
-            prompt: The input prompt to send to the model
-            **kwargs: Additional generation parameters
-
-        Returns:
-            The generated text response
-        """
-        # Merge default parameters with any provided kwargs
-        params = {
+        """Generate a response from the DeepSeek model."""
+        base_params = {
             "model": self.model_name,
-            "temperature": kwargs.get("temperature", 0.7),
-            "max_tokens": kwargs.get("max_tokens", 5000),
+            "temperature": 0.7,
+            "max_tokens": 5000,
             "top_p": 1.0,
-            **kwargs,
         }
-
-        # Create messages format expected by OpenAI
-        if type(prompt) is list:
-            messages = prompt
-        else:
-            messages = [{"role": "user", "content": str(prompt)}]
+        params = ModelConfigHelper.merge_params(base_params, **kwargs)
+        messages = ModelConfigHelper.prepare_messages(prompt)
 
         # Call the OpenAI API
         response = self.client.chat.completions.create(messages=messages, **params)
@@ -170,156 +131,70 @@ class DeepSeekModel(LLMBaseModel):
         return response_content
 
     def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
-        """
-        Generate a response and ensure it conforms to the provided JSON schema.
-
-        Args:
-            prompt: The input prompt to send to the model
-            **kwargs: Additional generation parameters
-
-        Returns:
-            A dictionary representing the JSON response
-        """
-        # Add instructions to format the response as JSON according to the schema
-        # json_prompt = f"{prompt}\n\nRespond with a JSON object that conforms
-        # to the following schema:\n{json.dumps(json_schema, indent=2)}"
-
-        # Generate the response
+        """Generate a response and ensure it conforms to the provided JSON schema."""
         response_text = self.generate(prompt, response_format={"type": "json_object"}, **kwargs)
-
-        # Parse the JSON response
-        try:
-            json_result = json.loads(response_text)
-        except json.JSONDecodeError:
-            # If parsing fails, try to extract JSON from the response
-            import re
-
-            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-            if json_match:
-                try:
-                    json_result = json.loads(json_match.group(0))
-                except json.JSONDecodeError:
-                    json_result = {}
-            else:
-                json_result = {}
-
         # Note: trace is already saved in self.generate() call above
-        return json_result
+        return self.parse_json_response(response_text)
 
-    def generate_with_tools(self, prompt: str, tools: List[Any], **kwargs) -> Dict:
-        # flow control and context cache here
-        pass
+    def generate_with_tools(self, prompt: str, tools: list, **kwargs) -> Dict:
+        """Generate with tools - placeholder for future implementation."""
+        # TODO: Implement tool-based generation
+        return {"content": "Tool-based generation not implemented yet"}
 
     async def generate_with_mcp(
         self,
         prompt: str,
-        mcp_servers: Dict[str, MCPServerStdio],
+        mcp_servers: dict,
         instruction: str,
         output_type: type[Any],
         max_turns: int = 10,
         **kwargs,
     ) -> Dict:
-        """Generate a response using multiple MCP (Machine Conversation Protocol) servers.
+        """Generate a response using multiple MCP servers."""
 
-        Args:
-            prompt: The input prompt to send to the model
-            mcp_servers: Dictionary of MCP servers to use for execution
-            instruction: The instruction for the agent
-            output_type: The type of output expected from the agent
-            max_turns: Maximum number of conversation turns
-            **kwargs: Additional parameters for the agent
-
-        Returns:
-            The result from the MCP agent execution with content and sql_contexts
-        """
-
-        # Custom JSON encoder to handle special types
-        class CustomJSONEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, AnyUrl):
-                    return str(obj)
-                if isinstance(obj, (date, datetime)):
-                    return obj.isoformat()
-                return super().default(obj)
-
-        json._default_encoder = CustomJSONEncoder()
-
-        # Initialize reasoning content list to track the entire MCP conversation process
-        reasoning_steps = []
-
-        # Create async OpenAI client
-        logger.debug(f"Creating async OpenAI client with base_url: {self.api_base}, model: {self.model_name}")
-        async_client = wrap_openai(
-            AsyncOpenAI(
+        def async_model_factory(**factory_kwargs):
+            return ClientFactory.create_async_model(
+                model_name=self.model_name,
                 api_key=self.api_key,
                 base_url=self.api_base,
             )
-        )
 
-        model_params = {"model": self.model_name}
-        async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
-
-        # Define the agent instructions
-        logger.debug("Starting run_agent")
         try:
-            # Use context manager to manage multiple MCP servers
-            from datus.models.mcp_utils import multiple_mcp_servers
+            # DeepSeek doesn't support structured output, force to str
+            result = await self.generate_with_mcp_base(
+                prompt=prompt,
+                mcp_servers=mcp_servers,
+                instruction=instruction,
+                output_type=str,  # Force to str for DeepSeek
+                max_turns=max_turns,
+                async_model_factory=async_model_factory,
+                **kwargs,
+            )
 
-            async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                logger.debug("MCP servers started successfully")
+            # Create reasoning content from the full interaction list
+            reasoning_content = None
+            # Additional tracing logic would go here if needed
 
-                # DeepSeek doesn't support structured output, force to str
-                agent = Agent(
-                    name=kwargs.pop("agent_name", "MCP_Agent"),
-                    instructions=instruction,
-                    mcp_servers=list(connected_servers.values()),
-                    output_type=str,
-                    model=async_model,
-                )
-                logger.debug(f"Agent created with name: {agent.name}, {output_type}")
-
-                result = await Runner.run(agent, input=prompt, max_turns=max_turns)
-
-                logger.info(f"deepseek mcp run Result: {result}")
-                # Build the result
-                final_result = {
-                    "content": result.final_output,
-                    "sql_contexts": extract_sql_contexts(result),
-                }
-
-                # Create reasoning content from the full interaction list
-                reasoning_content = None
-                if hasattr(result, "to_input_list"):
-                    try:
-                        # Pass the raw list of interactions
-                        reasoning_content = result.to_input_list()
-                    except Exception as e:
-                        logger.error(f"Error getting reasoning content list: {e}")
-                        # Fallback to a simple string representation
-                        reasoning_content = str(result.to_input_list())
-
-                logger.debug(f"Reasoning content: {reasoning_content}")
-                self._save_llm_trace(
-                    prompt=prompt,
-                    response_content=result.final_output,
-                    reasoning_content=reasoning_content,
-                )
-                return final_result
+            self._save_llm_trace(
+                prompt=prompt,
+                response_content=result["content"],
+                reasoning_content=reasoning_content,
+            )
+            return result
         except Exception as e:
             logger.error(f"Error in run_agent: {str(e)}")
             # Save trace even on error
-            full_reasoning_content = "\n".join(reasoning_steps)
             self._save_llm_trace(
                 prompt=f"Instruction: {instruction}\n\nUser Prompt: {prompt}",
                 response_content=f"ERROR: {str(e)}",
-                reasoning_content=full_reasoning_content,
+                reasoning_content="",
             )
             raise
 
     async def generate_with_mcp_stream(
         self,
         prompt: str,
-        mcp_servers: Dict[str, MCPServerStdio],
+        mcp_servers: dict,
         instruction: str,
         output_type: dict,
         max_turns: int = 10,
@@ -327,165 +202,29 @@ class DeepSeekModel(LLMBaseModel):
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate a response using multiple MCP servers with streaming support."""
-        if action_history_manager is None:
-            action_history_manager = ActionHistoryManager()
 
-        # Setup JSON encoder for special types
-        class CustomJSONEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, AnyUrl):
-                    return str(obj)
-                if isinstance(obj, (date, datetime)):
-                    return obj.isoformat()
-                return super().default(obj)
-
-        json._default_encoder = CustomJSONEncoder()
-
-        try:
-            from datus.models.mcp_utils import multiple_mcp_servers
-
-            async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                agent = self._setup_async_agent(instruction, connected_servers, output_type, **kwargs)
-                result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns)
-                function_call_count = 0
-
-                while not result.is_complete:
-                    async for event in result.stream_events():
-                        if not hasattr(event, "type") or event.type != "run_item_stream_event":
-                            continue
-
-                        if not (hasattr(event, "item") and hasattr(event.item, "type")):
-                            continue
-
-                        action = None
-                        item_type = event.item.type
-
-                        if item_type == "tool_call_item":
-                            function_call_count += 1
-                            action = self._process_tool_call_start(event, action_history_manager)
-                        elif item_type == "tool_call_output_item":
-                            action = self._process_tool_call_complete(event, action_history_manager)
-                        elif item_type == "message_output_item":
-                            action = self._process_message_output(event, action_history_manager)
-
-                        if action:
-                            yield action
-
-        except Exception as e:
-            logger.error(f"Error in streaming MCP execution: {str(e)}")
-            raise
-
-    def _setup_async_agent(self, instruction: str, mcp_servers: Dict, output_type: dict, **kwargs):
-        """Setup async client and agent."""
-        async_client = wrap_openai(AsyncOpenAI(api_key=self.api_key, base_url=self.api_base))
-        model_params = {"model": self.model_name}
-        async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+        def async_model_factory(**factory_kwargs):
+            return ClientFactory.create_async_model(
+                model_name=self.model_name,
+                api_key=self.api_key,
+                base_url=self.api_base,
+            )
 
         # DeepSeek doesn't support structured output, force to str
-        agent = Agent(
-            name=kwargs.pop("agent_name", "MCP_Agent"),
-            instructions=instruction,
-            mcp_servers=list(mcp_servers.values()),
-            output_type=str,
-            model=async_model,
-        )
-        return agent
-
-    def _process_tool_call_start(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
-        """Process tool_call_item events."""
-
-        raw_item = event.item.raw_item
-        call_id = getattr(raw_item, "call_id", None)
-        function_name = getattr(raw_item, "name", None)
-        arguments = getattr(raw_item, "arguments", None)
-
-        # Check if action with this call_id already exists
-        if call_id and action_history_manager.find_action_by_id(call_id):
-            return None
-
-        action = ActionHistory(
-            action_id=call_id,
-            role=ActionRole.TOOL,
-            messages="MCP call",
-            action_type=function_name or "unknown",
-            input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
-            status=ActionStatus.PROCESSING,
-        )
-        action_history_manager.add_action(action)
-        return action
-
-    def _process_tool_call_complete(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
-        """Process tool_call_output_item events."""
-        # try to find the action by call_id, but it seems deepseek doesn't have call_id in the raw_item sometimes
-        call_id = getattr(event.item.raw_item, "call_id", None)
-        matching_action = action_history_manager.find_action_by_id(call_id) if call_id else None
-
-        if not matching_action:
-            # Try to match by the most recent PROCESSING action as fallback
-            processing_actions = [a for a in action_history_manager.actions if a.status == ActionStatus.PROCESSING]
-            if processing_actions:
-                matching_action = processing_actions[-1]  # Get the most recent
-            else:
-                return None
-
-        output_data = {
-            "call_id": call_id,
-            "success": True,
-            "raw_output": event.item.output,
-        }
-
-        action_history_manager.update_action_by_id(
-            matching_action.action_id, output=output_data, end_time=datetime.now(), status=ActionStatus.SUCCESS
-        )
-
-        # Don't return the action to avoid duplicate yield
-        return None
-
-    def _process_message_output(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
-        """Process message_output_item events."""
-        if not (hasattr(event.item, "raw_item") and hasattr(event.item.raw_item, "content")):
-            return None
-
-        content = event.item.raw_item.content
-        if not content:
-            return None
-        logger.debug(f"Processing message output: {content}")
-        # Extract text content
-        if isinstance(content, list) and content:
-            text_content = content[0].text if hasattr(content[0], "text") else str(content[0])
-        else:
-            text_content = str(content)
-
-        # Create action with raw content
-        if len(text_content) > 0:
-            action = ActionHistory(
-                action_id=str(uuid.uuid4()),
-                role=ActionRole.ASSISTANT,
-                messages=(f"Thinking: {text_content}"),
-                action_type="message",
-                input={},
-                output={
-                    "success": True,
-                    "raw_output": text_content,
-                },
-                status=ActionStatus.SUCCESS,
-            )
-            action.end_time = datetime.now()
-            action_history_manager.add_action(action)
-        else:
-            action = None
-            logger.debug(f"No text content found in message output: {content}")
-        return action
+        async for action in self.generate_with_mcp_stream_base(
+            prompt=prompt,
+            mcp_servers=mcp_servers,
+            instruction=instruction,
+            output_type=str,  # Force to str for DeepSeek
+            max_turns=max_turns,
+            action_history_manager=action_history_manager,
+            async_model_factory=async_model_factory,
+            **kwargs,
+        ):
+            yield action
 
     def token_count(self, prompt: str) -> int:
-        """Estimate the number of tokens in a text using the deepseek tokenizer.
-
-        Args:
-            prompt (str): The text to count the tokens of.
-
-        Returns:
-            int: The number of tokens in the text.
-        """
+        """Estimate the number of tokens in a text using DeepSeek tokenizer."""
         return int(len(prompt) * 0.3 + 0.5)
 
     def max_tokens(self) -> int:
