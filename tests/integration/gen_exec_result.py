@@ -188,6 +188,8 @@ def execute_duckdb_query(namespace_config, sql_query):
 
 def execute_starrocks_query(namespace_config, sql_query):
     """Execute StarRocks query and return results"""
+    conn = None
+    cursor = None
     try:
         # Get connection parameters from namespace config and resolve environment variables
         host = resolve_env(namespace_config.get("host", ""))
@@ -221,14 +223,16 @@ def execute_starrocks_query(namespace_config, sql_query):
         # Fetch results
         results = cursor.fetchall()
 
-        # Close connection
-        cursor.close()
-        conn.close()
-
         return {"success": True, "columns": column_names, "results": results, "error": None}
 
     except Exception as e:
         return {"success": False, "columns": [], "results": [], "error": str(e)}
+    finally:
+        # Ensure resources are cleaned up even if an exception occurs
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def save_results_to_csv(results, output_path):
