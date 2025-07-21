@@ -63,7 +63,7 @@ def _find_config_differences(existing: Dict[str, Any], new: Dict[str, Dict[str, 
         for key, value in existing_config.items():
             if key not in new_config:
                 differences.append(f"Missing key '{key}' in section [{section}].")
-            elif str(value) != str(new_config[key]):
+            elif str(value) != str(new_config[key] if not isinstance(new_config[key], Enum) else new_config[key].value):
                 differences.append(
                     f"Value mismatch in section [{section}] for key '{key}': "
                     f"existing='{value}', current='{new_config[key]}'."
