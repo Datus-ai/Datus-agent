@@ -1,60 +1,78 @@
-## Integration testing
+## Integration Testing
 
-# Generate spider2 tests.
-```shell
-python gen_benchmark.py --namespace snowflake --benchmark spider2 --workdir=${path to datus agent}
-```
-# Generate bird tests.
+This document outlines the complete testing workflows for three different benchmarks: Bird, Spider2, and DuckDB Semantic Layer.
+
+## Bird Testing Workflow
+
+### 1. Generate Bird Tests
 ```shell
 python gen_benchmark.py --namespace bird_sqlite --benchmark bird_dev --workdir=${path to datus agent} --extra_option '--plan fixed --schema_linking_rate medium'
 ```
 
-# Generate semantic layer tests.
-
-## generate semantic models and metrics
-```shell
-cd ${path to datus project dir} && python -m datus.main bootstrap-kb --namespace duckdb --components metrics --success_story benchmark/semantic_layer/success_story.csv --domain sale --layer1 duckdb --layer2 duck --kb_update_strategy overwrite
-```
-## generate semantic layer test commands
-```shell
-python gen_benchmark.py --namespace duckdb --benchmark semantic_layer --workdir=${path to datus agent} --extra_option '--plan metric2SQL --task_db_name duck --task_schema mf_demo --domain sale --layer1 duckdb --layer2 duck --task_ext_knowledge "${external knowledge}"'
-```
-
-# Generate bird gold sql result.
+### 2. Generate Bird Gold SQL Results
 ```shell
 python gen_exec_result.py --namespace bird_sqlite --benchmark bird_dev --type bird --workdir=${path to datus agent}
 ```
 
-# Generate semantic layer gold sql result.
-```shell
-python gen_exec_result.py --namespace duckdb --benchmark semantic_layer --type semantic_layer --workdir=${path to datus agent}
-```
-
-# Run all tests
-
+### 3. Run Bird Tests
 ```shell
 sh run_integration.sh
 ```
 
-# Run the tests concurrently with 3 threads.
-```shell
-cat run_integration.sh | xargs -I {} -P 3 bash -c "{}"
-```
-# Evaluate spider2 tests
-
-```shell
-python evaluation.py --namespace snowflake --gold-path=${path to gold} --workdir=${path to datus agent}
-```
-# Evaluate bird tests
-
+### 4. Evaluate Bird Tests
 ```shell
 python evaluation.py --namespace bird_sqlite --gold-path=benchmark/bird/dev_20240627/gold --workdir=${path to datus agent}
 ```
 
-# Evaluate semantic layer tests
+## Spider2 Testing Workflow
 
+### 1. Generate Spider2 Tests
+```shell
+python gen_benchmark.py --namespace snowflake --benchmark spider2 --workdir=${path to datus agent}
+```
+
+### 2. Run Spider2 Tests
+```shell
+sh run_integration.sh
+```
+
+### 3. Evaluate Spider2 Tests
+```shell
+python evaluation.py --namespace snowflake --gold-path=${path to gold} --workdir=${path to datus agent}
+```
+
+## DuckDB Semantic Layer Testing Workflow
+
+### 1. Generate Semantic Models and Metrics
+```shell
+cd ${path to datus project dir} && python -m datus.main bootstrap-kb --namespace duckdb --components metrics --success_story benchmark/semantic_layer/success_story.csv --domain sale --layer1 duckdb --layer2 duck --kb_update_strategy overwrite
+```
+
+### 2. Generate Semantic Layer Test Commands
+```shell
+python gen_benchmark.py --namespace duckdb --benchmark semantic_layer --workdir=${path to datus agent} --extra_option '--plan metric2SQL --task_db_name duck --task_schema mf_demo --domain sale --layer1 duckdb --layer2 duck --task_ext_knowledge "${external knowledge}"'
+```
+
+### 3. Generate Semantic Layer Gold SQL Results
+```shell
+python gen_exec_result.py --namespace duckdb --benchmark semantic_layer --type semantic_layer --workdir=${path to datus agent}
+```
+
+### 4. Run Semantic Layer Tests
+```shell
+sh run_integration.sh
+```
+
+### 5. Evaluate Semantic Layer Tests
 ```shell
 python evaluation.py --namespace duckdb --gold-path=benchmark/semantic_layer/gold --workdir=${path to datus agent} --enable-comparison
+```
+
+## General Testing Options
+
+### Run Tests Concurrently
+```shell
+cat run_integration.sh | xargs -I {} -P 3 bash -c "{}"
 ```
 
 ## Multi-agent testing
