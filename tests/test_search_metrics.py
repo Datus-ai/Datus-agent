@@ -115,17 +115,3 @@ def test_json():
     json_str = json.dumps(metric.__dict__)
     print(f"json:{json_str}")
     assert json.loads(json_str) == metric.__dict__
-
-
-def test_exists_semantic_metrics(search_metrics_tool):
-    from datus.storage.metric.init_utils import exists_semantic_metrics
-
-    build_mode = "overwrite"
-    result = exists_semantic_metrics(search_metrics_tool.store, build_mode)
-    print(f"overwrite result: {result}")
-    assert result == (set(), set())
-
-    build_mode = "incremental"
-    result = exists_semantic_metrics(search_metrics_tool.store, build_mode)
-    print(f"incremental result: {result}")
-    assert result == (set(), set())

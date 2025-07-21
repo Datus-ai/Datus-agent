@@ -26,8 +26,8 @@ def test_import_from_file():
 
 
 def test_duckdb_query():
-    NEW_DB_PATH = Path(__file__).parent / "data" / "datus_metricflow_db" / "duck.db"
-    conn = duckdb.connect(NEW_DB_PATH)
+    tmp_db_path = Path(__file__).parent / "data" / "datus_metricflow_db" / "duck.db"
+    conn = duckdb.connect(tmp_db_path)
     result = conn.execute(
         "select database_name, schema_name, table_name, 'sql' from duckdb_tables() where database_name != 'system'"
     )

@@ -22,10 +22,10 @@ class SearchMetricsInput(BaseInput):
     def top_n_by_rate(self) -> int:
         # give hard code of the limit according to the scale of medium-sized company
         if self.matching_rate == "fast":
-            return 50
+            return 5
         elif self.matching_rate == "medium":
-            return 100
-        return 200
+            return 10
+        return 20
 
     @field_validator("matching_rate")
     def validate_matching_rate(cls, v):
