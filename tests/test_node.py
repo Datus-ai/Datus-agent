@@ -135,7 +135,6 @@ def agent_config() -> AgentConfig:
 
 @pytest.fixture
 def search_metrics_agent_config() -> AgentConfig:
-    # agent_config = load_agent_config(namespace="local_duckdb")  # FIXME Modify it according to your configuration
     agent_config = load_acceptance_config(namespace="duckdb")  # FIXME Modify it according to your configuration
     return agent_config
 
