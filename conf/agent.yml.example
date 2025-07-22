@@ -5,7 +5,7 @@ agent:
       type: openai
       vendor: openai
       base_url: https://api.openai.com/v1
-      api_key: sk-xxxxxx
+      api_key: ${OPENAI_API_KEY}
       model: gpt-4-turbo
 
     google:
@@ -19,22 +19,15 @@ agent:
       type: claude
       vendor: anthropic
       base_url: https://api.anthropic.com
-      api_key: sk-xxxxx
+      api_key: ${ANTHROPIC_API_KEY}
       model: claude-3-sonnet-20241022
 
-    deep_seek_v3:
+    deepseek_v3:
       type: deepseek
       vendor: deepseek
       base_url: https://api.deepseek.com
-      api_key: sk-xxxxxx
-      model: deepseek-r1-250120
-
-    deep_seek_ark:
-      type: deepseek
-      vendor: ark
-      base_url: https://ark.cn-beijing.volces.com/api/v3
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-v3-250324
+      model: deepseek-chat
 
   nodes:
     schema_linking:
@@ -67,6 +60,8 @@ agent:
       benchmark_path: benchmark/bird/dev_20240627
     spider2:
       benchmark_path: benchmark/spider2/spider2-snow
+    semantic_layer:
+      benchmark_path: benchmark/semantic_layer
 
   # local databases configuration
   namespace:
