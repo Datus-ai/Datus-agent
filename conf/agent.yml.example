@@ -35,7 +35,7 @@ agent:
       matching_rate: fast
       prompt_version: "1.0"
     generate_sql:
-      model: deep_seek_ark
+      model: deepseek_v3
       prompt_version: "1.0"
       max_table_schemas_length: 4000
       max_data_details_length: 2000
