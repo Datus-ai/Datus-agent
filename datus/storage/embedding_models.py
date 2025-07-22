@@ -11,7 +11,7 @@ from datus.utils.loggings import get_logger
 
 # Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
 try:
-    multiprocessing.set_start_method('fork', force=True)
+    multiprocessing.set_start_method("fork", force=True)
 except RuntimeError:
     # set_start_method can only be called once
     pass
@@ -74,6 +74,7 @@ class EmbeddingModel:
         # Additional PyTorch-specific threading controls
         try:
             import torch
+
             torch.set_num_threads(1)
         except ImportError:
             pass

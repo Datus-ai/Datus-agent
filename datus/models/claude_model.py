@@ -643,15 +643,15 @@ class ClaudeModel(LLMBaseModel):
 
     def close(self):
         """Close HTTP clients and cleanup resources."""
-        if hasattr(self, 'proxy_client') and self.proxy_client:
+        if hasattr(self, "proxy_client") and self.proxy_client:
             try:
                 self.proxy_client.close()
                 logger.debug("Proxy client closed successfully")
             except Exception as e:
                 logger.warning(f"Error closing proxy client: {e}")
-        
+
         # Close the anthropic client if it has a close method
-        if hasattr(self, 'anthropic_client') and hasattr(self.anthropic_client, 'close'):
+        if hasattr(self, "anthropic_client") and hasattr(self.anthropic_client, "close"):
             try:
                 self.anthropic_client.close()
                 logger.debug("Anthropic client closed successfully")

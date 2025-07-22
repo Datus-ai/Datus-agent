@@ -1,7 +1,11 @@
 agent:
-  # target: deepseek-v3
-  target: anthropic
+  target: deepseek
   models:
+    deepseek:
+      type: deepseek
+      base_url: ${DEEPSEEK_BASE_URL}
+      api_key: ${DEEPSEEK_API_KEY}
+      model: ${DEEPSEEK_MODEL_NAME}
     anthropic:
       type: claude
       vendor: anthropic
@@ -9,18 +13,6 @@ agent:
       api_key: ${ANTHROPIC_API_KEY}
       #model: claude-3-7-sonnet-latest
       model: claude-sonnet-4-20250514
-
-    deepseek-v3:
-      type: deepseek
-      base_url: https://api.deepseek.com
-      api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
-
-    deepseek-r1:
-      type: deepseek
-      base_url: https://api.deepseek.com
-      api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-reasoner
 
   nodes:
     schema_linking:
@@ -69,6 +61,7 @@ agent:
       type: duckdb
       name: duck
       uri: tests/data/datus_metricflow_db/duck.db # absolute path: sqlite:////full/path/to/example.db
+
     starrocks:
       type: starrocks
       host: ${STARROCKS_HOST}

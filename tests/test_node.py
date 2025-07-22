@@ -718,8 +718,8 @@ class TestNode:
             # Create test SQL task
             sql_task = SqlTask(
                 task="Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1.",
-                database_type="sqlite", 
-                database_name="california_schools"
+                database_type="sqlite",
+                database_name="california_schools",
             )
 
             # Create test SQL context with current query
@@ -727,14 +727,14 @@ class TestNode:
                 sql_query="SELECT Phone FROM schools WHERE Charter = 1 AND FundingType = 'Directly funded' AND OpenDate > '2000-01-01' AND Phone IS NOT NULL ORDER BY OpenDate",
                 explanation="Query to get phone numbers of direct charter-funded schools opened after 2000/1/1",
                 sql_return="Phone numbers result",
-                row_count=5
+                row_count=5,
             )
 
             # Create compare input with expected SQL that uses proper joins
             input_data = CompareInput(
                 sql_task=sql_task,
                 sql_context=sql_context,
-                expectation="SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode WHERE T1.`Charter Funding Type` = 'Directly funded' AND T1.`Charter School (Y/N)` = 1 AND T2.OpenDate > '2000-01-01'"
+                expectation="SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode WHERE T1.`Charter Funding Type` = 'Directly funded' AND T1.`Charter School (Y/N)` = 1 AND T2.OpenDate > '2000-01-01'",
             )
 
             # Create compare node
@@ -749,7 +749,10 @@ class TestNode:
             # Verify initial node configuration
             assert node.type == NodeType.TYPE_COMPARE
             assert isinstance(node.input, CompareInput)
-            assert node.input.sql_task.task == "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
+            assert (
+                node.input.sql_task.task
+                == "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
+            )
             assert "SELECT Phone FROM schools WHERE Charter = 1" in node.input.sql_context.sql_query
             assert "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2" in node.input.expectation
 
@@ -766,23 +769,23 @@ class TestNode:
             assert result.success is True, f"Node execution failed: {result}"
             assert len(result.explanation) > 0, "Empty explanation"
             assert len(result.suggest) > 0, "Empty suggestions"
-            
+
             # Test MCP-specific analysis capabilities
             # The explanation should be more detailed due to MCP database access
             assert len(result.explanation) > 100, "MCP analysis should provide detailed explanation"
-            
+
             # Should identify key differences between single table vs JOIN approach
             explanation_lower = result.explanation.lower()
             assert (
                 "join" in explanation_lower or "table" in explanation_lower or "frpm" in explanation_lower
             ), "Should identify table structure differences"
-            
+
             # Suggestions should be actionable and database-informed
             suggest_lower = result.suggest.lower()
             assert (
                 "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower
             ), "Should provide actionable database-informed suggestions"
-            
+
             # Print results for manual inspection
             print(f"\n=== Compare MCP Node Test Results ===")
             print(f"Explanation: {result.explanation}")
