@@ -44,7 +44,10 @@ def load_agent_config(**kwargs) -> AgentConfig:
     if not yaml_path:
         raise DatusException(
             code=ErrorCode.COMMON_FILE_NOT_FOUND,
-            message="Agent configuration file not found, please run with --config <your_config_file_path>",
+            message=(
+                "Agent configuration file not found. Please configure your `conf/agent.yaml` or `.datus/conf/agent.yml`"
+                ". You can also use --config <your_config_file_path>"
+            ),
         )
 
     if not os.path.exists(yaml_path):

@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
 from pyarrow import Table as ArrowTable
 
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.sql_utils import metadata_identifier
 
 
@@ -66,6 +67,12 @@ class BaseSqlConnector(ABC):
 
     def execute_arrow_iterator(self, query: str, max_rows: int = 100) -> Iterator[ArrowTable]:
         raise NotImplementedError
+
+    def get_databases(self, catalog: str = "") -> List[str]:
+        return []
+
+    def get_schemas(self, catalog: str = "", database_name: str = "") -> List[str]:
+        return []
 
     def execute_csv_iterator(
         self, query: str, max_rows: int = 100, with_header: bool = True
@@ -133,9 +140,27 @@ class BaseSqlConnector(ABC):
     def get_tables(self, **kwargs) -> List[str]:
         """
         Get all table names from the database.
-        Namespace parameters (such as catalog_name, database_name, schema_name)
+        Parameters contains catalog_name, database_name and schema_name
         should be passed via kwargs and handled by subclasses as needed.
         """
+        raise NotImplementedError
+
+    def switch_context(self, **kwargs):
+        """
+        Switch context, including catalogs, databases and schemas.
+        Parameters contains catalog_name, database_name and schema_name
+        """
+        try:
+            self.do_switch_context(**kwargs)
+        except DatusException as e:
+            raise e
+        except Exception as e:
+            raise DatusException(
+                ErrorCode.TOOL_DB_FAILED, message=f"Faield to switch context because {str(e)}, context_params:{kwargs}"
+            ) from e
+
+    @abstractmethod
+    def do_switch_context(self, **kwargs):
         raise NotImplementedError
 
     def get_schema(self, **kwargs) -> List[Dict[str, str]]:

@@ -3,7 +3,7 @@ import threading
 import weakref
 from typing import Any, Dict, List, Optional, override
 
-from datus.tools.db_tools.mysql_connector import MySQLConnectorBase
+from datus.tools.db_tools.mysql_connector import MySQLConnectorBase, list_to_in_str
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -105,8 +105,8 @@ class StarRocksConnector(MySQLConnectorBase):
         return ["sys", "information_schema", "_statistics_"]
 
     @override
-    def db_meta_table_type(self) -> str:
-        return "TABLE"
+    def db_meta_table_type(self) -> List[str]:
+        return ["TABLE", "BASE TABLE"]
 
     def get_materialized_views_with_ddl(self, **kwargs) -> List[Dict[str, str]]:
         """
@@ -127,8 +127,8 @@ class StarRocksConnector(MySQLConnectorBase):
             )
         else:
             query_sql = (
-                "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION "
-                f"FROM information_schema.materialized_views where  not in ({str(self.ignore_schemas())[1:-1]})"
+                "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION FROM information_schema.materialized_views"
+                f"{list_to_in_str(' where TABLE_SCHEMA not in ', self.ignore_schemas())}"
             )
         result = self.execute_query(query_sql)
         view_list = []
@@ -239,19 +239,9 @@ class StarRocksConnector(MySQLConnectorBase):
         """Return the database type."""
         return DBType.STARROCKS
 
-    def get_databases(self) -> List[str]:
+    def get_databases(self, catalog: str = "default_catalog") -> List[str]:
         """Get list of available databases."""
-        try:
-            result = self.execute_query("SHOW DATABASES")
-            if result.empty:
-                return []
-
-            # Get the database names from the first column
-            database_column = result.columns[0]
-            return result[database_column].tolist()
-        except Exception as e:
-            logger.error(f"Error getting databases: {e}")
-            return []
+        return super().get_databases(catalog)
 
     def test_connection(self) -> bool:
         """Test the database connection."""

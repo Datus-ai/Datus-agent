@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, Union, override
 
 from pandas import DataFrame
 from pyarrow import DataType, RecordBatch, Table, array, ipc
@@ -346,6 +346,10 @@ class SQLAlchemyConnector(BaseSqlConnector):
                     "sql": sql,
                 },
             ) from e
+
+    @override
+    def get_schemas(self, catalog: str = "", database_name: str = "") -> List[str]:
+        return self._inspector().get_schema_names()
 
     def update(self, sql: str) -> int:
         """Update the database.

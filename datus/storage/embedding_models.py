@@ -2,12 +2,15 @@ import multiprocessing
 import os
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from datus.utils.constants import EmbeddingProvider
 from datus.utils.device_utils import get_device
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.configuration.agent_config import ModelConfig
 
 # Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
 try:
@@ -38,7 +41,7 @@ class EmbeddingModel:
         model_name: str,
         dim_size: int,
         registry_name: str = EmbeddingProvider.SENTENCE_TRANSFORMERS,
-        openai_config: Optional[dict[str, Any]] = None,
+        openai_config: Optional["ModelConfig"] = None,
         batch_size: int = 32,
     ):
         self.registry_name = registry_name
@@ -102,8 +105,8 @@ class EmbeddingModel:
                 self._model = OpenAIEmbeddings.create(
                     name=self.model_name,
                     dim=self._dim_size,
-                    api_key=self.openai_config["api_key"],
-                    base_url=self.openai_config["base_url"],
+                    api_key=self.openai_config.api_key,
+                    base_url=self.openai_config.base_url,
                 )
             else:
                 self._model = OpenAIEmbeddings.create(name=self.model_name, dim=self._dim_size)
@@ -128,7 +131,9 @@ DEFAULT_MODEL_CONFIG = {"model_name": "all-MiniLM-L6-v2", "dim_size": 384}
 
 
 def init_embedding_models(
-    storage_config: dict[str, dict[str, Any]], openai_config: Optional[dict[str, Any]] = None
+    storage_config: dict[str, dict[str, Any]],
+    openai_configs: Dict[str, "ModelConfig"],
+    default_openai_config: "ModelConfig",
 ) -> dict[str, EmbeddingModel]:
     # ensure model just load once
     global EMBEDDING_DEVICE_TYPE
@@ -140,12 +145,22 @@ def init_embedding_models(
         if config["model_name"] in models:
             target_model = models[config["model_name"]]
         else:
+            target_openai_config = config.get("target_model")
+            if target_openai_config:
+                if target_openai_config not in openai_configs:
+                    raise DatusException(
+                        ErrorCode.COMMON_CONFIG_ERROR,
+                        message=f"Model {target_openai_config} not found in storage openai configuration",
+                    )
+                target_openai_config = openai_configs[target_openai_config]
+            else:
+                target_openai_config = default_openai_config
             target_model = EmbeddingModel(
                 model_name=config["model_name"],
                 dim_size=config["dim_size"],
                 registry_name=config.get("registry_name", EmbeddingProvider.SENTENCE_TRANSFORMERS),
                 batch_size=config.get("batch_size", 32),
-                openai_config=openai_config,
+                openai_config=target_openai_config,
             )
             models[config["model_name"]] = target_model
         EMBEDDING_MODELS[name] = target_model

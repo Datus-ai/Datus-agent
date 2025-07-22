@@ -6,7 +6,12 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.storage_cfg import check_storage_config
 from datus.utils.constants import DBType
-from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import DatusException, ErrorCode
+
+
+@pytest.fixture
+def agent_config() -> AgentConfig:
+    return load_agent_config()
 
 
 @pytest.mark.acceptance
@@ -30,11 +35,6 @@ def test_config_exception():
 
     with pytest.raises(DatusException, match="Unsupported value abc for namespace"):
         agent_config.override_by_args(namespace="abc")
-
-
-@pytest.fixture
-def agent_config() -> AgentConfig:
-    return load_agent_config()
 
 
 @pytest.mark.parametrize("namespace", ["bird_sqlite", "snowflake", "local_duckdb"])
@@ -107,10 +107,26 @@ def test_storage_config(agent_config: AgentConfig):
 def test_check_storage_config(agent_config: AgentConfig):
     agent_config.current_namespace = "bird_sqlite"
     rag_path = agent_config.rag_storage_path()
-    agent_config.check_init_storage_config()
+    agent_config.check_init_storage_config("database", save_config=False)
 
     error_config = {f: v.to_dict() for f, v in agent_config.storage_configs.items()}
     error_config["database"]["model_name"] = "123123"
-    with pytest.raises(DatusException, match="Embedding model configuration mismatch") as exec_info:
-        print(exec_info._striptext)
-        check_storage_config(error_config, rag_path)
+    with pytest.raises(DatusException, match=ErrorCode.COMMON_CONFIG_ERROR.code):
+        check_storage_config("database", error_config["database"], rag_path, save_config=False)
+
+
+def test_get_db_name_type(agent_config: AgentConfig):
+    agent_config.current_namespace = "bird_sqlite"
+    db_name, db_type = agent_config.current_db_name_type(db_name="california_schools")
+    assert db_name == "california_schools"
+    assert db_type == DBType.SQLITE
+
+    agent_config.current_namespace = "local_duckdb"
+    db_name, db_type = agent_config.current_db_name_type(db_name="ssb")
+    assert db_name == "ssb"
+    assert db_type == DBType.DUCKDB
+
+    agent_config.current_namespace = "starrocks"
+    db_name, db_type = agent_config.current_db_name_type(db_name="ssb")
+    assert db_name == "ssb"
+    assert db_type == DBType.STARROCKS

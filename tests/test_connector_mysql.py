@@ -13,20 +13,20 @@ def agent_config(namespace: str = "local_mysql") -> AgentConfig:
 
 
 @pytest.fixture
-def mysql_connector(agent_config: AgentConfig) -> MySQLConnector:
+def connector(agent_config: AgentConfig) -> MySQLConnector:
     db_manager = db_manager_instance(agent_config.namespaces)
     connector = db_manager.get_conn(agent_config.current_namespace, agent_config.db_type)
     assert isinstance(connector, MySQLConnector)
     return connector
 
 
-def test_mysql_connector(mysql_connector: MySQLConnector):
-    assert mysql_connector.test_connection()
-    assert len(mysql_connector.get_tables()) > 0
+def test_mysql_connector(connector: MySQLConnector):
+    assert connector.test_connection()
+    assert len(connector.get_tables()) > 0
 
 
-def test_get_tables_with_ddl(mysql_connector: MySQLConnector):
-    tables = mysql_connector.get_tables_with_ddl()
+def test_get_tables_with_ddl(connector: MySQLConnector):
+    tables = connector.get_tables_with_ddl()
     assert len(tables) > 0
     for table in tables:
         assert table["table_name"]
@@ -39,8 +39,8 @@ def test_get_tables_with_ddl(mysql_connector: MySQLConnector):
         assert len(table["identifier"].split(".")) == 2
 
 
-def test_get_views_with_ddl(mysql_connector: MySQLConnector):
-    views = mysql_connector.get_views_with_ddl()
+def test_get_views_with_ddl(connector: MySQLConnector):
+    views = connector.get_views_with_ddl()
     assert len(views) >= 0
     for view in views:
         assert view["table_name"]
@@ -50,6 +50,11 @@ def test_get_views_with_ddl(mysql_connector: MySQLConnector):
         assert view["schema_name"] == ""
 
 
-def test_exceptions(mysql_connector: MySQLConnector):
+def test_exceptions(connector: MySQLConnector):
     with pytest.raises(DatusException, match=ErrorCode.TOOL_DB_EXECUTE_QUERY_FAILED.code):
-        mysql_connector.get_sample_rows(database_name="test", tables=["nonexistent_table"])
+        connector.get_sample_rows(database_name="test", tables=["nonexistent_table"])
+
+
+def test_get_databases(connector: MySQLConnector):
+    databases = connector.get_databases()
+    assert len(databases) > 0

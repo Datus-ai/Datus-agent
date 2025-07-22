@@ -29,6 +29,11 @@ class SQLiteConnector(SQLAlchemyConnector):
         # sqlite has no schema
         return None
 
+    @override
+    def do_switch_context(self, **kwargs):
+        """SQLite not support switch context"""
+        pass
+
     def _get_schema_with_ddl(
         self, database_name: str = "", table_type: str = "table", filter_tables: Optional[List[str]] = None
     ) -> List[Dict[str, str]]:

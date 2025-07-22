@@ -11,7 +11,7 @@ from langsmith import traceable
 from datus.agent.evaluate import evaluate_result, setup_node_input
 from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
-from datus.configuration.agent_config import AgentConfig, DbConfig
+from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.models.claude_model import ClaudeModel
 from datus.models.deepseek_model import DeepSeekModel
@@ -202,12 +202,12 @@ class Agent:
             The final result of the workflow execution
         """
         if check_storage:
-            self.global_config.check_init_storage_config()
+            self.global_config.check_init_storage_config("database")
         logger.info("Starting agent execution")
 
         if not self.init_or_load_workflow(sql_task):
             return None
-
+        self.check_db()
         # Main execution loop
         step_count = 0
 
@@ -274,12 +274,12 @@ class Agent:
         try:
             namespace = self.global_config.current_namespace
             if namespace in self.global_config.namespaces:
-                db_config = self.global_config.namespaces[namespace]
-                if isinstance(db_config, DbConfig):
-                    self.db_manager.get_conn(namespace, db_config.type).test_connection()
+                connections = self.db_manager.get_connections(namespace)
+                if isinstance(connections, dict):
+                    for conn in connections.values():
+                        conn.test_connection()
                 else:
-                    for db_name, db_conf in db_config.items():
-                        self.db_manager.get_conn(namespace, db_conf.type, db_name).test_connection()
+                    connections.test_connection()
 
                 logger.info(f"Database connection test successful {namespace}")
                 return {"status": "success", "message": "Database connection test successful"}
@@ -297,7 +297,7 @@ class Agent:
         try:
             from datus.tools.mcp_server import MCPServer
 
-            db_configs = self.global_config.current_dbconfigs()
+            db_configs = self.db_manager.current_dbconfigs(self.global_config.current_namespace)
             db_type = self.global_config.db_type
 
             logger.info(f"Checking MCP server for database type: {db_type}")
@@ -349,7 +349,8 @@ class Agent:
                     if not os.path.exists(dir_path):
                         raise ValueError("metadata is not built, please run bootstrap_kb with overwrite strategy first")
                     else:
-                        self.global_config.check_init_storage_config()
+                        self.global_config.check_init_storage_config("database")
+
                         self.metadata_store = rag_by_configuration(self.global_config)
                         return {
                             "status": "success",
@@ -360,6 +361,7 @@ class Agent:
                         }
 
                 if kb_update_strategy == "overwrite":
+                    self.global_config.save_storage_config("database")
                     schema_metadata_path = os.path.join(dir_path, "schema_metadata.lance")
                     if os.path.exists(schema_metadata_path):
                         shutil.rmtree(schema_metadata_path)
@@ -368,8 +370,8 @@ class Agent:
                     if os.path.exists(schema_value_path):
                         shutil.rmtree(schema_value_path)
                         logger.info(f"Deleted existing directory {schema_value_path}")
-
-                self.global_config.check_init_storage_config()
+                else:
+                    self.global_config.check_init_storage_config("database")
                 self.metadata_store = rag_by_configuration(self.global_config)
 
                 if not benchmark_platform:
@@ -423,7 +425,9 @@ class Agent:
                     if os.path.exists(metrics_path):
                         shutil.rmtree(metrics_path)
                         logger.info(f"Deleted existing directory {metrics_path}")
-
+                    self.global_config.save_storage_config("metric")
+                else:
+                    self.global_config.check_init_storage_config("metric")
                 self.metrics_store = SemanticMetricsRAG(dir_path)
                 init_success_story_metrics(
                     self.metrics_store, self.args, self.global_config, build_mode=kb_update_strategy
@@ -436,6 +440,7 @@ class Agent:
                 }
             elif component == "document":
                 self.storage_modules["document_store"] = DocumentStore(dir_path)
+                # self.global_config.check_init_storage_config("document")
             results[component] = True
 
         # Initialize success story storage (always created)
@@ -462,7 +467,7 @@ class Agent:
         if not os.path.exists(benchmark_path):
             raise FileNotFoundError(f"Benchmark_path not found: {benchmark_path}")
 
-        self.global_config.check_init_storage_config()
+        self.global_config.check_init_storage_config("database")
         target_task_ids = set(getattr(self.args, "benchmark_task_ids", []))
         if benchmark_platform == "spider2":
             return self.benchmark_spider2(benchmark_path, target_task_ids)

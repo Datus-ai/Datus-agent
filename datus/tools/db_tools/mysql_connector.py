@@ -21,6 +21,10 @@ def db_table_type_to_inner(db_table_type: str) -> TABLE_TYPE:
     return "table"
 
 
+def list_to_in_str(prefix: str, values: Optional[List[str]] = None) -> str:
+    return "" if not values else f"{prefix} ({str(values)[1:-1]})"
+
+
 def inner_table_type_to_db(table_type: TABLE_TYPE) -> Tuple[META_TABLE_NAMES, CREATE_TYPE]:
     if table_type == "table":
         return ("TABLES", "TABLE")
@@ -41,7 +45,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         self.database = database
         # StarRocks uses MySQL protocol, use mysql+pymysql driver with specific pool settings
         # URL encode the password to handle special characters like @, :, etc.
-        encoded_password = quote_plus(password)
+        encoded_password = quote_plus(str(password))
         # Use mysql+pymysql instead of starrocks:// to avoid pymysql struct.pack issues
         self.connection_string = (
             f"mysql+pymysql://{user}:{encoded_password}@{host}:{self.port}/{database}?charset=utf8mb4&autocommit=true"
@@ -49,21 +53,22 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         super().__init__(self.connection_string, dialect=DBType.MYSQL)
 
     def _get_metadatas(
-        self, meta_table_name: META_TABLE_NAMES = "TABLES", inner_table_type: Optional[str] = None, **kwargs
+        self, meta_table_name: META_TABLE_NAMES = "TABLES", inner_table_type: Optional[List[str]] = None, **kwargs
     ) -> List[Dict[str, str]]:
         self.connect()
         database_name = self.sqlalchemy_schema(**kwargs)
-        ignore_schemas = str(self.ignore_schemas())[1:-1]
         catalog = self.reset_catalog_to_def(kwargs.get("catalog_name", ""))
         where = f"TABLE_CATALOG = '{catalog}'"
         if database_name:
             where = f"{where} AND TABLE_SCHEMA = '{database_name}'"
         else:
-            where = f"{where} and TABLE_SCHEMA not in ({ignore_schemas})"
+            where = f"{where} {list_to_in_str('and TABLE_SCHEMA not in', self.ignore_schemas())}"
 
         query_result = self.execute_query(
-            f"SELECT TABLE_CATALOG, TABLE_SCHEMA,TABLE_NAME FROM information_schema.{meta_table_name} WHERE {where}"
-            + (f" and TABLE_TYPE = '{inner_table_type}' " if inner_table_type else "")
+            (
+                f"SELECT TABLE_CATALOG, TABLE_SCHEMA,TABLE_NAME FROM information_schema.{meta_table_name} WHERE {where}"
+                f"{list_to_in_str(' and TABLE_TYPE in ', inner_table_type)}"
+            )
         )
         result = []
         for i in range(len(query_result)):
@@ -82,6 +87,22 @@ class MySQLConnectorBase(SQLAlchemyConnector):
 
     def default_catalog(self) -> str:
         return ""
+
+    @override
+    def do_switch_context(self, **kwargs):
+        if self.default_catalog():
+            catalog_name = kwargs.get("catalog_name")
+            if catalog_name:
+                self._execute(f"SET `{catalog_name}`")
+            database_name = kwargs.get("database_name")
+            if database_name:
+                self._execute(f"USE `{database_name}`")
+        else:
+            # not support catalog
+            database_name = kwargs.get("database_name")
+            if database_name:
+                self._execute(f"USE `{database_name}`")
+        return
 
     def reset_catalog_to_default(self, catalog: str) -> str:
         """
@@ -122,8 +143,21 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         database_name = kwargs.get("database_name", "")
         return super()._reset_filter_tables(tables, catalog_name=catalog_name, database_name=database_name)
 
-    def db_meta_table_type(self) -> str:
-        return "BASE TABLE"
+    def db_meta_table_type(self) -> List[str]:
+        return ["BASE TABLE"]
+
+    @override
+    def get_databases(self, catalog: str = "") -> List[str]:
+        schema_names = super().get_schemas()
+        databases = []
+        for item in schema_names:
+            if item not in self.ignore_schemas():
+                databases.append(str(item))
+        return databases
+
+    @override
+    def get_schemas(self, catalog: str = "", database_name: str = "") -> List[str]:
+        return []
 
     def _get_meta_with_ddl(
         self,

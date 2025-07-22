@@ -52,3 +52,8 @@ def test_execute_query(duckdb_connector: DuckdbConnector):
 
     with pytest.raises(DatusException, match=ErrorCode.TOOL_DB_EXECUTE_QUERY_FAILED.code):
         duckdb_connector.execute_query("select * from unexist_table")
+
+
+@pytest.mark.acceptance
+def test_get_schemas(duckdb_connector: DuckdbConnector):
+    assert len(duckdb_connector.get_schemas()) > 0

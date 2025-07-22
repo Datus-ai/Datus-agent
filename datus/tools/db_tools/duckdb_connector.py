@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Literal, Optional, override
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from datus.configuration.agent_config import duckdb_database_name
 from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
 from datus.utils.constants import DBType
@@ -22,6 +23,7 @@ class DuckdbConnector(SQLAlchemyConnector):
         connection_string += "?access_mode=read_only"
         super().__init__(connection_string=connection_string)
         self.db_path = db_path
+        self.database_name = duckdb_database_name(self.connection_string)
 
     @override
     def full_name(
@@ -34,6 +36,17 @@ class DuckdbConnector(SQLAlchemyConnector):
         return f'"{schema_name}"."{table_name}"'
 
     @override
+    def get_schemas(self, catalog: str = "", database_name: str = "") -> List[str]:
+        sql = "select schema_name from duckdb_schemas()"
+        if database_name:
+            sql += f" where database_name='{database_name}'"
+        else:
+            sql += " WHERE database_name not in ('system', 'temp')"
+
+        schema_names = self.execute_query(sql)
+        return schema_names["schema_name"].to_list()
+
+    @override
     def sqlalchemy_schema(self, **kwargs) -> Optional[str]:
         database_name = kwargs.get("database_name")
         schema_name = kwargs.get("schema_name")
@@ -42,6 +55,11 @@ class DuckdbConnector(SQLAlchemyConnector):
                 return f"{database_name}.{schema_name}"
             return None
         return schema_name
+
+    @override
+    def do_switch_context(self, **kwargs):
+        if kwargs.get("schema_name"):
+            self._execute(f'use "{kwargs.get("schema_name")}"')
 
     def get_tables_with_ddl(self, tables: Optional[List[str]] = None, **kwargs) -> List[Dict[str, str]]:
         """

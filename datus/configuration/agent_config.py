@@ -1,5 +1,4 @@
 import os
-from collections import defaultdict
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, List
 
@@ -7,15 +6,15 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput
 from datus.schemas.node_models import StrategyType
 from datus.storage.embedding_models import init_embedding_models
-from datus.storage.storage_cfg import check_storage_config
+from datus.storage.storage_cfg import check_storage_config, save_storage_config
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.path_utils import get_files_from_glob_pattern
 
 
 @dataclass
 class DbConfig:
+    path_pattern: str = field(default="", init=True)
     type: str = field(default="", init=True)
     uri: str = field(default="", init=True)
     host: str = field(default="", init=True)
@@ -122,72 +121,41 @@ class AgentConfig:
         workflow_config = kwargs.get("workflow", {})
         self.workflow_plan = workflow_config.get("plan", "reflection")
         self.custom_workflows = {k: v for k, v in workflow_config.items() if k != "plan"}
-
-        self.namespaces: Dict[str, Dict[str, DbConfig]] = defaultdict(dict)
+        self.namespaces: Dict[str, Dict[str, DbConfig]] = {}
         for namespace, db_config in kwargs.get("namespace", {}).items():
             db_type = db_config.get("type", "")
+            self.namespaces[namespace] = {}
             if db_type == DBType.SQLITE or db_type == DBType.DUCKDB:
-                self.namespaces[namespace] = {}
-                # sqlite and duckdb support path_pattern
                 if "path_pattern" in db_config:
-                    db_paths = get_files_from_glob_pattern(db_config["path_pattern"], db_type)
-                    if len(db_paths) == 0:
-                        path_pattern = db_config["path_pattern"]
-                        logger.warning(f"No database paths found in {path_pattern}, ignore the namespace {namespace}")
-                        self.namespaces.pop(namespace)
-                        continue
-                    for db_path in db_paths:
-                        database_name = (
-                            db_path["name"] if db_type == DBType.SQLITE else duckdb_database_name(db_path["uri"])
-                        )
-                        self.namespaces[namespace][db_path["name"]] = DbConfig(
-                            type=db_type, uri=db_path["uri"], database=database_name, schema=db_path.get("schema", "")
-                        )
-                else:
-                    # only sqlite and duckdb support multiple databases
-                    if "dbs" in db_config:
-                        for item in db_config.get("dbs", []):
-                            self.namespaces[namespace][item["name"]] = DbConfig(
-                                type=db_type, uri=item["uri"], database=item["name"], schema=item.get("schema", "")
-                            )
-                    elif "name" not in db_config or "uri" not in db_config:
-                        raise DatusException(
-                            code=ErrorCode.COMMON_CONFIG_ERROR,
-                            message_args={"config_error": f"db_config: {db_config} is invalid, "},
-                        )
-                    else:
-                        self.namespaces[namespace][db_config["name"]] = DbConfig(
+                    self.namespaces[namespace][namespace] = DbConfig(
+                        path_pattern=db_config["path_pattern"],
+                        type=db_type,
+                        uri=db_config.get("uri", ""),
+                        database=db_config.get("name", db_config["path_pattern"]),
+                        schema=db_config.get("schema", ""),
+                    )
+                elif "dbs" in db_config:
+                    for item in db_config.get("dbs", []):
+                        self.namespaces[namespace][item["name"]] = DbConfig(
                             type=db_type,
-                            uri=db_config["uri"],
-                            database=db_config["name"],
-                            schema=db_config.get("schema", ""),
+                            uri=item.get("uri", ""),
+                            database=item["name"],
+                            schema=item.get("schema", ""),
                         )
+                elif "name" in db_config and "uri" in db_config:
+                    self.namespaces[namespace][db_config["name"]] = DbConfig(
+                        type=db_type,
+                        uri=db_config["uri"],
+                        database=db_config["name"],
+                        schema=db_config.get("schema", ""),
+                    )
             else:
-                if db_type == DBType.DUCKDB:
-                    db_config["database"] = duckdb_database_name(db_config["uri"])
-                if db_type == DBType.DUCKDB or db_type == DBType.SQLITE:
-                    self.namespaces[namespace] = {db_config["name"]: DbConfig.filter_kwargs(DbConfig, db_config)}
-                else:
-                    self.namespaces[namespace] = {namespace: DbConfig.filter_kwargs(DbConfig, db_config)}
+                name = db_config.get("name", namespace)
+                self.namespaces[namespace][name] = DbConfig.filter_kwargs(DbConfig, db_config)
 
     @property
     def current_namespace(self) -> str:
         return self._current_namespace
-
-    def current_dbconfigs(self) -> Dict[str, DbConfig]:
-        return self.namespaces[self._current_namespace]
-
-    def current_db_config(self, db_name: str = "") -> DbConfig:
-        configs = self.namespaces[self._current_namespace]
-        if len(configs) == 1:
-            return list(configs.values())[0]
-        else:
-            if db_name not in configs:
-                raise DatusException(
-                    code=ErrorCode.COMMON_UNSUPPORTED,
-                    message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
-                )
-            return configs[db_name]
 
     @current_namespace.setter
     def current_namespace(self, value: str):
@@ -202,9 +170,19 @@ class AgentConfig:
                 message_args={"field_name": "namespace", "your_value": value},
             )
         self._current_namespace = value
+        self.db_type = self.current_db_config().type
 
-        configs = self.namespaces[value]
-        self.db_type = list(configs.values())[0].type
+    def current_db_config(self, db_name: str = "") -> DbConfig:
+        configs = self.namespaces[self._current_namespace]
+        if len(configs) == 1:
+            return list(configs.values())[0]
+        else:
+            if db_name not in configs:
+                raise DatusException(
+                    code=ErrorCode.COMMON_UNSUPPORTED,
+                    message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
+                )
+            return configs[db_name]
 
     @property
     def output_dir(self) -> str:
@@ -229,7 +207,9 @@ class AgentConfig:
 
     def _init_storage_config(self, storage_config: dict):
         self.rag_base_path = os.path.expanduser(storage_config.get("base_path", "data"))
-        self.storage_configs = init_embedding_models(storage_config, openai_config=self.active_model().to_dict())
+        self.storage_configs = init_embedding_models(
+            storage_config, openai_configs=self.models, default_openai_config=self.active_model()
+        )
 
     def override_by_args(self, **kwargs):
         if kwargs.get("storage_path", ""):
@@ -296,13 +276,17 @@ class AgentConfig:
         return self.namespaces[self._current_namespace]
 
     def current_db_name_type(self, db_name: str) -> tuple[str, str]:
-        db_config = self._current_db_config()
-        if db_name not in db_config:
-            raise DatusException(
-                code=ErrorCode.COMMON_UNSUPPORTED,
-                message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
-            )
-        db_type = db_config[db_name].type
+        db_configs = self._current_db_config()
+        if len(db_configs) > 1:
+            if db_name not in db_configs:
+                raise DatusException(
+                    code=ErrorCode.COMMON_UNSUPPORTED,
+                    message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
+                )
+            db_type = db_configs[db_name].type
+        else:
+            db_config = list(db_configs.values())[0]
+            db_type = db_config.type
         return db_name, db_type
 
     def active_model(self) -> ModelConfig:
@@ -323,8 +307,14 @@ class AgentConfig:
             )
         return rag_storage_path(self._current_namespace, self.rag_base_path)
 
-    def check_init_storage_config(self):
-        check_storage_config({k: v.to_dict() for k, v in self.storage_configs.items()}, self.rag_storage_path())
+    def check_init_storage_config(self, storage_type: str, save_config: bool = True):
+        check_storage_config(
+            storage_type, self.storage_configs[storage_type].to_dict(), self.rag_storage_path(), save_config
+        )
+
+    def save_storage_config(self, storage_type: str):
+        if storage_type in self.storage_configs:
+            save_storage_config(storage_type, self.storage_configs[storage_type], self.rag_storage_path())
 
 
 def rag_storage_path(namespace: str, rag_base_path: str = "data") -> str:
