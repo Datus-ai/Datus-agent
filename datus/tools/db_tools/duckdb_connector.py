@@ -47,9 +47,11 @@ class DuckdbConnector(SQLAlchemyConnector):
         return schema_names["schema_name"].to_list()
 
     @override
-    def sqlalchemy_schema(self, **kwargs) -> Optional[str]:
-        database_name = kwargs.get("database_name")
-        schema_name = kwargs.get("schema_name")
+    def sqlalchemy_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> Optional[str]:
+        schema_name = schema_name or self.schema_name
+        database_name = database_name or self.database_name
         if database_name:
             if schema_name:
                 return f"{database_name}.{schema_name}"

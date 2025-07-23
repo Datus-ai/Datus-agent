@@ -471,7 +471,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
                         "cid": i,
                         "name": col["name"],
                         "type": str(col["type"]),
-                        "comment": str(col["comment"]),
+                        "comment": str(col["comment"]) if "comment" in col else None,
                         "notnull": not col["nullable"],
                         "pk": col["name"] in pk_columns,
                         "dflt_value": col["default"],
