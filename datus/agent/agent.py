@@ -468,7 +468,8 @@ class Agent:
             raise FileNotFoundError(f"Benchmark_path not found: {benchmark_path}")
 
         self.global_config.check_init_storage_config("database")
-        target_task_ids = set(getattr(self.args, "benchmark_task_ids", []))
+        target_task_ids = getattr(self.args, "benchmark_task_ids", [])
+        target_task_ids = set(target_task_ids) if target_task_ids else None
         if benchmark_platform == "spider2":
             return self.benchmark_spider2(benchmark_path, target_task_ids)
         elif benchmark_platform == "bird_dev":
