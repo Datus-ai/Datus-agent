@@ -14,12 +14,14 @@ __all__ = [
     "SearchMetricsNode",
     "ParallelNode",
     "SelectionNode",
+    "CompareNode",
     "Node",
 ]
 
 from datus.agent.node.node import Node
 
 from .begin_node import BeginNode
+from .compare_node import CompareNode
 from .doc_search_node import DocSearchNode
 from .execute_sql_node import ExecuteSQLNode
 from .fix_node import FixNode

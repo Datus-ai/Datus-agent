@@ -102,13 +102,14 @@ class DatusCLI:
             "!fix": self.agent_commands.cmd_fix,
             "!daend": self.agent_commands.cmd_daend,
             # "!rf": self.agent_commands.cmd_reflect,
-            # "!compare": self.agent_commands.cmd_compare,
-            "!reason": self.agent_commands.cmd_reason,
-            "!reason_stream": self.agent_commands.cmd_reason_stream,
-            "!gen_metrics": self.agent_commands.cmd_gen_metrics,
-            "!gen_metrics_stream": self.agent_commands.cmd_gen_metrics_stream,
-            "!gen_semantic_model": self.agent_commands.cmd_gen_semantic_model,
-            "!gen_semantic_model_stream": self.agent_commands.cmd_gen_semantic_model_stream,
+            "!compare": self.agent_commands.cmd_compare_stream,
+            # "!compare_stream": self.agent_commands.cmd_compare_stream,
+            "!reason": self.agent_commands.cmd_reason_stream,
+            # "!reason_stream": self.agent_commands.cmd_reason_stream,
+            "!gen_metrics": self.agent_commands.cmd_gen_metrics_stream,
+            # "!gen_metrics_stream": self.agent_commands.cmd_gen_metrics_stream,
+            "!gen_semantic_model": self.agent_commands.cmd_gen_semantic_model_stream,
+            # "!gen_semantic_model_stream": self.agent_commands.cmd_gen_semantic_model_stream,
             "!set": self.agent_commands.cmd_set_context,
             "!save": self.agent_commands.cmd_save,
             "!bash": self._cmd_bash,
@@ -485,7 +486,6 @@ class DatusCLI:
 
     def _execute_sqlite_internal_command(self, cmd: str, args: str):
         """Execute an internal command for SQLite."""
-        self.console.print(f"[bold green]Executing internal command:[/] {cmd}, {args}")
         base_cmd = cmd
 
         try:
@@ -501,15 +501,33 @@ class DatusCLI:
 
                 # Check if result is None or failed
                 if result is None or not result.success:
-                    self.console.print("[bold red]Error:[/] Query failed")
+                    error_msg = result.error if result and hasattr(result, "error") else "Query failed"
+                    self.console.print(f"[bold red]Error:[/] {error_msg}")
                     return True
 
-                schemas = result.sql_return.to_pylist()
-                if schemas:
-                    for schema in schemas:
-                        self.console.print(Syntax(schema[0], "sql"))
+                # Check if sql_return is an Arrow table
+                if hasattr(result.sql_return, "to_pylist"):
+                    schemas = result.sql_return.to_pylist()
+                    if schemas:
+                        for schema in schemas:
+                            # Handle both tuple/list and dict formats
+                            sql_text = None
+                            if isinstance(schema, (list, tuple)) and len(schema) > 0:
+                                sql_text = schema[0]
+                            elif isinstance(schema, dict) and "sql" in schema:
+                                sql_text = schema["sql"]
+                            elif hasattr(schema, "sql"):
+                                sql_text = schema.sql
+
+                            if sql_text:
+                                self.console.print(Syntax(sql_text, "sql", theme="default"))
+                    else:
+                        if table_name:
+                            self.console.print(f"[yellow]Table '{table_name}' not found[/]")
+                        else:
+                            self.console.print("[yellow]No table schemas found[/]")
                 else:
-                    self.console.print("[yellow]No table schema found[/]")
+                    self.console.print(f"[bold red]Error:[/] Unexpected result format: {type(result.sql_return)}")
                 return True
             elif base_cmd == ".show":
                 settings = {"database": self.args.db_path, "Python": sys.version.split()[0]}
@@ -549,6 +567,7 @@ class DatusCLI:
                 self.console.print(f"[bold red]未知命令:[/] {cmd}")
                 return True
         except Exception as e:
+            logger.error(f"Internal command error: {e}", exc_info=True)
             self.console.print(f"[bold red]Command execution error:[/] {e}")
             return True
 

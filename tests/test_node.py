@@ -1,6 +1,8 @@
+import glob
 from pathlib import Path
 from typing import Any, Dict, List
 
+import duckdb
 import pytest
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -10,6 +12,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseResult
+from datus.schemas.compare_node_models import CompareInput, CompareResult
 from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
@@ -133,8 +136,7 @@ def agent_config() -> AgentConfig:
 
 @pytest.fixture
 def search_metrics_agent_config() -> AgentConfig:
-    # conf = Path(__file__).parent.parent / "conf" / "agent.yml"
-    agent_config = load_agent_config(namespace="local_duckdb")  # FIXME Modify it according to your configuration
+    agent_config = load_acceptance_config(namespace="duckdb")  # FIXME Modify it according to your configuration
     return agent_config
 
 
@@ -183,8 +185,30 @@ def save_to_yaml(content: BaseModel, filename: str):
         yaml.dump(content.to_dict(), f)
 
 
+def init_metricflow_db() -> None:
+    db_dir = Path(__file__).parent / "data" / "datus_metricflow_db"
+    db_path = db_dir / "duck.db"
+    if not db_dir.exists():
+        db_dir.mkdir(parents=True, exist_ok=True)
+    csv_path: Path = Path(__file__).parent / "data/metricflow_csv" / "*.csv"
+    print(f"Creating db_path: {db_path}")
+    conn = duckdb.connect(db_path)
+    conn.execute("CREATE SCHEMA IF NOT EXISTS mf_demo;")
+    csv_files = glob.glob(str(csv_path))
+    for csv_file in csv_files:
+        full_file_name = Path(csv_file).name
+        file_name = full_file_name.split(".")[0]
+        table_name = f"mf_demo.{file_name}"
+        conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto('{csv_file}', header=TRUE)")
+        print(f"finish the import of {csv_file}")
+    conn.close()
+
+
 class TestNode:
     """Test suite for Node class"""
+
+    def setup_method(self) -> None:
+        init_metricflow_db()
 
     def test_node_initialization(self, agent_config):
         """Test node initialization"""
@@ -536,27 +560,27 @@ class TestNode:
             logger.error(f"Doc search node test failed: {str(e)}")
             raise
 
-        def test_generate_semantic_model_node(self, generate_semantic_model_input, agent_config):
-            """Test generate semantic model node"""
-            try:
-                # Create generate semantic model input from test data
-                for case in generate_semantic_model_input:
-                    input_data = GenerateSemanticModelInput(**case["input"])
-                    node = Node.new_instance(
-                        node_id="generate_semantic_model_test",
-                        description="Generate semantic model test",
-                        node_type=NodeType.TYPE_GENERATE_SEMANTIC_MODEL,
-                        input_data=input_data,
-                        agent_config=agent_config,
-                    )
-                    result = node.run()
-                    logger.debug(f"Generate semantic model node result: {result}")
-                    assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                    assert isinstance(result, GenerateSemanticModelResult), "Result type mismatch"
-                    assert result.success is True, f"Node execution failed: {result}"
-            except Exception as e:
-                logger.error(f"Generate semantic model node test failed: {str(e)}")
-                raise
+    def test_generate_semantic_model_node(self, generate_semantic_model_input, agent_config):
+        """Test generate semantic model node"""
+        try:
+            # Create generate semantic model input from test data
+            for case in generate_semantic_model_input:
+                input_data = GenerateSemanticModelInput(**case["input"])
+                node = Node.new_instance(
+                    node_id="generate_semantic_model_test",
+                    description="Generate semantic model test",
+                    node_type=NodeType.TYPE_GENERATE_SEMANTIC_MODEL,
+                    input_data=input_data,
+                    agent_config=agent_config,
+                )
+                result = node.run()
+                logger.debug(f"Generate semantic model node result: {result}")
+                assert node.status == "completed", f"Node execution failed with status: {node.status}"
+                assert isinstance(result, GenerateSemanticModelResult), "Result type mismatch"
+                assert result.success is True, f"Node execution failed: {result}"
+        except Exception as e:
+            logger.error(f"Generate semantic model node test failed: {str(e)}")
+            raise
 
     def test_generate_metrics_node(self, generate_metrics_input, agent_config):
         """Test generate metrics node"""
@@ -604,4 +628,171 @@ class TestNode:
                 assert result.success is True, f"Node execution failed: {result}"
         except Exception as e:
             logger.error(f"Search metrics node test failed: {str(e)}")
+            raise
+
+    @pytest.mark.acceptance
+    def test_compare_node(self, agent_config):
+        """Test compare node with real california_schools data"""
+        try:
+            # Create test SQL task
+            sql_task = SqlTask(
+                task="Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1.",
+                database_type="sqlite",
+                database_name="california_schools",
+            )
+
+            # Create test SQL context
+            sql_context = SQLContext(
+                sql_query="SELECT Phone FROM schools WHERE Charter = 1 AND FundingType = 'Directly funded' AND OpenDate > '2000-01-01' AND Phone IS NOT NULL ORDER BY OpenDate",
+                explanation="Query to get phone numbers of direct charter-funded schools opened after 2000/1/1",
+                sql_return="Phone numbers result",
+                row_count=5,
+            )
+
+            # Create compare input with expected SQL
+            input_data = CompareInput(
+                sql_task=sql_task,
+                sql_context=sql_context,
+                expectation="SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode WHERE T1.Charter Funding Type = 'Directly funded' AND T1.Charter School (Y/N) = 1 AND T2.OpenDate > '2000-01-01'",
+            )
+
+            # Create compare node
+            node = Node.new_instance(
+                node_id="compare_test",
+                description="Compare SQL Test",
+                node_type=NodeType.TYPE_COMPARE,
+                input_data=input_data,
+                agent_config=agent_config,
+            )
+
+            # Verify initial node configuration
+            assert node.type == NodeType.TYPE_COMPARE
+            assert isinstance(node.input, CompareInput)
+            assert (
+                node.input.sql_task.task
+                == "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
+            )
+            assert "SELECT Phone FROM schools WHERE Charter = 1" in node.input.sql_context.sql_query
+            assert "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2" in node.input.expectation
+
+            # Test validation error for invalid input
+            with pytest.raises(ValidationError):
+                CompareInput(**{"invalid": "data"})
+
+            # Execute node
+            result = node.run()
+            logger.info(f"Compare node result: {result}")
+
+            # Verify execution results
+            assert node.status == "completed", f"Node execution failed with status: {node.status}"
+            assert isinstance(result, CompareResult), "Result type mismatch"
+            assert result.success is True, f"Node execution failed: {result}"
+            assert len(result.explanation) > 0, "Empty explanation"
+            assert len(result.suggest) > 0, "Empty suggestions"
+
+            # Test that explanation contains meaningful content
+            assert (
+                "Charter" in result.explanation or "charter" in result.explanation
+            ), "Explanation should mention charter schools"
+
+            # Test that suggestions contain actionable advice
+            assert (
+                "JOIN" in result.suggest or "join" in result.suggest or "table" in result.suggest
+            ), "Suggestions should mention JOIN or table differences"
+
+            # Print results for manual inspection
+            print(f"\n=== Compare Node Test Results ===")
+            print(f"Explanation: {result.explanation}")
+            print(f"Suggestions: {result.suggest}")
+            print(f"Success: {result.success}")
+            print(f"=====================================\n")
+
+        except Exception as e:
+            logger.error(f"Compare node test failed: {str(e)}")
+            raise
+
+    @pytest.mark.acceptance
+    def test_compare_with_mcp_node(self, agent_config):
+        """Test compare node with MCP streaming for enhanced database analysis"""
+        try:
+            # Create test SQL task
+            sql_task = SqlTask(
+                task="Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1.",
+                database_type="sqlite",
+                database_name="california_schools",
+            )
+
+            # Create test SQL context with current query
+            sql_context = SQLContext(
+                sql_query="SELECT Phone FROM schools WHERE Charter = 1 AND FundingType = 'Directly funded' AND OpenDate > '2000-01-01' AND Phone IS NOT NULL ORDER BY OpenDate",
+                explanation="Query to get phone numbers of direct charter-funded schools opened after 2000/1/1",
+                sql_return="Phone numbers result",
+                row_count=5,
+            )
+
+            # Create compare input with expected SQL that uses proper joins
+            input_data = CompareInput(
+                sql_task=sql_task,
+                sql_context=sql_context,
+                expectation="SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode WHERE T1.`Charter Funding Type` = 'Directly funded' AND T1.`Charter School (Y/N)` = 1 AND T2.OpenDate > '2000-01-01'",
+            )
+
+            # Create compare node
+            node = Node.new_instance(
+                node_id="compare_mcp_test",
+                description="Compare SQL MCP Test",
+                node_type=NodeType.TYPE_COMPARE,
+                input_data=input_data,
+                agent_config=agent_config,
+            )
+
+            # Verify initial node configuration
+            assert node.type == NodeType.TYPE_COMPARE
+            assert isinstance(node.input, CompareInput)
+            assert (
+                node.input.sql_task.task
+                == "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
+            )
+            assert "SELECT Phone FROM schools WHERE Charter = 1" in node.input.sql_context.sql_query
+            assert "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2" in node.input.expectation
+
+            # Test MCP streaming method exists
+            assert hasattr(node, "_compare_sql_stream"), "Node should have MCP streaming method"
+
+            # Execute node (standard execution first)
+            result = node.run()
+            logger.debug(f"Compare MCP node result: {result}")
+
+            # Verify execution results
+            assert node.status == "completed", f"Node execution failed with status: {node.status}"
+            assert isinstance(result, CompareResult), "Result type mismatch"
+            assert result.success is True, f"Node execution failed: {result}"
+            assert len(result.explanation) > 0, "Empty explanation"
+            assert len(result.suggest) > 0, "Empty suggestions"
+
+            # Test MCP-specific analysis capabilities
+            # The explanation should be more detailed due to MCP database access
+            assert len(result.explanation) > 100, "MCP analysis should provide detailed explanation"
+
+            # Should identify key differences between single table vs JOIN approach
+            explanation_lower = result.explanation.lower()
+            assert (
+                "join" in explanation_lower or "table" in explanation_lower or "frpm" in explanation_lower
+            ), "Should identify table structure differences"
+
+            # Suggestions should be actionable and database-informed
+            suggest_lower = result.suggest.lower()
+            assert (
+                "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower
+            ), "Should provide actionable database-informed suggestions"
+
+            # Print results for manual inspection
+            print(f"\n=== Compare MCP Node Test Results ===")
+            print(f"Explanation: {result.explanation}")
+            print(f"Suggestions: {result.suggest}")
+            print(f"Success: {result.success}")
+            print(f"==========================================\n")
+
+        except Exception as e:
+            logger.error(f"Compare MCP node test failed: {str(e)}")
             raise

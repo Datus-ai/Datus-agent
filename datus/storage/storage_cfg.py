@@ -1,5 +1,6 @@
 import os
 from configparser import ConfigParser
+from enum import Enum
 from typing import Any, Dict, List
 
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -13,7 +14,10 @@ def save_storage_config(config: Dict[str, Any], rag_base_path: str) -> None:
     parser = ConfigParser()
     for store_type in ["database", "document", "metric"]:
         if store_type in config:
-            parser[store_type] = {str(k): str(v) for k, v in config[store_type].items()}
+            save_config = {}
+            for k, v in config[store_type].items():
+                save_config[str(k)] = str(v) if not isinstance(v, Enum) else v.value
+            parser[store_type] = save_config
 
     with open(config_path, "w", encoding="utf-8") as f:
         parser.write(f)
@@ -59,7 +63,7 @@ def _find_config_differences(existing: Dict[str, Any], new: Dict[str, Dict[str, 
         for key, value in existing_config.items():
             if key not in new_config:
                 differences.append(f"Missing key '{key}' in section [{section}].")
-            elif str(value) != str(new_config[key]):
+            elif str(value) != str(new_config[key] if not isinstance(new_config[key], Enum) else new_config[key].value):
                 differences.append(
                     f"Value mismatch in section [{section}] for key '{key}': "
                     f"existing='{value}', current='{new_config[key]}'."

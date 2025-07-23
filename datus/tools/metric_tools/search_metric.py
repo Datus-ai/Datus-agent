@@ -31,8 +31,7 @@ class SearchMetricsTool(BaseTool):
         return self._search_hybrid_metrics(input_param)
 
     def _search_hybrid_metrics(self, input_param: SearchMetricsInput) -> SearchMetricsResult:
-        top_n = 100  # hard code for the limit according to the scale of medium-sized company
-        metric_results = self.store.search_hybrid_metrics(input_param, top_n)
+        metric_results = self.store.search_hybrid_metrics(input_param, input_param.top_n_by_rate())
 
         # Convert dictionaries to proper model instances
         metric_list = [Metrics.from_dict(metric) for metric in metric_results]

@@ -14,6 +14,57 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+class SilentMCPServerStdio(MCPServerStdio):
+    """Enhanced MCP server wrapper that redirects stdout and stderr to suppress all output
+    WARNING: This redirects both stdout and stderr, which may break MCP protocol communication.
+    Use with caution and test thoroughly.
+    """
+
+    def __init__(self, params: MCPServerStdioParams, **kwargs):
+        # Set environment variables to reduce output
+        if hasattr(params, "env"):
+            if params.env is None:
+                params.env = {}
+
+            # Basic environment variables for all MCP servers
+            params.env.update(
+                {
+                    "UV_QUIET": "1",  # Quiet uv tool output
+                    "RUST_LOG": "error",  # Reduce Rust logging
+                }
+            )
+
+            # Additional variables for filesystem MCP server
+            if hasattr(params, "args") and any("server-filesystem" in str(arg) for arg in (params.args or [])):
+                params.env.update(
+                    {
+                        "NODE_OPTIONS": "--no-warnings --quiet",
+                        "NPM_CONFIG_LOGLEVEL": "silent",
+                        "SUPPRESS_NO_CONFIG_WARNING": "1",
+                    }
+                )
+
+        # Redirect both stdout and stderr using shell redirection
+        if hasattr(params, "command") and hasattr(params, "args"):
+            original_command = params.command
+            original_args = params.args or []
+
+            # Create shell command to redirect both stdout and stderr
+            import sys
+
+            if sys.platform == "win32":
+                # Windows: redirect both stdout and stderr to nul
+                params.command = "cmd"
+                params.args = ["/c", f'"{original_command}" {" ".join(original_args)} >nul 2>&1']
+            else:
+                # Unix/Linux/macOS: redirect both stdout and stderr to /dev/null
+                args_str = " ".join(f'"{arg}"' for arg in original_args)
+                params.command = "sh"
+                params.args = ["-c", f'"{original_command}" {args_str} >/dev/null 2>&1']
+
+        super().__init__(params, **kwargs)
+
+
 def find_mcp_directory(mcp_name: str) -> str:
     """Find the MCP directory, whether in development or installed package"""
 
@@ -220,7 +271,7 @@ class MCPServer:
                         },
                     )
                     logger.info(f"Snowflake MCP server params: {mcp_server_params}")
-                    cls._snowflake_mcp_server = MCPServerStdio(
+                    cls._snowflake_mcp_server = SilentMCPServerStdio(
                         params=mcp_server_params,
                         client_session_timeout_seconds=10,
                     )
@@ -250,8 +301,8 @@ class MCPServer:
                             "STARROCKS_PASSWORD": db_config.password,
                         },
                     )
-                    cls._starrocks_mcp_server = MCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=10  # Increase timeout for StarRocks
+                    cls._starrocks_mcp_server = SilentMCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=120  # Increase timeout for StarRocks
                     )
         return cls._starrocks_mcp_server
 
@@ -282,7 +333,7 @@ class MCPServer:
                         ],
                         env={},  # SQLite doesn't need additional environment variables
                     )
-                    cls._sqlite_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._sqlite_mcp_server = SilentMCPServerStdio(params=mcp_server_params)
         return cls._sqlite_mcp_server
 
     @classmethod
@@ -313,7 +364,9 @@ class MCPServer:
                         ],
                         env={},  # DuckDB doesn't need additional environment variables for local usage
                     )
-                    cls._duckdb_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._duckdb_mcp_server = SilentMCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=10
+                    )
         return cls._duckdb_mcp_server
 
     @classmethod
@@ -347,7 +400,9 @@ class MCPServer:
                             "MF_VERBOSE": mf_verbose,
                         },
                     )
-                    cls._metricflow_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._metricflow_mcp_server = SilentMCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=20
+                    )
         return cls._metricflow_mcp_server
 
     @classmethod
@@ -359,10 +414,17 @@ class MCPServer:
                     mcp_server_params = MCPServerStdioParams(
                         command="npx",
                         args=[
+                            "--silent",
                             "-y",
                             "@modelcontextprotocol/server-filesystem",
                             filesystem_mcp_directory,
                         ],
+                        env={
+                            "NODE_OPTIONS": "--no-warnings",
+                            "NPM_CONFIG_LOGLEVEL": "silent",
+                        },
                     )
-                    cls._filesystem_mcp_server = MCPServerStdio(params=mcp_server_params)
+                    cls._filesystem_mcp_server = SilentMCPServerStdio(
+                        params=mcp_server_params, client_session_timeout_seconds=10
+                    )
         return cls._filesystem_mcp_server

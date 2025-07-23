@@ -41,6 +41,7 @@ class ErrorCode(Enum):
     MODEL_API_ERROR = ("300016", "Unexpected API internal error (HTTP 500)")
     MODEL_OVERLOADED = ("300017", "API temporarily overloaded - please try again later (HTTP 529)")
     MODEL_CONNECTION_ERROR = ("300018", "Connection error - check your network connection")
+    MODEL_EMBEDDING_ERROR = ("300019", "Embedding Model error")
     # ...
     # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")

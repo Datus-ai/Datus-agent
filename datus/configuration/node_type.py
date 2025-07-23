@@ -2,6 +2,7 @@ from typing import Optional, get_type_hints
 
 from pydantic import BaseModel, create_model
 
+from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.doc_search_node_models import DocSearchInput
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
@@ -36,6 +37,7 @@ class NodeType:
     TYPE_GENERATE_METRICS = "generate_metrics"  # For generating metrics
     TYPE_GENERATE_SEMANTIC_MODEL = "generate_semantic_model"  # For generating semantic models
     TYPE_SEARCH_METRICS = "search_metrics"  # For search metrics
+    TYPE_COMPARE = "compare"  # For comparing SQL with expectations
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
@@ -48,6 +50,7 @@ class NodeType:
         TYPE_GENERATE_METRICS,
         TYPE_GENERATE_SEMANTIC_MODEL,
         TYPE_SEARCH_METRICS,
+        TYPE_COMPARE,
     ]
 
     NODE_TYPE_DESCRIPTIONS = {
@@ -66,6 +69,7 @@ class NodeType:
         TYPE_SEARCH_METRICS: "Search metrics",
         TYPE_PARALLEL: "Execute child nodes in parallel",
         TYPE_SELECTION: "Select best result from multiple candidates",
+        TYPE_COMPARE: "Compare SQL with expectations",
     }
 
     @classmethod
@@ -101,6 +105,8 @@ class NodeType:
             input_data_cls = ParallelInput
         elif node_type == NodeType.TYPE_SELECTION:
             input_data_cls = SelectionInput
+        elif node_type == NodeType.TYPE_COMPARE:
+            input_data_cls = CompareInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 

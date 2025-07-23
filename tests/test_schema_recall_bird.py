@@ -34,7 +34,7 @@ def match_result(target_schema: set[str], full_name_set: set[str]) -> dict[str, 
 @pytest.fixture
 def agent_config() -> AgentConfig:
     # FIXME Modify namespace according to your configuration
-    config = load_agent_config(**{"benchmark": "bird_dev", "namespace": "bird_dev"})
+    config = load_agent_config(**{"benchmark": "bird_dev", "namespace": "bird_sqlite"})
     return config
 
 
@@ -135,7 +135,7 @@ def test_full_recall(top_n: int, rag: SchemaWithValueRAG, agent_config: AgentCon
         top_n: Number of top results to return
     """
 
-    output_dir = os.path.join(PROJECT_ROOT, "tests/output/bird_dev")
+    output_dir = os.path.join(PROJECT_ROOT, "tests/output/bird_dev/recall/")
     os.makedirs(output_dir, exist_ok=True)
     start_time = datetime.now()
     benchmark_path = agent_config.benchamrk_path("bird_dev")

@@ -3,12 +3,28 @@ import csv
 import glob
 import json
 import os
+import re
 import sqlite3
 import sys
 
 import duckdb
 import pandas as pd
+import pymysql
 import yaml
+
+
+def resolve_env(value: str) -> str:
+    """Resolve environment variables in a string"""
+    if not value or not isinstance(value, str):
+        return value
+
+    pattern = r"\${([^}]+)}"
+
+    def replace_env(match):
+        env_var = match.group(1)
+        return os.getenv(env_var, f"<MISSING:{env_var}>")
+
+    return re.sub(pattern, replace_env, value)
 
 
 def load_config(config_path):
@@ -170,6 +186,55 @@ def execute_duckdb_query(namespace_config, sql_query):
         return {"success": False, "columns": [], "results": [], "error": str(e)}
 
 
+def execute_starrocks_query(namespace_config, sql_query):
+    """Execute StarRocks query and return results"""
+    conn = None
+    cursor = None
+    try:
+        # Get connection parameters from namespace config and resolve environment variables
+        host = resolve_env(namespace_config.get("host", ""))
+        port = resolve_env(namespace_config.get("port", 9030))
+        username = resolve_env(namespace_config.get("username", ""))
+        password = resolve_env(namespace_config.get("password", ""))
+        database = resolve_env(namespace_config.get("database", ""))
+
+        if not all([host, username, password, database]):
+            raise Exception("Missing required StarRocks connection parameters")
+
+        # Connect to StarRocks using pymysql (StarRocks is MySQL compatible)
+        conn = pymysql.connect(
+            host=host,
+            port=int(port),
+            user=username,
+            password=password,
+            database=database,
+            charset="utf8mb4",
+            autocommit=True,
+        )
+
+        cursor = conn.cursor()
+
+        # Execute query
+        cursor.execute(sql_query)
+
+        # Get column names
+        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+
+        # Fetch results
+        results = cursor.fetchall()
+
+        return {"success": True, "columns": column_names, "results": results, "error": None}
+
+    except Exception as e:
+        return {"success": False, "columns": [], "results": [], "error": str(e)}
+    finally:
+        # Ensure resources are cleaned up even if an exception occurs
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 def save_results_to_csv(results, output_path):
     """Save results to CSV file using pandas DataFrame"""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -274,6 +339,9 @@ def main():
             elif namespace_config.get("type") == "duckdb":
                 print(f"Executing SQL: {task_data['sql'][:100]}...")
                 results = execute_duckdb_query(namespace_config, task_data["sql"])
+            elif namespace_config.get("type") == "starrocks":
+                print(f"Executing SQL: {task_data['sql'][:100]}...")
+                results = execute_starrocks_query(namespace_config, task_data["sql"])
             else:
                 raise Exception(f"Unsupported database type: {namespace_config.get('type')}")
 
@@ -304,6 +372,8 @@ def main():
                         results = execute_sql_query(db_path, task_data["sql"])
                     elif namespace_config.get("type") == "duckdb":
                         results = execute_duckdb_query(namespace_config, task_data["sql"])
+                    elif namespace_config.get("type") == "starrocks":
+                        results = execute_starrocks_query(namespace_config, task_data["sql"])
                     else:
                         raise Exception(f"Unsupported database type: {namespace_config.get('type')}")
 

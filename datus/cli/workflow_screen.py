@@ -595,7 +595,14 @@ def show_workflow_screen(workflow: Workflow, run_new_loop=True, exit_callback=No
         new_loop = False
         try:
             loop = asyncio.get_event_loop()
-            logger.info(f"Got existing event loop: {loop}")
+            if loop.is_running():
+                # Don't create a new loop if one is already running
+                logger.info(f"Using existing running event loop: {loop}")
+                app = WorkflowApp(workflow, exit_callback)
+                app.run()
+                return
+            else:
+                logger.info(f"Got existing event loop: {loop}")
         except RuntimeError:
             new_loop = True
             loop = asyncio.new_event_loop()
@@ -604,9 +611,22 @@ def show_workflow_screen(workflow: Workflow, run_new_loop=True, exit_callback=No
 
         app = WorkflowApp(workflow, exit_callback)
 
-        app.run()
-        if new_loop:
-            loop.close()
+        try:
+            app.run()
+        finally:
+            if new_loop:
+                # Ensure proper cleanup before closing the loop
+                try:
+                    # Cancel any remaining tasks
+                    pending_tasks = asyncio.all_tasks(loop)
+                    for task in pending_tasks:
+                        task.cancel()
+                    if pending_tasks:
+                        loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
+                except Exception as e:
+                    logger.warning(f"Error during task cleanup: {e}")
+                finally:
+                    loop.close()
     else:
         app = WorkflowApp(workflow, exit_callback)
         app.run()

@@ -14,6 +14,10 @@ logger = get_logger(__name__)
 
 
 class ReasonSQLNode(Node):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.action_history_manager = None
+
     def execute(self):
         self.result = self._reason_sql()
 
@@ -33,17 +37,32 @@ class ReasonSQLNode(Node):
 
     def update_context(self, workflow: Workflow) -> Dict:
         """Update reasoning results to workflow context."""
-        result = self.result
         try:
-            # Choose the valuable sql_context from the result
-            # Append successful SQL contexts from reasoning result to workflow context
-            if result.success:
+            # Check if we have streaming results from action history manager
+            if self.action_history_manager and hasattr(self.action_history_manager, "sql_contexts"):
+                # Use sql_contexts from streaming execution
+                sql_contexts = self.action_history_manager.sql_contexts
+                logger.info(f"Using streaming results: {len(sql_contexts)} SQL contexts found")
+
+                # Add successful SQL contexts to workflow context
+                for sql_ctx in sql_contexts:
+                    if sql_ctx.sql_error == "":  # only add the successful sql context
+                        workflow.context.sql_contexts.append(sql_ctx)
+                    else:
+                        logger.warning(f"Failed context, skip it: {sql_ctx.sql_query}, {sql_ctx.sql_error}")
+
+                return {"success": True, "message": "Updated reasoning context from streaming results"}
+
+            # Fall back to non-streaming result
+            result = self.result
+            if result and result.success:
                 # Add the reasoning process sqls to the sql context
                 for sql_ctx in result.sql_contexts:
                     if sql_ctx.sql_error == "":  # only add the successful sql context
                         workflow.context.sql_contexts.append(sql_ctx)
                     else:
                         logger.warning(f"Failed context, skip it: {sql_ctx.sql_query}, {sql_ctx.sql_error}")
+
                 # Add the reasoning result to the sql context
                 new_record = SQLContext(
                     sql_query=result.sql_query, sql_return=result.sql_return
@@ -96,6 +115,9 @@ class ReasonSQLNode(Node):
         if not self.model:
             logger.error("Model not available for SQL reasoning")
             return
+
+        # Store the action history manager for later use in update_context
+        self.action_history_manager = action_history_manager
 
         try:
             # Setup reasoning context action

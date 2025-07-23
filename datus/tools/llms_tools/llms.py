@@ -10,10 +10,12 @@ from datus.tools.base import BaseTool
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
+from ...schemas.compare_node_models import CompareInput, CompareResult
 from ...schemas.fix_node_models import FixInput, FixResult
 from ...schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from ...schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from .autofix_sql import autofix_sql
+from .compare_sql import compare_sql, compare_sql_with_mcp_stream
 from .generate_metrics import generate_metrics_with_mcp
 from .generate_semantic_model import generate_semantic_model_with_mcp
 from .generate_sql import generate_sql
@@ -84,3 +86,12 @@ class LLMTool(BaseTool):
         return generate_semantic_model_with_mcp(
             self.model, table_definition, input_data, db_config=db_config, tool_config=tool_config
         )
+
+    def compare_sql(self, input_data: CompareInput) -> CompareResult:
+        return compare_sql(self.model, input_data)
+
+    def compare_sql_with_mcp_stream(self, input_data: CompareInput, db_config: DbConfig, tool_config=None):
+        """Compare SQL with MCP streaming support."""
+        if tool_config is None:
+            tool_config = {}
+        return compare_sql_with_mcp_stream(self.model, input_data, db_config=db_config, tool_config=tool_config)

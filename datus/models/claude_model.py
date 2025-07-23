@@ -118,8 +118,9 @@ class ClaudeModel(LLMBaseModel):
 
         # Optional proxy configuration - only use if environment variable is set
         proxy_url = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
+        self.proxy_client = None  # Store reference for cleanup
         if proxy_url:
-            proxy_client = httpx.Client(
+            self.proxy_client = httpx.Client(
                 transport=httpx.HTTPTransport(proxy=httpx.Proxy(url=proxy_url)),
                 timeout=60.0,
             )
@@ -127,7 +128,7 @@ class ClaudeModel(LLMBaseModel):
                 anthropic.Anthropic(
                     api_key=self.api_key,
                     base_url=self.api_base if self.api_base else None,
-                    http_client=proxy_client,
+                    http_client=self.proxy_client,
                 )
             )
         else:
@@ -639,3 +640,35 @@ class ClaudeModel(LLMBaseModel):
             action = None
             logger.debug(f"No text content found in message output: {content}")
         return action
+
+    def close(self):
+        """Close HTTP clients and cleanup resources."""
+        if hasattr(self, "proxy_client") and self.proxy_client:
+            try:
+                self.proxy_client.close()
+                logger.debug("Proxy client closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing proxy client: {e}")
+
+        # Close the anthropic client if it has a close method
+        if hasattr(self, "anthropic_client") and hasattr(self.anthropic_client, "close"):
+            try:
+                self.anthropic_client.close()
+                logger.debug("Anthropic client closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing anthropic client: {e}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup on garbage collection."""
+        try:
+            self.close()
+        except Exception as e:
+            logger.warning(f"Error in ClaudeModel destructor: {e}")
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit with cleanup."""
+        self.close()

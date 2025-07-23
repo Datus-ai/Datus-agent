@@ -12,7 +12,8 @@ from lancedb.table import Table
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
+
+# from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
 from datus.utils.loggings import configure_logging, get_logger
 
@@ -30,8 +31,8 @@ def rag_storage(agent_config: AgentConfig) -> SchemaWithValueRAG:
     return rag_by_configuration(agent_config)
 
 
-def test_init_snowflake_schema(rag_storage: SchemaWithValueRAG):
-    init_snowflake_schema(rag_storage)
+# def test_init_snowflake_schema(rag_storage: SchemaWithValueRAG):
+#     init_snowflake_schema(rag_storage)
 
 
 def do_query_schema(

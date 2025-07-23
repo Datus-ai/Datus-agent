@@ -40,13 +40,15 @@ async def generate_metrics_with_mcp_stream(
 
     # Setup MCP servers
     db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
-    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server()
+    # metricflow_mcp_server = MCPServer.get_metricflow_mcp_server()
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
     mcp_servers = {
         "db_mcp_server": db_mcp_server,
-        "metricflow_mcp_server": metricflow_mcp_server,
+        # "metricflow_mcp_server": metricflow_mcp_server,
         "filesystem_mcp_server": filesystem_mcp_server,
     }
+
+    tool_config["max_turns"] = 30
 
     async for action in base_mcp_stream(
         model=model,

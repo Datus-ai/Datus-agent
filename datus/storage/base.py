@@ -146,6 +146,8 @@ class BaseEmbeddingStore(StorageBase):
                 ],
                 exist_ok=True,
             )
+        except DatusException as e:
+            raise e
         except Exception as e:
             raise DatusException(
                 ErrorCode.TOOL_STORE_FAILED,
