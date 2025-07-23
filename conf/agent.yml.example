@@ -115,7 +115,7 @@ agent:
       model_name: text-embedding-v3
       dim_size: 1024
       batch_size: 10 # Aliyun only supports no more than 10
-      target_model: google # target model in agent.models, if not set, the agent's target configuration will be used
+      target_model: openai # target model in agent.models, if not set, the agent's target configuration will be used
     document:
       model_name: all-MiniLM-L6-v2 #～100MB The lightest model
       dim_size: 384

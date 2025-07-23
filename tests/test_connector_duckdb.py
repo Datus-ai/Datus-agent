@@ -33,14 +33,14 @@ def test_get_views_with_ddl(duckdb_connector: DuckdbConnector):
 
 
 @pytest.mark.acceptance
-def test_get_schema(duckdb_connector: DuckdbConnector):
+def test_get_table_schema(duckdb_connector: DuckdbConnector):
     schema = duckdb_connector.get_schema(table_name="search_trends")
     assert len(schema) > 0
 
     assert len(duckdb_connector.get_schema()) == 0
 
     with pytest.raises(DatusException, match=ErrorCode.TOOL_DB_FAILED.code):
-        duckdb_connector.get_schema("unexist_table")
+        duckdb_connector.get_schema(table_name="unexist_table")
 
 
 @pytest.mark.acceptance

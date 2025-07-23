@@ -16,7 +16,9 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style
 from pygments.lexers.sql import SqlLexer
+from rich.box import SIMPLE_HEAD
 from rich.console import Console
+from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
@@ -26,7 +28,6 @@ from datus.cli.context_commands import ContextCommands
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import SQLContext
-from datus.tools.db_tools import SQLiteConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.constants import DBType
 from datus.utils.exceptions import setup_exception_handler
@@ -126,6 +127,8 @@ class DatusCLI:
             ".database": self._cmd_switch_database,
             ".tables": self._cmd_tables,
             ".schemas": self._cmd_schemas,
+            ".schema": self._cmd_switch_schema,
+            ".table_schema": self._cmd_table_schema,
             ".show": self._cmd_show,
             ".namespace": self._cmd_switch_namespace,
         }
@@ -137,10 +140,13 @@ class DatusCLI:
 
         self.agent_config = load_agent_config(**vars(self.args))
         self.current_db_name = getattr(args, "database", "")
+        self.current_catalog = getattr(args, "catalog", "")
+        self.current_schema = getattr(args, "schema", "")
         self.db_manager = db_manager_instance(self.agent_config.namespaces)
 
         # Start agent initialization in background
         self._async_init_agent()
+        self._init_connection()
 
     def run(self):
         """Run the REPL loop."""
@@ -216,7 +222,6 @@ class DatusCLI:
             self.agent_initializing = False
 
             self.agent_commands.update_agent_reference()
-            self._init_connection()
             # self.console.print("[dim]Agent initialized successfully in background[/]")
         except Exception as e:
             self.console.print(f"[bold red]Error:[/]Failed to initialize agent in background: {str(e)}")
@@ -321,7 +326,7 @@ class DatusCLI:
             self.db_connector = self.db_manager.get_conn(
                 self.agent_config.current_namespace, self.agent_config.db_type, self.current_db_name
             )
-
+        self.db_connector.switch_context(database_name=new_db)
         self.console.print(f"[bold green]Database switched to: {self.current_db_name}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
@@ -633,26 +638,32 @@ class DatusCLI:
 
         try:
             # For SQLite, query the sqlite_master table
-            if self.db_connector.get_type() in [DBType.SQLITE, DBType.STARROCKS, DBType.DUCKDB]:
-                result = self.db_connector.get_tables()
-                self.last_result = result
-                self.console.print(result)
-
+            result = self.db_connector.get_tables(
+                catalog_name=self.current_catalog, database_name=self.current_db_name, schema_name=self.current_schema
+            )
+            self.last_result = result
+            if result:
                 # Display results
                 table = Table(
-                    title=f"Tables in Database {self.agent_config.current_namespace}",
                     show_header=True,
                     header_style="bold green",
                 )
-
                 # Add columns
                 table.add_column("Table Name")
                 for row in result:
                     table.add_row(row)
-                self.console.print(table)
+                if self.current_schema:
+                    if self.current_db_name:
+                        show_name = f"{self.current_db_name}.{self.current_schema}"
+                    else:
+                        show_name = self.current_schema
+                else:
+                    show_name = self.current_db_name
+                panel = Panel(table, title=f"Tables in Database {show_name}", title_align="left", box=SIMPLE_HEAD)
+                self.console.print(panel)
             else:
                 # For other database types, execute the appropriate query
-                self.console.print("[yellow]Table listing not implemented for this database type.[/]")
+                self.console.print("[yellow]Empty set.[/]")
 
         except Exception as e:
             logger.error(f"Table listing error: {str(e)}")
@@ -738,41 +749,41 @@ class DatusCLI:
 
     def _cmd_databases(self, args: str):
         """List all databases in the current connection."""
-        # if not self.db_connector:
-        #     self.console.print("[bold red]Error:[/] No database connection.")
-        #     return
-
         try:
             # For SQLite, this is simply the current database file
             namespace = self.agent_config.current_namespace
-            db_uris = self.db_manager.get_db_uris(namespace)
+            connections = self.db_manager.get_connections(namespace)
             result = []
-            if namespace == "bird_dev":
-                for db_name, db_uri in db_uris.items():
-                    result.append({"name": db_name, "path": db_uri.replace("sqlite:///", "")})
-                self.last_result = result
-                # Display results
-            elif namespace == "spider2":
-                pass
+            show_uri = False
+            if isinstance(connections, dict):
+                show_uri = True
+                for name, conn in connections.items():
+                    result.append({"name": name, "uri": conn.connection_string})
             else:
-                result = []
-                # FIXME need to support other database types
-                if isinstance(db_uris, dict):
-                    for db_name, db_uri in db_uris.items():
-                        if db_uri.startswith("sqlite:///"):
-                            result.append({"name": db_name, "path": db_uri.replace("sqlite:///", "")})
-                        else:
-                            result.append({"name": db_name, "path": db_uri})
-                else:
-                    result.append({"name": namespace, "path": db_uris})
-                self.last_result = result
+                db_type = connections.dialect
+                self.db_connector = connections
+                if db_type == DBType.SQLITE:
+                    show_uri = True
+                    result.append({"name": namespace, "uri": connections.connection_string})
+                elif db_type == DBType.DUCKDB:
+                    show_uri = True
+                    result.append({"name": connections.database_name, "uri": connections.connection_string})
+                elif db_type == DBType.MYSQL or db_type == DBType.STARROCKS:
+                    for db_name in connections.get_databases(catalog=self.current_catalog):
+                        result.append({"name": db_name})
+
+            self.last_result = result
 
             # Display results
             table = Table(title="Databases", show_header=True, header_style="bold green")
             table.add_column("Database Name")
-            table.add_column("Path")
-            for db_config in result:
-                table.add_row(db_config["name"], db_config["path"])
+            if show_uri:
+                table.add_column("URI")
+                for db_config in result:
+                    table.add_row(db_config["name"], db_config["uri"])
+            else:
+                for db_config in result:
+                    table.add_row(db_config["name"])
             self.console.print(table)
 
         except Exception as e:
@@ -780,99 +791,97 @@ class DatusCLI:
             self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     def _cmd_schemas(self, args: str):
+        dialect = self.db_connector.dialect
+        if dialect == DBType.SQLITE or dialect == DBType.MYSQL or dialect == DBType.STARROCKS:
+            self.console.print(f"[bold red]The {dialect} database does not support schema[/]")
+            return
+        result = self.db_connector.get_schemas(catalog=self.current_catalog, database_name=self.current_db_name)
+        self.last_result = result
+        if result:
+            # Display results
+            table = Table(
+                show_header=True,
+                header_style="bold green",
+            )
+            # Add columns
+            table.add_column("Schema Name")
+            for row in result:
+                table.add_row(row)
+            if self.current_catalog:
+                if self.current_db_name:
+                    show_name = f"{self.current_catalog}.{self.current_db_name}"
+                else:
+                    show_name = self.current_catalog
+            else:
+                show_name = self.current_db_name
+            panel = Panel(table, title=f"Schema in Database {show_name}", title_align="left", box=SIMPLE_HEAD)
+            self.console.print(panel)
+        else:
+            # For other database types, execute the appropriate query
+            self.console.print("[yellow]Empty set.[/]")
+
+    def _cmd_switch_schema(self, args: str):
+        schema_name = args.strip()
+        if not schema_name:
+            self.console.print("[yellow]You need to give the name of the schema you want to switch to[/]")
+            return
+        self.db_connector.switch_context(
+            catalog_name=self.current_catalog, database_name=self.current_db_name, schema_name=schema_name
+        )
+
+    def _cmd_table_schema(self, args: str):
         """Show schema information for tables."""
         if not self.db_connector:
             self.console.print("[bold red]Error:[/] No database connection.")
             return
 
         try:
-            # For SQLite, get table schema information
-            if isinstance(self.db_connector, SQLiteConnector):
-                # If a specific table is provided, show its schema
-                # FIXME other database
-                if args.strip():
-                    table_name = args.strip()
-                    # sql = f"PRAGMA table_info('{table_name}')"
-                    result = self.db_connector.get_schema(table_name)
-                    self.last_result = result
+            if args.strip():
+                table_name = args.strip()
+                # sql = f"PRAGMA table_info('{table_name}')"
+                result = self.db_connector.get_schema(table_name=table_name)
+                self.last_result = result
 
-                    # Display schema for the specific table
-                    schema_table = Table(
-                        title=f"Schema for {table_name}",
-                        show_header=True,
-                        header_style="bold green",
+                # Display schema for the specific table
+                schema_table = Table(
+                    title=f"Schema for {table_name}",
+                    show_header=True,
+                    header_style="bold green",
+                )
+                schema_table.add_column("Column Position")
+                schema_table.add_column("Name")
+                schema_table.add_column("Type")
+                schema_table.add_column("NotNull")
+                schema_table.add_column("Default")
+                schema_table.add_column("PK")
+
+                for row in result:
+                    schema_table.add_row(
+                        str(row.get("cid", "")),
+                        str(row.get("name", "")),
+                        str(row.get("type", "")),
+                        str(row.get("notnull", "")),
+                        str(row.get("dflt_value", "")) if row.get("dflt_value") is not None else "",
+                        str(row.get("pk", "")),
                     )
-                    schema_table.add_column("Column Position")
-                    schema_table.add_column("Name")
-                    schema_table.add_column("Type")
-                    schema_table.add_column("NotNull")
-                    schema_table.add_column("Default")
-                    schema_table.add_column("PK")
 
-                    for row in result:
-                        schema_table.add_row(
-                            str(row.get("cid", "")),
-                            str(row.get("name", "")),
-                            str(row.get("type", "")),
-                            str(row.get("notnull", "")),
-                            str(row.get("dflt_value", "")) if row.get("dflt_value") is not None else "",
-                            str(row.get("pk", "")),
-                        )
-
-                    self.console.print(schema_table)
-                else:
-                    # List all tables with basic schema info
-                    sql = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                    result = self.db_connector.execute({"sql_query": sql})
-                    self.last_result = result
-
-                    # Extract result data
-                    success = False
-                    rows = []
-
-                    # Handle different result types
-                    if isinstance(result, dict):
-                        success = result.get("success", False)
-                        rows = result.get("rows", [])
-                    elif hasattr(result, "success"):
-                        # Handle ExecuteSQLResult object
-                        success = result.success
-                        if hasattr(result, "rows"):
-                            rows = result.rows
-                        elif hasattr(result, "__dict__"):
-                            rows = result.__dict__.get("rows", [])
-
-                    if not success:
-                        error_message = "Unknown error"
-                        if isinstance(result, dict):
-                            error_message = result.get("error", "Unknown error")
-                        elif hasattr(result, "error"):
-                            error_message = result.error
-                        elif hasattr(result, "__dict__"):
-                            error_message = result.__dict__.get("error", "Unknown error")
-
-                        self.console.print(f"[bold red]Error:[/] {error_message}")
-                        return
-
-                    # Display list of tables
-                    self.console.print("[bold green]Available tables:[/]")
-
-                    # Process rows to extract table names
-                    table_names = []
-                    for row in rows:
-                        if isinstance(row, dict):
-                            table_names.append(row.get("name", ""))
-                        elif isinstance(row, (list, tuple)) and len(row) > 0:
-                            table_names.append(row[0])
-
-                    # Display table list
-                    for idx, table_name in enumerate(table_names):
-                        self.console.print(f"{idx + 1}. {table_name}")
-
-                    self.console.print("\n[dim]Use .schemas [table_name] to view detailed schema.[/]")
+                self.console.print(schema_table)
             else:
-                # For other database types
-                self.console.print("[yellow]Schema listing not implemented for this database type.[/]")
+                # List all tables with basic schema info
+                table_names = self.db_connector.get_tables(
+                    catalog_name=self.current_catalog,
+                    database_name=self.current_db_name,
+                    schema_name=self.current_schema,
+                )
+                self.last_result = table_names
+
+                # Display list of tables
+                self.console.print("[bold green]Available tables:[/]")
+                # Display table list
+                for idx, table_name in enumerate(table_names):
+                    self.console.print(f"{idx + 1}. {table_name}")
+
+                self.console.print("\n[dim]Use .schemas [table_name] to view detailed schema.[/]")
 
         except Exception as e:
             logger.error(f"Schema listing error: {str(e)}")
@@ -899,7 +908,9 @@ class DatusCLI:
         [bold].databases[/]           List all databases
         [bold].database[/]            Switch the current database
         [bold].tables[/]              List all tables in the current database
-        [bold].schemas [table][/]     Show schema information for all tables or a specific table
+        [bold].schemas[/]             Show schemas in current database
+        [bold].schema [schema][/]     Switch schema
+        [bold].table_schema [table][/]Show schema information for all tables or a specific table
         [bold].help[/]                Display help information
         [bold].exit, .quit[/]         Exit the CLI
         """
@@ -939,12 +950,14 @@ Type '.help' for a list of commands or '.exit' to quit.
 
     def _init_connection(self):
         """Initialize database connection."""
-        default_db = getattr(self.args, "database", None)
-        current_namespace = self.agent.global_config.current_namespace
-        if not default_db:
-            self.db_connector = self.agent.db_manager.first_conn(current_namespace)
+        self.current_db_name
+        current_namespace = self.agent_config.current_namespace
+        if not self.current_db_name:
+            self.current_db_name, self.db_connector = self.db_manager.first_conn_with_name(current_namespace)
         else:
-            self.db_connector = self.agent.db_manager.get_conn(current_namespace, self.agent_config.db_type, default_db)
+            self.db_connector = self.db_manager.get_conn(
+                current_namespace, self.agent_config.db_type, self.current_db_name
+            )
         if not self.db_connector:
             self.console.print("[bold red]Error:[/] No database connection.")
             return

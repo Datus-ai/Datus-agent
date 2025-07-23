@@ -24,7 +24,7 @@ class TestSQLAlchemyTools:
         connector.connect()
 
         # Create temporary test table
-        connector._conn.execute(
+        connector.connection.execute(
             text(
                 """
             CREATE TABLE IF NOT EXISTS test_insert_table (
@@ -35,7 +35,7 @@ class TestSQLAlchemyTools:
         """
             )
         )
-        connector._conn.commit()
+        connector.connection.commit()
 
         yield connector
 
@@ -45,8 +45,8 @@ class TestSQLAlchemyTools:
         # Create a new connection for cleanup
         cleanup_connector = SQLAlchemyConnector(f"sqlite:///{db_path}")
         cleanup_connector.connect()
-        cleanup_connector._conn.execute(text("DROP TABLE IF EXISTS test_insert_table"))
-        cleanup_connector._conn.commit()
+        cleanup_connector.connection.execute(text("DROP TABLE IF EXISTS test_insert_table"))
+        cleanup_connector.connection.commit()
         cleanup_connector.close()
 
     def test_do_execute_select(self, sqlalchemy_connector: SQLAlchemyConnector):

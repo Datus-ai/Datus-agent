@@ -13,6 +13,9 @@ class BaseSqlConnector(ABC):
         self.batch_size = batch_size
         self.connection: Any = None
         self.dialect = dialect
+        self.catalog_name = ""
+        self.database_name = ""
+        self.schema_name = ""
 
     def close(self):
         """
@@ -21,6 +24,9 @@ class BaseSqlConnector(ABC):
         if self.connection:
             self.connection.close()
             self.connection = None
+
+    def connect(self):
+        return
 
     def execute(self, input_params: Any, result_format: Literal["csv", "arrow", "list"] = "csv") -> ExecuteSQLResult:
         """Execute a SQL query against the SQLite database.
@@ -95,7 +101,9 @@ class BaseSqlConnector(ABC):
     def execute_queries(self, queries: List[str]) -> List[Any]:
         raise NotImplementedError
 
-    def get_tables_with_ddl(self, tables: Optional[List[str]] = None, **kwargs) -> List[Dict[str, str]]:
+    def get_tables_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", tables: Optional[List[str]] = None
+    ) -> List[Dict[str, str]]:
         """
         Get all tables with DDL from the database.
         Namespace parameters (such as catalog_name, database_name, schema_name) should be passed via kwargs and
@@ -125,7 +133,9 @@ class BaseSqlConnector(ABC):
                 )
         return filter_tables
 
-    def get_views_with_ddl(self, **kwargs) -> List[Dict[str, str]]:
+    def get_views_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[Dict[str, str]]:
         """
         Get all views with DDL from the database.
         Namespace parameters (such as catalog_name, database_name, schema_name)
@@ -137,7 +147,7 @@ class BaseSqlConnector(ABC):
         """
         raise NotImplementedError
 
-    def get_tables(self, **kwargs) -> List[str]:
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """
         Get all table names from the database.
         Parameters contains catalog_name, database_name and schema_name
@@ -145,25 +155,40 @@ class BaseSqlConnector(ABC):
         """
         raise NotImplementedError
 
-    def switch_context(self, **kwargs):
+    def switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         """
         Switch context, including catalogs, databases and schemas.
         Parameters contains catalog_name, database_name and schema_name
         """
+        self.connect()
         try:
-            self.do_switch_context(**kwargs)
+            self.do_switch_context(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name)
+            if catalog_name:
+                self.catalog_name = catalog_name
+            if database_name:
+                self.database_name = database_name
+            if schema_name:
+                self.schema_name = schema_name
         except DatusException as e:
             raise e
         except Exception as e:
+            params = ""
+            if catalog_name:
+                params += f"catalog_name={catalog_name},"
+            if database_name:
+                params += f"database_name={database_name},"
+            if schema_name:
+                params += f"schema_name={schema_name},"
             raise DatusException(
-                ErrorCode.TOOL_DB_FAILED, message=f"Faield to switch context because {str(e)}, context_params:{kwargs}"
+                ErrorCode.TOOL_DB_FAILED, message=f"Faield to switch context because {str(e)}, context_params:{params}"
             ) from e
 
-    @abstractmethod
-    def do_switch_context(self, **kwargs):
-        raise NotImplementedError
+    def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
+        return None
 
-    def get_schema(self, **kwargs) -> List[Dict[str, str]]:
+    def get_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+    ) -> List[Dict[str, str]]:
         """
         Get schema information for the specified table.
         Namespace parameters (such as catalog_name, database_name, schema_name, table_name)
@@ -171,7 +196,14 @@ class BaseSqlConnector(ABC):
         """
         raise NotImplementedError
 
-    def get_sample_rows(self, tables: Optional[List[str]] = None, top_n: int = 5, **kwargs) -> List[Dict[str, Any]]:
+    def get_sample_rows(
+        self,
+        tables: Optional[List[str]] = None,
+        top_n: int = 5,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+    ) -> List[Dict[str, Any]]:
         """
         Get sample values for each table from the database.
         Namespace parameters (such as catalog_name, database_name, schema_name) should be passed via kwargs and

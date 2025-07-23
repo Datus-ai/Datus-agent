@@ -27,6 +27,7 @@ class SnowflakeConnector(BaseSqlConnector):
         schema: str = "",
     ):
         super().__init__(dialect=DBType.SNOWFLAKE)
+        # FIXME lazy init
         self.connection: SnowflakeConnection = Connect(
             account=account,
             user=user,
@@ -35,6 +36,8 @@ class SnowflakeConnector(BaseSqlConnector):
             database=database if database else None,
             schema=schema if schema else None,
         )
+        self.database_name = database
+        self.schema_name = schema
 
     def test_connection(self) -> Dict[str, Any]:
         """"""

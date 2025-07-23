@@ -50,7 +50,7 @@ class StarRocksConnector(MySQLConnectorBase):
         database: str = "",
     ):
         super().__init__(host, port, user, password, database)
-
+        self.catalog_name = catalog
         # Register this connection for cleanup and ensure global cleanup is registered
         _starrocks_connections.add(self)
         _register_cleanup()
@@ -73,25 +73,11 @@ class StarRocksConnector(MySQLConnectorBase):
             # Silently ignore all errors during destruction
             logger.warning(f"StarRocks connection close error: {e}")
 
-    def get_tables(self, **kwargs) -> List[str]:
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of tables in the database."""
         # FIXME use full name?
-        result = self._get_metadatas(**kwargs)
+        result = self._get_metadatas(catalog_name=catalog_name, database_name=database_name)
         return [table["table_name"] for table in result]
-
-    @override
-    def sqlalchemy_schema(self, **kwargs) -> Optional[str]:
-        catalog_name = kwargs.get("catalog_name", "")
-        database_name = kwargs.get("database_name", "")
-        if catalog_name:
-            if database_name:
-                return f"{catalog_name}.{database_name}"
-            else:
-                return catalog_name
-        elif database_name:
-            return database_name
-        else:
-            return None
 
     # @override
     # def catalog_valid(self) -> bool:
@@ -108,7 +94,9 @@ class StarRocksConnector(MySQLConnectorBase):
     def db_meta_table_type(self) -> List[str]:
         return ["TABLE", "BASE TABLE"]
 
-    def get_materialized_views_with_ddl(self, **kwargs) -> List[Dict[str, str]]:
+    def get_materialized_views_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[Dict[str, str]]:
         """
         Get all materialized views with DDL from the database.
         Namespace parameters (such as catalog_name, database_name, schema_name)
@@ -118,7 +106,6 @@ class StarRocksConnector(MySQLConnectorBase):
             database_name: The database name to filter the materialized views.
             schema_name: The schema name to filter the materialized views.
         """
-        database_name = kwargs.get("database_name", "")
         if database_name:
             query_sql = (
                 "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION "
@@ -154,12 +141,13 @@ class StarRocksConnector(MySQLConnectorBase):
         self,
         tables: Optional[List[str]] = None,
         top_n: int = 5,
-        **kwargs,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
     ) -> List[Dict[str, str]]:
         """Get sample values from tables."""
         self.connect()
-        catalog_name = self.reset_catalog_to_default(kwargs.get("catalog_name", ""))
-        database_name = kwargs.get("database_name", "")
+        catalog_name = self.reset_catalog_to_default(catalog_name)
         result = []
         if tables:
             for table_name in tables:
@@ -189,7 +177,7 @@ class StarRocksConnector(MySQLConnectorBase):
                         }
                     )
         else:
-            for table in self._get_metadatas(**kwargs):
+            for table in self._get_metadatas(catalog_name=catalog_name, database_name=database_name):
                 sql = (
                     f"SELECT * FROM `{table['catalog_name']}`.`{table['database_name']}`.`{table['table_name']}` "
                     "LIMIT {top_n}"
@@ -207,7 +195,9 @@ class StarRocksConnector(MySQLConnectorBase):
                     )
         return result
 
-    def get_schema(self, table_name: str = "", **kwargs) -> List[Dict[str, str]]:
+    def get_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+    ) -> List[Dict[str, str]]:
         """Get schema information for a specific table."""
         if not table_name:
             return []

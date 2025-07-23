@@ -6,7 +6,6 @@ This module provides context-related commands for the Datus CLI.
 from rich.table import Table
 from rich.tree import Tree
 
-from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
 
@@ -159,26 +158,24 @@ class ContextCommands:
 
         try:
             # For SQLite, query the sqlite_master table
-            if self.cli.db_connector.get_type() == DBType.SQLITE:
-                sql = "SELECT type, name FROM sqlite_master WHERE type='table' ORDER BY name"
-                result = self.cli.db_connector.execute_arrow(sql)
-                self.cli.last_result = result
+            result = self.cli.db_connector.get_tables(
+                catalog_name=self.cli.current_catalog,
+                database_name=self.cli.current_db_name,
+                schema_name=self.cli.current_schema,
+            )
+            self.cli.last_result = result
 
+            if result:
                 # Display results
                 table = Table(title="Show tables", show_header=True, header_style="bold green")
-                if result is not None and result.success:
-                    # Add columns
-                    for col in result.sql_return.column_names:
-                        table.add_column(col)
-                    # Add rows
-                    for row in result.sql_return.to_pylist():
-                        table.add_row(*[str(cell) for cell in row.values()])
-                    self.console.print(table)
-                else:
-                    self.console.print("[bold red]Error:[/] Failed to retrieve table list")
+                # Add columns
+                table.add_column("Table Name")
+                # Add rows
+                for row in result.sql_return.to_pylist():
+                    table.add_row(*[str(cell) for cell in row.values()])
+                self.console.print(table)
             else:
-                # For other database types, execute the appropriate query
-                self.console.print("[yellow]Table listing not implemented for this database type.[/]")
+                self.console.print("Empty set.")
 
         except Exception as e:
             logger.error(f"Table listing error: {str(e)}")

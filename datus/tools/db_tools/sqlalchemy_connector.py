@@ -40,7 +40,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
         super().__init__(self.dialect, batch_size)
         self.connection_string = connection_string
         self.engine = None
-        self._conn = None
+        self.connection = None
         self._owns_engine = False
         self.use_arrow_dtype_mapping = False
 
@@ -52,13 +52,14 @@ class SQLAlchemyConnector(BaseSqlConnector):
             # Ignore any errors during cleanup
             pass
 
+    @override
     def connect(self):
         """Establish connection to the database."""
         if self.engine and self._owns_engine:
             return
         try:
             self.engine = create_engine(self.connection_string)
-            self._conn = self.engine.connect()
+            self.connection = self.engine.connect()
             self._owns_engine = True
         except Exception as e:
             raise DatusException(
@@ -69,7 +70,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
                     "uri": self.connection_string,
                 },
             ) from e
-        if self.engine is None or self._conn is None:
+        if self.engine is None or self.connection is None:
             raise DatusException(
                 ErrorCode.TOOL_DB_FAILED,
                 message_args={
@@ -79,12 +80,13 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 },
             )
 
+    @override
     def close(self):
         """Close the database connection."""
         try:
-            if self._conn:
-                self._conn.close()
-                self._conn = None
+            if self.connection:
+                self.connection.close()
+                self.connection = None
             if self.engine:
                 self.engine.dispose()
                 self.engine = None
@@ -156,7 +158,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
         self.connect()
 
         try:
-            result = self._conn.execute(text(query))
+            result = self.connection.execute(text(query))
 
             if result.returns_rows:  # rows returned: select
                 rows = result.fetchall()
@@ -201,7 +203,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
         self.connect()
 
         try:
-            result = self._conn.execute(text(query))
+            result = self.connection.execute(text(query))
             if result.returns_rows:
                 # TODO: improve the performance of this function with ADBC or remove pandas dependency
                 df = DataFrame(result.fetchall(), columns=result.keys())
@@ -237,7 +239,9 @@ class SQLAlchemyConnector(BaseSqlConnector):
         """Execute query and return results as tuples in batches."""
         try:
             self.connect()
-            result = self._conn.execute(text(query).execution_options(stream_results=True, max_row_buffer=max_rows))
+            result = self.connection.execute(
+                text(query).execution_options(stream_results=True, max_row_buffer=max_rows)
+            )
             if result.returns_rows:
                 while True:
                     batch_rows = result.fetchmany(max_rows)
@@ -256,7 +260,9 @@ class SQLAlchemyConnector(BaseSqlConnector):
         """Execute a SQL query and return results as tuples in batches."""
         try:
             self.connect()
-            result = self._conn.execute(text(query).execution_options(stream_results=True, max_row_buffer=max_rows))
+            result = self.connection.execute(
+                text(query).execution_options(stream_results=True, max_row_buffer=max_rows)
+            )
             if result.returns_rows:
                 if with_header:
                     columns = result.keys()
@@ -280,7 +286,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
         """Execute query and stream results as Arrow format."""
         self.connect()
         try:
-            result = self._conn.execute(text(query))
+            result = self.connection.execute(text(query))
             if result.returns_rows:
                 while True:
                     batch = result.fetchmany(self.batch_size)
@@ -323,7 +329,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
     # TODO execute_update
 
     def _execute_query(self, query: str) -> DataFrame:
-        result = self._conn.execute(text(query))
+        result = self.connection.execute(text(query))
         return DataFrame(result.fetchall(), columns=list(result.keys()))
 
     def insert(self, sql: str) -> Tuple[int, int]:
@@ -335,7 +341,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
         """
         self.connect()
         try:
-            res = self._conn.execute(text(sql))
+            res = self.connection.execute(text(sql))
             return (res.lastrowid, res.rowcount)
         except SQLAlchemyError as e:
             raise DatusException(
@@ -363,7 +369,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
     def _update_or_delete(self, sql: str) -> int:
         self.connect()
         try:
-            res = self._conn.execute(text(sql))
+            res = self.connection.execute(text(sql))
             return res.rowcount
         except SQLAlchemyError as e:
             raise DatusException(
@@ -402,7 +408,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
             ) from e
 
     def _execute(self, query: str) -> Any:
-        result = self._conn.execute(text(query))
+        result = self.connection.execute(text(query))
         if result.returns_rows:
             df = DataFrame(result.fetchall(), columns=list(result.keys()))
             return df.to_dict(orient="records")
@@ -433,27 +439,51 @@ class SQLAlchemyConnector(BaseSqlConnector):
             ) from e
         return results
 
-    def get_tables(self, **kwargs) -> List[str]:
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of tables in the database."""
-        schema_name = self.sqlalchemy_schema(**kwargs)
+        self.connect()
+        sqlalchemy_schema = self.sqlalchemy_schema(
+            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
+        )
         inspector = self._inspector()
 
-        return inspector.get_table_names(schema=schema_name if schema_name else None)
+        return inspector.get_table_names(schema=sqlalchemy_schema)
 
-    def get_schema(self, **kwargs) -> List[Dict[str, Any]]:
+    def get_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+    ) -> List[Dict[str, Any]]:
         """Get database schema information."""
-        schema_name = self.sqlalchemy_schema(**kwargs)
+        sqlalchemy_schema = self.sqlalchemy_schema(
+            catalog_name=catalog_name or self.catalog_name,
+            database_name=database_name or self.database_name,
+            schema_name=schema_name or self.schema_name,
+        )
         inspector = self._inspector()
         try:
             schemas: List[Dict[str, Any]] = []
-            for table_name in inspector.get_table_names(schema=schema_name):
-                columns = inspector.get_columns(table_name=table_name, schema=schema_name)
+            pk_columns = set(
+                inspector.get_pk_constraint(table_name=table_name, schema=sqlalchemy_schema)["constrained_columns"]
+            )
+            columns = inspector.get_columns(table_name=table_name, schema=sqlalchemy_schema)
+            for i, col in enumerate(columns):
                 schemas.append(
                     {
-                        "table": table_name,
-                        "columns": [{"name": col["name"], "type": str(col["type"])} for col in columns],
+                        "cid": i,
+                        "name": col["name"],
+                        "type": str(col["type"]),
+                        "comment": str(col["comment"]),
+                        "notnull": not col["nullable"],
+                        "pk": col["name"] in pk_columns,
+                        "dflt_value": col["default"],
                     }
                 )
+            schemas.append(
+                {
+                    "table": table_name,
+                    "columns": [{"name": col["name"], "type": str(col["type"])} for col in columns],
+                }
+            )
+
             return schemas
         except Exception as e:
             raise DatusException(
@@ -486,12 +516,14 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 },
             ) from e
 
-    def sqlalchemy_schema(self, **kwargs) -> Optional[str]:
+    def sqlalchemy_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> Optional[str]:
         """
         Get the schema name from the kwargs for Inspector.
         return None if no schema is specified.
         """
-        return kwargs.get("schema_name")
+        return database_name or schema_name
 
     def get_materialized_views(self, schema_name: Optional[str] = None) -> List[str]:
         """Get list of materialized views in the database."""
@@ -511,20 +543,21 @@ class SQLAlchemyConnector(BaseSqlConnector):
         self,
         tables: Optional[List[str]] = None,
         top_n: int = 5,
-        **kwargs,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
     ) -> List[Dict[str, str]]:
         """
         Get sample values from tables.
         The caller should fill catalog_name, database_name, schema_name themselves.
         """
-        catalog_name = kwargs.get("catalog_name", "")
-        database_name = kwargs.get("database_name", "")
-        schema_name = kwargs.get("schema_name", "")
         self._inspector()
         try:
             samples = []
             if not tables:
-                tables = self.get_tables(schema_name=self.sqlalchemy_schema(**kwargs))
+                tables = self.get_tables(
+                    catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
+                )
             logger.info(f"Getting sample data from tables {tables} LIMIT {top_n}")
             for table_name in tables:
                 full_table_name = self.full_name(
@@ -612,7 +645,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
             Arrow RecordBatch objects, each containing a batch of rows
         """
         self.connect()
-        with self._conn.execution_options(stream_results=True).execute(
+        with self.connection.execution_options(stream_results=True).execute(
             text(query) if isinstance(query, str) else query, parameters=params
         ) as result:
             if result.returns_rows:

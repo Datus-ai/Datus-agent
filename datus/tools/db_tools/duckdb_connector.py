@@ -57,11 +57,14 @@ class DuckdbConnector(SQLAlchemyConnector):
         return schema_name
 
     @override
-    def do_switch_context(self, **kwargs):
-        if kwargs.get("schema_name"):
-            self._execute(f'use "{kwargs.get("schema_name")}"')
+    def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
+        if schema_name:
+            self._execute(f'use "{schema_name}"')
 
-    def get_tables_with_ddl(self, tables: Optional[List[str]] = None, **kwargs) -> List[Dict[str, str]]:
+    @override
+    def get_tables_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", tables: Optional[List[str]] = None
+    ) -> List[Dict[str, str]]:
         """
         Get the database schema as a list of dictionaries.
 
@@ -69,10 +72,12 @@ class DuckdbConnector(SQLAlchemyConnector):
             A list of dictionaries, each containing:
             - database_name: The CREATE TABLE statement for the table
         """
-        filter_tables = self._reset_filter_tables(tables, **kwargs)
+        filter_tables = self._reset_filter_tables(
+            tables, catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
+        )
         return self._get_meta_with_ddl(
-            database_name=kwargs.get("database_name", ""),
-            schema_name=kwargs.get("schema_name", ""),
+            database_name=database_name,
+            schema_name=schema_name,
             name_field="table_name",
             table_type="table",
             meta_table="duckdb_tables",
@@ -126,10 +131,12 @@ class DuckdbConnector(SQLAlchemyConnector):
             )
         return result
 
-    def get_views_with_ddl(self, **kwargs) -> List[Dict[str, str]]:
+    def get_views_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[Dict[str, str]]:
         return self._get_meta_with_ddl(
-            database_name=kwargs.get("database_name", ""),
-            schema_name=kwargs.get("schema_name", ""),
+            database_name=database_name,
+            schema_name=schema_name,
             name_field="view_name",
             table_type="view",
             meta_table="duckdb_views",
@@ -140,19 +147,19 @@ class DuckdbConnector(SQLAlchemyConnector):
         self,
         tables: Optional[List[str]] = None,
         top_n: int = 5,
-        **kwargs,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
     ) -> List[Dict[str, str]]:
         """Get sample values from tables."""
         try:
             self.connect()
             samples = []
             if not tables:
-                tables = self.get_tables(**kwargs)
+                tables = self.get_tables(database_name=database_name, schema_name=schema_name)
             if tables:
                 logger.debug(f"Getting sample data from tables {tables} LIMIT {top_n}")
                 for table_name in tables:
-                    database_name = kwargs.get("database_name", "")
-                    schema_name = kwargs.get("schema_name", "")
                     if schema_name:
                         if database_name:
                             prefix = f'"{database_name}"."{schema_name}"'
@@ -176,7 +183,7 @@ class DuckdbConnector(SQLAlchemyConnector):
                             }
                         )
             else:
-                for table in self.get_tables_with_ddl(**kwargs):
+                for table in self.get_tables_with_ddl(database_name=database_name, schema_name=schema_name):
                     query = (
                         f'SELECT * FROM "{table["database_name"]}"."{table["schema_name"]}"."{table["table_name"]}" '
                         f"LIMIT {top_n}"
@@ -202,13 +209,17 @@ class DuckdbConnector(SQLAlchemyConnector):
                 },
             ) from e
 
-    def get_schema(self, table_name: str = "", **kwargs) -> List[Dict[str, str]]:
-        schema_name = self.sqlalchemy_schema(**kwargs)
-        full_name = table_name if not schema_name else f"{schema_name}.{table_name}"
+    @override
+    def get_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+    ) -> List[Dict[str, str]]:
+        if not table_name:
+            return []
+        full_name = self.full_name(database_name=database_name, schema_name=schema_name, table_name=table_name)
         if table_name:
             sql = f"PRAGMA table_info('{full_name}')"
             try:
-                result = self.execute_query(sql).to_dict(orient="records")
+                return self.execute_query(sql).to_dict(orient="records")
             except Exception as e:
                 raise DatusException(
                     ErrorCode.TOOL_DB_FAILED,
@@ -218,7 +229,6 @@ class DuckdbConnector(SQLAlchemyConnector):
                         "uri": self.connection_string,
                     },
                 ) from e
-            return result
         else:
             return []
 
