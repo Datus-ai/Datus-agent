@@ -192,7 +192,9 @@ class SnowflakeConnector(BaseSqlConnector):
             if not isinstance(input_params["params"], Sequence) and not isinstance(input_params["params"], dict):
                 raise ValueError("params must be dict or Sequence")
 
-    def get_schema(self, schema_name: str = "", **kwargs) -> List[Dict[str, str]]:
+    def get_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+    ) -> List[Dict[str, str]]:
         """
         Get the schema of the database.
         1. Get All Databases
@@ -257,12 +259,13 @@ class SnowflakeConnector(BaseSqlConnector):
             return cursor.fetchall()
 
     @override
-    def get_databases(self, catalog: str = "") -> List[str]:
+    def get_databases(self, catalog_name: str = "") -> List[str]:
         res = self.execute_query(sql="SHOW DATABASES")
         return [it[1] for it in res]
 
     @override
-    def get_schemas(self, catalog: str = "", database_name: str = "") -> List[str]:
+    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
+        database_name = database_name or self.database_name
         select_table_name = (
             "INFORMATION_SCHEMA.SCHEMATA" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.SCHEMATA'
         )
@@ -273,9 +276,9 @@ class SnowflakeConnector(BaseSqlConnector):
         return [item for item in df["SCHEMA_NAME"]]
 
     @override
-    def get_tables(self, **kwargs) -> List[str]:
-        database_name = kwargs.get("database_name")
-        schema_name = kwargs.get("schema_name")
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
+        database_name = database_name or self.database_name
+        schema_name = schema_name or self.schema_name
         select_table_name = (
             "INFORMATION_SCHEMA.TABLES" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.TABLES'
         )

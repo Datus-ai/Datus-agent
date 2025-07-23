@@ -53,11 +53,15 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         super().__init__(self.connection_string, dialect=DBType.MYSQL)
 
     def _get_metadatas(
-        self, meta_table_name: META_TABLE_NAMES = "TABLES", inner_table_type: Optional[List[str]] = None, **kwargs
+        self,
+        meta_table_name: META_TABLE_NAMES = "TABLES",
+        inner_table_type: Optional[List[str]] = None,
+        catalog_name: str = "",
+        database_name: str = "",
     ) -> List[Dict[str, str]]:
         self.connect()
-        database_name = self.sqlalchemy_schema(**kwargs)
-        catalog = self.reset_catalog_to_def(kwargs.get("catalog_name", ""))
+        database_name = database_name or self.database_name
+        catalog = self.reset_catalog_to_def(catalog_name or self.catalog_name)
         where = f"TABLE_CATALOG = '{catalog}'"
         if database_name:
             where = f"{where} AND TABLE_SCHEMA = '{database_name}'"
@@ -162,7 +166,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         return ["BASE TABLE"]
 
     @override
-    def get_databases(self, catalog: str = "") -> List[str]:
+    def get_databases(self, catalog_name: str = "") -> List[str]:
         schema_names = super().get_schemas()
         databases = []
         for item in schema_names:
@@ -171,7 +175,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         return databases
 
     @override
-    def get_schemas(self, catalog: str = "", database_name: str = "") -> List[str]:
+    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
         return []
 
     def _get_meta_with_ddl(
@@ -257,8 +261,10 @@ class MySQLConnector(MySQLConnectorBase):
     def __init__(self, host: str, port: int, user: str, password: str, database: str):
         super().__init__(host, port, user, password, database)
 
-    def sqlalchemy_schema(self, **kwargs) -> Optional[str]:
-        return kwargs.get("database_name")
+    def sqlalchemy_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> Optional[str]:
+        return database_name
 
     @override
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:

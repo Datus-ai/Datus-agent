@@ -36,7 +36,7 @@ class DuckdbConnector(SQLAlchemyConnector):
         return f'"{schema_name}"."{table_name}"'
 
     @override
-    def get_schemas(self, catalog: str = "", database_name: str = "") -> List[str]:
+    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
         sql = "select schema_name from duckdb_schemas()"
         if database_name:
             sql += f" where database_name='{database_name}'"

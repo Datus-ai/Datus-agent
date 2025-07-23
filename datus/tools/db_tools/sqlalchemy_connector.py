@@ -354,7 +354,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
             ) from e
 
     @override
-    def get_schemas(self, catalog: str = "", database_name: str = "") -> List[str]:
+    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
         return self._inspector().get_schema_names()
 
     def update(self, sql: str) -> int:

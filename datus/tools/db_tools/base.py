@@ -74,10 +74,10 @@ class BaseSqlConnector(ABC):
     def execute_arrow_iterator(self, query: str, max_rows: int = 100) -> Iterator[ArrowTable]:
         raise NotImplementedError
 
-    def get_databases(self, catalog: str = "") -> List[str]:
+    def get_databases(self, catalog_name: str = "") -> List[str]:
         return []
 
-    def get_schemas(self, catalog: str = "", database_name: str = "") -> List[str]:
+    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
         return []
 
     def execute_csv_iterator(

@@ -769,7 +769,7 @@ class DatusCLI:
                     show_uri = True
                     result.append({"name": connections.database_name, "uri": connections.connection_string})
                 elif db_type == DBType.MYSQL or db_type == DBType.STARROCKS:
-                    for db_name in connections.get_databases(catalog=self.current_catalog):
+                    for db_name in connections.get_databases(catalog_name=self.current_catalog):
                         result.append({"name": db_name})
 
             self.last_result = result
@@ -795,7 +795,7 @@ class DatusCLI:
         if dialect == DBType.SQLITE or dialect == DBType.MYSQL or dialect == DBType.STARROCKS:
             self.console.print(f"[bold red]The {dialect} database does not support schema[/]")
             return
-        result = self.db_connector.get_schemas(catalog=self.current_catalog, database_name=self.current_db_name)
+        result = self.db_connector.get_schemas(catalog_name=self.current_catalog, database_name=self.current_db_name)
         self.last_result = result
         if result:
             # Display results

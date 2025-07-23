@@ -229,9 +229,9 @@ class StarRocksConnector(MySQLConnectorBase):
         """Return the database type."""
         return DBType.STARROCKS
 
-    def get_databases(self, catalog: str = "default_catalog") -> List[str]:
+    def get_databases(self, catalog_name: str = "default_catalog") -> List[str]:
         """Get list of available databases."""
-        return super().get_databases(catalog)
+        return super().get_databases(catalog_name)
 
     def test_connection(self) -> bool:
         """Test the database connection."""
