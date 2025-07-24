@@ -4,7 +4,6 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
 from pyarrow import Table as ArrowTable
 
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
-from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.sql_utils import metadata_identifier
 
 
@@ -116,12 +115,14 @@ class BaseSqlConnector(ABC):
         """
         raise NotImplementedError
 
-    def _reset_filter_tables(self, tables: Optional[List[str]] = None, **kwargs) -> List[str]:
+    def _reset_filter_tables(
+        self, tables: Optional[List[str]] = None, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[str]:
         filter_tables = []
         if tables:
-            catalog_name = kwargs.get("catalog_name", "")
-            database_name = kwargs.get("database_name", "")
-            schema_name = kwargs.get("schema_name", "")
+            catalog_name = catalog_name or self.catalog_name
+            database_name = database_name or self.database_name
+            schema_name = schema_name or self.schema_name
             for table_name in tables:
                 filter_tables.append(
                     self.full_name(
@@ -161,27 +162,13 @@ class BaseSqlConnector(ABC):
         Parameters contains catalog_name, database_name and schema_name
         """
         self.connect()
-        try:
-            self.do_switch_context(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name)
-            if catalog_name:
-                self.catalog_name = catalog_name
-            if database_name:
-                self.database_name = database_name
-            if schema_name:
-                self.schema_name = schema_name
-        except DatusException as e:
-            raise e
-        except Exception as e:
-            params = ""
-            if catalog_name:
-                params += f"catalog_name={catalog_name},"
-            if database_name:
-                params += f"database_name={database_name},"
-            if schema_name:
-                params += f"schema_name={schema_name},"
-            raise DatusException(
-                ErrorCode.TOOL_DB_FAILED, message=f"Faield to switch context because {str(e)}, context_params:{params}"
-            ) from e
+        self.do_switch_context(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name)
+        if catalog_name:
+            self.catalog_name = catalog_name
+        if database_name:
+            self.database_name = database_name
+        if schema_name:
+            self.schema_name = schema_name
 
     def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         return None

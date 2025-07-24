@@ -491,12 +491,14 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 message=f"Get schema error, uri={self.connection_string}, error_mesage={str(e)}",
             ) from e
 
-    def get_views(self, **kwargs) -> List[str]:
+    def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of views in the database."""
         inspector = self._inspector()
-        schema_name = self.sqlalchemy_schema(**kwargs)
+        sqlalchemy_schema = self.sqlalchemy_schema(
+            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
+        )
         try:
-            return inspector.get_view_names(schema=schema_name)
+            return inspector.get_view_names(schema=sqlalchemy_schema)
         except Exception as e:
             raise DatusException(
                 ErrorCode.TOOL_DB_FAILED, message=f"Get views error, uri={self.connection_string}"
@@ -590,7 +592,9 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 ErrorCode.TOOL_DB_FAILED, message=f"Database connection error, uri={self.connection_string}"
             ) from e
 
-    def get_columns(self, table_name: str, **kwargs) -> List[Dict[str, Any]]:
+    def get_columns(
+        self, table_name: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[Dict[str, Any]]:
         """
         Get column information for a table.
 
@@ -601,9 +605,11 @@ class SQLAlchemyConnector(BaseSqlConnector):
             List[Dict]: List of column information dictionaries
         """
         inspector = self._inspector()
-        schema_name = self.sqlalchemy_schema(**kwargs)
+        sqlalchemy_schema = self.sqlalchemy_schema(
+            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
+        )
         try:
-            columns = inspector.get_columns(table_name=table_name, schema=schema_name)
+            columns = inspector.get_columns(table_name=table_name, schema=sqlalchemy_schema)
 
             # Standardize the output format
             return [

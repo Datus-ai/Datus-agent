@@ -25,7 +25,9 @@ class SQLiteConnector(SQLAlchemyConnector):
         return f'"{table_name}"'
 
     @override
-    def sqlalchemy_schema(self, **kwargs) -> Optional[str]:
+    def sqlalchemy_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> Optional[str]:
         # sqlite has no schema
         return None
 

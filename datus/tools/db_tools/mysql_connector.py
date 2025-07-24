@@ -157,9 +157,11 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             return f"`{database_name}`.`{table_name}`" if database_name else f"`{table_name}`"
 
     @override
-    def _reset_filter_tables(self, tables: Optional[List[str]] = None, **kwargs) -> List[str]:
-        catalog_name = self.reset_catalog_to_default(kwargs.get("catalog_name", ""))
-        database_name = kwargs.get("database_name", "")
+    def _reset_filter_tables(
+        self, tables: Optional[List[str]] = None, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[str]:
+        catalog_name = self.reset_catalog_to_default(catalog_name or self.catalog_name)
+        database_name = database_name or self.database_name
         return super()._reset_filter_tables(tables, catalog_name=catalog_name, database_name=database_name)
 
     def db_meta_table_type(self) -> List[str]:
@@ -182,7 +184,9 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         self,
         tables: Optional[List[str]] = None,
         inner_table_type: TABLE_TYPE = "table",
-        **kwargs,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
     ) -> List[Dict[str, str]]:
         """
         Get the database tables/views/materialized views as a list of dictionaries with DDL statements.
@@ -195,12 +199,13 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             - table_type: The schema type (table, view or materialized_view)
         """
         result = []
-        filter_tables = self._reset_filter_tables(tables, **kwargs)
+        filter_tables = self._reset_filter_tables(tables, catalog_name=catalog_name, database_name=database_name)
         meta_table_name, create_type = inner_table_type_to_db(inner_table_type)
         for table in self._get_metadatas(
             meta_table_name=meta_table_name,
             inner_table_type=None if inner_table_type != "table" else self.db_meta_table_type(),
-            **kwargs,
+            catalog_name=catalog_name,
+            database_name=database_name,
         ):
             full_name = self.full_name(
                 catalog_name=table["catalog_name"],

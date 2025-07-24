@@ -110,9 +110,7 @@ class SnowflakeConnector(BaseSqlConnector):
                 result_format="csv",
             )
 
-    def do_switch_context(self, **kwargs):
-        database_name = kwargs.get("database_name")
-        schema_name = kwargs.get("schema_name")
+    def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         with self.connection.cursor() as cursor:
             if not schema_name:
                 if not database_name:

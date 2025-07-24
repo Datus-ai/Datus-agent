@@ -768,7 +768,7 @@ class DatusCLI:
                 elif db_type == DBType.DUCKDB:
                     show_uri = True
                     result.append({"name": connections.database_name, "uri": connections.connection_string})
-                elif db_type == DBType.MYSQL or db_type == DBType.STARROCKS:
+                else:
                     for db_name in connections.get_databases(catalog_name=self.current_catalog):
                         result.append({"name": db_name})
 
@@ -792,7 +792,7 @@ class DatusCLI:
 
     def _cmd_schemas(self, args: str):
         dialect = self.db_connector.dialect
-        if dialect == DBType.SQLITE or dialect == DBType.MYSQL or dialect == DBType.STARROCKS:
+        if not DBType.support_schema(dialect):
             self.console.print(f"[bold red]The {dialect} database does not support schema[/]")
             return
         result = self.db_connector.get_schemas(catalog_name=self.current_catalog, database_name=self.current_db_name)
@@ -821,6 +821,10 @@ class DatusCLI:
             self.console.print("[yellow]Empty set.[/]")
 
     def _cmd_switch_schema(self, args: str):
+        dialect = self.db_connector.dialect
+        if not DBType.support_schema(dialect):
+            self.console.print(f"[bold red]The {dialect} database does not support schema[/]")
+            return
         schema_name = args.strip()
         if not schema_name:
             self.console.print("[yellow]You need to give the name of the schema you want to switch to[/]")
@@ -905,6 +909,7 @@ class DatusCLI:
         [bold green]Available Commands:[/]
 
         [bold].namespace[/]           Switch the current namespace
+        [bold].catalog[/]             Switch the current catalog
         [bold].databases[/]           List all databases
         [bold].database[/]            Switch the current database
         [bold].tables[/]              List all tables in the current database
