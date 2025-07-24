@@ -9,12 +9,17 @@ from datus.utils.device_utils import get_device
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
+import platform
+
 if TYPE_CHECKING:
     from datus.configuration.agent_config import ModelConfig
 
 # Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
 try:
-    multiprocessing.set_start_method("fork", force=True)
+    if platform.system() == "Windows":
+        multiprocessing.set_start_method("spawn", force=True)
+    else:
+        multiprocessing.set_start_method("fork", force=True)
 except RuntimeError:
     # set_start_method can only be called once
     pass
