@@ -36,7 +36,7 @@ class OpenAIModel(LLMBaseModel):
 
         # Store model config for later use
         self.model_config = model_config
-        
+
         # Use provided API key or get from environment
         self.api_key = model_config.api_key or os.environ.get("OPENAI_API_KEY")
         self.model_name = model_config.model
