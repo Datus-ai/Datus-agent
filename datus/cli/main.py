@@ -56,7 +56,6 @@ class ArgumentParser:
             "--config",
             dest="config",
             type=str,
-            default="conf/agent.yml",
             help="Path to configuration file (default: conf/agent.yml > ~/.datus/conf/agent.yml)",
         )
         self.parser.add_argument("--debug", action="store_true", help="Enable debug logging")
