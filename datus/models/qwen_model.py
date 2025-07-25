@@ -2,7 +2,7 @@ import json
 import os
 import time
 from datetime import date, datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import openai
 from agents import Agent, OpenAIChatCompletionsModel, Runner
@@ -20,7 +20,6 @@ from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-MAX_INPUT_QEN = 98000  # 98304 - buffer of ~300 tokens
 
 
 class QwenModel(OpenAICompatibleModel):
@@ -103,6 +102,4 @@ class QwenModel(OpenAICompatibleModel):
         )
         return len(self.tokenizer.encode(input_text))
 
-    def max_tokens(self) -> int:
-        return MAX_INPUT_QEN
 

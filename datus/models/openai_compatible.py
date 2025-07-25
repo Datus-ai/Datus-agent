@@ -54,6 +54,9 @@ class OpenAICompatibleModel(LLMBaseModel):
         # Context for tracing
         self.workflow = None
         self.current_node = None
+        
+        # Cache for model info
+        self._model_info = None
     
     def _get_api_key(self) -> str:
         """Get API key from config or environment. Override in subclasses."""
@@ -396,6 +399,49 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.workflow = workflow
         self.current_node = current_node
     
+    def get_model_info(self) -> Optional[Dict]:
+        """
+        Get model information from the /v1/models API endpoint.
+        
+        Returns:
+            Dictionary with model info, or None if unavailable
+        """
+        if self._model_info is not None:
+            return self._model_info
+        
+        try:
+            # Use the OpenAI client to get model info
+            model_info = self.client.models.retrieve(self.model_name)
+            
+            # Convert to dict for easier access
+            self._model_info = {
+                "id": getattr(model_info, 'id', None),
+                "context_length": getattr(model_info, 'context_length', None),
+                "max_tokens": getattr(model_info, 'max_tokens', None),
+                "owned_by": getattr(model_info, 'owned_by', None),
+                "created": getattr(model_info, 'created', None),
+            }
+            
+            logger.debug(f"Retrieved model info for {self.model_name}: {self._model_info}")
+            return self._model_info
+            
+        except Exception as e:
+            logger.warning(f"Failed to retrieve model info for {self.model_name}: {str(e)}")
+            self._model_info = {}  # Cache empty result to avoid repeated failures
+            return None
+    
+    def max_tokens(self) -> Optional[int]:
+        """
+        Get the max tokens from model info.
+        
+        Returns:
+            Max tokens from model info, or None if unavailable
+        """
+        model_info = self.get_model_info()
+        if model_info:
+            return model_info.get('max_tokens')
+        return None
+
     def token_count(self, prompt: str) -> int:
         """
         Count tokens in prompt. Default implementation uses character approximation.
