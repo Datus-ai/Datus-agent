@@ -11,11 +11,13 @@ import anthropic
 import httpx
 from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, Usage
 from agents.mcp import MCPServerStdio
+from agents.sessions import SQLiteSession
 from langsmith.wrappers import wrap_anthropic, wrap_openai
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from pydantic import AnyUrl
 
 from datus.models.base import LLMBaseModel
+from datus.models.session_manager import SessionManager
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -138,6 +140,9 @@ class ClaudeModel(LLMBaseModel):
                     base_url=self.api_base if self.api_base else None,
                 )
             )
+        
+        # Initialize session manager
+        self.session_manager = SessionManager()
 
     def generate(self, prompt: Any, **kwargs) -> str:
         """Generate a response from the Claude model.
@@ -213,9 +218,56 @@ class ClaudeModel(LLMBaseModel):
                 pass
             return {}
 
-    def generate_with_tools(self, prompt: str, tools: List[Any], **kwargs) -> Dict:
-        # flow control and context cache here
-        pass
+    async def generate_with_tools(
+        self,
+        prompt: str,
+        mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
+        tools: Optional[List[Any]] = None,
+        instruction: str = "",
+        output_type: type = str,
+        max_turns: int = 10,
+        session: Optional[SQLiteSession] = None,
+        **kwargs
+    ) -> Dict:
+        """Generate response with unified tool support."""
+        # For now, primarily support MCP servers as that's what the existing code uses
+        if not mcp_servers:
+            # Fallback to basic generation if no tools
+            response = self.generate(f"{instruction}\n\n{prompt}", **kwargs)
+            return {"content": response, "sql_contexts": []}
+        
+        # Use existing generate_with_mcp implementation
+        return await self.generate_with_mcp(
+            prompt, mcp_servers, instruction, output_type, max_turns, **kwargs
+        )
+    
+    async def generate_with_tools_stream(
+        self,
+        prompt: str, 
+        mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
+        tools: Optional[List[Any]] = None,
+        instruction: str = "",
+        output_type: type = str,
+        max_turns: int = 10,
+        session: Optional[SQLiteSession] = None,
+        action_history_manager: Optional[ActionHistoryManager] = None,
+        **kwargs
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Generate response with streaming and tool support."""
+        if action_history_manager is None:
+            action_history_manager = ActionHistoryManager()
+        
+        # For now, primarily support MCP servers
+        if not mcp_servers:
+            # Basic streaming not implemented for Claude without tools
+            return
+        
+        # Use existing generate_with_mcp_stream implementation
+        async for action in self.generate_with_mcp_stream(
+            prompt, mcp_servers, instruction, output_type, max_turns,
+            action_history_manager, **kwargs
+        ):
+            yield action
 
     async def generate_with_mcp(
         self,

@@ -2,11 +2,13 @@ import multiprocessing
 import os
 import platform
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Dict
+from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional
 
 from agents.mcp import MCPServerStdio
+from agents.sessions import SQLiteSession
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.constants import LLMProvider
 
 # Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
@@ -39,6 +41,8 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     def __init__(self, model_config: ModelConfig):
         """Initialize model with configuration and parameters"""
         self.model_config = model_config  # Model configuration
+        # Initialize session manager for all models
+        self._session_manager = None
 
     @classmethod
     def create_model(cls, agent_config: AgentConfig, model_name: str = None, **kwargs) -> "LLMBaseModel":
@@ -105,6 +109,97 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     def token_count(self, prompt: str) -> int:
         pass
 
+    # Session management - concrete implementation shared by all models
+    @property
+    def session_manager(self):
+        """Lazy initialization of session manager."""
+        if self._session_manager is None:
+            from datus.models.session_manager import SessionManager
+            self._session_manager = SessionManager()
+        return self._session_manager
+    
+    def create_session(self, session_id: str) -> SQLiteSession:
+        """Create or get a session for multi-turn conversations."""
+        return self.session_manager.create_session(session_id)
+    
+    def clear_session(self, session_id: str) -> None:
+        """Clear conversation history for a session."""
+        self.session_manager.clear_session(session_id)
+    
+    def delete_session(self, session_id: str) -> None:
+        """Delete a session completely."""
+        self.session_manager.delete_session(session_id)
+    
+    def list_sessions(self) -> List[str]:
+        """List all available sessions."""
+        return self.session_manager.list_sessions()
+
+    # New unified tool interface - abstract methods that models must implement
+    @abstractmethod
+    async def generate_with_tools(
+        self,
+        prompt: str,
+        mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
+        tools: Optional[List[Any]] = None,
+        instruction: str = "",
+        output_type: type = str,
+        max_turns: int = 10,
+        session: Optional[SQLiteSession] = None,
+        **kwargs
+    ) -> Dict:
+        """Generate response with unified tool support.
+        
+        This replaces generate_with_mcp and supports both MCP servers and regular tools.
+        
+        Args:
+            prompt: Input prompt
+            mcp_servers: Optional MCP servers to use
+            tools: Optional regular tools to use  
+            instruction: System instruction
+            output_type: Expected output type
+            max_turns: Maximum conversation turns
+            session: Optional session for multi-turn context
+            **kwargs: Additional parameters
+            
+        Returns:
+            Result with content and sql_contexts
+        """
+        pass
+    
+    @abstractmethod 
+    async def generate_with_tools_stream(
+        self,
+        prompt: str,
+        mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
+        tools: Optional[List[Any]] = None,
+        instruction: str = "",
+        output_type: type = str,
+        max_turns: int = 10,
+        session: Optional[SQLiteSession] = None,
+        action_history_manager: Optional[ActionHistoryManager] = None,
+        **kwargs
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Generate response with streaming and tool support.
+        
+        This replaces generate_with_mcp_stream and supports both MCP servers and regular tools.
+        
+        Args:
+            prompt: Input prompt
+            mcp_servers: Optional MCP servers
+            tools: Optional regular tools
+            instruction: System instruction
+            output_type: Expected output type
+            max_turns: Maximum turns
+            session: Optional session for multi-turn context
+            action_history_manager: Action history manager for streaming
+            **kwargs: Additional parameters
+            
+        Yields:
+            ActionHistory objects for streaming updates
+        """
+        pass
+
+    # Backward compatibility - concrete implementation using new methods
     async def generate_with_mcp(
         self,
         prompt: str,
@@ -131,4 +226,17 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         Returns:
             The result from the MCP agent execution with content and sql_contexts
         """
-        return {}
+        import warnings
+        warnings.warn(
+            "generate_with_mcp is deprecated. Use generate_with_tools instead.", 
+            DeprecationWarning, 
+            stacklevel=2
+        )
+        return await self.generate_with_tools(
+            prompt=prompt,
+            mcp_servers=mcp_servers,
+            instruction=instruction,
+            output_type=output_type,
+            max_turns=max_turns,
+            **kwargs
+        )
