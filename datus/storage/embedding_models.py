@@ -3,13 +3,12 @@ import os
 from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, Optional
+import platform
 
 from datus.utils.constants import EmbeddingProvider
 from datus.utils.device_utils import get_device
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-
-import platform
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import ModelConfig
