@@ -64,12 +64,13 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         return model_class(model_config=target_config)
 
     @abstractmethod
-    def generate(self, prompt: Any, **kwargs) -> str:
+    def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """
         Generate a response from the language model.
 
         Args:
             prompt: The input prompt to send to the model
+            enable_thinking: Enable thinking mode for hybrid models (default: False)
             **kwargs: Additional generation parameters
 
         Returns:

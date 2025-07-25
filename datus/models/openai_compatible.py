@@ -84,12 +84,13 @@ class OpenAICompatibleModel(LLMBaseModel):
         
         return self._async_client
     
-    def generate(self, prompt: Any, **kwargs) -> str:
+    def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """
         Generate a response from the model.
         
         Args:
             prompt: The input prompt (string or list of messages)
+            enable_thinking: Enable thinking mode for hybrid models (default: False)
             **kwargs: Additional generation parameters
             
         Returns:
