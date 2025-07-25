@@ -100,6 +100,13 @@ agent:
       password: ${STARROCKS_PASSWORD}
       database: ${STARROCKS_DATABASE}
 
+  metrics:
+    duckdb:
+      domain: sale
+      layer1: layer1
+      layer2: layer2
+      ext_knowledge: ""
+
   storage:
     base_path: data # rag storage base path,final data path is 'data/datus_db_spider2',  'data/datus_db_bird_dev', 'data/datus_db_local1' ...
     embedding_device_type: cpu # If set to cpu, it will be specified as cpu, otherwise, it will be automatically selected based on the current machine

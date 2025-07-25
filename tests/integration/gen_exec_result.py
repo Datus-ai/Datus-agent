@@ -1,5 +1,4 @@
 import argparse
-import csv
 import glob
 import json
 import os
@@ -9,7 +8,6 @@ import sys
 
 import duckdb
 import pandas as pd
-import pymysql
 import yaml
 
 
@@ -96,27 +94,6 @@ def parse_dev_sql(dev_sql_path):
     return sql_data
 
 
-def parse_success_story_csv(csv_path):
-    """Parse success_story.csv file and return SQL statements"""
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"success_story.csv file not found: {csv_path}")
-
-    sql_data = []
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for line_no, row in enumerate(reader, 1):
-            if "sql" in row and row["sql"].strip():
-                sql_data.append(
-                    {
-                        "question_id": line_no,
-                        "sql": row["sql"].strip(),
-                        "question": row.get("question", "").strip() if "question" in row else "",
-                    }
-                )
-
-    return sql_data
-
-
 def find_sqlite_database(path_pattern, db_id):
     """Find SQLite database file based on path pattern and database ID"""
     sqlite_files = glob.glob(path_pattern, recursive=True)
@@ -186,55 +163,6 @@ def execute_duckdb_query(namespace_config, sql_query):
         return {"success": False, "columns": [], "results": [], "error": str(e)}
 
 
-def execute_starrocks_query(namespace_config, sql_query):
-    """Execute StarRocks query and return results"""
-    conn = None
-    cursor = None
-    try:
-        # Get connection parameters from namespace config and resolve environment variables
-        host = resolve_env(namespace_config.get("host", ""))
-        port = resolve_env(namespace_config.get("port", 9030))
-        username = resolve_env(namespace_config.get("username", ""))
-        password = resolve_env(namespace_config.get("password", ""))
-        database = resolve_env(namespace_config.get("database", ""))
-
-        if not all([host, username, password, database]):
-            raise Exception("Missing required StarRocks connection parameters")
-
-        # Connect to StarRocks using pymysql (StarRocks is MySQL compatible)
-        conn = pymysql.connect(
-            host=host,
-            port=int(port),
-            user=username,
-            password=password,
-            database=database,
-            charset="utf8mb4",
-            autocommit=True,
-        )
-
-        cursor = conn.cursor()
-
-        # Execute query
-        cursor.execute(sql_query)
-
-        # Get column names
-        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
-
-        # Fetch results
-        results = cursor.fetchall()
-
-        return {"success": True, "columns": column_names, "results": results, "error": None}
-
-    except Exception as e:
-        return {"success": False, "columns": [], "results": [], "error": str(e)}
-    finally:
-        # Ensure resources are cleaned up even if an exception occurs
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
 def save_results_to_csv(results, output_path):
     """Save results to CSV file using pandas DataFrame"""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -298,14 +226,6 @@ def main():
                 print(f"Using dev.sql with {len(sql_data)} questions")
             else:
                 raise FileNotFoundError("Neither dev.json nor dev.sql found")
-        elif args.type == "semantic_layer":
-            # Parse success_story.csv file
-            success_story_path = os.path.join(full_benchmark_path, "testing_set.csv")
-            if not os.path.exists(success_story_path):
-                raise FileNotFoundError(f"success_story.csv file not found: {success_story_path}")
-
-            sql_data = parse_success_story_csv(success_story_path)
-            print(f"Using success_story.csv with {len(sql_data)} questions")
         else:
             raise Exception(f"Unsupported type: {args.type}")
 
@@ -325,10 +245,7 @@ def main():
                 print(f"Error: Task ID {task_id} not found")
                 return
 
-            if args.type == "semantic_layer":
-                print(f"Processing task {task_id}")
-            else:
-                print(f"Processing task {task_id}: database={task_data['db_id']}")
+            print(f"Processing task {task_id}: database={task_data['db_id']}")
 
             if namespace_config.get("type") == "sqlite":
                 path_pattern = namespace_config.get("path_pattern", "")
@@ -339,9 +256,6 @@ def main():
             elif namespace_config.get("type") == "duckdb":
                 print(f"Executing SQL: {task_data['sql'][:100]}...")
                 results = execute_duckdb_query(namespace_config, task_data["sql"])
-            elif namespace_config.get("type") == "starrocks":
-                print(f"Executing SQL: {task_data['sql'][:100]}...")
-                results = execute_starrocks_query(namespace_config, task_data["sql"])
             else:
                 raise Exception(f"Unsupported database type: {namespace_config.get('type')}")
 
@@ -359,10 +273,7 @@ def main():
 
             for task_data in sql_data:
                 task_id = task_data["question_id"]
-                if args.type == "semantic_layer":
-                    print(f"Processing task {task_id}/{len(sql_data)}")
-                else:
-                    print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
+                print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
 
                 try:
                     if namespace_config.get("type") == "sqlite":
@@ -372,8 +283,6 @@ def main():
                         results = execute_sql_query(db_path, task_data["sql"])
                     elif namespace_config.get("type") == "duckdb":
                         results = execute_duckdb_query(namespace_config, task_data["sql"])
-                    elif namespace_config.get("type") == "starrocks":
-                        results = execute_starrocks_query(namespace_config, task_data["sql"])
                     else:
                         raise Exception(f"Unsupported database type: {namespace_config.get('type')}")
 

@@ -22,7 +22,7 @@ workflow:
     - reflect
     - output
 
-  metric2SQL:
+  metric_to_sql:
     - schema_linking
     - search_metrics
     - generate_sql

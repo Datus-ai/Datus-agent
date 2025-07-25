@@ -37,6 +37,22 @@ class DbConfig:
 
 
 @dataclass
+class MetricMeta:
+    domain: str = field(default="", init=True)
+    layer1: str = field(default="", init=True)
+    layer2: str = field(default="", init=True)
+    ext_knowledge: str = field(default="", init=True)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def filter_kwargs(cls, kwargs):
+        valid_fields = {f.name for f in fields(cls)}
+        return cls(**{k: resolve_env(v) for k, v in kwargs.items() if k in valid_fields})
+
+
+@dataclass
 class ModelConfig:
     type: str
     base_url: str
@@ -113,7 +129,7 @@ class AgentConfig:
         self._output_dir = kwargs.get("output_dir", "output")
         self.db_type = ""
 
-        self.benchmark_pathes = {k: v["benchmark_path"] for k, v in kwargs.get("benchmark", {}).items()}
+        self.benchmark_paths = {k: v["benchmark_path"] for k, v in kwargs.get("benchmark", {}).items()}
         self._reflection_nodes = DEFAULT_REFLECTION_NODES
         self._reflection_nodes.update(kwargs.get("reflection_nodes", {}))
 
@@ -153,6 +169,9 @@ class AgentConfig:
                 name = db_config.get("name", namespace)
                 self.namespaces[namespace][name] = DbConfig.filter_kwargs(DbConfig, db_config)
 
+        self.metric_meta = {k: MetricMeta.filter_kwargs(MetricMeta, v) for k, v in kwargs.get("metrics", {}).items()}
+        logger.info(f"metric_meta: {self.metric_meta}")
+
     @property
     def current_namespace(self) -> str:
         return self._current_namespace
@@ -183,6 +202,19 @@ class AgentConfig:
                     message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
                 )
             return configs[db_name]
+
+    def current_metric_meta(self, metric_meta_name: str = "") -> MetricMeta:
+        if not metric_meta_name:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message_args={"field_name": "metric_name"},
+            )
+        if metric_meta_name not in self.metric_meta:
+            raise DatusException(
+                code=ErrorCode.COMMON_UNSUPPORTED,
+                message_args={"field_name": "metric_meta_name", "your_value": metric_meta_name},
+            )
+        return self.metric_meta[metric_meta_name]
 
     @property
     def output_dir(self) -> str:
@@ -224,7 +256,7 @@ class AgentConfig:
             self.current_namespace = kwargs.get("namespace", "")
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]
-            if benchmark_platform not in self.benchmark_pathes:
+            if benchmark_platform not in self.benchmark_paths:
                 raise DatusException(
                     code=ErrorCode.COMMON_UNSUPPORTED,
                     message_args={"field_name": "benchmark", "your_value": benchmark_platform},
@@ -235,7 +267,7 @@ class AgentConfig:
                 raise DatusException(code=ErrorCode.COMMON_UNSUPPORTED, message="bird_dev only support sqlite")
             benchmark_path = kwargs.get("benchmark_path", "")
             if benchmark_path:
-                self.benchmark_pathes[benchmark_platform] = benchmark_path
+                self.benchmark_paths[benchmark_platform] = benchmark_path
 
         if kwargs.get("output_dir", ""):
             self._output_dir = kwargs["output_dir"]
@@ -245,6 +277,16 @@ class AgentConfig:
             # Update all model configs to enable tracing if command line flag is set
             for model_config in self.models.values():
                 model_config.save_llm_trace = True
+        if kwargs.get("metric_meta", ""):
+            current_metric_meta = self.current_metric_meta(metric_meta_name=kwargs["metric_meta"])
+            if kwargs.get("domain", ""):
+                current_metric_meta.domain = kwargs["domain"]
+            if kwargs.get("layer1", ""):
+                current_metric_meta.layer1 = kwargs["layer1"]
+            if kwargs.get("layer2", ""):
+                current_metric_meta.layer2 = kwargs["layer2"]
+            if kwargs.get("ext_knowledge", ""):
+                current_metric_meta.ext_knowledge = kwargs["ext_knowledge"]
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -255,12 +297,12 @@ class AgentConfig:
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
                 message="Benchmark name is required, please run with --benchmark <benchmark>",
             )
-        if name not in self.benchmark_pathes:
+        if name not in self.benchmark_paths:
             raise DatusException(
                 code=ErrorCode.COMMON_UNSUPPORTED,
                 message_args={"field_name": "benchmark", "your_value": name},
             )
-        return self.benchmark_pathes[name]
+        return self.benchmark_paths[name]
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
         if not self._current_namespace:
