@@ -34,6 +34,9 @@ class OpenAIModel(LLMBaseModel):
         """
         super().__init__(model_config, **kwargs)
 
+        # Store model config for later use
+        self.model_config = model_config
+
         # Use provided API key or get from environment
         self.api_key = model_config.api_key or os.environ.get("OPENAI_API_KEY")
         self.model_name = model_config.model
@@ -41,7 +44,10 @@ class OpenAIModel(LLMBaseModel):
             raise ValueError("OpenAI API key must be provided or set as OPENAI_API_KEY environment variable")
 
         # Initialize OpenAI client
-        self.client = OpenAI(api_key=self.api_key)
+        client_kwargs = {"api_key": self.api_key}
+        if model_config.base_url:
+            client_kwargs["base_url"] = model_config.base_url
+        self.client = OpenAI(**client_kwargs)
 
         # Store reference to workflow and current node for trace saving
         self.workflow = None
@@ -172,11 +178,10 @@ class OpenAIModel(LLMBaseModel):
 
         # Create async OpenAI client
         logger.debug(f"Creating async OpenAI client with model: {self.model_name}")
-        async_client = wrap_openai(
-            AsyncOpenAI(
-                api_key=self.api_key,
-            )
-        )
+        async_client_kwargs = {"api_key": self.api_key}
+        if self.model_config.base_url:
+            async_client_kwargs["base_url"] = self.model_config.base_url
+        async_client = wrap_openai(AsyncOpenAI(**async_client_kwargs))
 
         model_params = {"model": self.model_name}
         async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
