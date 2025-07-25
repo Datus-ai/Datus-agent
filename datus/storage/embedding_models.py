@@ -1,9 +1,9 @@
 import multiprocessing
 import os
+import platform
 from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, Optional
-import platform
 
 from datus.utils.constants import EmbeddingProvider
 from datus.utils.device_utils import get_device
