@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 import warnings
 from datetime import date, datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -10,7 +11,7 @@ from agents import Agent, OpenAIChatCompletionsModel, Runner
 from agents.mcp import MCPServerStdio
 from agents.sessions import SQLiteSession
 from langsmith.wrappers import wrap_openai
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI, OpenAI, APIConnectionError, APIError, APITimeoutError, RateLimitError
 from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
@@ -19,9 +20,49 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
+    """Classify OpenAI-compatible API errors and return error code and whether it's retryable."""
+    error_msg = str(error).lower()
+
+    if isinstance(error, APIError):
+        # Handle specific HTTP status codes and error types
+        if any(indicator in error_msg for indicator in ["401", "unauthorized", "authentication"]):
+            return ErrorCode.MODEL_AUTHENTICATION_ERROR, False
+        elif any(indicator in error_msg for indicator in ["403", "forbidden", "permission"]):
+            return ErrorCode.MODEL_PERMISSION_ERROR, False
+        elif any(indicator in error_msg for indicator in ["404", "not found"]):
+            return ErrorCode.MODEL_NOT_FOUND, False
+        elif any(indicator in error_msg for indicator in ["413", "too large", "request size"]):
+            return ErrorCode.MODEL_REQUEST_TOO_LARGE, False
+        elif any(indicator in error_msg for indicator in ["429", "rate limit", "quota", "billing"]):
+            if any(indicator in error_msg for indicator in ["quota", "billing"]):
+                return ErrorCode.MODEL_QUOTA_EXCEEDED, False
+            else:
+                return ErrorCode.MODEL_RATE_LIMIT, True
+        elif any(indicator in error_msg for indicator in ["500", "internal", "server error"]):
+            return ErrorCode.MODEL_API_ERROR, True
+        elif any(indicator in error_msg for indicator in ["502", "503", "overloaded"]):
+            return ErrorCode.MODEL_OVERLOADED, True
+        elif any(indicator in error_msg for indicator in ["400", "bad request", "invalid"]):
+            return ErrorCode.MODEL_INVALID_RESPONSE, False
+
+    if isinstance(error, RateLimitError):
+        return ErrorCode.MODEL_RATE_LIMIT, True
+
+    if isinstance(error, APITimeoutError):
+        return ErrorCode.MODEL_TIMEOUT_ERROR, True
+
+    if isinstance(error, APIConnectionError):
+        return ErrorCode.MODEL_CONNECTION_ERROR, True
+
+    # Default to general request failure
+    return ErrorCode.MODEL_REQUEST_FAILED, False
 
 
 class OpenAICompatibleModel(LLMBaseModel):
@@ -89,7 +130,7 @@ class OpenAICompatibleModel(LLMBaseModel):
     
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """
-        Generate a response from the model.
+        Generate a response from the model with error handling and retry logic.
         
         Args:
             prompt: The input prompt (string or list of messages)
@@ -99,26 +140,51 @@ class OpenAICompatibleModel(LLMBaseModel):
         Returns:
             Generated text response
         """
-        params = {
-            "model": self.model_name,
-            "temperature": kwargs.get("temperature", 0.7),
-            "max_tokens": kwargs.get("max_tokens", 1000),
-            "top_p": kwargs.get("top_p", 1.0),
-            **{k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens", "top_p"]}
-        }
+        max_retries = 3
+        base_delay = 1.0
         
-        # Convert prompt to messages format
-        if isinstance(prompt, list):
-            messages = prompt
-        else:
-            messages = [{"role": "user", "content": str(prompt)}]
-        
-        response = self.client.chat.completions.create(messages=messages, **params)
-        return response.choices[0].message.content
+        for attempt in range(max_retries + 1):
+            try:
+                params = {
+                    "model": self.model_name,
+                    "temperature": kwargs.get("temperature", 0.7),
+                    "max_tokens": kwargs.get("max_tokens", 1000),
+                    "top_p": kwargs.get("top_p", 1.0),
+                    **{k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens", "top_p"]}
+                }
+                
+                # Convert prompt to messages format
+                if isinstance(prompt, list):
+                    messages = prompt
+                else:
+                    messages = [{"role": "user", "content": str(prompt)}]
+                
+                response = self.client.chat.completions.create(messages=messages, **params)
+                return response.choices[0].message.content
+                
+            except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
+                error_code, is_retryable = classify_openai_compatible_error(e)
+                
+                if is_retryable and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(
+                        f"API error (attempt {attempt + 1}/{max_retries + 1}): {error_code.code} - "
+                        f"{error_code.desc}. Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Max retries reached or non-retryable error
+                    logger.error(f"API error after {attempt + 1} attempts: {error_code.code} - {error_code.desc}")
+                    raise DatusException(error_code)
+                    
+            except Exception as e:
+                logger.error(f"Unexpected error in generate: {str(e)}")
+                raise
     
     def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
         """
-        Generate a JSON response.
+        Generate a JSON response with error handling.
         
         Args:
             prompt: Input prompt
@@ -127,27 +193,51 @@ class OpenAICompatibleModel(LLMBaseModel):
         Returns:
             Parsed JSON dictionary
         """
-        # Set JSON mode
-        kwargs["response_format"] = {"type": "json_object"}
+        max_retries = 3
+        base_delay = 1.0
         
-        response_text = self.generate(prompt, **kwargs)
-        
-        try:
-            return json.loads(response_text)
-        except json.JSONDecodeError:
-            # Try to extract JSON from response
-            import re
-            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-            if json_match:
+        for attempt in range(max_retries + 1):
+            try:
+                # Set JSON mode
+                kwargs["response_format"] = {"type": "json_object"}
+                
+                response_text = self.generate(prompt, **kwargs)
+                
                 try:
-                    return json.loads(json_match.group(0))
+                    return json.loads(response_text)
                 except json.JSONDecodeError:
-                    pass
-            
-            return {
-                "error": "Failed to parse JSON response",
-                "raw_response": response_text
-            }
+                    # Try to extract JSON from response
+                    import re
+                    json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+                    if json_match:
+                        try:
+                            return json.loads(json_match.group(0))
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    return {
+                        "error": "Failed to parse JSON response",
+                        "raw_response": response_text
+                    }
+                    
+            except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
+                error_code, is_retryable = classify_openai_compatible_error(e)
+                
+                if is_retryable and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"API error in JSON generation (attempt {attempt + 1}/{max_retries + 1}): "
+                        f"{error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"API error in JSON generation after {attempt + 1} attempts: {error_code.code} - {error_code.desc}")
+                    raise DatusException(error_code)
+                    
+            except Exception as e:
+                logger.error(f"Unexpected error in JSON generation: {str(e)}")
+                raise
     
     # Session management methods
     def create_session(self, session_id: str) -> SQLiteSession:
@@ -257,7 +347,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         session: Optional[SQLiteSession],
         **kwargs
     ) -> Dict:
-        """Internal method for MCP server execution."""
+        """Internal method for MCP server execution with error handling."""
         # Custom JSON encoder for special types
         class CustomJSONEncoder(json.JSONEncoder):
             def default(self, obj):
@@ -269,29 +359,49 @@ class OpenAICompatibleModel(LLMBaseModel):
         
         json._default_encoder = CustomJSONEncoder()
         
-        async_client = self._create_async_client()
-        model_params = {"model": self.model_name}
-        async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+        max_retries = 3
+        base_delay = 1.0
         
-        try:
-            async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                agent = Agent(
-                    name=kwargs.pop("agent_name", "MCP_Agent"),
-                    instructions=instruction,
-                    mcp_servers=list(connected_servers.values()),
-                    output_type=output_type,
-                    model=async_model,
-                )
+        for attempt in range(max_retries + 1):
+            try:
+                async_client = self._create_async_client()
+                model_params = {"model": self.model_name}
+                async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
                 
-                result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+                async with multiple_mcp_servers(mcp_servers) as connected_servers:
+                    agent = Agent(
+                        name=kwargs.pop("agent_name", "MCP_Agent"),
+                        instructions=instruction,
+                        mcp_servers=list(connected_servers.values()),
+                        output_type=output_type,
+                        model=async_model,
+                    )
+                    
+                    result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+                    
+                    return {
+                        "content": result.final_output,
+                        "sql_contexts": extract_sql_contexts(result)
+                    }
+                    
+            except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
+                error_code, is_retryable = classify_openai_compatible_error(e)
                 
-                return {
-                    "content": result.final_output,
-                    "sql_contexts": extract_sql_contexts(result)
-                }
-        except Exception as e:
-            logger.error(f"Error in MCP execution: {str(e)}")
-            raise
+                if is_retryable and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(
+                        f"API error in MCP execution (attempt {attempt + 1}/{max_retries + 1}): "
+                        f"{error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"API error in MCP execution after {attempt + 1} attempts: {error_code.code} - {error_code.desc}")
+                    raise DatusException(error_code)
+                    
+            except Exception as e:
+                logger.error(f"Error in MCP execution: {str(e)}")
+                raise
     
     async def _generate_with_mcp_servers_stream(
         self,
@@ -304,7 +414,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         action_history_manager: ActionHistoryManager,
         **kwargs
     ) -> AsyncGenerator[ActionHistory, None]:
-        """Internal method for MCP server streaming execution."""
+        """Internal method for MCP server streaming execution with error handling."""
         # Custom JSON encoder
         class CustomJSONEncoder(json.JSONEncoder):
             def default(self, obj):
@@ -316,30 +426,53 @@ class OpenAICompatibleModel(LLMBaseModel):
         
         json._default_encoder = CustomJSONEncoder()
         
-        async_client = self._create_async_client()
-        model_params = {"model": self.model_name}
-        async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+        max_retries = 3
+        base_delay = 1.0
         
-        try:
-            async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                agent = Agent(
-                    name=kwargs.pop("agent_name", "MCP_Agent"),
-                    instructions=instruction,
-                    mcp_servers=list(connected_servers.values()),
-                    output_type=output_type,
-                    model=async_model,
-                )
+        for attempt in range(max_retries + 1):
+            try:
+                async_client = self._create_async_client()
+                model_params = {"model": self.model_name}
+                async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
                 
-                result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+                async with multiple_mcp_servers(mcp_servers) as connected_servers:
+                    agent = Agent(
+                        name=kwargs.pop("agent_name", "MCP_Agent"),
+                        instructions=instruction,
+                        mcp_servers=list(connected_servers.values()),
+                        output_type=output_type,
+                        model=async_model,
+                    )
+                    
+                    result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+                    
+                    while not result.is_complete:
+                        async for event in result.stream_events():
+                            action = self._process_stream_event(event, action_history_manager)
+                            if action:
+                                yield action
+                    
+                    # If we reach here, streaming completed successfully
+                    break
+                    
+            except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
+                error_code, is_retryable = classify_openai_compatible_error(e)
                 
-                while not result.is_complete:
-                    async for event in result.stream_events():
-                        action = self._process_stream_event(event, action_history_manager)
-                        if action:
-                            yield action
-        except Exception as e:
-            logger.error(f"Error in MCP streaming: {str(e)}")
-            raise
+                if is_retryable and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(
+                        f"API error in MCP streaming (attempt {attempt + 1}/{max_retries + 1}): "
+                        f"{error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"API error in MCP streaming after {attempt + 1} attempts: {error_code.code} - {error_code.desc}")
+                    raise DatusException(error_code)
+                    
+            except Exception as e:
+                logger.error(f"Error in MCP streaming: {str(e)}")
+                raise
     
     def _process_stream_event(self, event, action_history_manager: ActionHistoryManager) -> Optional[ActionHistory]:
         """Process streaming events. Override in subclasses for custom handling."""

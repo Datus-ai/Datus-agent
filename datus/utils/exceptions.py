@@ -45,8 +45,10 @@ class ErrorCode(Enum):
     MODEL_OVERLOADED = ("300017", "API temporarily overloaded - please try again later (HTTP 529)")
     MODEL_CONNECTION_ERROR = ("300018", "Connection error - check your network connection")
     MODEL_EMBEDDING_ERROR = ("300019", "Embedding Model error")
-
-    # Tool errors - General
+    MODEL_QUOTA_EXCEEDED = ("300020", "Usage quota exceeded - please check your billing plan")
+    MODEL_TIMEOUT_ERROR = ("300021", "Request timeout - the API took too long to respond")
+    # ...
+    # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
 
