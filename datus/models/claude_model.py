@@ -28,6 +28,29 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+# Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue
+try:
+    from agents.models.chatcmpl_stream_handler import ResponseTextDeltaEvent
+    from pydantic import Field
+    from typing import Optional, Any
+    
+    # Get the original fields and make logprobs optional
+    original_fields = ResponseTextDeltaEvent.model_fields.copy()
+    if 'logprobs' in original_fields:
+        # Create a new field annotation that allows None
+        original_fields['logprobs'] = Field(default=None)
+        
+        # Rebuild the model with optional logprobs
+        ResponseTextDeltaEvent.__annotations__['logprobs'] = Optional[Any]
+        ResponseTextDeltaEvent.model_fields['logprobs'] = Field(default=None)
+        ResponseTextDeltaEvent.model_rebuild()
+        
+        logger.debug("Successfully patched ResponseTextDeltaEvent to make logprobs optional")
+except ImportError:
+    logger.warning("Could not import ResponseTextDeltaEvent - patch not applied")
+except Exception as e:
+    logger.warning(f"Could not patch ResponseTextDeltaEvent: {e}")
+
 
 def classify_api_error(error: Exception) -> tuple[ErrorCode, bool]:
     """Classify API errors and return error code and whether it's retryable."""
