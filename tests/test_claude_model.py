@@ -17,12 +17,7 @@ class TestClaudeModel:
         """Set up test environment before each test method."""
         load_dotenv()
         config = load_agent_config()
-        self.model = ClaudeModel(
-            model_config=config.active_model(),
-            temperature=0.5,
-            top_p=0.9,
-            max_tokens=1000,
-        )
+        self.model = ClaudeModel(model_config=config.active_model())
 
     def test_generate(self):
         """Test basic text generation functionality."""

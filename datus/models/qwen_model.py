@@ -132,8 +132,9 @@ class QwenModel(LLMBaseModel):
                         logger.debug("\n" + "=" * 20 + "complete answer" + "=" * 20 + "\n")
                         is_answering = True
                     # print answering process
-                    print(delta.content, end="")
-                    chunks.append(delta.content)
+                    if delta.content is not None:
+                        print(delta.content, end="")
+                        chunks.append(delta.content)
         if not chunks:
             raise ValueError("No answer content from LLM")
 
