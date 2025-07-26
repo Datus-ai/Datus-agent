@@ -18,8 +18,8 @@ class TestQwenModel:
     def setup_method(self):
         """Set up test environment before each test method."""
         load_dotenv()
-        config = load_agent_config()
-        self.model = QwenModel(model_config=config.active_model())
+        config = load_agent_config(config="tests/conf/agent.yml")
+        self.model = QwenModel(model_config=config["qwen"])
 
     def test_generate(self):
         """Test basic text generation functionality."""
