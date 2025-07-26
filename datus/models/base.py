@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional
 
 from agents.mcp import MCPServerStdio
-from agents.sessions import SQLiteSession
+from agents import SQLiteSession
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager

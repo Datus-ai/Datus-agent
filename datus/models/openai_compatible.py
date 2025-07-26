@@ -9,7 +9,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from agents import Agent, OpenAIChatCompletionsModel, Runner
 from agents.mcp import MCPServerStdio
-from agents.sessions import SQLiteSession
+from agents import SQLiteSession
 from langsmith.wrappers import wrap_openai
 from openai import AsyncOpenAI, OpenAI, APIConnectionError, APIError, APITimeoutError, RateLimitError
 from pydantic import AnyUrl
@@ -112,8 +112,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.client = self._create_sync_client()
         self._async_client = None
         
-        # Session management
-        self.session_manager = SessionManager()
+        # Session management is handled by the base class
         
         # Context for tracing
         self.workflow = None
@@ -262,22 +261,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 logger.error(f"Unexpected error in JSON generation: {str(e)}")
                 raise
     
-    # Session management methods
-    def create_session(self, session_id: str) -> SQLiteSession:
-        """Create or get a session for multi-turn conversations."""
-        return self.session_manager.create_session(session_id)
-    
-    def clear_session(self, session_id: str) -> None:
-        """Clear conversation history for a session."""
-        self.session_manager.clear_session(session_id)
-    
-    def delete_session(self, session_id: str) -> None:
-        """Delete a session completely."""
-        self.session_manager.delete_session(session_id)
-    
-    def list_sessions(self) -> List[str]:
-        """List all available sessions."""
-        return self.session_manager.list_sessions()
+    # Session management methods are inherited from LLMBaseModel
     
     # New unified tool methods (replacing generate_with_mcp)
     async def generate_with_tools(

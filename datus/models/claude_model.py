@@ -11,7 +11,7 @@ import anthropic
 import httpx
 from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, Usage
 from agents.mcp import MCPServerStdio
-from agents.sessions import SQLiteSession
+from agents import SQLiteSession
 from langsmith.wrappers import wrap_anthropic, wrap_openai
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from pydantic import AnyUrl
