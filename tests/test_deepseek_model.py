@@ -145,24 +145,15 @@ class TestDeepSeekModel:
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
         action_count = 0
-        try:
-            async for action in self.model.generate_with_mcp_stream(
-                prompt=question,
-                output_type=str,
-                mcp_servers={"sqlite": mcp_server},
-                instruction=instructions,
-            ):
-                action_count += 1
-                assert action is not None, "Stream action should not be None"
-                logger.debug(f"Stream action {action_count}: {type(action)}")
-        except Exception as e:
-            # Handle pydantic validation errors from openai-agents library  
-            error_msg = str(e).lower()
-            if "responsetextdeltaevent" in error_msg and "logprobs" in error_msg:
-                logger.warning(f"Skipping streaming test due to known openai-agents + DeepSeek compatibility issue: {e}")
-                pytest.skip("Pydantic validation error in MCP streaming - known openai-agents compatibility issue")
-            else:
-                raise
+        async for action in self.model.generate_with_mcp_stream(
+            prompt=question,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+        ):
+            action_count += 1
+            assert action is not None, "Stream action should not be None"
+            logger.debug(f"Stream action {action_count}: {type(action)}")
 
         assert action_count > 0, "Should receive at least one streaming action"
 

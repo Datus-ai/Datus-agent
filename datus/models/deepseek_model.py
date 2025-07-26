@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import yaml
-from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+from agents import Agent, AgentBase, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_openai
 from openai import AsyncOpenAI, OpenAI
@@ -22,6 +22,45 @@ logger = get_logger(__name__)
 MAX_INPUT_DEEPSEEK = 52000  # 57344 - buffer of ~5000 tokens
 
 set_tracing_disabled(True)
+
+# Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue
+try:
+    from agents.models.chatcmpl_stream_handler import ResponseTextDeltaEvent
+    from pydantic import Field
+    from typing import Optional, Any
+    
+    # Get the original fields and make logprobs optional
+    original_fields = ResponseTextDeltaEvent.model_fields.copy()
+    if 'logprobs' in original_fields:
+        # Create a new field annotation that allows None
+        original_fields['logprobs'] = Field(default=None)
+        
+        # Rebuild the model with optional logprobs
+        ResponseTextDeltaEvent.__annotations__['logprobs'] = Optional[Any]
+        ResponseTextDeltaEvent.model_fields['logprobs'] = Field(default=None)
+        ResponseTextDeltaEvent.model_rebuild()
+        
+        logger.debug("Successfully patched ResponseTextDeltaEvent to make logprobs optional")
+except ImportError:
+    logger.warning("Could not import ResponseTextDeltaEvent - patch not applied")
+except Exception as e:
+    logger.warning(f"Could not patch ResponseTextDeltaEvent: {e}")
+
+
+class DeepSeekAsyncOpenAI(AsyncOpenAI):
+    """Custom AsyncOpenAI client that always includes logprobs for DeepSeek compatibility."""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Wrap the chat completions create method
+        original_create = self.chat.completions.create
+        
+        async def create_with_logprobs(*args, **kwargs):
+            if kwargs.get('stream', False):
+                kwargs['logprobs'] = True
+            return await original_create(*args, **kwargs)
+        
+        self.chat.completions.create = create_with_logprobs
 
 
 class DeepSeekModel(LLMBaseModel):
@@ -377,7 +416,7 @@ class DeepSeekModel(LLMBaseModel):
 
     def _setup_async_agent(self, instruction: str, mcp_servers: Dict, output_type: dict, **kwargs):
         """Setup async client and agent."""
-        async_client = wrap_openai(AsyncOpenAI(api_key=self.api_key, base_url=self.api_base))
+        async_client = wrap_openai(DeepSeekAsyncOpenAI(api_key=self.api_key, base_url=self.api_base))
         model_params = {"model": self.model_name}
         async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 

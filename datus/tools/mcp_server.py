@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 from typing import Dict, Union
 
-from agents import Agent, RunContextWrapper, Usage
+from agents import Agent, AgentBase, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdio, MCPServerStdioParams
 
 from datus.configuration.agent_config import DbConfig
