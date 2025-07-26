@@ -64,22 +64,20 @@ class TestClaudeModel:
 
     @pytest.mark.asyncio
     async def test_generate_with_mcp(self):
-        """Test MCP integration with SQLite."""
-        instructions = """You are a SQLite expert. Your task is to:
-        1. Understand the user's question about data analysis
-        2. Generate appropriate SQL queries for SQLite
-        3. Execute the queries using the provided tools
-        4. Present the results in a clear and concise manner
+        """Test MCP integration with SSB database."""
+        instructions = """You are a SQLite expert working with the Star Schema Benchmark (SSB) database. 
+        The database contains tables: customer, supplier, part, date, and lineorder.
+        Focus on business analytics and data relationships.
         
         Output format: {
-            "sql": "SELECT * FROM table LIMIT 10",
-            "result": "Results here...",
-            "explanation": "Explanation here..."
+            "sql": "SELECT ...",
+            "result": "Query results...",
+            "explanation": "Business explanation..."
         }"""
         
-        question = "database_type='sqlite' task='Create a simple products table and show sample data'"
-        test_db_path = "./test_claude_mcp.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=test_db_path)
+        question = """database_type='sqlite' task='Find the top 5 customers by total revenue from the SSB database'"""
+        ssb_db_path = "tests/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
         
         result = await self.model.generate_with_mcp(
             prompt=question,
@@ -96,18 +94,19 @@ class TestClaudeModel:
 
     @pytest.mark.asyncio
     async def test_generate_with_mcp_stream(self):
-        """Test MCP streaming functionality with SQLite."""
-        instructions = """You are a SQLite expert. Analyze the database and provide insights.
+        """Test MCP streaming functionality with SSB database."""
+        instructions = """You are a SQLite expert analyzing the Star Schema Benchmark database.
+        Provide comprehensive business insights with detailed SQL analysis.
         
         Output format: {
-            "sql": "SELECT COUNT(*) FROM table",
-            "result": "Count results here...",
-            "explanation": "Table analysis explanation..."
+            "sql": "SELECT ...",
+            "result": "Analysis results...",
+            "explanation": "Business insights..."
         }"""
         
-        question = "database_type='sqlite' task='Analyze the database structure and provide basic statistics'"
-        test_db_path = "./test_claude_stream.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=test_db_path)
+        question = """database_type='sqlite' task='Analyze seasonal sales patterns by month and region in the SSB database'"""
+        ssb_db_path = "tests/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
         
         action_count = 0
         async for action in self.model.generate_with_mcp_stream(

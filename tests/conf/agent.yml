@@ -3,9 +3,16 @@ agent:
   models:
     deepseek:
       type: deepseek
-      base_url: ${DEEPSEEK_BASE_URL}
+      vendor: deepseek
+      base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
-      model: ${DEEPSEEK_MODEL_NAME}
+      model: deepseek-chat
+    deepseek-r1:
+      type: deepseek
+      vendor: deepseek
+      base_url: https://api.deepseek.com
+      api_key: ${DEEPSEEK_API_KEY}
+      model: deepseek-reasoner
     anthropic:
       type: claude
       vendor: anthropic
@@ -49,11 +56,6 @@ agent:
 
   # local databases configuration
   namespace:
-    snowflake:
-      type: snowflake
-      account: ${SNOWFLAKE_ACCOUNT}
-      username: ${SNOWFLAKE_USERNAME}
-      password: ${SNOWFLAKE_PASSWORD}
     bird_sqlite:
       type: sqlite
       path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
@@ -61,6 +63,14 @@ agent:
       type: duckdb
       name: duck
       uri: tests/data/datus_metricflow_db/duck.db # absolute path: sqlite:////full/path/to/example.db
+    ssb_sqlite:
+      type: sqlite
+      path_pattern: tests/SSB.db
+    snowflake:
+      type: snowflake
+      account: ${SNOWFLAKE_ACCOUNT}
+      username: ${SNOWFLAKE_USERNAME}
+      password: ${SNOWFLAKE_PASSWORD}
 
     starrocks:
       type: starrocks
