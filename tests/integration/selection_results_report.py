@@ -195,12 +195,13 @@ def generate_report(data, num_agents, verbose=False):
 
             for _, row in answer_found_wrong_selection.iterrows():
                 best_agent = row["best_agent"]
-                agent_num = int(best_agent.replace("agent", ""))
-                col_name = f"agent{agent_num}_gold_match"
-                if col_name in row and row[col_name]:
-                    selected_agent_has_gold_match += 1
-                else:
-                    selected_agent_no_gold_match += 1
+                if best_agent != "Unknown":
+                    agent_num = int(best_agent.replace("agent", ""))
+                    col_name = f"agent{agent_num}_gold_match"
+                    if col_name in row and row[col_name]:
+                        selected_agent_has_gold_match += 1
+                    else:
+                        selected_agent_no_gold_match += 1
 
             print("\nError analysis:")
             print(

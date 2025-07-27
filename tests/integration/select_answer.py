@@ -1,20 +1,11 @@
 # flake8: noqa
-"""
-Agent Answer Selection Tool
-
-This script compares answers from different agents and uses a large language model
-to select the best answer for each task.
-
-Usage:
-    python select_answer.py --workdir=/path/to/workdir --namespace=bird_sqlite --agent=3
-    --task-id=0 --gold-path=benchmark/bird/dev_20240627/gold
-"""
-
 import argparse
 import json
 import math
 import os
+import re
 import shutil
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -26,12 +17,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.utils.loggings import get_logger
+from datus.utils.path_utils import get_files_from_glob_pattern
 
 logger = get_logger(__name__)
 
 
 def load_csv_data(filepath):
-    """Load CSV data and return pandas DataFrame"""
     try:
         df = pd.read_csv(filepath)
         return df, None
@@ -40,17 +31,6 @@ def load_csv_data(filepath):
 
 
 def compare_pandas_table(pred, gold, ignore_order=False):
-    """
-    Smart comparison of two pandas tables, based on spider_evaluation.py implementation
-
-    Args:
-        pred (DataFrame): Predicted result table
-        gold (DataFrame): Gold standard table
-        ignore_order (bool, optional): Whether to ignore row order. Defaults to False.
-
-    Returns:
-        int: 1 for match, 0 for no match
-    """
     tolerance = 1e-2
 
     def vectors_match(v1, v2, tol=tolerance, ignore_order_=False):
@@ -74,7 +54,6 @@ def compare_pandas_table(pred, gold, ignore_order=False):
     gold_cols = gold
     pred_cols = pred
 
-    # Transpose and convert to lists for comparison
     t_gold_list = gold_cols.transpose().values.tolist()
     t_pred_list = pred_cols.transpose().values.tolist()
 
@@ -92,7 +71,6 @@ def compare_pandas_table(pred, gold, ignore_order=False):
 
 
 def compare_csv_results(actual_path, expected_path):
-    """Use smart comparison method to compare CSV results"""
     comparison_result = {
         "match": False,
         "actual_file_exists": True,
@@ -103,14 +81,12 @@ def compare_csv_results(actual_path, expected_path):
     }
 
     try:
-        # Load actual results
         actual_df, actual_error = load_csv_data(actual_path)
         if actual_error:
             comparison_result["error"] = f"Actual file error: {actual_error}"
             comparison_result["actual_file_exists"] = False
             return comparison_result
 
-        # Load expected results
         expected_df, expected_error = load_csv_data(expected_path)
         if expected_error:
             comparison_result["error"] = f"Expected file error: {expected_error}"
@@ -120,7 +96,6 @@ def compare_csv_results(actual_path, expected_path):
         comparison_result["actual_shape"] = actual_df.shape
         comparison_result["expected_shape"] = expected_df.shape
 
-        # Use smart comparison method
         score = compare_pandas_table(actual_df, expected_df, ignore_order=True)
         comparison_result["match"] = score == 1
 
@@ -131,7 +106,6 @@ def compare_csv_results(actual_path, expected_path):
 
 
 def compare_with_gold_standard(task_id, workdir, namespace, gold_path, result_dir="output"):
-    """Compare execution results with gold standard"""
     actual_csv = os.path.join(workdir, result_dir, namespace, f"{task_id}.csv")
     gold_csv = os.path.join(workdir, gold_path, "exec_result", f"{task_id}.csv")
 
@@ -158,8 +132,6 @@ def compare_with_gold_standard(task_id, workdir, namespace, gold_path, result_di
 
 
 class AgentAnswerSelector:
-    """Tool for selecting the best answer from different agents"""
-
     def __init__(self, workdir: str, namespace: str, agent_count: int, gold_path: str = None):
         self.workdir = Path(workdir)
         self.namespace = namespace
@@ -173,11 +145,19 @@ class AgentAnswerSelector:
 
         try:
             self.agent_config = load_agent_config(config=str(config_path), namespace=self.namespace)
+        except Exception as e:
+            os.chdir(original_cwd)
+            logger.error(f"Error loading agent config: {e}")
+            sys.exit(1)
         finally:
             os.chdir(original_cwd)
 
-        self.model = LLMBaseModel.create_model(self.agent_config)
-        print("Using Select Model:" + self.model.model_config.model)
+        try:
+            self.model = LLMBaseModel.create_model(self.agent_config)
+            print("Using Select Model:" + self.model.model_config.model)
+        except Exception as e:
+            logger.error(f"Error creating LLM model: {e}")
+            sys.exit(1)
 
     def load_agent_outputs(self, task_id: str) -> Dict[str, Dict]:
         agent_outputs = {}
@@ -200,7 +180,6 @@ class AgentAnswerSelector:
         return agent_outputs
 
     def check_agent_gold_matches(self, task_id: str) -> Dict[str, bool]:
-        """Check which agents match with gold standard"""
         agent_matches = {}
 
         if not self.gold_path:
@@ -219,11 +198,16 @@ class AgentAnswerSelector:
                 if comparison_result["comparison"] and not comparison_result["comparison"].get("error"):
                     agent_matches[agent_name] = comparison_result["comparison"]["match"]
                 else:
+                    error_msg = (
+                        comparison_result["comparison"].get("error", "Unknown error")
+                        if comparison_result["comparison"]
+                        else "No comparison result"
+                    )
+                    logger.warning(f"Gold comparison failed for {agent_name}: {error_msg}")
                     agent_matches[agent_name] = False
-                    logger.warning(f"Gold comparison failed for {agent_name}: {comparison_result['comparison']}")
 
             except Exception as e:
-                logger.error(f"Error comparing {agent_name} with gold: {e}")
+                logger.warning(f"Error comparing {agent_name} with gold: {e}")
                 agent_matches[agent_name] = False
 
         return agent_matches
@@ -232,8 +216,174 @@ class AgentAnswerSelector:
         if len(sql_result) <= max_length:
             return sql_result
 
-        # Truncate and add ellipsis
         return sql_result[:max_length] + "\n... (Result truncated)"
+
+    def extract_tables_from_sql(self, sql: str) -> List[str]:
+        if not sql:
+            return []
+
+        sql_lower = sql.lower()
+
+        patterns = [
+            r"from\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+            r"join\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+            r"update\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+            r"insert\s+into\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+            r"delete\s+from\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+        ]
+
+        tables = set()
+        for pattern in patterns:
+            matches = re.findall(pattern, sql_lower)
+            tables.update(matches)
+
+        return list(tables)
+
+    def get_sqlite_database_path(self, database_name: str) -> str:
+        if hasattr(self.agent_config, "namespaces") and self.namespace in self.agent_config.namespaces:
+            namespace_configs = self.agent_config.namespaces[self.namespace]
+
+            if len(namespace_configs) > 1:
+                if database_name in namespace_configs:
+                    db_config = namespace_configs[database_name]
+                    if db_config.uri and db_config.uri.startswith("sqlite:///"):
+                        return db_config.uri[10:]
+            else:
+                db_config = list(namespace_configs.values())[0]
+
+                if hasattr(db_config, "path_pattern") and db_config.path_pattern:
+                    from datus.utils.constants import DBType
+
+                    glob_results = get_files_from_glob_pattern(db_config.path_pattern, str(DBType.SQLITE))
+
+                    for db_path in glob_results:
+                        if db_path["name"] == database_name:
+                            file_path = db_path["uri"]
+                            if file_path.startswith("sqlite:///"):
+                                return file_path[10:]
+                            elif file_path.startswith("DBType.SQLITE:///"):
+                                return file_path[17:]
+                            else:
+                                logger.warning(f"Unknown URI format: {file_path}")
+                                return ""
+                elif hasattr(db_config, "uri") and db_config.uri:
+                    if db_config.uri.startswith("sqlite:///"):
+                        return db_config.uri[10:]
+
+        standard_path = os.path.join(
+            str(self.workdir), "benchmark/bird/dev_20240627/dev_databases", database_name, f"{database_name}.sqlite"
+        )
+        if os.path.exists(standard_path):
+            return standard_path
+
+        logger.warning(f"Cannot find SQLite file for database: {database_name}")
+        return ""
+
+    def get_sqlite_table_metadata(self, database_name: str) -> str:
+        db_path = self.get_sqlite_database_path(database_name)
+        if not db_path or not os.path.exists(db_path):
+            logger.warning(f"Database file not found: {db_path}")
+            return ""
+
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+            tables = cursor.fetchall()
+
+            metadata_parts = []
+
+            for (table_name,) in tables:
+                cursor.execute(f'PRAGMA table_info("{table_name}");')
+                columns = cursor.fetchall()
+
+                if not columns:
+                    continue
+
+                table_info = f"\nTable: {table_name}\n"
+                table_info += "Columns:\n"
+
+                for cid, name, col_type, notnull, default_value, pk in columns:
+                    nullable = "NOT NULL" if notnull else "NULL"
+                    primary_key = "PRIMARY KEY" if pk else ""
+                    default = f"DEFAULT {default_value}" if default_value is not None else ""
+
+                    column_desc = f"  - {name}: {col_type} {nullable} {primary_key} {default}".strip()
+                    table_info += column_desc + "\n"
+
+                cursor.execute(f'PRAGMA foreign_key_list("{table_name}");')
+                foreign_keys = cursor.fetchall()
+                if foreign_keys:
+                    table_info += "Foreign Keys:\n"
+                    for fk in foreign_keys:
+                        table_info += f"  - {fk[3]} -> {fk[2]}.{fk[4]}\n"
+
+                metadata_parts.append(table_info)
+
+            conn.close()
+            return "\n".join(metadata_parts)
+
+        except Exception as e:
+            logger.warning(f"Error getting SQLite metadata for {database_name}: {e}")
+            return ""
+
+    def load_database_description(self, database_name: str) -> str:
+        return self.get_sqlite_table_metadata(database_name)
+
+    def extract_relevant_schema_info(self, sql_queries: List[str], database_metadata: str) -> str:
+        if not database_metadata or not sql_queries:
+            return ""
+
+        valid_queries = [q for q in sql_queries if q.strip()]
+        if not valid_queries:
+            return ""
+
+        prompt = f"""Extract and format database schema information relevant to the given SQL queries. The database metadata provided is directly from SQLite PRAGMA table_info commands.
+
+SQL Queries:
+{chr(10).join([f"- {sql}" for sql in valid_queries])}
+
+Database Metadata (from SQLite):
+{database_metadata}
+
+Required Output Format:
+
+## Tables Used
+For each table mentioned in the SQL queries, provide:
+- Table name: [name]
+- Relevant columns: [list of column names used in queries]
+- Column types: [column_name: data_type]
+- Primary keys: [column_name] (if any)
+- Constraints: [NOT NULL/NULL status]
+
+## Join Relationships
+For each join operation in the SQL queries, provide:
+- Join: [table1].[column1] = [table2].[column2]
+- Data types: [table1].[column1] ([type]) = [table2].[column2] ([type])
+- Compatibility: [Compatible/Incompatible based on types]
+
+## Column Details
+For each column referenced in WHERE clauses, SELECT, or GROUP BY, provide:
+- Column: [table].[column]
+- Data type: [type]
+- Constraints: [NOT NULL/NULL, PRIMARY KEY status]
+- Default values: [if any]
+
+## Foreign Key Constraints
+List any foreign key relationships from the metadata:
+- [table1].[column1] → [table2].[column2]
+
+Output only factual information from the SQLite metadata. Focus on tables and columns actually used in the SQL queries.
+"""
+
+        print("------------------------\n" + prompt + "------------------------\n")
+        try:
+            response = self.model.generate(prompt)
+            return response
+        except Exception as e:
+            logger.warning(f"Error extracting schema info: {e}")
+            return ""
 
     def create_comparison_prompt(self, task_id: str, agent_outputs: Dict[str, Dict]) -> str:
         if not agent_outputs:
@@ -243,12 +393,32 @@ class AgentAnswerSelector:
         instruction = agent_outputs[first_agent].get("instruction", "")
         database_name = agent_outputs[first_agent].get("database_name", "")
 
+        sql_queries = []
+        for agent_name, output in agent_outputs.items():
+            gen_sql_final = output.get("gen_sql_final", "")
+            if gen_sql_final:
+                sql_queries.append(gen_sql_final)
+
+        database_metadata = self.load_database_description(database_name)
+        relevant_schema_info = ""
+
+        if database_metadata:
+            relevant_schema_info = self.extract_relevant_schema_info(sql_queries, database_metadata)
+
         prompt = f"""Please analyze the following task's different agent answers and select the best answer.
 
 Task ID: {task_id}
 Database: {database_name}
 Task Description: {instruction}
+"""
 
+        if relevant_schema_info:
+            prompt += f"""
+Relevant Database Schema Information (from SQLite metadata):
+{relevant_schema_info}
+"""
+
+        prompt += """
 Here are the answers from different agents:
 
 """
@@ -270,10 +440,11 @@ Here are the answers from different agents:
 
         prompt += """
 Please evaluate and select the best answer based on the following criteria:
-1. SQL query correctness and logic
+1. SQL query correctness and logic (considering the database schema)
 2. Execution result reasonableness
 3. Whether the task was successfully completed
 4. Query efficiency and code quality
+5. Proper use of table relationships and constraints
 
 Please return results in JSON format, including:
 {
@@ -298,10 +469,8 @@ Please return results in JSON format, including:
             logger.error(f"No agent outputs found for task {task_id}")
             return None
 
-        # Check which agents match with gold standard
         agent_gold_matches = self.check_agent_gold_matches(task_id)
 
-        # Determine answer_found
         answer_found = any(agent_gold_matches.values()) if agent_gold_matches else False
 
         if len(agent_outputs) == 1:
@@ -324,7 +493,20 @@ Please return results in JSON format, including:
 
         try:
             logger.info(f"Calling LLM to compare answers for task {task_id}...")
+            print("------------------------\n" + prompt + "------------------------\n")
             response = self.model.generate_with_json_output(prompt)
+
+            if not response or "best_agent" not in response:
+                logger.error(f"Invalid LLM response for task {task_id}: {response}")
+                best_agent = list(agent_outputs.keys())[0] if agent_outputs else "Unknown"
+                response = {
+                    "best_agent": best_agent,
+                    "reason": "LLM response invalid, selected first available agent",
+                    "score_analysis": {
+                        agent: {"score": 5, "reason": "Default selection due to LLM failure"}
+                        for agent in agent_outputs.keys()
+                    },
+                }
 
             best_agent = response.get("best_agent", "Unknown")
             is_selected_agent_right = agent_gold_matches.get(best_agent, False)
@@ -346,31 +528,39 @@ Please return results in JSON format, including:
 
         except Exception as e:
             logger.error(f"Error processing task {task_id}: {e}")
-            return None
+            sys.exit(1)
 
     def copy_best_agent_files(self, task_id: str, best_agent: str) -> tuple[Path, Path]:
-        best_output_dir = self.multi_dir / "best_agent_output" / self.namespace
-        best_save_dir = self.multi_dir / "best_agent_save"
+        try:
+            best_output_dir = self.multi_dir / "best_agent_output" / self.namespace
+            best_save_dir = self.multi_dir / "best_agent_save"
 
-        best_output_dir.mkdir(parents=True, exist_ok=True)
-        best_save_dir.mkdir(parents=True, exist_ok=True)
+            best_output_dir.mkdir(parents=True, exist_ok=True)
+            best_save_dir.mkdir(parents=True, exist_ok=True)
 
-        source_output_dir = self.multi_dir / f"{best_agent}_output" / self.namespace
-        for ext in [".json", ".csv", ".sql"]:
-            source_file = source_output_dir / f"{task_id}{ext}"
-            if source_file.exists():
-                dest_file = best_output_dir / f"{task_id}{ext}"
-                shutil.copy2(source_file, dest_file)
-                logger.info(f"Copied {source_file} to {dest_file}")
+            source_output_dir = self.multi_dir / f"{best_agent}_output" / self.namespace
+            for ext in [".json", ".csv", ".sql"]:
+                source_file = source_output_dir / f"{task_id}{ext}"
+                if source_file.exists():
+                    dest_file = best_output_dir / f"{task_id}{ext}"
+                    shutil.copy2(source_file, dest_file)
+                    logger.info(f"Copied {source_file} to {dest_file}")
 
-        source_save_dir = self.multi_dir / f"{best_agent}_save"
-        if source_save_dir.exists():
-            for save_file in source_save_dir.glob(f"{task_id}_*.yaml"):
-                dest_file = best_save_dir / save_file.name
-                shutil.copy2(save_file, dest_file)
-                logger.info(f"Copied {save_file} to {dest_file}")
+            source_save_dir = self.multi_dir / f"{best_agent}_save"
+            if source_save_dir.exists():
+                for save_file in source_save_dir.glob(f"{task_id}_*.yaml"):
+                    dest_file = best_save_dir / save_file.name
+                    shutil.copy2(save_file, dest_file)
+                    logger.info(f"Copied {save_file} to {dest_file}")
 
-        return best_output_dir, best_save_dir
+            return best_output_dir, best_save_dir
+        except Exception as e:
+            logger.warning(f"Error copying best agent files for task {task_id}: {e}")
+            best_output_dir = self.multi_dir / "best_agent_output" / self.namespace
+            best_save_dir = self.multi_dir / "best_agent_save"
+            best_output_dir.mkdir(parents=True, exist_ok=True)
+            best_save_dir.mkdir(parents=True, exist_ok=True)
+            return best_output_dir, best_save_dir
 
     def save_results(self, results: List[Dict], output_file: str):
         try:
@@ -378,7 +568,14 @@ Please return results in JSON format, including:
                 json.dump(results, f, ensure_ascii=False, indent=2)
             logger.info(f"Results saved to: {output_file}")
         except Exception as e:
-            logger.error(f"Error saving results: {e}")
+            logger.warning(f"Error saving results: {e}")
+            backup_file = f"selection_results_backup_{task_id if 'task_id' in str(output_file) else 'unknown'}.json"
+            try:
+                with open(backup_file, "w", encoding="utf-8") as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+                logger.info(f"Results saved to backup file: {backup_file}")
+            except Exception as backup_e:
+                logger.error(f"Failed to save backup results: {backup_e}")
 
     def generate_summary(self, results: List[Dict]) -> Dict:
         if not results:
@@ -434,43 +631,45 @@ def main():
 
     result = selector.select_best_answer(task_id)
 
-    if result:
-        best_agent = result.get("best_agent", "Unknown")
-
-        best_output_dir, best_save_dir = selector.copy_best_agent_files(task_id, best_agent)
-
-        if args.output == "selection_results.json":
-            output_filename = f"selection_results_{task_id}.json"
-        else:
-            output_filename = args.output
-        output_file = best_output_dir / output_filename
-        selector.save_results([result], str(output_file))
-
-        print(f"\n=== Task {task_id} Selection Results ===")
-        print(f"Best Agent: {result.get('best_agent', 'Unknown')}")
-        print(f"Selection Reason: {result.get('reason', 'Not provided')}")
-        print(f"Answer Found: {result.get('answer_found', False)}")
-        print(f"Selected Agent is Right: {result.get('is_selected_agent_right', False)}")
-
-        score_analysis = result.get("score_analysis", {})
-        if score_analysis:
-            print("\n=== Score Analysis ===")
-            for agent, analysis in score_analysis.items():
-                print(f"{agent}: {analysis.get('score', 0)}/10 - {analysis.get('reason', 'No reason')}")
-
-        agent_gold_matches = result.get("agent_gold_matches", {})
-        if agent_gold_matches:
-            print("\n=== Gold Standard Matches ===")
-            for agent, match in agent_gold_matches.items():
-                print(f"{agent}: {'✓' if match else '✗'}")
-
-        print("\nBest agent files copied to:")
-        print(f"  Output: {best_output_dir}")
-        print(f"  Save: {best_save_dir}")
-        print(f"Results saved to: {output_file}")
-    else:
-        print(f"Failed to process task {task_id}")
+    if not result:
+        logger.error(f"Failed to process task {task_id} - no agent outputs available")
         sys.exit(1)
+
+    best_agent = result.get("best_agent", "Unknown")
+    if best_agent == "Unknown":
+        logger.warning(f"No best agent identified for task {task_id}, but continuing with available results")
+
+    best_output_dir, best_save_dir = selector.copy_best_agent_files(task_id, best_agent)
+
+    if args.output == "selection_results.json":
+        output_filename = f"selection_results_{task_id}.json"
+    else:
+        output_filename = args.output
+    output_file = best_output_dir / output_filename
+    selector.save_results([result], str(output_file))
+
+    print(f"\n=== Task {task_id} Selection Results ===")
+    print(f"Best Agent: {result.get('best_agent', 'Unknown')}")
+    print(f"Selection Reason: {result.get('reason', 'Not provided')}")
+    print(f"Answer Found: {result.get('answer_found', False)}")
+    print(f"Selected Agent is Right: {result.get('is_selected_agent_right', False)}")
+
+    score_analysis = result.get("score_analysis", {})
+    if score_analysis:
+        print("\n=== Score Analysis ===")
+        for agent, analysis in score_analysis.items():
+            print(f"{agent}: {analysis.get('score', 0)}/10 - {analysis.get('reason', 'No reason')}")
+
+    agent_gold_matches = result.get("agent_gold_matches", {})
+    if agent_gold_matches:
+        print("\n=== Gold Standard Matches ===")
+        for agent, match in agent_gold_matches.items():
+            print(f"{agent}: {'✓' if match else '✗'}")
+
+    print("\nBest agent files copied to:")
+    print(f"  Output: {best_output_dir}")
+    print(f"  Save: {best_save_dir}")
+    print(f"Results saved to: {output_file}")
 
 
 if __name__ == "__main__":
