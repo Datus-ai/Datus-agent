@@ -38,7 +38,6 @@ def load_agent_config(**kwargs) -> AgentConfig:
 
     if not yaml_path:
         home_config = Path.home() / ".datus" / "conf" / "agent.yml"
-        logger.info(f"home config {home_config}")
         if os.path.exists(home_config):
             yaml_path = home_config
 

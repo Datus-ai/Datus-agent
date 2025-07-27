@@ -310,7 +310,7 @@ class AgentConfig:
     def check_init_storage_config(self, storage_type: str, save_config: bool = True):
         check_storage_config(
             storage_type,
-            None if storage_type not in self.storage_configs else self.storage_configs[storage_type],
+            None if storage_type not in self.storage_configs else self.storage_configs[storage_type].to_dict(),
             self.rag_storage_path(),
             save_config,
         )
