@@ -3,9 +3,9 @@
 ---
 # Deployment
 
-## Pulling submodule code locally 
+## Pulling submodule code locally
 ```bash
-git submodule update --init 
+git submodule update --init
 ```
 
 ## Install the Necessary Dependencies
@@ -93,13 +93,13 @@ agent:
 
   storage:
     base_path: data
-    # Local model suggestions:
-    # 1. if you want extreme performance, choose the small multilingual model with 384 dimensions: all-MiniLM-L6-v2 (~100M) or intfloat/multilingual-e5-small (~460M).
-    # 2. if you want performance and retrieval quality, choose the 1024-dimension multilingual model: intfloat/multilingual-e5-large-instruct (~1.2G)
-    # 3. if you pay more attention to retrieval quality, you can choose 1024-dimension model according to language (English/Chinese): BAAI/bge-large-en-v1.5 or BAAI/bge-large-zh-v1.5 (~3.6G)
-    # Of course, you can also choose your own model according to your business.
-    # If you don't configure the following models, all-MiniLM-L6-v2 will be selected by default.
-    # Cloud model suggestions: Now we just support openai.
+    # Local model recommendations:
+    # 1. For extreme performance: all-MiniLM-L6-v2 (~100M) or intfloat/multilingual-e5-small (~460M)
+    # 2. For balanced performance and quality: intfloat/multilingual-e5-large-instruct (~1.2G)
+    # 3. For optimal retrieval quality: BAAI/bge-large-en-v1.5 or BAAI/bge-large-zh-v1.5 (~3.6G)
+    # You can also select any model that suits your requirements.
+    # Default: all-MiniLM-L6-v2 if no model is configured.
+    # Claude model suggestions: Now we just support openai.
     database:
       registry_name: openai # default is sentence-transformers
       model_name: text-embedding-v3
@@ -177,7 +177,7 @@ Datus-sql> select * from tree;
 └───────────┴─────────────┴────────────┴────────┘
 Returned 15 rows in 0.03 seconds
 
-Datus-sql> .help 
+Datus-sql> .help
 ```
 
 ---
@@ -221,11 +221,11 @@ python -m datus.cli.main --namespace spidersnow  --config conf/agent.yml
 
 Datus-sql> !darun_screen
 Creating a new SQL task
-Enter task ID (49856268): 
+Enter task ID (49856268):
 Enter task description (): Based on the most recent refresh date, identify the top-ranked rising search term for the week that is exactly one year prior to the latest available week in the dataset.
 Enter database name: GOOGLE_TRENDS
-Enter output directory (output): 
-Enter external knowledge (optional) (): 
+Enter output directory (output):
+Enter external knowledge (optional) ():
 SQL Task created: 49856268
 Database: snowflake - GOOGLE_TRENDS
 
@@ -287,3 +287,69 @@ python -m datus.main benchmarking --benchmark bird_dev --plan fixed --schema_lin
 python -m datus.cli.main --namespace bird_sqlite  --config conf/agent.yml
 ```
 
+# Semantic Layer Benchmark
+
+## Initialization
+
+Install Metricflow:
+
+```bash
+# poetry config virtualenvs.in-project true
+poetry lock
+poetry install
+source .venv/bin/activate
+
+# make sure these commands succeeded
+mf setup
+mf tutorial
+mf validate-configs
+```
+
+Update Configuration `~/.metricflow/config.yml`:
+
+```yml
+model_path: </path/to/semantic-models-dir>
+dwh_schema: mf_demo
+dwh_dialect: duckdb
+dwh_database: <home dir>/.metricflow/duck.db
+```
+
+Update Configuration conf/agent.yml:
+
+```yaml
+namespace:
+  duckdb:
+    type: duckdb
+    name: duck
+    uri: ~/.metricflow/duck.db
+
+benchmark:
+  semantic_layer:
+    benchmark_path: benchmark/semantic_layer
+
+metrics:
+  duckdb:
+    domain: sale
+    layer1: layer1
+    layer2: layer2
+    ext_knowledge: ""
+```
+
+Export Environment Variables:
+```bash
+export MF_PATH=</path/to/metricflow>/.venv/bin/mf
+export MF_VERBOSE=true
+export FILESYSTEM_MCP_DIRECTORY=</path/to/semantic-models-dir>
+```
+
+### Bootstrap Metrics Generation
+
+```bash
+python -m datus.main bootstrap-kb --namespace duckdb --components metrics --success_story benchmark/semantic_layer/success_story.csv --metric_meta duckdb --kb_update_strategy overwrite
+```
+
+### Run Tests
+
+```bash
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --plan metric_to_sql --metric_meta duckdb
+```
