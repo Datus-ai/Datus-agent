@@ -308,9 +308,15 @@ class MCPServer:
 
     @classmethod
     def get_sqlite_mcp_server(cls, db_path: str = "./sqlite_mcp_server.db"):
-        if cls._sqlite_mcp_server is None:
+        # Convert db_path to absolute path to avoid confusion with relative paths
+        absolute_db_path = os.path.abspath(db_path)
+        
+        # Check if we need to create a new server for a different database
+        if (cls._sqlite_mcp_server is None or 
+            getattr(cls, '_current_sqlite_db_path', None) != absolute_db_path):
             with cls._lock:
-                if cls._sqlite_mcp_server is None:
+                if (cls._sqlite_mcp_server is None or 
+                    getattr(cls, '_current_sqlite_db_path', None) != absolute_db_path):
                     directory = os.environ.get("SQLITE_MCP_DIR", "mcp/mcp-sqlite-server")
                     if not directory:
                         try:
@@ -318,8 +324,8 @@ class MCPServer:
                         except FileNotFoundError as e:
                             logger.error(f"Could not find SQLite MCP directory: {e}")
                             return None
-
-                    logger.info(f"Using SQLite database: {db_path}")
+                    
+                    logger.info(f"Using SQLite database: {absolute_db_path}")
 
                     mcp_server_params = MCPServerStdioParams(
                         command="uv",
@@ -329,11 +335,12 @@ class MCPServer:
                             "run",
                             "mcp-server-sqlite",
                             "--db-path",
-                            db_path,
+                            absolute_db_path,
                         ],
                         env={},  # SQLite doesn't need additional environment variables
                     )
                     cls._sqlite_mcp_server = SilentMCPServerStdio(params=mcp_server_params)
+                    cls._current_sqlite_db_path = absolute_db_path
         return cls._sqlite_mcp_server
 
     @classmethod

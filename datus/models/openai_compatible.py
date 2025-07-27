@@ -483,8 +483,27 @@ class OpenAICompatibleModel(LLMBaseModel):
     
     def _process_stream_event(self, event, action_history_manager: ActionHistoryManager) -> Optional[ActionHistory]:
         """Process streaming events. Override in subclasses for custom handling."""
-        # Basic implementation - subclasses can override for more sophisticated processing
-        return None
+        # Log the event for debugging
+        logger.debug(f"Processing stream event: {type(event)} - {event}")
+        
+        # Import ActionHistory to create action objects
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+        import uuid
+        
+        # Create an ActionHistory object for any stream event to ensure streaming works
+        # This is a basic implementation that creates actions for all events
+        action = ActionHistory(
+            action_id=str(uuid.uuid4()),
+            role=ActionRole.ASSISTANT,
+            messages=f"Stream event: {type(event).__name__}",
+            action_type=type(event).__name__,
+            input=str(event) if hasattr(event, '__str__') else "stream_event",
+            output=None,
+            status=ActionStatus.PROCESSING
+        )
+        
+        logger.debug(f"Created action: {action.action_id} for event {type(event).__name__}")
+        return action
     
     # Backward compatibility methods (with deprecation warnings)
     async def generate_with_mcp(
