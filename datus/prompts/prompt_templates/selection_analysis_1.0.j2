@@ -1,0 +1,43 @@
+Please analyze the following candidate results and select the best one.
+
+Candidates:
+
+{% for candidate_id, candidate in candidates.items() %}
+{{ candidate_id }}:
+{% if candidate is mapping %}
+- Success: {{ candidate.get('success', false) }}
+- Status: {{ candidate.get('status', 'unknown') }}
+{% if candidate.get('result') %}
+{% set result = candidate.get('result') %}
+{% if result.sql_result_final is defined %}
+- SQL Result: {{ result.sql_result_final }}
+{% endif %}
+{% if result.gen_sql_final is defined %}
+- Generated SQL: {{ result.gen_sql_final }}
+{% endif %}
+{% endif %}
+{% if candidate.get('error') %}
+- Error: {{ candidate.get('error') }}
+{% endif %}
+{% else %}
+- Raw Result: {{ candidate | string }}
+{% endif %}
+
+{% endfor %}
+
+Please evaluate and select the best candidate based on the following criteria:
+1. Successful execution without errors
+2. Quality and completeness of results
+3. Correctness of generated content
+4. Overall reliability
+
+Please return results in JSON format:
+{
+    "best_candidate": "ID of the selected best candidate",
+    "reason": "detailed reason for selection",
+    "score_analysis": {
+        "candidate1": {"score": score(1-10), "reason": "scoring reason"},
+        "candidate2": {"score": score(1-10), "reason": "scoring reason"},
+        ...
+    }
+} 

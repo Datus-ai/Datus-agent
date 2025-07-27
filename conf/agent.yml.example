@@ -156,3 +156,16 @@ agent:
       - reasoning
       - execute_sql
       - reflect
+
+  # Workflow configuration with parallel execution and selection
+  workflow:
+    plan: bird_para
+
+    bird_para:
+      - schema_linking
+      - parallel:
+        - generate_sql
+        - reasoning
+      - selection
+      - execute_sql
+      - output

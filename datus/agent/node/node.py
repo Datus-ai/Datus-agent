@@ -59,10 +59,12 @@ class Node(ABC):
             GenerateSQLNode,
             HitlNode,
             OutputNode,
+            ParallelNode,
             ReasonSQLNode,
             ReflectNode,
             SchemaLinkingNode,
             SearchMetricsNode,
+            SelectionNode,
         )
 
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
@@ -91,6 +93,10 @@ class Node(ABC):
             return GenerateSemanticModelNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_SEARCH_METRICS:
             return SearchMetricsNode(node_id, description, node_type, input_data, agent_config)
+        elif node_type == NodeType.TYPE_PARALLEL:
+            return ParallelNode(node_id, description, node_type, input_data, agent_config)
+        elif node_type == NodeType.TYPE_SELECTION:
+            return SelectionNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_COMPARE:
             return CompareNode(node_id, description, node_type, input_data, agent_config)
         else:
@@ -224,10 +230,23 @@ class Node(ABC):
             elif self.type in NodeType.CONTROL_TYPES:
                 if self.type == NodeType.TYPE_REFLECT:
                     self.execute()
-
                     self.complete(self.result)
                     # strategy_result = execute_strategy(self, strategy, details, model)
                     # logger.info(f"Execute strategy result: {strategy_result}")
+                elif self.type == NodeType.TYPE_PARALLEL:
+                    self.execute()
+                    if self.result is not None and self.result.success:
+                        self.complete(self.result)
+                    else:
+                        logger.error(f"Parallel node execution failed: {self.result}")
+                        self.fail(f"Parallel node execution failed: {self.result}")
+                elif self.type == NodeType.TYPE_SELECTION:
+                    self.execute()
+                    if self.result is not None and self.result.success:
+                        self.complete(self.result)
+                    else:
+                        logger.error(f"Selection node execution failed: {self.result}")
+                        self.fail(f"Selection node execution failed: {self.result}")
                 else:
                     pass
             else:

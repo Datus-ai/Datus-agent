@@ -12,6 +12,8 @@ __all__ = [
     "GenerateMetricsNode",
     "GenerateSemanticModelNode",
     "SearchMetricsNode",
+    "ParallelNode",
+    "SelectionNode",
     "CompareNode",
     "Node",
 ]
@@ -28,7 +30,9 @@ from .generate_semantic_model_node import GenerateSemanticModelNode
 from .generate_sql_node import GenerateSQLNode
 from .hitl_node import HitlNode
 from .output_node import OutputNode
+from .parallel_node import ParallelNode
 from .reason_sql_node import ReasonSQLNode
 from .reflect_node import ReflectNode
 from .schema_linking_node import SchemaLinkingNode
 from .search_metrics_node import SearchMetricsNode
+from .selection_node import SelectionNode
