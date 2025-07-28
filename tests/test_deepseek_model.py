@@ -140,7 +140,8 @@ class TestDeepSeekModel:
             "explanation": "Business insights..."
         }"""
 
-        question = """database_type='sqlite' task='Analyze the top 5 suppliers by total revenue and their regional distribution using the SSB database'"""
+        # question = """database_type='sqlite' task='Analyze the top 5 suppliers by total revenue and their regional distribution using the SSB database'"""
+        question = """database_type='sqlite' task='Calculate the total revenue in 1993 from orders with a discount between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the extended price by the discount'"""
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
@@ -154,6 +155,7 @@ class TestDeepSeekModel:
             action_count += 1
             assert action is not None, "Stream action should not be None"
             logger.debug(f"Stream action {action_count}: {type(action)}")
+            logger.info(f"Got action: {action}")
 
         assert action_count > 0, "Should receive at least one streaming action"
 
@@ -173,7 +175,7 @@ class TestDeepSeekModel:
             assert result is not None, f"Response should not be None for prompt: {prompt}"
             assert isinstance(result, str), "Response should be a string"
             assert len(result) > 0, "Response should not be empty"
-            logger.debug(f"Acceptance test prompt: {prompt[:30]}... -> Response length: {len(result)}")
+            logger.info(f"Acceptance test prompt: {prompt[:30]}... -> Response length: {len(result)}")
 
     @pytest.mark.acceptance
     @pytest.mark.asyncio
@@ -219,6 +221,7 @@ class TestDeepSeekModel:
             ), f"Response should contain relevant SQL keywords for scenario {i+1}: {scenario['expected_keywords']}"
 
             logger.debug(f"Acceptance scenario {i+1} completed: {scenario['task']}")
+            logger.info(f"Final result: {result}")
 
     @pytest.mark.acceptance
     @pytest.mark.asyncio
@@ -272,4 +275,4 @@ class TestDeepSeekModel:
             logger.debug(
                 f"Acceptance stream scenario {i+1} completed: {action_count} actions, {total_content_length} total content length"
             )
-            logger.debug(f"Action: {action}")
+            logger.info(f"Final Action: {action}")

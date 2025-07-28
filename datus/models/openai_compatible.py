@@ -482,28 +482,121 @@ class OpenAICompatibleModel(LLMBaseModel):
                 raise
     
     def _process_stream_event(self, event, action_history_manager: ActionHistoryManager) -> Optional[ActionHistory]:
-        """Process streaming events. Override in subclasses for custom handling."""
-        # Log the event for debugging
-        logger.debug(f"Processing stream event: {type(event)} - {event}")
-        
-        # Import ActionHistory to create action objects
+        """Process streaming events and route to appropriate handlers."""
+        if not hasattr(event, "type") or event.type != "run_item_stream_event":
+            return None
+
+        if not (hasattr(event, "item") and hasattr(event.item, "type")):
+            return None
+
+        action = None
+        item_type = event.item.type
+
+        if item_type == "tool_call_item":
+            action = self._process_tool_call_start(event, action_history_manager)
+        elif item_type == "tool_call_output_item":
+            action = self._process_tool_call_complete(event, action_history_manager)
+        elif item_type == "message_output_item":
+            action = self._process_message_output(event, action_history_manager)
+
+        return action
+
+    def _process_tool_call_start(self, event, action_history_manager: ActionHistoryManager) -> Optional[ActionHistory]:
+        """Process tool_call_item events."""
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        raw_item = event.item.raw_item
+        call_id = getattr(raw_item, "call_id", None)
+        function_name = getattr(raw_item, "name", None)
+        arguments = getattr(raw_item, "arguments", None)
+
+        # Check if action with this call_id already exists
+        if call_id and action_history_manager.find_action_by_id(call_id):
+            return None
+
+        action = ActionHistory(
+            action_id=call_id,
+            role=ActionRole.TOOL,
+            messages="MCP call",
+            action_type=function_name or "unknown",
+            input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
+            status=ActionStatus.PROCESSING,
+        )
+        action_history_manager.add_action(action)
+        return action
+
+    def _process_tool_call_complete(self, event, action_history_manager: ActionHistoryManager) -> Optional[ActionHistory]:
+        """Process tool_call_output_item events."""
+        from datus.schemas.action_history import ActionStatus
+
+        # Try to find the action by call_id, but it seems some models don't have call_id in the raw_item sometimes
+        call_id = getattr(event.item.raw_item, "call_id", None)
+        matching_action = action_history_manager.find_action_by_id(call_id) if call_id else None
+
+        if not matching_action:
+            # Try to match by the most recent PROCESSING action as fallback
+            processing_actions = [a for a in action_history_manager.actions if a.status == ActionStatus.PROCESSING]
+            if processing_actions:
+                matching_action = processing_actions[-1]  # Get the most recent
+            else:
+                return None
+
+        output_data = {
+            "call_id": call_id,
+            "success": True,
+            "raw_output": event.item.output,
+        }
+
+        action_history_manager.update_action_by_id(
+            matching_action.action_id, 
+            output=output_data, 
+            end_time=datetime.now(), 
+            status=ActionStatus.SUCCESS
+        )
+
+        # Don't return the action to avoid duplicate yield
+        return None
+
+    def _process_message_output(self, event, action_history_manager: ActionHistoryManager) -> Optional[ActionHistory]:
+        """Process message_output_item events."""
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
         import uuid
+
+        if not (hasattr(event.item, "raw_item") and hasattr(event.item.raw_item, "content")):
+            return None
+
+        content = event.item.raw_item.content
+        if not content:
+            return None
         
-        # Create an ActionHistory object for any stream event to ensure streaming works
-        # This is a basic implementation that creates actions for all events
-        action = ActionHistory(
-            action_id=str(uuid.uuid4()),
-            role=ActionRole.ASSISTANT,
-            messages=f"Stream event: {type(event).__name__}",
-            action_type=type(event).__name__,
-            input=str(event) if hasattr(event, '__str__') else "stream_event",
-            output=None,
-            status=ActionStatus.PROCESSING
-        )
+        logger.debug(f"Processing message output: {content}")
         
-        logger.debug(f"Created action: {action.action_id} for event {type(event).__name__}")
-        return action
+        # Extract text content
+        if isinstance(content, list) and content:
+            text_content = content[0].text if hasattr(content[0], "text") else str(content[0])
+        else:
+            text_content = str(content)
+
+        # Create action with raw content
+        if len(text_content) > 0:
+            action = ActionHistory(
+                action_id=str(uuid.uuid4()),
+                role=ActionRole.ASSISTANT,
+                messages=f"Thinking: {text_content}",
+                action_type="message",
+                input={},
+                output={
+                    "success": True,
+                    "raw_output": text_content,
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action.end_time = datetime.now()
+            action_history_manager.add_action(action)
+            return action
+        else:
+            logger.debug(f"No text content found in message output: {content}")
+            return None
     
     # Backward compatibility methods (with deprecation warnings)
     async def generate_with_mcp(
