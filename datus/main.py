@@ -91,7 +91,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--components",
         type=str,
         nargs="+",
-        choices=["metrics", "metadata", "table_lineage", "document"],
+        choices=["metrics", "metadata", "table_lineage", "document", "ext_knowledge"],
         default=["metadata"],
         help="Knowledge base components to initialize",
     )
@@ -127,6 +127,7 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
     bootstrap_parser.add_argument("--layer1", type=str, help="Layer1 of the metrics")
     bootstrap_parser.add_argument("--layer2", type=str, help="Layer2 of the metrics")
+    bootstrap_parser.add_argument("--ext_knowledge", type=str, help="Path to external knowledge CSV file")
 
     # benchmark command
     benchmark_parser = subparsers.add_parser(

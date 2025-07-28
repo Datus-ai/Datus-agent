@@ -21,6 +21,8 @@ from datus.models.qwen_model import QwenModel
 # Import model implementations
 from datus.schemas.node_models import BaseResult, SqlTask
 from datus.storage.document import DocumentStore
+from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge
+from datus.storage.ext_knowledge.store import ExtKnowledgeStore
 from datus.storage.metric.metrics_init import init_success_story_metrics
 from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
@@ -442,6 +444,24 @@ class Agent:
             elif component == "document":
                 self.storage_modules["document_store"] = DocumentStore(dir_path)
                 # self.global_config.check_init_storage_config("document")
+            elif component == "ext_knowledge":
+                ext_knowledge_path = os.path.join(dir_path, "ext_knowledge.lance")
+                if kb_update_strategy == "overwrite":
+                    if os.path.exists(ext_knowledge_path):
+                        shutil.rmtree(ext_knowledge_path)
+                        logger.info(f"Deleted existing directory {ext_knowledge_path}")
+                    self.global_config.save_storage_config("ext_knowledge")
+                else:
+                    self.global_config.check_init_storage_config("ext_knowledge")
+                self.ext_knowledge_store = ExtKnowledgeStore(dir_path)
+                init_ext_knowledge(
+                    self.ext_knowledge_store, self.args, build_mode=kb_update_strategy, pool_size=pool_size
+                )
+                return {
+                    "status": "success",
+                    "message": f"ext_knowledge bootstrap completed, "
+                    f"knowledge_size={self.ext_knowledge_store.table_size()}",
+                }
             results[component] = True
 
         # Initialize success story storage (always created)
