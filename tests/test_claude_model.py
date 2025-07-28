@@ -22,23 +22,21 @@ class TestClaudeModel:
     def test_generate(self):
         """Test basic text generation functionality."""
         result = self.model.generate("Hello", temperature=0.5, max_tokens=100)
-        
+
         assert result is not None, "Response should not be None"
         assert isinstance(result, str), "Response should be a string"
         assert len(result) > 0, "Response should not be empty"
-        
+
         logger.debug(f"Generated response: {result}")
 
     def test_generate_with_json_output(self):
         """Test JSON output generation."""
-        result = self.model.generate_with_json_output(
-            "Respond with a JSON object containing a greeting message"
-        )
-        
+        result = self.model.generate_with_json_output("Respond with a JSON object containing a greeting message")
+
         assert result is not None, "Response should not be None"
         assert isinstance(result, dict), "Response should be a dictionary"
         assert len(result) > 0, "Response should not be empty"
-        
+
         logger.debug(f"JSON response: {result}")
 
     def test_generate_with_system_prompt(self):
@@ -46,20 +44,17 @@ class TestClaudeModel:
         messages = [
             {
                 "role": "system",
-                "content": "You are a helpful assistant. Respond in JSON format with 'question' and 'answer' fields."
+                "content": "You are a helpful assistant. Respond in JSON format with 'question' and 'answer' fields.",
             },
-            {
-                "role": "user", 
-                "content": "What is 2+2?"
-            }
+            {"role": "user", "content": "What is 2+2?"},
         ]
-        
+
         result = self.model.generate_with_json_output(messages)
-        
+
         assert result is not None, "Response should not be None"
         assert isinstance(result, dict), "Response should be a dictionary"
         assert len(result) > 0, "Response should not be empty"
-        
+
         logger.debug(f"System prompt response: {result}")
 
     @pytest.mark.asyncio
@@ -74,22 +69,22 @@ class TestClaudeModel:
             "result": "Query results...",
             "explanation": "Business explanation..."
         }"""
-        
+
         question = """database_type='sqlite' task='Find the top 5 customers by total revenue from the SSB database'"""
-        ssb_db_path = "tests/SSB.db"
+        ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
-        
+
         result = await self.model.generate_with_mcp(
             prompt=question,
             output_type=str,
             mcp_servers={"sqlite": mcp_server},
             instruction=instructions,
         )
-        
+
         assert result is not None, "MCP response should not be None"
         assert "content" in result, "Response should contain content"
         assert "sql_contexts" in result, "Response should contain sql_contexts"
-        
+
         logger.debug(f"MCP response: {result.get('content', '')}")
 
     @pytest.mark.asyncio
@@ -103,11 +98,13 @@ class TestClaudeModel:
             "result": "Analysis results...",
             "explanation": "Business insights..."
         }"""
-        
-        question = """database_type='sqlite' task='Analyze seasonal sales patterns by month and region in the SSB database'"""
-        ssb_db_path = "tests/SSB.db"
+
+        question = (
+            """database_type='sqlite' task='Analyze seasonal sales patterns by month and region in the SSB database'"""
+        )
+        ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
-        
+
         action_count = 0
         async for action in self.model.generate_with_mcp_stream(
             prompt=question,
@@ -118,5 +115,5 @@ class TestClaudeModel:
             action_count += 1
             assert action is not None, "Stream action should not be None"
             logger.debug(f"Stream action {action_count}: {type(action)}")
-        
+
         assert action_count > 0, "Should receive at least one streaming action"

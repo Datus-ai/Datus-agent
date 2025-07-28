@@ -18,8 +18,7 @@ class TestSQLAlchemyTools:
     @pytest.fixture
     def sqlalchemy_connector(self):
         """Create a SQLAlchemy connector instance"""
-        # FIXME: Use existing SSB database
-        db_path = os.path.join(os.path.dirname(__file__), "SSB.db")
+        db_path = os.path.join(os.path.dirname(__file__), "data/SSB.db")
         connector = SQLAlchemyConnector(f"sqlite:///{db_path}")
         connector.connect()
 

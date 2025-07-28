@@ -109,7 +109,7 @@ class TestDeepSeekModel:
         }"""
 
         question = """database_type='sqlite' task='Calculate the total revenue in 1993 from orders with a discount between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the extended price by the discount'"""
-        ssb_db_path = "tests/SSB.db"
+        ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
         result = await self.model.generate_with_mcp(
@@ -141,7 +141,7 @@ class TestDeepSeekModel:
         }"""
 
         question = """database_type='sqlite' task='Analyze the top 5 suppliers by total revenue and their regional distribution using the SSB database'"""
-        ssb_db_path = "tests/SSB.db"
+        ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
         action_count = 0
@@ -196,7 +196,7 @@ class TestDeepSeekModel:
 
         instructions = """You are a SQLite expert working with the Star Schema Benchmark database. 
         Execute business analytics queries and provide clear results with proper joins."""
-        ssb_db_path = "tests/SSB.db"
+        ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
         for i, scenario in enumerate(test_scenarios):
@@ -233,7 +233,7 @@ class TestDeepSeekModel:
             "Perform comprehensive supplier performance analysis including revenue, volume, and geographic distribution",
         ]
 
-        ssb_db_path = "tests/SSB.db"
+        ssb_db_path = "tests/data/SSB.db"
 
         for i, scenario in enumerate(complex_scenarios):
             question = f"database_type='sqlite' task='{scenario}'"
@@ -272,3 +272,4 @@ class TestDeepSeekModel:
             logger.debug(
                 f"Acceptance stream scenario {i+1} completed: {action_count} actions, {total_content_length} total content length"
             )
+            logger.debug(f"Action: {action}")
