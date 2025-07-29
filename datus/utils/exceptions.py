@@ -23,8 +23,8 @@ class ErrorCode(Enum):
     COMMON_ENV = ("100005", "The environment variable {env_var} is not set")
     COMMON_CONFIG_ERROR = ("100006", "Configuration error: {config_error}")
     COMMON_MISSING_DEPENDENCY = ("100007", "Missing node dependency")
-    # Validation errors
     COMMON_VALIDATION_FAILED = ("100008", "Data validation failed")
+    COMMON_JSON_PARSE_ERROR = ("100009", "JSON parsing error in file '{file_path}': {error_detail}")
 
     # Node execution errors
     NODE_EXECUTION_FAILED = ("200001", "Node execution failed")

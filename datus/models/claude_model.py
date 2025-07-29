@@ -17,7 +17,6 @@ from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, O
 from pydantic import AnyUrl
 
 from datus.models.base import LLMBaseModel
-from datus.models.session_manager import SessionManager
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -164,8 +163,7 @@ class ClaudeModel(LLMBaseModel):
                 )
             )
         
-        # Initialize session manager
-        self.session_manager = SessionManager()
+        # Session manager is initialized lazily in the base class via property
 
     def generate(self, prompt: Any, **kwargs) -> str:
         """Generate a response from the Claude model.

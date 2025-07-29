@@ -39,6 +39,7 @@ from datus.utils.benchmark_utils import (
     load_bird_dev_tasks,
 )
 from datus.utils.constants import DBType, LLMProvider
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
