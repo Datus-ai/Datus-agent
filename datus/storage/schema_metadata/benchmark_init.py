@@ -24,8 +24,11 @@ def init_snowflake_schema(
     benchmark_path: str = "benchmark/spider2/spider2-snow",
     build_mode: str = "overwrite",
     pool_size: int = 4,
+    instance_ids: list = None,
 ):
     """Initialize the schema store for Snowflake."""
+    if instance_ids is None:
+        instance_ids = []
 
     all_schema_tables, all_value_tables = exists_table_value(storage, build_mode=build_mode)
 
@@ -38,6 +41,11 @@ def init_snowflake_schema(
     ):
         for line in f:
             json_data = json.loads(line)
+
+            # Filter by instance_ids if provided
+            if instance_ids and json_data.get("instance_id") not in instance_ids:
+                continue
+
             db_id = json_data["db_id"]
             if db_id in db_ids:
                 continue

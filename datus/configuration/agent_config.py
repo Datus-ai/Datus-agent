@@ -291,7 +291,7 @@ class AgentConfig:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
-    def benchamrk_path(self, name: str = "") -> str:
+    def benchmark_path(self, name: str = "") -> str:
         if not name:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_REQUIRED,

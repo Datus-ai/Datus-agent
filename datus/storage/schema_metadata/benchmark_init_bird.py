@@ -100,6 +100,7 @@ def init_dev_schema(
     bird_path: str = "benchmark/bird/dev_20240627",
     build_mode: str = "overwrite",
     pool_size: int = 4,
+    database_names: list = None,
 ):
     """
     Initialize the schema for Bird-Bench.
@@ -110,11 +111,19 @@ def init_dev_schema(
         bird_path: Path to the bird benchmark directory
         build_mode: Build mode for the schema
     """
+    if database_names is None:
+        database_names = []
+
     db_table_keys = load_table_keys(f"{bird_path}/dev_tables.json")
     databases_path = f"{bird_path}/dev_databases"
     all_schema_tables, all_value_tables = exists_table_value(rag, build_mode=build_mode)
 
     with ThreadPoolExecutor(max_workers=pool_size) as executor:
+        all_databases = os.listdir(databases_path)
+        # Filter by database_names if provided
+        if database_names:
+            all_databases = [db for db in all_databases if db in database_names]
+
         futures = [
             executor.submit(
                 init_dev_schema_by_db,
@@ -127,7 +136,7 @@ def init_dev_schema(
                 set(all_schema_tables.keys()),
                 all_value_tables,
             )
-            for database_name in os.listdir(databases_path)
+            for database_name in all_databases
         ]
         for future in as_completed(futures):
             future.result()
