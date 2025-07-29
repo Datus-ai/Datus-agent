@@ -102,14 +102,14 @@ def bird_rag_storage(bird_agent_config: AgentConfig) -> SchemaWithValueRAG:
 
 
 @pytest.mark.parametrize("database_name", BIRD_DATABASE_NAMES)
-@pytest.mark.acceptance
+# @pytest.mark.acceptance
 def test_bird_tables(bird_rag_storage: SchemaWithValueRAG, database_name: str):
     tables = bird_rag_storage.search_all_schemas(database_name=database_name)
     assert len(tables) > 0, "tables should be greater than 0"
 
 
 @pytest.mark.parametrize("task_id", ["233"])
-@pytest.mark.acceptance
+# @pytest.mark.acceptance
 def test_bird_task(bird_rag_storage: SchemaWithValueRAG, bird_agent_config: AgentConfig, task_id: str):
     bird_path = bird_agent_config.benchmark_path("bird_dev")
     with open(os.path.join(bird_path, "dev.json"), "r") as f:
