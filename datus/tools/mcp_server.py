@@ -97,128 +97,89 @@ class MCPServer:
     _lock = threading.Lock()
 
     @classmethod
-    def get_db_mcp_server(cls, db_configs: Union[DbConfig, Dict[str, DbConfig]], database: str):
+    def get_db_mcp_server(cls, db_config: DbConfig):
         """Get the appropriate MCP server based on database type and configuration."""
-
-        # Handle null/empty inputs
-        if not db_configs:
+        if not db_config:
             logger.error("No database configuration provided")
             return None
 
-        if isinstance(db_configs, dict) and not db_configs:
-            logger.error("Empty database configuration dictionary provided")
+        if db_config.type in [DBType.SNOWFLAKE, DBType.STARROCKS]:
+            return cls._get_server_based_mcp_server(db_config, db_config.database or "")
+        elif db_config.type in [DBType.SQLITE, DBType.DUCKDB]:
+            return cls._get_file_based_mcp_server(db_config)
+        else:
+            logger.error(f"Unsupported database type for MCP: {db_config.type}")
+            raise ValueError(f"Unsupported database type for MCP: {db_config.type}")
+
+    @classmethod
+    def _get_server_based_mcp_server(cls, db_config: DbConfig, database: str):
+        """Get MCP server for server-based databases (Snowflake, StarRocks)."""
+        if db_config.type == DBType.SNOWFLAKE:
+            logger.debug("Initializing Snowflake MCP server")
+            return cls.get_snowflake_mcp_server(database, db_config)
+        elif db_config.type == DBType.STARROCKS:
+            logger.debug("Initializing StarRocks MCP server")
+            return cls.get_starrocks_mcp_server(database, db_config)
+        else:
+            logger.error(f"Unsupported server-based database type: {db_config.type}")
             return None
 
-        db_type = db_configs.type if isinstance(db_configs, DbConfig) else list(db_configs.values())[0].type
-        # Snowflake and starrocks only have one Dbconfig, they can switch database internally
-        # but duckdb and sqlite may have multiple databases
-        if db_type == DBType.SNOWFLAKE:
-            logger.debug("Initializing Snowflake MCP server")
-            if isinstance(db_configs, DbConfig):
-                return cls.get_snowflake_mcp_server(database, db_configs)
-            elif isinstance(db_configs, dict):
-                # Extract the first (and typically only) Snowflake config from dictionary
-                db_config = list(db_configs.values())[0]
-                return cls.get_snowflake_mcp_server(database, db_config)
-            else:
-                logger.warning(f"Snowflake MCP server only support one database, check {db_configs}")
-                return None
-        elif db_type == DBType.STARROCKS:
-            logger.debug("Initializing StarRocks MCP server")
-            if isinstance(db_configs, DbConfig):
-                return cls.get_starrocks_mcp_server(database, db_configs)
-            elif isinstance(db_configs, dict):
-                # Extract the first (and typically only) StarRocks config from dictionary
-                db_config = list(db_configs.values())[0]
-                return cls.get_starrocks_mcp_server(database, db_config)
-            else:
-                logger.warning(f"StarRocks MCP server only support one database, check {db_configs}")
-                return None
-        elif db_type == DBType.SQLITE:
-            logger.debug("Initializing SQLite MCP server")
-            db_config = None
-
-            if isinstance(db_configs, DbConfig):
-                db_config = db_configs
-            elif isinstance(db_configs, dict):
-                if database in db_configs:
-                    db_config = db_configs[database]
-                else:
-                    # Use first available config if specific database not found
-                    db_config = list(db_configs.values())[0]
-                    logger.warning(f"Database '{database}' not found, using first available SQLite database")
-
-            if db_config and db_config.uri:
-                # Extract db_path from URI
-                if db_config.uri.startswith("sqlite:///"):
-                    db_path = db_config.uri.replace("sqlite:///", "")
-                else:
-                    db_path = db_config.uri
-
-                # Expand user home directory (handle ~ paths)
-                db_path = str(Path(db_path).expanduser())
-
-                # Convert relative path to absolute path, if not already absolute
-                if not os.path.isabs(db_path):
-                    db_path = os.path.abspath(db_path)
-
-                logger.info(f"Initializing SQLite MCP server with database: {db_path}")
-                return cls.get_sqlite_mcp_server(db_path=db_path)
-            else:
+    @classmethod
+    def _get_file_based_mcp_server(cls, db_config: DbConfig):
+        """Get MCP server for file-based databases (SQLite, DuckDB)."""
+        if not db_config.uri:
+            if db_config.type == DBType.SQLITE:
                 logger.info("Initializing SQLite MCP server with default database")
                 return cls.get_sqlite_mcp_server()
-        elif db_type == DBType.DUCKDB:
-            logger.debug("Initializing DuckDB MCP server")
-            db_config = None
-
-            if isinstance(db_configs, DbConfig):
-                db_config = db_configs
-            elif isinstance(db_configs, dict):
-                if database in db_configs:
-                    db_config = db_configs[database]
-                else:
-                    # Use first available config if specific database not found
-                    db_config = list(db_configs.values())[0]
-                    logger.warning(f"Database '{database}' not found, using first available DuckDB database")
-
-            if db_config and db_config.uri:
-                # Extract db_path from URI
-                if db_config.uri.startswith("duckdb:///"):
-                    db_path = db_config.uri.replace("duckdb:///", "")
-                else:
-                    db_path = db_config.uri
-
-                # Expand user home directory (handle ~ paths)
-                db_path = str(Path(db_path).expanduser())
-
-                # Convert relative path to absolute path, if not already absolute
-                if not os.path.isabs(db_path):
-                    db_path = os.path.abspath(db_path)
-
-                logger.info(f"Initializing DuckDB MCP server with database: {db_path}")
-                return cls.get_duckdb_mcp_server(db_path=db_path)
             else:
                 logger.info("Initializing DuckDB MCP server with memory database")
                 return cls.get_duckdb_mcp_server()
+
+        db_path = cls._extract_db_path_from_uri(db_config.uri, db_config.type)
+        
+        if db_config.type == DBType.SQLITE:
+            logger.info(f"Initializing SQLite MCP server with database: {db_path}")
+            return cls.get_sqlite_mcp_server(db_path=db_path)
+        elif db_config.type == DBType.DUCKDB:
+            logger.info(f"Initializing DuckDB MCP server with database: {db_path}")
+            return cls.get_duckdb_mcp_server(db_path=db_path)
         else:
-            logger.error(f"Unsupported database type for MCP: {db_type}")
-            raise ValueError(f"Unsupported database type for MCP: {db_type}")
+            logger.error(f"Unsupported file-based database type: {db_config.type}")
+            return None
 
     @classmethod
-    def check_connectivity(cls, db_type: str, db_configs: Union[DbConfig, Dict[str, DbConfig]]):
-        """Check MCP server connectivity for a given database type."""
-        logger.info(f"Checking MCP server connectivity for database type: {db_type}")
+    def _extract_db_path_from_uri(cls, uri: str, db_type: str) -> str:
+        """Extract database path from URI and convert to absolute path."""
+        # Remove protocol prefix if present
+        if uri.startswith(f"{db_type.lower()}:///"):
+            db_path = uri.replace(f"{db_type.lower()}:///", "")
+        else:
+            db_path = uri
+
+        # Expand user home directory (handle ~ paths)
+        db_path = str(Path(db_path).expanduser())
+
+        # Convert relative path to absolute path, if not already absolute
+        if not os.path.isabs(db_path):
+            db_path = os.path.abspath(db_path)
+
+        return db_path
+
+    @classmethod
+    def check_connectivity(cls, db_config: DbConfig):
+        """Check MCP server connectivity for a given database configuration."""
+        logger.info(f"Checking MCP server connectivity for database type: {db_config.type}")
 
         try:
-            mcp_server = cls.get_db_mcp_server(db_configs, "")
+            mcp_server = cls.get_db_mcp_server(db_config)
             if not mcp_server:
-                logger.error(f"{db_type} MCP Server failed to initialize")
+                logger.error(f"{db_config.type} MCP Server failed to initialize")
                 return
 
             async def test_connection():
                 try:
                     await mcp_server.connect()
-                    logger.info(f"{db_type} MCP Server connected successfully")
+                    logger.info(f"{db_config.type} MCP Server connected successfully")
 
                     if hasattr(mcp_server, "list_tools"):
                         # Create minimal agent and run context for the new interface
@@ -227,11 +188,11 @@ class MCPServer:
                         tools = await mcp_server.list_tools(run_context, agent)
                         tool_count = len(tools) if tools else 0
                         logger.info(
-                            f"{db_type} MCP Server has {tool_count} tools available: {[tool.name for tool in tools]}"
+                            f"{db_config.type} MCP Server has {tool_count} tools available: {[tool.name for tool in tools]}"
                         )
 
                 except Exception as e:
-                    logger.error(f"{db_type} MCP Server connection failed: {str(e)}")
+                    logger.error(f"{db_config.type} MCP Server connection failed: {str(e)}")
                 finally:
                     # Ensure proper cleanup
                     if hasattr(mcp_server, "cleanup"):

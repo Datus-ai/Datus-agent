@@ -51,7 +51,7 @@ async def reasoning_sql_with_mcp_stream(
         )
 
     # Setup MCP servers
-    db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+    db_mcp_server = MCPServer.get_db_mcp_server(db_config)
     mcp_servers = {input_data.sql_task.database_name: db_mcp_server}
 
     # If no action history manager provided, create one to track the final result
@@ -144,7 +144,7 @@ def reasoning_sql_with_mcp(
         raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
 
     # logger.info(f"@@@@db_config: {db_config}, input_data: {input_data.sql_task.database_name}")
-    mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+    mcp_server = MCPServer.get_db_mcp_server(db_config)
 
     instruction = prompt_manager.get_raw_template("reasoning_system", input_data.prompt_version)
     # update to python 3.12 to enable structured output

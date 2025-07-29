@@ -70,7 +70,8 @@ agent:
       uri: tests/data/datus_metricflow_db/duck.db # absolute path: sqlite:////full/path/to/example.db
     ssb_sqlite:
       type: sqlite
-      path_pattern: tests/data/SSB.db
+      name: SSB
+      uri: tests/data/SSB.db
     snowflake:
       type: snowflake
       account: ${SNOWFLAKE_ACCOUNT}

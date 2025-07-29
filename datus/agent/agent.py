@@ -516,13 +516,12 @@ class Agent:
         try:
             from datus.tools.mcp_server import MCPServer
 
-            db_configs = self.db_manager.current_db_configs(self.global_config.current_namespace)
-            db_type = self.global_config.db_type
+            db_config = self.global_config.current_db_config()
 
-            logger.info(f"Checking MCP server for database type: {db_type}")
+            logger.info(f"Checking MCP server for database type: {db_config.type}")
 
             # Use the encapsulated method to check connectivity
-            return MCPServer.check_connectivity(db_type, db_configs)
+            return MCPServer.check_connectivity(db_config)
 
         except Exception as e:
             logger.error(f"MCP server check failed: {str(e)}")
