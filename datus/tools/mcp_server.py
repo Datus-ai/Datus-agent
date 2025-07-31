@@ -370,43 +370,7 @@ class MCPServer:
         return cls._duckdb_mcp_server
 
     @classmethod
-    def get_metricflow_mcp_server(cls):
-        if cls._metricflow_mcp_server is None:
-            with cls._lock:
-                if cls._metricflow_mcp_server is None:
-                    directory = os.environ.get("METRICFLOW_MCP_DIR", "mcp/mcp-metricflow-server")
-                    mf_path = os.environ.get("MF_PATH", "")
-                    mf_project_dir = os.environ.get("MF_PROJECT_DIR", "")
-                    mf_verbose = os.environ.get("MF_VERBOSE", "false")
-                    if not directory:
-                        try:
-                            directory = find_mcp_directory("mcp-metricflow-server")
-                        except FileNotFoundError as e:
-                            logger.error(f"Could not find MetricFlow MCP directory: {e}")
-                            return None
-                    logger.info(f"Using MetricFlow MCP server with directory: {directory}")
-
-                    mcp_server_params = MCPServerStdioParams(
-                        command="uv",
-                        args=[
-                            "--directory",
-                            directory,
-                            "run",
-                            "mcp-metricflow-server",
-                        ],
-                        env={
-                            "MF_PATH": mf_path,
-                            "MF_PROJECT_DIR": mf_project_dir,
-                            "MF_VERBOSE": mf_verbose,
-                        },
-                    )
-                    cls._metricflow_mcp_server = SilentMCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=20
-                    )
-        return cls._metricflow_mcp_server
-
-    @classmethod
-    def get_metricflow_with_dbinfo_mcp_server(cls, database_name: str, db_config: DbConfig):
+    def get_metricflow_mcp_server(cls, database_name: str, db_config: DbConfig):
         if cls._metricflow_mcp_server is None:
             with cls._lock:
                 if cls._metricflow_mcp_server is None:
@@ -428,7 +392,7 @@ class MCPServer:
                         "MF_PROJECT_DIR": mf_project_dir,
                         "MF_VERBOSE": mf_verbose,
                     }
-                    if db_config.type in (DBType.DUCKDB.value, DBType.SQLITE.value):
+                    if db_config.type in (DBType.DUCKDB, DBType.SQLITE):
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_DIALECT"] = db_config.type
                         env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
