@@ -6,7 +6,7 @@ import argparse
 
 import uvicorn
 
-from datus.utils.loggings import get_logger
+from datus.utils.loggings import configure_logging, get_logger
 
 logger = get_logger(__name__)
 
@@ -24,15 +24,45 @@ def main():
         choices=["critical", "error", "warning", "info", "debug"],
         help="Log level (default: info)",
     )
+    parser.add_argument(
+        "--namespace",
+        type=str,
+        help="Namespace of databases or benchmark",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to configuration file (default: conf/agent.yml > ~/.datus/conf/agent.yml)",
+    )
+    parser.add_argument("--max_steps", type=int, default=20, help="Maximum workflow steps")
+    parser.add_argument("--plan", type=str, default="fixed", help="Workflow plan type")
+    parser.add_argument("--load_cp", type=str, help="Load workflow from checkpoint file")
 
     args = parser.parse_args()
 
     logger.info(f"Starting Datus Agent API server on {args.host}:{args.port}")
     logger.info(f"Workers: {args.workers}, Reload: {args.reload}, Log Level: {args.log_level}")
+    logger.info(f"Agent config - Namespace: {args.namespace}, Config: {args.config}")
+
+    configure_logging(args.log_level)
+
+    # Create agent args from command line args
+    agent_args = argparse.Namespace(
+        namespace=args.namespace,
+        config=args.config,
+        max_steps=args.max_steps,
+        plan=args.plan,
+        load_cp=args.load_cp,
+    )
+
+    # Create app with args
+    from datus.api.service import create_app
+
+    app = create_app(agent_args)
 
     # Start the server
     uvicorn.run(
-        "datus.api.service:app",
+        app,
         host=args.host,
         port=args.port,
         reload=args.reload,

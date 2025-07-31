@@ -1,0 +1,36 @@
+# Datus Agent API - Client Credentials Configuration
+# Client credentials configuration file
+#
+# Format:
+# clients:
+#   client_id: client_secret
+#
+# Security recommendations:
+# 1. Use strong secrets (at least 32 characters with letters, numbers, special chars)
+# 2. Rotate secrets regularly
+# 3. Do not commit this file to public repositories
+# 4. Set appropriate file permissions (e.g., 600)
+
+clients:
+  # Default client - for development and testing
+  datus_client: "datus_secret_key_2025_change_in_production"
+
+  # Analytics service
+  analytics_service: "analytics_strong_secret_key_2025"
+
+  # Machine learning service
+  ml_service: "ml_service_secure_key_2025"
+
+  # Third-party integration service
+  integration_service: "integration_secure_secret_2025"
+
+# JWT configuration
+jwt:
+  # JWT secret key (recommend using JWT_SECRET_KEY environment variable to override)
+  secret_key: "jwt_signing_secret_key_change_in_production_2025"
+
+  # Token expiration time (hours)
+  expiration_hours: 2
+
+  # Signing algorithm
+  algorithm: "HS256"
