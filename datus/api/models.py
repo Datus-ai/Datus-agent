@@ -1,66 +1,10 @@
 """
 API models for the Datus Agent FastAPI service.
 """
-from enum import Enum
+
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
-
-
-class QueryType(str, Enum):
-    """Query execution type."""
-
-    SYNC = "sync"
-    ASYNC = "async"
-
-
-class DatabaseType(str, Enum):
-    """Supported database types."""
-
-    DUCKDB = "duckdb"
-    SNOWFLAKE = "snowflake"
-    MYSQL = "mysql"
-    SQLITE = "sqlite"
-    STARROCKS = "starrocks"
-
-
-class QueryRequest(BaseModel):
-    """Request model for SQL query generation."""
-
-    query: str = Field(..., description="Natural language query description")
-    namespace: str = Field(..., description="Database namespace to use")
-    database: Optional[str] = Field(None, description="Specific database name")
-    schema_name: Optional[str] = Field(None, description="Database schema name")
-    domain: Optional[str] = Field(None, description="Business domain context")
-    layer1: Optional[str] = Field(None, description="Layer 1 context")
-    layer2: Optional[str] = Field(None, description="Layer 2 context")
-    external_knowledge: Optional[str] = Field(None, description="Additional context or evidence")
-    query_type: QueryType = Field(QueryType.SYNC, description="Query execution type")
-    max_steps: Optional[int] = Field(10, description="Maximum workflow steps")
-    plan: Optional[str] = Field(
-        "fixed", description="Workflow plan type from workflow.yml (fixed, dynamic, reflection, etc.)"
-    )
-
-
-class QueryResponse(BaseModel):
-    """Response model for SQL query results."""
-
-    task_id: str = Field(..., description="Unique task identifier")
-    status: str = Field(..., description="Query execution status")
-    sql: Optional[str] = Field(None, description="Generated SQL query")
-    result: Optional[List[Dict[str, Any]]] = Field(None, description="Query execution results")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
-    error: Optional[str] = Field(None, description="Error message if any")
-    execution_time: Optional[float] = Field(None, description="Execution time in seconds")
-
-
-class StreamResponse(BaseModel):
-    """Response model for streaming updates."""
-
-    task_id: str = Field(..., description="Unique task identifier")
-    event_type: str = Field(..., description="Type of update event")
-    data: Dict[str, Any] = Field(..., description="Event data")
-    timestamp: float = Field(..., description="Event timestamp")
 
 
 class HealthResponse(BaseModel):
@@ -72,9 +16,34 @@ class HealthResponse(BaseModel):
     llm_status: str = Field(..., description="LLM service status")
 
 
-class ErrorResponse(BaseModel):
-    """Error response model."""
+class RunWorkflowRequest(BaseModel):
+    """Request model for workflow execution."""
 
-    error: str = Field(..., description="Error message")
-    details: Optional[str] = Field(None, description="Detailed error information")
-    task_id: Optional[str] = Field(None, description="Associated task ID if any")
+    workflow: str = Field(..., description="Workflow name, e.g., nl2sql")
+    namespace: str = Field(..., description="Database namespace")
+    task: str = Field(..., description="Natural language task description")
+    task_id: Optional[str] = Field(None, description="Custom task ID for idempotency")
+    catalog_name: Optional[str] = Field(None, description="Catalog name")
+    database_name: Optional[str] = Field(None, description="Database name")
+    schema_name: Optional[str] = Field(None, description="Schema name")
+
+
+class RunWorkflowResponse(BaseModel):
+    """Response model for workflow execution."""
+
+    task_id: str = Field(..., description="Unique task identifier")
+    status: str = Field(..., description="Workflow execution status")
+    workflow: str = Field(..., description="Workflow name")
+    sql: Optional[str] = Field(None, description="Generated SQL query")
+    result: Optional[List[Dict[str, Any]]] = Field(None, description="Workflow execution results")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    error: Optional[str] = Field(None, description="Error message if any")
+    execution_time: Optional[float] = Field(None, description="Execution time in seconds")
+
+
+class TokenResponse(BaseModel):
+    """Token response model."""
+
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = Field(..., description="Token type, always 'Bearer'")
+    expires_in: int = Field(..., description="Token expiration time in seconds")

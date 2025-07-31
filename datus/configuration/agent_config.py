@@ -172,7 +172,6 @@ class AgentConfig:
                 self.namespaces[namespace][name] = DbConfig.filter_kwargs(DbConfig, db_config)
 
         self.metric_meta = {k: MetricMeta.filter_kwargs(MetricMeta, v) for k, v in kwargs.get("metrics", {}).items()}
-        logger.info(f"metric_meta: {self.metric_meta}")
 
     @property
     def current_namespace(self) -> str:
