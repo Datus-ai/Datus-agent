@@ -445,7 +445,7 @@ class MCPServer:
                         "MF_PROJECT_DIR": mf_project_dir,
                         "MF_VERBOSE": mf_verbose,
                     }
-                    if db_config.type in (DBType.DUCKDB.value, DBType.SQLITE.value):
+                    if db_config.type in (DBType.DUCKDB, DBType.SQLITE):
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_DIALECT"] = db_config.type
                         env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
