@@ -72,7 +72,7 @@ def match_result(target_schema: Set[str], full_name_set: Set[str]):
 )
 def test_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, task_ids: Set[str], use_rerank: bool):
     gold_tables = load_gold_tables()
-    with open(os.path.join(agent_config.benchamrk_path("spider2"), "spider2-snow.jsonl")) as f:
+    with open(os.path.join(agent_config.benchmark_path("spider2"), "spider2-snow.jsonl")) as f:
         for line in f:
             task = json.loads(line)
             if task["instance_id"] not in task_ids:
@@ -108,7 +108,7 @@ def test_full_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: 
         top_n: Number of top results to return
     """
 
-    tasks_file = os.path.join(agent_config.benchamrk_path("spider2"), "spider2-snow.jsonl")
+    tasks_file = os.path.join(agent_config.benchmark_path("spider2"), "spider2-snow.jsonl")
     start_time = datetime.now()
     with open(tasks_file) as f:
         tasks = [json.loads(line) for line in f]

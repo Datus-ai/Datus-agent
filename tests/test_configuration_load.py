@@ -66,7 +66,7 @@ def test_configuration_load(namespace: str, agent_config: AgentConfig):
 
     error_benchmark = "abc"
     with pytest.raises(DatusException, match=f"Unsupported value {error_namespace} for benchmark"):
-        agent_config.benchamrk_path(error_benchmark)
+        agent_config.benchmark_path(error_benchmark)
 
 
 def test_benchmark_db_check(agent_config: AgentConfig, namespace: str = "snowflake"):
@@ -86,7 +86,7 @@ def test_benchmark_db_check(agent_config: AgentConfig, namespace: str = "snowfla
     argvalues=[("bird_sqlite", "bird_dev"), ("snowflake", "spider2")],
 )
 def test_benchmark_config(namespace: str, benchmark: str, agent_config: AgentConfig):
-    assert agent_config.benchamrk_path
+    assert agent_config.benchmark_path
     agent_config.override_by_args(
         **{
             "namespace": namespace,
@@ -94,9 +94,9 @@ def test_benchmark_config(namespace: str, benchmark: str, agent_config: AgentCon
             "benchmark_path": "abc",
         }
     )
-    assert agent_config.benchamrk_path(benchmark) == "abc"
+    assert agent_config.benchmark_path(benchmark) == "abc"
 
-    assert not os.path.exists(agent_config.benchamrk_path(benchmark))
+    assert not os.path.exists(agent_config.benchmark_path(benchmark))
 
 
 def test_storage_config(agent_config: AgentConfig):

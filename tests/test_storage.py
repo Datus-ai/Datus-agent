@@ -1,38 +1,50 @@
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor
+import shutil
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
-import lancedb
-import pandas as pd
 import pytest
 from conftest import PROJECT_ROOT
-from lancedb.table import Table
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-
-# from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
+from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
+from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.loggings import configure_logging, get_logger
 
 configure_logging(debug=True)
 logger = get_logger(__name__)
 
+# Test instance IDs for snowflake schema initialization
+SPIDER_INSTANCE_IDS = ["sf014", "sf002", "sf012", "sf044", "sf011", "sf040"]
+
+# Test database names for bird schema initialization
+BIRD_DATABASE_NAMES = ["california_schools", "card_games"]
+
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    return load_agent_config(**{"namespace": "snowflake"})
+    return load_agent_config(config="tests/conf/agent.yml", namespace="snowflake")
 
 
 @pytest.fixture
 def rag_storage(agent_config: AgentConfig) -> SchemaWithValueRAG:
-    return rag_by_configuration(agent_config)
+    rag_storage_path = agent_config.rag_storage_path()
+    schema_metadata_path = os.path.join(rag_storage_path, "schema_metadata.lance")
+    if os.path.exists(schema_metadata_path):
+        shutil.rmtree(schema_metadata_path)
+        logger.info(f"Deleted existing directory {schema_metadata_path}")
+    schema_value_path = os.path.join(rag_storage_path, "schema_value.lance")
+    if os.path.exists(schema_value_path):
+        shutil.rmtree(schema_value_path)
+        logger.info(f"Deleted existing directory {schema_value_path}")
 
-
-# def test_init_snowflake_schema(rag_storage: SchemaWithValueRAG):
-#     init_snowflake_schema(rag_storage)
+    rag_storage = rag_by_configuration(agent_config)
+    init_snowflake_schema(rag_storage, instance_ids=SPIDER_INSTANCE_IDS)
+    return rag_storage
 
 
 def do_query_schema(
@@ -41,7 +53,7 @@ def do_query_schema(
     return rag_storage.search_similar(query_txt, top_n=top_n, database_name=db_name)
 
 
-@pytest.mark.parametrize("task_id", ["sf014", "sf002", "sf012", "sf044", "sf011", "sf040"])
+@pytest.mark.parametrize("task_id", SPIDER_INSTANCE_IDS)
 def test_query_schema_by_spider2_task(task_id: str, rag_storage: SchemaWithValueRAG, top_n: int = 10):
     with open(os.path.join(PROJECT_ROOT, "benchmark/spider2/spider2-snow/spider2-snow.jsonl"), "r") as f:
         for line in f:
@@ -56,61 +68,50 @@ def test_query_schema_by_spider2_task(task_id: str, rag_storage: SchemaWithValue
             break
 
 
-# you can use this function to move the table from one path to another
-def move_path(
-    executor: ThreadPoolExecutor,
-    table_name: str,
-    path: str,
-    new_path: str,
-    schema_claz,
-    columns: List[str],
-):
-    old_db = lancedb.connect(path)
-    new_db = lancedb.connect(new_path)
-    old_table = old_db.open_table(table_name)
-    data = old_table.search().limit(1000000).to_list()
-    print("total", len(data))
-    new_table = new_db.create_table(table_name, schema=schema_claz)
-    batch_data = []
-    for i in data:
-        new_data = {}
-        for c in columns:
-            new_data[c] = i[c]
-        batch_data.append(new_data)
-        if len(batch_data) == 100:
-            new_table.add(pd.DataFrame(batch_data))
-            executor.submit(do_add_data, new_table, batch_data)
-            batch_data = []
-    if len(batch_data) > 0:
-        executor.submit(do_add_data, new_table, batch_data)
-
-
-def do_add_data(table: Table, data: List[Dict[str, Any]]):
-    table.add(pd.DataFrame(data))
-
-
 @pytest.fixture
 def bird_agent_config() -> AgentConfig:
-    # Modify namespace according to your config file
-    return load_agent_config(**{"namespace": "bird_sqlite"})
+    return load_agent_config(config="tests/conf/agent.yml", namespace="bird_sqlite")
 
 
 @pytest.fixture
 def bird_rag_storage(bird_agent_config: AgentConfig) -> SchemaWithValueRAG:
-    return rag_by_configuration(bird_agent_config)
+    rag_storage_path = bird_agent_config.rag_storage_path()
+    schema_metadata_path = os.path.join(rag_storage_path, "schema_metadata.lance")
+    print(f"schema_metadata_path: {schema_metadata_path}")
+    if os.path.exists(schema_metadata_path):
+        shutil.rmtree(schema_metadata_path)
+        logger.info(f"Deleted existing directory {schema_metadata_path}")
+    schema_value_path = os.path.join(rag_storage_path, "schema_value.lance")
+    if os.path.exists(schema_value_path):
+        shutil.rmtree(schema_value_path)
+        logger.info(f"Deleted existing directory {schema_value_path}")
+
+    benchmark_path = bird_agent_config.benchmark_path("bird_dev")
+    rag_storage = rag_by_configuration(bird_agent_config)
+    db_manager = db_manager_instance(bird_agent_config.namespaces)
+    init_dev_schema(
+        rag_storage,
+        db_manager,
+        bird_agent_config.current_namespace,
+        benchmark_path,
+        "overwrite",
+        pool_size=4,
+        database_names=BIRD_DATABASE_NAMES,
+    )
+    return rag_storage
 
 
-@pytest.mark.parametrize("database_name", ["california_schools", "card_games"])
-@pytest.mark.acceptance
+@pytest.mark.parametrize("database_name", BIRD_DATABASE_NAMES)
+# @pytest.mark.acceptance
 def test_bird_tables(bird_rag_storage: SchemaWithValueRAG, database_name: str):
     tables = bird_rag_storage.search_all_schemas(database_name=database_name)
     assert len(tables) > 0, "tables should be greater than 0"
 
 
 @pytest.mark.parametrize("task_id", ["233"])
-@pytest.mark.acceptance
+# @pytest.mark.acceptance
 def test_bird_task(bird_rag_storage: SchemaWithValueRAG, bird_agent_config: AgentConfig, task_id: str):
-    bird_path = bird_agent_config.benchamrk_path("bird_dev")
+    bird_path = bird_agent_config.benchmark_path("bird_dev")
     with open(os.path.join(bird_path, "dev.json"), "r") as f:
         data = json.load(f)
         for task in data:
@@ -120,7 +121,6 @@ def test_bird_task(bird_rag_storage: SchemaWithValueRAG, bird_agent_config: Agen
             db_name = task["db_id"]
             print(query_txt)
             all_tables = bird_rag_storage.search_all_schemas(database_name=db_name)
-            # all_values = bird_rag_storage.value_store.search_all(db_name)
             result, value_result = do_query_schema(bird_rag_storage, query_txt, top_n=5, db_name=db_name)
 
             print(
@@ -131,7 +131,7 @@ def test_bird_task(bird_rag_storage: SchemaWithValueRAG, bird_agent_config: Agen
 
 @pytest.mark.parametrize("top_n", [5, 10, 20])
 def test_time_spends_bird(top_n: int, bird_rag_storage: SchemaWithValueRAG, bird_agent_config: AgentConfig):
-    bird_path = bird_agent_config.benchamrk_path("bird_dev")
+    bird_path = bird_agent_config.benchmark_path("bird_dev")
     spend_times = {}
     max_time = 0
     max_id = ""
@@ -165,7 +165,9 @@ def test_time_spends_bird(top_n: int, bird_rag_storage: SchemaWithValueRAG, bird
     else:
         median_time = sorted_times[n // 2]
 
-    with open(f"tests/output/bird_dev/search_spends_top_{top_n}.txt", "w") as f:
+    output_dir = "tests/output/bird_dev"
+    os.makedirs(output_dir, exist_ok=True)
+    with open(f"{output_dir}/search_spends_top_{top_n}.txt", "w") as f:
         f.write(
             f"Time statistics for top_n={top_n} (in milliseconds):\n"
             f"  Maximum: {max_time:.2f}ms, id: {max_id}\n"

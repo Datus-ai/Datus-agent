@@ -45,7 +45,7 @@ def rag(agent_config: AgentConfig) -> SchemaWithValueRAG:
 
 @pytest.mark.parametrize("task_ids", [[0, 1, 2, 3, 4, 5, 6]])
 def test_recall(task_ids: List[str], rag: SchemaWithValueRAG, agent_config: AgentConfig):
-    benchmark_path = agent_config.benchamrk_path("bird_dev")
+    benchmark_path = agent_config.benchmark_path("bird_dev")
     with open(os.path.join(benchmark_path, "dev.json"), "r", encoding="utf-8") as f:
         dev_json_list = json.load(f)
         for task in dev_json_list:
@@ -138,7 +138,7 @@ def test_full_recall(top_n: int, rag: SchemaWithValueRAG, agent_config: AgentCon
     output_dir = os.path.join(PROJECT_ROOT, "tests/output/bird_dev/recall/")
     os.makedirs(output_dir, exist_ok=True)
     start_time = datetime.now()
-    benchmark_path = agent_config.benchamrk_path("bird_dev")
+    benchmark_path = agent_config.benchmark_path("bird_dev")
     match_results = []
     total = 0
     with open(os.path.join(benchmark_path, "dev.json"), "r", encoding="utf-8") as f:
