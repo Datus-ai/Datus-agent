@@ -33,6 +33,7 @@ def test_multiprocessing_start_method_base(platform_name, expected_method):
             import importlib
 
             import datus.models.base
+
             importlib.reload(datus.models.base)
 
             # 验证是否调用了正确的启动方法
@@ -61,6 +62,7 @@ def test_multiprocessing_start_method_embedding(platform_name, expected_method):
             import importlib
 
             import datus.storage.embedding_models
+
             importlib.reload(datus.storage.embedding_models)
 
             # 验证是否调用了正确的启动方法
@@ -80,7 +82,7 @@ def test_detect_toxicology_db(tmp_path):
     test_files = [
         "benchmark/bird/dev_20240627/dev_databases/medical/toxicology.sqlite",
         "benchmark/bird/dev_20240627/dev_databases/chemical/untested.sqlite",
-        "benchmark/bird/dev_20240627/dev_databases/empty.sqlite"
+        "benchmark/bird/dev_20240627/dev_databases/empty.sqlite",
     ]
 
     for file in test_files:
@@ -94,18 +96,15 @@ def test_detect_toxicology_db(tmp_path):
     results = get_files_from_glob_pattern(full_pattern, DBType.SQLITE)
 
     # 3. 验证结果
-    toxicology_files = [
-        r for r in results
-        if r["name"] == "toxicology"
-           and r["uri"].endswith("toxicology.sqlite")
-    ]
+    toxicology_files = [r for r in results if r["name"] == "toxicology" and r["uri"].endswith("toxicology.sqlite")]
 
     assert len(toxicology_files) == 1, "应检测到1个toxicology数据库"
 
     # 4. 验证完整URI格式
     expected_uri = (
-        f"{DBType.SQLITE}:///"
-        f"{tmp_path}/benchmark/bird/dev_20240627/dev_databases/medical/toxicology.sqlite"
-    ).replace("\\", "/")  # 统一路径分隔符
+        f"{DBType.SQLITE}:///" f"{tmp_path}/benchmark/bird/dev_20240627/dev_databases/medical/toxicology.sqlite"
+    ).replace(
+        "\\", "/"
+    )  # 统一路径分隔符
 
     assert toxicology_files[0]["uri"] == expected_uri
