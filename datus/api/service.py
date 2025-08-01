@@ -1,4 +1,5 @@
 import argparse
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -10,14 +11,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from datus.agent.agent import Agent
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.node_models import SqlTask
+from datus.storage.feedback import FeedbackStore
 from datus.utils.loggings import get_logger
 
 from .auth import auth_service, get_current_client
-from .models import HealthResponse, RunWorkflowRequest, RunWorkflowResponse, TokenResponse
+from .models import (
+    FeedbackRequest,
+    FeedbackResponse,
+    HealthResponse,
+    RunWorkflowRequest,
+    RunWorkflowResponse,
+    TokenResponse,
+)
 
 logger = get_logger(__name__)
 
 _form_required = Form(...)
+_form_client_id = Form(...)
+_form_client_secret = Form(...)
+_form_grant_type = Form(...)
 _depends_get_current_client = Depends(get_current_client)
 
 
@@ -29,6 +41,7 @@ class DatusAPIService:
         self.agents: Dict[str, Agent] = {}
         self.agent_config = None
         self.args = args
+        self.feedback_store = None
 
     async def initialize(self):
         """Initialize the service with default configurations."""
@@ -36,6 +49,11 @@ class DatusAPIService:
             # Load default agent configuration
             self.agent_config = load_agent_config()
             logger.info("Agent configuration loaded successfully")
+
+            # Initialize feedback store
+            feedback_db_path = os.path.join(self.agent_config.rag_base_path, "feedback")
+            self.feedback_store = FeedbackStore(feedback_db_path)
+            logger.info("Feedback store initialized successfully")
         except Exception as e:
             logger.error(f"Failed to load agent configuration: {e}")
             self.agent_config = None
@@ -124,6 +142,27 @@ class DatusAPIService:
                 execution_time=time.time() - start_time,
             )
 
+    async def record_feedback(self, request: FeedbackRequest) -> FeedbackResponse:
+        """Record user feedback for a task."""
+        try:
+            if not self.feedback_store:
+                raise HTTPException(status_code=500, detail="Feedback store not initialized")
+
+            # Record the feedback
+            recorded_data = self.feedback_store.record_feedback(task_id=request.task_id, status=request.status.value)
+
+            return FeedbackResponse(
+                task_id=recorded_data["task_id"], acknowledged=True, recorded_at=recorded_data["recorded_at"]
+            )
+
+        except Exception as e:
+            logger.error(f"Error recording feedback for task {request.task_id}: {e}")
+            return FeedbackResponse(
+                task_id=request.task_id,
+                acknowledged=False,
+                recorded_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            )
+
     async def health_check(self) -> HealthResponse:
         """Perform health check on the service."""
         try:
@@ -164,7 +203,7 @@ async def health_check() -> HealthResponse:
 
 
 async def authenticate(
-    client_id: str = _form_required, client_secret: str = _form_required, grant_type: str = _form_required
+    client_id: str = _form_client_id, client_secret: str = _form_client_secret, grant_type: str = _form_grant_type
 ) -> TokenResponse:
     """
     OAuth2 client credentials token endpoint.
@@ -188,6 +227,16 @@ async def run_workflow(req: RunWorkflowRequest, current_client: str = _depends_g
         return await service.run_workflow(req)
     except Exception as e:
         logger.error(f"Workflow execution error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def record_feedback(req: FeedbackRequest, current_client: str = _depends_get_current_client):
+    """Record user feedback for a task."""
+    try:
+        logger.info(f"Feedback request from client: {current_client} for task: {req.task_id}")
+        return await service.record_feedback(req)
+    except Exception as e:
+        logger.error(f"Feedback recording error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -234,6 +283,7 @@ def create_app(agent_args: argparse.Namespace) -> FastAPI:
     app.add_api_route("/health", health_check, methods=["GET"], response_model=HealthResponse)
     app.add_api_route("/auth/token", authenticate, methods=["POST"], response_model=TokenResponse)
     app.add_api_route("/workflows/run", run_workflow, methods=["POST"])
+    app.add_api_route("/workflows/feedback", record_feedback, methods=["POST"], response_model=FeedbackResponse)
     app.add_api_route("/", root, methods=["GET"])
 
     return app
