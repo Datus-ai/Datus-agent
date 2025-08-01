@@ -1,13 +1,12 @@
 import json
 import os
-import shutil
 from datetime import datetime
 from typing import Tuple
 
 import pyarrow as pa
 import pytest
-
 from conftest import PROJECT_ROOT
+
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
