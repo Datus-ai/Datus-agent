@@ -276,3 +276,243 @@ class TestDeepSeekModel:
                 f"Acceptance stream scenario {i+1} completed: {action_count} actions, {total_content_length} total content length"
             )
             logger.info(f"Final Action: {action}")
+
+    def test_generate_with_session(self):
+        """Test basic generation with session management."""
+        import uuid
+        session_id = f"test_session_{uuid.uuid4().hex[:8]}"
+        
+        # Create session and have a simple conversation
+        session = self.model.create_session(session_id)
+        
+        # First turn: greeting
+        result1 = self.model.generate("Hello, how are you?", max_tokens=50)
+        assert result1 is not None
+        assert isinstance(result1, str)
+        assert len(result1) > 0
+        
+        # Second turn in same session: follow-up question
+        result2 = self.model.generate("What's 2 + 2?", max_tokens=50)
+        assert result2 is not None
+        assert isinstance(result2, str)
+        assert len(result2) > 0
+        
+        # Verify session exists and has items
+        session_info = self.model.session_manager.get_session_info(session_id)
+        assert session_info["exists"] is True
+        assert session_info["session_id"] == session_id
+        
+        # Cleanup
+        self.model.delete_session(session_id)
+        
+        logger.debug(f"Session conversation: '{result1}' -> '{result2}'")
+
+    def test_generate_with_json_output_session(self):
+        """Test JSON output generation with session management."""
+        import uuid
+        session_id = f"test_json_session_{uuid.uuid4().hex[:8]}"
+        
+        # Create session
+        session = self.model.create_session(session_id)
+        
+        # First JSON request
+        result1 = self.model.generate_with_json_output(
+            "Respond with JSON containing a greeting message"
+        )
+        assert result1 is not None
+        assert isinstance(result1, dict)
+        assert len(result1) > 0
+        
+        # Second JSON request in same session
+        result2 = self.model.generate_with_json_output(
+            "Respond with JSON containing the answer to 2+2"
+        )
+        assert result2 is not None
+        assert isinstance(result2, dict)
+        assert len(result2) > 0
+        
+        # Verify session management
+        assert self.model.session_manager.session_exists(session_id)
+        sessions = self.model.list_sessions()
+        assert session_id in sessions
+        
+        # Cleanup
+        self.model.delete_session(session_id)
+        
+        logger.debug(f"JSON session results: {result1} -> {result2}")
+
+    @pytest.mark.asyncio
+    async def test_generate_with_mcp_session(self):
+        """Test MCP integration with session management."""
+        import uuid
+        session_id = f"test_mcp_session_{uuid.uuid4().hex[:8]}"
+        
+        # Create session
+        session = self.model.create_session(session_id)
+        
+        instructions = """You are a SQLite expert working with the SSB database.
+        Answer questions about the database schema and data."""
+        
+        ssb_db_path = "tests/data/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        
+        # First question: explore schema
+        question1 = "database_type='sqlite' task='Show me all the tables in the database'"
+        result1 = await self.model.generate_with_mcp(
+            prompt=question1,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            session=session,
+        )
+        
+        assert result1 is not None
+        assert "content" in result1
+        assert "sql_contexts" in result1
+        
+        # Second question in same session: follow-up query
+        question2 = "database_type='sqlite' task='Count the total number of rows in the customer table'"
+        result2 = await self.model.generate_with_mcp(
+            prompt=question2,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            session=session,
+        )
+        
+        assert result2 is not None
+        assert "content" in result2
+        assert "sql_contexts" in result2
+        
+        # Verify session persistence
+        session_info = self.model.session_manager.get_session_info(session_id)
+        assert session_info["exists"] is True
+        assert session_info["item_count"] > 0
+        
+        # Cleanup
+        self.model.delete_session(session_id)
+        
+        logger.debug(f"MCP session Q1: {result1.get('content', '')[:100]}...")
+        logger.debug(f"MCP session Q2: {result2.get('content', '')[:100]}...")
+
+    @pytest.mark.asyncio
+    async def test_generate_with_mcp_stream_session(self):
+        """Test MCP streaming with session management."""
+        import uuid
+        session_id = f"test_stream_session_{uuid.uuid4().hex[:8]}"
+        
+        # Create session
+        session = self.model.create_session(session_id)
+        
+        instructions = """You are a SQLite expert working with the SSB database.
+        Provide clear and concise answers about the database."""
+        
+        ssb_db_path = "tests/data/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        
+        # First streaming question
+        question1 = "database_type='sqlite' task='Describe the customer table structure'"
+        action_count1 = 0
+        
+        async for action in self.model.generate_with_mcp_stream(
+            prompt=question1,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            session=session,
+        ):
+            action_count1 += 1
+            assert action is not None
+            logger.debug(f"Stream action 1.{action_count1}: {type(action)}")
+        
+        assert action_count1 > 0
+        
+        # Second streaming question in same session
+        question2 = "database_type='sqlite' task='Show a sample of 3 rows from the customer table'"
+        action_count2 = 0
+        
+        async for action in self.model.generate_with_mcp_stream(
+            prompt=question2,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            session=session,
+        ):
+            action_count2 += 1
+            assert action is not None
+            logger.debug(f"Stream action 2.{action_count2}: {type(action)}")
+        
+        assert action_count2 > 0
+        
+        # Verify session management
+        assert self.model.session_manager.session_exists(session_id)
+        
+        # Cleanup
+        self.model.delete_session(session_id)
+        
+        logger.debug(f"MCP stream session: {action_count1} + {action_count2} total actions")
+
+    @pytest.mark.acceptance
+    @pytest.mark.asyncio
+    async def test_generate_with_mcp_stream_session_acceptance(self):
+        """Acceptance test for MCP streaming with session management."""
+        import uuid
+        session_id = f"test_acceptance_session_{uuid.uuid4().hex[:8]}"
+        
+        # Create session
+        session = self.model.create_session(session_id)
+        
+        instructions = """You are a SQLite expert working with the SSB database.
+        Provide concise answers about database schema and simple queries."""
+        
+        ssb_db_path = "tests/data/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        
+        # Simple acceptance scenarios with session
+        scenarios = [
+            "database_type='sqlite' task='List all tables in the database'",
+            "database_type='sqlite' task='Describe the lineorder table structure'",
+            "database_type='sqlite' task='Count rows in the date table'"
+        ]
+        
+        total_actions = 0
+        
+        for i, scenario in enumerate(scenarios):
+            action_count = 0
+            
+            try:
+                async for action in self.model.generate_with_mcp_stream(
+                    prompt=scenario,
+                    output_type=str,
+                    mcp_servers={"sqlite": mcp_server},
+                    instruction=instructions,
+                    session=session,
+                ):
+                    action_count += 1
+                    total_actions += 1
+                    assert action is not None
+                    logger.debug(f"Acceptance scenario {i+1}, action {action_count}: {type(action)}")
+                    
+            except Exception as e:
+                # Handle known compatibility issues
+                error_msg = str(e).lower()
+                if "responsetextdeltaevent" in error_msg and "logprobs" in error_msg:
+                    logger.warning(
+                        f"Skipping acceptance scenario {i+1} due to known openai-agents + DeepSeek compatibility issue: {e}"
+                    )
+                    pytest.skip("Pydantic validation error in MCP streaming - known openai-agents compatibility issue")
+                else:
+                    raise
+            
+            assert action_count > 0, f"Should receive at least one action for scenario {i+1}"
+            logger.debug(f"Acceptance scenario {i+1} completed with {action_count} actions")
+        
+        # Verify session management
+        session_info = self.model.session_manager.get_session_info(session_id)
+        assert session_info["exists"] is True
+        assert session_info["item_count"] > 0
+        
+        # Cleanup
+        self.model.delete_session(session_id)
+        
+        logger.debug(f"Acceptance test completed: {total_actions} total actions across {len(scenarios)} scenarios")
