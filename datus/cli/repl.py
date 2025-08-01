@@ -25,7 +25,6 @@ from rich.table import Table
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
 from datus.cli.context_commands import ContextCommands
-from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools.db_manager import db_manager_instance
