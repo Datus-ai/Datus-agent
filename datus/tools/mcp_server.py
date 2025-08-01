@@ -396,9 +396,9 @@ class MCPServer:
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_DIALECT"] = db_config.type
                         env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
-                    elif db_config.type == DBType.STARROCKS.value:
+                    elif db_config.type == DBType.STARROCKS:
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
-                        env_settings["MF_DWH_DIALECT"] = DBType.MYSQL.value
+                        env_settings["MF_DWH_DIALECT"] = DBType.MYSQL
                         env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_HOST"] = db_config.host
