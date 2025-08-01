@@ -75,7 +75,10 @@ def generate_metrics_with_mcp(
         raise ValueError("Input must be a GenerateMetricsInput instance")
 
     db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
-    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server()
+    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
+        database_name=input_data.sql_task.database_name,
+        db_config=db_config,
+    )
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
 
     instruction = prompt_manager.get_raw_template("generate_metrics_system", input_data.prompt_version)
