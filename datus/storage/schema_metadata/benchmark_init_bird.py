@@ -114,23 +114,34 @@ def init_dev_schema(
     databases_path = f"{bird_path}/dev_databases"
     all_schema_tables, all_value_tables = exists_table_value(rag, build_mode=build_mode)
 
-    with ThreadPoolExecutor(max_workers=pool_size) as executor:
-        futures = [
-            executor.submit(
-                init_dev_schema_by_db,
-                rag,
-                db_manager,
-                namespace,
-                database_name,
-                db_table_keys,
-                databases_path,
-                set(all_schema_tables.keys()),
-                all_value_tables,
-            )
-            for database_name in os.listdir(databases_path)
-        ]
-        for future in as_completed(futures):
-            future.result()
+    # -------------------------------------------------------------
+    # 多线程版本
+    # with ThreadPoolExecutor(max_workers=pool_size) as executor:
+    #     futures = [
+    #         executor.submit(
+    #             init_dev_schema_by_db,
+    #             rag,
+    #             db_manager,
+    #             namespace,
+    #             database_name,
+    #             db_table_keys,
+    #             databases_path,
+    #             set(all_schema_tables.keys()),
+    #             all_value_tables,
+    #         )
+    #         for database_name in os.listdir(databases_path)
+    #     ]
+    #     for future in as_completed(futures):
+    #         future.result()
+
+    # 单线程版本
+    for database_name in os.listdir(databases_path):
+        init_dev_schema_by_db(
+            rag, db_manager, namespace, database_name,
+            db_table_keys, databases_path,
+            set(all_schema_tables.keys()), all_value_tables
+        )
+    #-------------------------------------------------------------
     rag.after_init()
 
 
