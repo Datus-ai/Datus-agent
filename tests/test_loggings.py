@@ -1,4 +1,5 @@
-from datus.utils.loggings import configure_logging, get_log_manager, get_logger, log_context
+from datus.utils.loggings import (configure_logging, get_log_manager,
+                                  get_logger, log_context)
 
 configure_logging(debug=True)
 

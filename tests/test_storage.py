@@ -12,9 +12,9 @@ from lancedb.table import Table
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-
 # from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
-from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.storage.schema_metadata.store import (SchemaWithValueRAG,
+                                                 rag_by_configuration)
 from datus.utils.loggings import configure_logging, get_logger
 
 configure_logging(debug=True)

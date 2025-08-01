@@ -6,7 +6,8 @@ import pytest
 
 from datus.agent.node import Node
 from datus.configuration.node_type import NodeType
-from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
+from datus.schemas.doc_search_node_models import (DocSearchInput,
+                                                  DocSearchResult)
 from datus.tools.search_tools import SearchTool
 from datus.utils.loggings import get_logger
 

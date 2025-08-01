@@ -137,11 +137,16 @@ def init_dev_schema(
     # 单线程版本
     for database_name in os.listdir(databases_path):
         init_dev_schema_by_db(
-            rag, db_manager, namespace, database_name,
-            db_table_keys, databases_path,
-            set(all_schema_tables.keys()), all_value_tables
+            rag,
+            db_manager,
+            namespace,
+            database_name,
+            db_table_keys,
+            databases_path,
+            set(all_schema_tables.keys()),
+            all_value_tables,
         )
-    #-------------------------------------------------------------
+    # -------------------------------------------------------------
     rag.after_init()
 
 

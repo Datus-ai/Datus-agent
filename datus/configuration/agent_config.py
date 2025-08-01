@@ -1,7 +1,7 @@
 import os
 from dataclasses import asdict, dataclass, field, fields
-from typing import Any, Dict, List
 from pathlib import Path
+from typing import Any, Dict, List
 
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput
@@ -153,7 +153,6 @@ class AgentConfig:
             else:
                 name = db_config.get("name", namespace)
                 self.namespaces[namespace][name] = DbConfig.filter_kwargs(DbConfig, db_config)
-
 
     @property
     def current_namespace(self) -> str:

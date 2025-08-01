@@ -15,6 +15,7 @@ try:
         multiprocessing.set_start_method("spawn", force=True)
     else:
         multiprocessing.set_start_method("fork", force=True)
+    # multiprocessing.set_start_method("fork", force=True)
 except RuntimeError:
     # set_start_method can only be called once
     pass

@@ -2,8 +2,10 @@ import pytest
 from pandas import DataFrame
 from pydantic import ValidationError
 
-from datus.schemas.node_models import ExecuteSQLResult, GenerateSQLResult, SqlTask, TableSchema, TableValue
-from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
+from datus.schemas.node_models import (ExecuteSQLResult, GenerateSQLResult,
+                                       SqlTask, TableSchema, TableValue)
+from datus.schemas.schema_linking_node_models import (SchemaLinkingInput,
+                                                      SchemaLinkingResult)
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
