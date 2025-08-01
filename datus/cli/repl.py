@@ -25,7 +25,6 @@ from rich.table import Table
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
 from datus.cli.context_commands import ContextCommands
-from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools.db_manager import db_manager_instance
@@ -55,6 +54,8 @@ class DatusCLI:
         self.args = args
         self.console = Console()
         self.console_column_width = 16
+        self.selected_catalog_path = ""
+        self.selected_catalog_data = {}
         setup_exception_handler(
             console_logger=self.console.print, prefix_wrap_func=lambda x: f"[bold red]{x}[/bold red]"
         )
@@ -138,7 +139,6 @@ class DatusCLI:
         self.last_result = None
         self.chat_history = []
 
-        self.agent_config = load_agent_config(**vars(self.args))
         self.current_db_name = getattr(args, "database", "")
         self.current_catalog = getattr(args, "catalog", "")
         self.current_schema = getattr(args, "schema", "")
@@ -154,20 +154,30 @@ class DatusCLI:
 
         while True:
             try:
+                # Check if we have a selected catalog path to inject
+                prompt_text = "Datus-sql> "
+                # TODO use selected_catalog_path
+                if self.selected_catalog_path:
+                    # prompt_text = f"Datus-sql> {self.selected_catalog_path}"
+                    selected_path = self.selected_catalog_path
+                    self.console.print(f"Selected catalog: {selected_path}")
+                    self.selected_catalog_path = None
+
                 # Get user input
-                text = self.session.prompt("Datus-sql> ")
-                if not text.strip():
+                user_input = self.session.prompt(
+                    message=prompt_text,
+                ).strip()
+                if not user_input:
                     continue
 
                 # Parse and execute the command
-                cmd_type, cmd, args = self._parse_command(text)
-
+                cmd_type, cmd, args = self._parse_command(user_input)
                 if cmd_type == CommandType.EXIT:
-                    return 0
+                    return True
 
                 # Execute the command based on type
                 if cmd_type == CommandType.SQL:
-                    self._execute_sql(text)
+                    self._execute_sql(user_input)
                 elif cmd_type == CommandType.TOOL:
                     self._execute_tool_command(cmd, args)
                 elif cmd_type == CommandType.CONTEXT:
@@ -184,6 +194,26 @@ class DatusCLI:
             except Exception as e:
                 logger.error(f"Error: {str(e)}")
                 self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+    def _process_command(self, user_input: str) -> bool:
+        # Parse and execute the command
+        cmd_type, cmd, args = self._parse_command(user_input)
+        if cmd_type == CommandType.EXIT:
+            return True
+
+        # Execute the command based on type
+        if cmd_type == CommandType.SQL:
+            self._execute_sql(user_input)
+        elif cmd_type == CommandType.TOOL:
+            self._execute_tool_command(cmd, args)
+        elif cmd_type == CommandType.CONTEXT:
+            self._execute_context_command(cmd, args)
+        elif cmd_type == CommandType.CHAT:
+            self._execute_chat_command(args)
+        elif cmd_type == CommandType.INTERNAL:
+            self._execute_internal_command(cmd, args)
+
+        return False
 
     def _async_init_agent(self):
         """Initialize the agent asynchronously in a background thread."""
@@ -212,6 +242,7 @@ class DatusCLI:
                 max_steps=20,
                 debug=self.args.debug,
                 load_cp=False,
+                components=["metrics", "metadata", "table_lineage", "document"],
             )
 
             from datus.agent.agent import Agent
@@ -747,6 +778,12 @@ class DatusCLI:
                 logger.warning(f"Database connection closed failed, reason:{e}")
         sys.exit(0)
 
+    def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
+        if not selected_path:
+            return
+        self.selected_catalog_path = selected_path
+        self.selected_catalog_data = selected_data
+
     def _cmd_databases(self, args: str):
         """List all databases in the current connection."""
         try:
@@ -936,20 +973,14 @@ Type '.help' for a list of commands or '.exit' to quit.
             self.console.print(f"Namespace [bold green]{namespace}[/] selected")
         else:
             self.console.print("[yellow]Warning: No namespace selected, please use .namespace to select a namespace[/]")
-
         # Display connection info
         if self.db_connector:
-            db_info = f"Connected to [bold green]{self.args.db_type}[/]"
-            if self.args.db_type == DBType.SQLITE:
-                db_path = self.args.db_path or ":memory:"
-                db_info += f" at [bold]{db_path}[/]"
-            elif self.args.db_type == DBType.SNOWFLAKE:
-                db_info += f" as [bold]{self.args.sf_user}[/]@[bold]{self.args.sf_account}[/]"
-                if self.args.sf_database:
-                    db_info += f" using database [bold]{self.args.sf_database}[/]"
+            db_info = f"Connected to [bold green]{self.agent_config.db_type}[/]"
+            if self.current_db_name:
+                db_info += f" using database [bold]{self.current_db_name}[/]"
 
             self.console.print(db_info)
-            self.console.print("Type SQL statements or use ! @ / commands to interact.")
+            self.console.print("Type SQL statements or use ! @ . commands to interact.")
         # else:
         #    self.console.print("[yellow]Warning: No database connection initialized.[/]")
 

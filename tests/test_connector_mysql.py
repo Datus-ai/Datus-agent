@@ -51,7 +51,7 @@ def test_get_views_with_ddl(connector: MySQLConnector):
 
 
 def test_exceptions(connector: MySQLConnector):
-    with pytest.raises(DatusException, match=ErrorCode.TOOL_DB_EXECUTE_QUERY_FAILED.code):
+    with pytest.raises(DatusException, match=ErrorCode.DB_EXECUTION_ERROR.code):
         connector.get_sample_rows(database_name="test", tables=["nonexistent_table"])
 
 

@@ -242,11 +242,9 @@ class StarRocksConnector(MySQLConnectorBase):
             raise e
         except Exception as e:
             raise DatusException(
-                ErrorCode.TOOL_DB_FAILED,
+                ErrorCode.DB_CONNECTION_FAILED,
                 message_args={
-                    "operation": "test_connection",
                     "error_message": str(e),
-                    "uri": self.connection_string,
                 },
             ) from e
         finally:

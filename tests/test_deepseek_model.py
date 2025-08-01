@@ -91,7 +91,7 @@ class TestDeepSeekModel:
         except Exception as e:
             pytest.fail(f"Failed to get response from API: {str(e)}")
 
-    @pytest.mark.acceptance
+    # @pytest.mark.acceptance
     def test_basic_chat(self):
         """Test basic chat functionality with real API calls and logging."""
         try:
@@ -124,7 +124,7 @@ class TestDeepSeekModel:
         except Exception as e:
             pytest.fail(f"Failed to get response from API: {str(e)}")
 
-    @pytest.mark.acceptance
+    # @pytest.mark.acceptance
     def test_system_prompt(self):
         try:
             # Test system prompt with JSON output

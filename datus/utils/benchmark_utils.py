@@ -14,11 +14,12 @@ import math
 import os
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import pandas as pd
 import yaml
 
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -898,3 +899,14 @@ def _log_accuracy_summary(accuracy_report: Dict):
     # Output the complete report as a single log entry
     full_report = "\n".join(report_lines)
     logger.info(f"\n{full_report}")
+
+
+def load_bird_dev_tasks(benchmark_path: str) -> List[Dict[str, Any]]:
+    file_path = os.path.join(benchmark_path, "dev.json")
+    if not os.path.exists(file_path):
+        raise DatusException(
+            code=ErrorCode.COMMON_FILE_NOT_FOUND,
+            message_args={"file_name": file_path, "config_name": "Bird-dev benchmark"},
+        )
+    with open(file_path, "r", encoding="utf-8") as f:
+        return json.load(f)

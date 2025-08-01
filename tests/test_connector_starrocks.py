@@ -71,7 +71,7 @@ def test_get_materialized_views_with_ddl(connector: StarRocksConnector):
 
 
 def test_exceptions(connector: StarRocksConnector):
-    with pytest.raises(DatusException, match=ErrorCode.TOOL_DB_EXECUTE_QUERY_FAILED.code):
+    with pytest.raises(DatusException, match=ErrorCode.DB_CONNECTION_FAILED.code):
         connector.get_sample_rows(database_name="ssb", tables=["nonexistent_table"])
 
 

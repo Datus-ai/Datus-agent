@@ -4,13 +4,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import TableSchema, TableValue
+from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.tools.base import BaseTool
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.llms_tools.llms import LLMTool
 from datus.utils.loggings import get_logger
-
-from ...schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
-from ..base import BaseTool
 
 logger = get_logger(__name__)
 
@@ -88,7 +87,7 @@ class SchemaLineageTool(BaseTool):
         return self._search_similar_schemas(input_param, input_param.top_n_by_rate())
 
     def _search_similar_schemas(self, input_param: SchemaLinkingInput, top_n: int = 5) -> SchemaLinkingResult:
-        (similar_schemas, values) = self.store.search_similar(
+        (similar_schemas, similar_values) = self.store.search_similar(
             input_param.input_text,
             top_n=top_n,
             catalog_name=input_param.catalog_name,
@@ -98,8 +97,8 @@ class SchemaLineageTool(BaseTool):
         )
 
         # Convert dictionaries to proper model instances
-        table_schemas = [TableSchema.from_dict(schema) for schema in similar_schemas]
-        table_values = [TableValue.from_dict(value) for value in values]
+        table_schemas = TableSchema.from_arrow(similar_schemas)
+        table_values = TableValue.from_arrow(similar_values)
 
         return SchemaLinkingResult(
             success=True,

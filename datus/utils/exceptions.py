@@ -23,10 +23,13 @@ class ErrorCode(Enum):
     COMMON_ENV = ("100005", "The environment variable {env_var} is not set")
     COMMON_CONFIG_ERROR = ("100006", "Configuration error: {config_error}")
     COMMON_MISSING_DEPENDENCY = ("100007", "Missing node dependency")
+    # Validation errors
+    COMMON_VALIDATION_FAILED = ("100008", "Data validation failed")
 
     # Node execution errors
     NODE_EXECUTION_FAILED = ("200001", "Node execution failed")
     NODE_NO_SQL_CONTEXT = ("200002", "No SQL context available. Please run a SQL generation node first.")
+
     # Model errors
     MODEL_REQUEST_FAILED = ("300001", "LLM request failed")
     MODEL_INVALID_RESPONSE = ("300002", "Invalid request format, content, or model response (HTTP 400)")
@@ -42,21 +45,52 @@ class ErrorCode(Enum):
     MODEL_OVERLOADED = ("300017", "API temporarily overloaded - please try again later (HTTP 529)")
     MODEL_CONNECTION_ERROR = ("300018", "Connection error - check your network connection")
     MODEL_EMBEDDING_ERROR = ("300019", "Embedding Model error")
-    # ...
-    # Tool errors
+
+    # Tool errors - General
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
     TOOL_STORE_FAILED = ("400003", "Store failed")
-    TOOL_DB_FAILED = ("400004", "Database {operation} failed, uri={uri}, error_message={error_message}")
-    TOOL_DB_EXECUTE_QUERY_FAILED = (
-        "400005",
-        'Database execute failed, uri={uri}, sql="{sql}", error_message={error_message}',
-    )
-    # ...
 
-    # Validation errors
-    VALIDATION_FAILED = ("500001", "Data validation failed")
-    # ...
+    # Database errors
+    DB_FAILED = ("500000", "Database operation failed. Error details: {error_message}")
+    # Database errors - Connection (common SQLAlchemy exceptions)
+    DB_CONNECTION_FAILED = ("500001", "Failed to establish connection to database. Error details: {error_message}")
+    DB_CONNECTION_TIMEOUT = ("500002", "Connection to database timed out. Error details: {error_message}")
+    DB_AUTHENTICATION_FAILED = (
+        "500003",
+        "Authentication failed for database. Please check your credentials. Error details: {error_message}",
+    )
+    DB_PERMISSION_DENIED = (
+        "500004",
+        "Permission denied when performing '{operation}' on database. Error details: {error_message}",
+    )
+
+    # Database errors - Query Execution (SQLAlchemy + Snowflake specific)
+    DB_EXECUTION_SYNTAX_ERROR = (
+        "500005",
+        "Invalid SQL syntax in query. SQL: {sql}, Error details: {error_message}",
+    )
+    DB_EXECUTION_ERROR = (
+        "500006",
+        "Failed to execute query on database. SQL: {sql}, Error details: {error_message}",
+    )
+    DB_EXECUTION_TIMEOUT = (
+        "430003",
+        "Query execution timed out on database. SQL: {sql}, Error details: {error_message}",
+    )
+    DB_QUERY_METADATA_FAILED = (
+        "500007",
+        "Failed to retrieve metadata for query. SQL: {sql}, Error details: {error_message}",
+    )
+
+    # Database errors - Constraints (SQLAlchemy IntegrityError)
+    DB_CONSTRAINT_VIOLATION = (
+        "500008",
+        "Database constraint violation occurred. SQL: {sql}, Error details: {error_message}",
+    )
+
+    # Database errors - Transaction (SQLAlchemy transaction issues)
+    DB_TRANSACTION_FAILED = ("500009", "Database transaction failed. Error details: {error_message}")
 
     def __init__(self, code: str, desc: str):
         self.code = code

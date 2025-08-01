@@ -30,7 +30,11 @@ from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
 from datus.storage.schema_metadata.local_init import init_local_schema
 from datus.storage.schema_metadata.store import rag_by_configuration
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.utils.benchmark_utils import evaluate_and_report_accuracy, generate_gold_standard_results
+from datus.utils.benchmark_utils import (
+    evaluate_and_report_accuracy,
+    generate_gold_standard_results,
+    load_bird_dev_tasks,
+)
 from datus.utils.constants import DBType, LLMProvider
 from datus.utils.loggings import get_logger
 
@@ -387,7 +391,9 @@ class Agent:
                         pool_size=pool_size,
                     )
                 elif benchmark_platform == "spider2":
-                    benchmark_path = self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
+                    benchmark_path = os.path.expanduser(
+                        self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
+                    )
 
                     init_snowflake_schema(
                         self.metadata_store,
@@ -396,7 +402,9 @@ class Agent:
                         pool_size=pool_size,
                     )
                 elif benchmark_platform == "bird_dev":
-                    benchmark_path = self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
+                    benchmark_path = os.path.expanduser(
+                        self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
+                    )
                     init_dev_schema(
                         self.metadata_store,
                         self.db_manager,
@@ -534,10 +542,7 @@ class Agent:
             )
 
     def benchmark_bird_dev(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
-        task_file = f"{benchmark_path}/dev.json"
-        self._check_benchmark_file(task_file)
-        with open(task_file, "r") as f:
-            tasks = json.load(f)
+        tasks = load_bird_dev_tasks(benchmark_path)
 
         logger.info(f"Benchmarking tasks: {target_task_ids}")
         task_group = {}

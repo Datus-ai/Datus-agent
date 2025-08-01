@@ -1,4 +1,3 @@
-import json
 import os
 from datetime import datetime
 from typing import Any, List
@@ -9,6 +8,7 @@ from pandas import DataFrame
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.utils.benchmark_utils import load_bird_dev_tasks
 from datus.utils.constants import DBType
 from datus.utils.sql_utils import extract_table_names
 from tests.conftest import PROJECT_ROOT
@@ -46,29 +46,28 @@ def rag(agent_config: AgentConfig) -> SchemaWithValueRAG:
 @pytest.mark.parametrize("task_ids", [[0, 1, 2, 3, 4, 5, 6]])
 def test_recall(task_ids: List[str], rag: SchemaWithValueRAG, agent_config: AgentConfig):
     benchmark_path = agent_config.benchmark_path("bird_dev")
-    with open(os.path.join(benchmark_path, "dev.json"), "r", encoding="utf-8") as f:
-        dev_json_list = json.load(f)
-        for task in dev_json_list:
-            question_id = task["question_id"]
-            if question_id not in task_ids:
-                continue
-            result = _do_recall(rag, task, 5)
-            if result:
-                print(f"Task ID: {task['question_id']}")
-                print(f"Actual Tables: {result['actual_tables']}")
-                print(f"Matched Tables: {result['matched_tables']}")
-                print(f"Match Scores: {result['match_tables_score']}")
-                print(f"Matched Values: {result['matched_values']}")
-                print(f"Match Values Score: {result['match_values_score']}")
-                print(f"Union Match Tables: {result['union_match_tables']}")
-                print(f"Union Match Tables Count: {result['union_match_tables_count']}")
-                print(f"Union Match Tables Score: {result['union_match_tables_score']}")
-                print(f"Table Count: {result['table_count']}")
-                print(f"Recall Rate: {result['recall_rate']}")
-                print("---")
-            else:
-                print(f"Task ID: {task['question_id']} result not found")
-                print("TOTAL FOR ", task["db_id"], len(rag.search_all_schemas(database_name=task["db_id"])))
+    dev_json_list = load_bird_dev_tasks(benchmark_path)
+    for task in dev_json_list:
+        question_id = task["question_id"]
+        if question_id not in task_ids:
+            continue
+        result = _do_recall(rag, task, 5)
+        if result:
+            print(f"Task ID: {task['question_id']}")
+            print(f"Actual Tables: {result['actual_tables']}")
+            print(f"Matched Tables: {result['matched_tables']}")
+            print(f"Match Scores: {result['match_tables_score']}")
+            print(f"Matched Values: {result['matched_values']}")
+            print(f"Match Values Score: {result['match_values_score']}")
+            print(f"Union Match Tables: {result['union_match_tables']}")
+            print(f"Union Match Tables Count: {result['union_match_tables_count']}")
+            print(f"Union Match Tables Score: {result['union_match_tables_score']}")
+            print(f"Table Count: {result['table_count']}")
+            print(f"Recall Rate: {result['recall_rate']}")
+            print("---")
+        else:
+            print(f"Task ID: {task['question_id']} result not found")
+            print("TOTAL FOR ", task["db_id"], len(rag.search_all_schemas(database_name=task["db_id"])))
 
 
 def _do_recall(rag: SchemaWithValueRAG, item: dict[str, Any], top_n: int = 5) -> dict[str, Any]:
@@ -77,21 +76,13 @@ def _do_recall(rag: SchemaWithValueRAG, item: dict[str, Any], top_n: int = 5) ->
     target_schema = set(extract_table_names(item["SQL"], dialect=DBType.SQLITE))
     schema_tables, schema_values = rag.search_similar(query_text=item["question"], database_name=db_id, top_n=top_n)
     table_count = len(rag.search_all_schemas(database_name=db_id))
-    if len(schema_tables) == 0:
+    if schema_tables.num_rows == 0:
         print(f"No schema tables found for task {task_id} from {db_id}")
         return {}
 
-    union_tables = set()
-    schema_full_tables = set()
-    value_full_tables = set()
-    for t in schema_tables:
-        full_name = t["table_name"]
-        union_tables.add(full_name)
-        schema_full_tables.add(full_name)
-    for t in schema_values:
-        full_name = t["table_name"]
-        value_full_tables.add(full_name)
-        union_tables.add(full_name)
+    schema_full_tables = {item for item in schema_tables["table_name"].to_pandas().unique()}
+    value_full_tables = {item for item in schema_values["table_name"].to_pandas().unique()}
+    union_tables = schema_full_tables.union(value_full_tables)
     # target_schema = set(target_schema)
 
     query_schema_tables, match_tables, match_tables_count, match_tables_score = match_result(
@@ -141,14 +132,13 @@ def test_full_recall(top_n: int, rag: SchemaWithValueRAG, agent_config: AgentCon
     benchmark_path = agent_config.benchmark_path("bird_dev")
     match_results = []
     total = 0
-    with open(os.path.join(benchmark_path, "dev.json"), "r", encoding="utf-8") as f:
-        dev_json_list = json.load(f)
-        for task in dev_json_list:
-            result = _do_recall(rag, task, top_n)
-            if result:
-                match_results.append(result)
-                if result["union_match_tables_score"] == 1:
-                    total += 1
+    dev_json_list = load_bird_dev_tasks(benchmark_path)
+    for task in dev_json_list:
+        result = _do_recall(rag, task, top_n)
+        if result:
+            match_results.append(result)
+            if result["union_match_tables_score"] == 1:
+                total += 1
     df = DataFrame(match_results)
     df.to_excel(os.path.join(output_dir, f"match_results_{top_n}.xlsx"), engine="xlsxwriter", index=False)
     print(

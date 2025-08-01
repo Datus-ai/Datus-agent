@@ -19,7 +19,7 @@ uv venv -p 3.12
 # Synchronize all dependencies
 uv sync
 # with dev dependencies
-uv sync --group dev
+uv sync --dev
 
 # Use current environment
 source .venv/bin/activate
