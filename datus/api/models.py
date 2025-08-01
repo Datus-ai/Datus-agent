@@ -2,6 +2,7 @@
 API models for the Datus Agent FastAPI service.
 """
 
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -47,3 +48,25 @@ class TokenResponse(BaseModel):
     access_token: str = Field(..., description="JWT access token")
     token_type: str = Field(..., description="Token type, always 'Bearer'")
     expires_in: int = Field(..., description="Token expiration time in seconds")
+
+
+class FeedbackStatus(str, Enum):
+    """Feedback status enum."""
+
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+class FeedbackRequest(BaseModel):
+    """Request model for user feedback."""
+
+    task_id: str = Field(..., description="Target task ID")
+    status: FeedbackStatus = Field(..., description="Task execution status feedback")
+
+
+class FeedbackResponse(BaseModel):
+    """Response model for feedback submission."""
+
+    task_id: str = Field(..., description="Task ID that feedback was recorded for")
+    acknowledged: bool = Field(..., description="Whether feedback was successfully recorded")
+    recorded_at: str = Field(..., description="ISO timestamp when feedback was recorded")
