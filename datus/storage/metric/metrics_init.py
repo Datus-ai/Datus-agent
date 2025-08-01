@@ -59,23 +59,23 @@ def process_line(
 ):
     logger.info(f"processing line: {row}")
 
+    current_db_config = agent_config.current_db_config()
     sql_task = SqlTask(
         id=f"sql_task_{index}",
         database_type=agent_config.db_type,
         task=row["question"],
-        catalog_name=agent_config.current_db_config().catalog,
-        database_name=agent_config.current_db_config().database,
-        schema_name=agent_config.current_db_config().schema,
+        catalog_name=current_db_config.catalog,
+        database_name=current_db_config.database,
+        schema_name=current_db_config.schema,
     )
-    layer1 = args.layer1 if getattr(args, "layer1", None) else agent_config.db_type
-    layer2 = args.layer2 if getattr(args, "layer2", None) else sql_task.database_name
+    current_metric_meta = agent_config.current_metric_meta(args.metric_meta)
     semantic_model_meta = SemanticModelMeta(
-        layer1=layer1,
-        layer2=layer2,
-        domain=args.domain,
-        catalog_name=sql_task.catalog_name,
-        database_name=sql_task.database_name,
-        schema_name=sql_task.schema_name,
+        layer1=current_metric_meta.layer1,
+        layer2=current_metric_meta.layer2,
+        domain=current_metric_meta.domain,
+        catalog_name=current_db_config.catalog,
+        database_name=current_db_config.database,
+        schema_name=current_db_config.schema,
     )
 
     logger.debug(f"sql task: {sql_task}")
@@ -133,9 +133,9 @@ def process_line(
         semantic_model.get("semantic_model_name", ""),
         metric_result.sql_queries,
         metric_result.metrics,
-        args.domain,
-        layer1,
-        layer2,
+        current_metric_meta.domain,
+        current_metric_meta.layer1,
+        current_metric_meta.layer2,
     )
     logger.debug(f"metrics: {metrics}")
     for metric in metrics:

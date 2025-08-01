@@ -65,9 +65,9 @@ def _find_config_differences(
         if key not in new_config:
             differences.append(f"Missing key '{key}' in section [{storage_type}].")
             continue
-        new_value = new_config[key]
-        new_value = str(new_value) if not isinstance(new_value, Enum) else new_value.value
-        if str(value) != new_value:
+        value = str(value) if not isinstance(value, Enum) else value.value
+        new_value = str(new_config[key]) if not isinstance(new_config[key], Enum) else new_config[key].value
+        if value != new_value:
             differences.append(
                 f"Value mismatch in section [{storage_type}] for key '{key}': "
                 f"existing='{value}', new='{new_config[key]}'."
@@ -76,7 +76,9 @@ def _find_config_differences(
     return differences
 
 
-def check_storage_config(storage_type: str, storage_config: dict[str, Any], rag_path: str, save_config: bool = True):
+def check_storage_config(
+    storage_type: str, storage_config: Optional[dict[str, Any]], rag_path: str, save_config: bool = True
+):
     """Initialize embedding configuration and save it."""
     existing_config = load_storage_config(rag_path)
     if existing_config:
@@ -90,5 +92,5 @@ def check_storage_config(storage_type: str, storage_config: dict[str, Any], rag_
             )
     if save_config:
         # Convert EmbeddingModel objects to config dictionary
-        existing_config[storage_type] = storage_config
+        existing_config[storage_type] = storage_config if storage_config else DEFAULT_MODEL_CONFIG
         save_storage_configs(existing_config, rag_path)
