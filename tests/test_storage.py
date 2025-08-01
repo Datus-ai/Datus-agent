@@ -9,10 +9,12 @@ from conftest import PROJECT_ROOT
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
+
 from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
 from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
 from datus.tools.db_tools.db_manager import db_manager_instance
+
 from datus.utils.loggings import configure_logging, get_logger
 
 configure_logging(debug=True)

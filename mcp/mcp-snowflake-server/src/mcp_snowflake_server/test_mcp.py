@@ -3,16 +3,9 @@ import asyncio
 import json
 import os
 
-from agents import (
-    Agent,
-    OpenAIChatCompletionsModel,
-    Runner,
-    RunContextWrapper,
-    Usage,
-    set_default_openai_client,
-    set_trace_processors,
-    set_tracing_disabled,
-)
+from agents import (Agent, OpenAIChatCompletionsModel, RunContextWrapper,
+                    Runner, Usage, set_default_openai_client,
+                    set_trace_processors, set_tracing_disabled)
 from agents.mcp import MCPServerStdio
 from dotenv import load_dotenv
 from langsmith import traceable

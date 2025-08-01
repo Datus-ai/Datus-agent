@@ -8,7 +8,8 @@ from pandas import DataFrame
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.storage.schema_metadata.store import (SchemaWithValueRAG,
+                                                 rag_by_configuration)
 from datus.utils.constants import DBType
 from datus.utils.sql_utils import extract_table_names
 from tests.conftest import PROJECT_ROOT
