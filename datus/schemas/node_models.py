@@ -7,6 +7,7 @@ from enum import Enum
 from io import StringIO
 from typing import Any, Dict, List, Optional, Union
 
+import pyarrow as pa
 from pydantic import BaseModel, Field, field_validator
 
 from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
@@ -122,6 +123,23 @@ class TableSchema(BaseTableSchema):
             definition=data["definition"],
             table_type=data["table_type"],
         )
+
+    @classmethod
+    def from_arrow(cls, table: pa.Table) -> List[TableSchema]:
+        result = []
+        for index in range(table.num_rows):
+            result.append(
+                cls(
+                    identifier=table["identifier"][index].as_py(),
+                    catalog_name=table["catalog_name"][index].as_py(),
+                    table_name=table["table_name"][index].as_py(),
+                    database_name=table["database_name"][index].as_py(),
+                    schema_name=table["schema_name"][index].as_py(),
+                    definition=table["definition"][index].as_py(),
+                    table_type=table["table_type"][index].as_py(),
+                )
+            )
+        return result
 
     def to_dict(self):
         return self.model_dump()
@@ -253,6 +271,23 @@ class TableValue(BaseTableSchema):
             table_values=data["table_values"] if "table_values" in data else data["sample_rows"],
             table_type=data["table_type"],
         )
+
+    @classmethod
+    def from_arrow(cls, table: pa.Table) -> List[TableValue]:
+        result = []
+        for index in range(table.num_rows):
+            result.append(
+                cls(
+                    identifier=table["identifier"][index].as_py(),
+                    catalog_name=table["catalog_name"][index].as_py(),
+                    table_name=table["table_name"][index].as_py(),
+                    database_name=table["database_name"][index].as_py(),
+                    schema_name=table["schema_name"][index].as_py(),
+                    table_values=table["sample_rows"][index].as_py(),
+                    table_type=table["table_type"][index].as_py(),
+                )
+            )
+        return result
 
     def to_dict(self):
         return self.model_dump()

@@ -8,9 +8,12 @@ from datus.utils.constants import EmbeddingProvider
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
-def save_storage_config(name: str, config: EmbeddingModel, rag_path: str):
+def save_storage_config(name: str, rag_path: str, config: Optional[EmbeddingModel] = None):
     exist_config = load_storage_config(rag_path)
-    exist_config[name] = config.to_dict()
+    if config:
+        exist_config[name] = config.to_dict()
+    else:
+        exist_config.pop(name)
     save_storage_configs(exist_config, rag_path)
 
 

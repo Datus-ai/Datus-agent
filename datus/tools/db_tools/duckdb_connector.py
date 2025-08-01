@@ -204,9 +204,8 @@ class DuckdbConnector(SQLAlchemyConnector):
             return samples
         except SQLAlchemyError as e:
             raise DatusException(
-                ErrorCode.TOOL_DB_FAILED,
+                ErrorCode.DB_EXECUTION_ERROR,
                 message_args={
-                    "operation": "get_sampe_rows",
                     "error_message": str(e),
                 },
             ) from e
@@ -224,12 +223,8 @@ class DuckdbConnector(SQLAlchemyConnector):
                 return self.execute_query(sql).to_dict(orient="records")
             except Exception as e:
                 raise DatusException(
-                    ErrorCode.TOOL_DB_FAILED,
-                    message_args={
-                        "operation": "get_schema",
-                        "error_message": str(e),
-                        "uri": self.connection_string,
-                    },
+                    ErrorCode.DB_QUERY_METADATA_FAILED,
+                    message_args={"error_message": str(e), "sql": sql},
                 ) from e
         else:
             return []

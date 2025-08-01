@@ -8,6 +8,7 @@ from lancedb.embeddings import EmbeddingFunctionConfig
 from lancedb.pydantic import LanceModel
 from lancedb.query import LanceQueryBuilder
 from lancedb.rerankers import Reranker
+from lancedb.table import Table
 from pydantic import Field
 
 from datus.storage.embedding_models import EmbeddingModel
@@ -32,48 +33,7 @@ class StorageBase:
 
     def _ensure_tables(self):
         """Ensure all required tables exist in LanceDB."""
-        self._ensure_document_table()
-        self._ensure_metrics_table()
         self._ensure_success_story_table()
-
-    def _ensure_document_table(self):
-        """Ensure the document table exists in LanceDB."""
-        try:
-            if "document" not in self.db.table_names():
-                # Create table schema using PyArrow
-                schema = pa.schema(
-                    [
-                        pa.field("title", pa.string()),
-                        pa.field("hierarchy", pa.string()),  # Hierarchical structure
-                        pa.field("keywords", pa.list_(pa.string())),
-                        pa.field("language", pa.string()),
-                        pa.field("chunk_text", pa.string()),
-                        pa.field("created_at", pa.string()),
-                        pa.field("embedding", pa.list_(pa.float64(), list_size=384)),
-                    ]
-                )
-                self.db.create_table("document", schema=schema)
-        except Exception as e:
-            raise Exception(f"Failed to create document table: {str(e)}")
-
-    def _ensure_metrics_table(self):
-        """Ensure the metrics table exists in LanceDB."""
-        try:
-            if "metrics" not in self.db.table_names():
-                # Create table schema using PyArrow
-                schema = pa.schema(
-                    [
-                        pa.field("metric_name", pa.string()),
-                        pa.field("metric_sql", pa.string()),
-                        pa.field("dimensions", pa.list_(pa.string())),
-                        pa.field("description", pa.string()),
-                        pa.field("created_at", pa.string()),
-                        pa.field("embedding", pa.list_(pa.float64(), list_size=384)),
-                    ]
-                )
-                self.db.create_table("metrics", schema=schema)
-        except Exception as e:
-            raise Exception(f"Failed to create metrics table: {str(e)}")
 
     def _ensure_success_story_table(self):
         """Ensure the success story table exists in LanceDB."""
@@ -134,7 +94,7 @@ class BaseEmbeddingStore(StorageBase):
 
     def _ensure_table(self, schema: Optional[Union[pa.Schema, LanceModel]] = None):
         try:
-            self.table = self.db.create_table(
+            self.table: Table = self.db.create_table(
                 self.table_name,
                 schema=schema,
                 embedding_functions=[
@@ -261,50 +221,55 @@ class BaseEmbeddingStore(StorageBase):
         self,
         query_txt: str,
         select_fields: Optional[List[str]] = None,
-        top_n: int = 5,
+        top_n: Optional[int] = None,
         where: str = "",
         reranker: Optional[Reranker] = None,
-    ) -> List[dict]:
+    ) -> pa.Table:
         if reranker:
-            return self._search_hybird(query_txt, reranker, select_fields, top_n, where)
+            search_result = self._search_hybrid(query_txt, reranker, select_fields, top_n, where)
         else:
-            return self._search_vector(query_txt, select_fields, top_n, where)
+            search_result = self._search_vector(query_txt, select_fields, top_n, where)
+        if self.vector_column_name in search_result.column_names:
+            search_result = search_result.drop([self.vector_column_name])
+        return search_result
 
-    def _search_hybird(
+    def _search_hybrid(
         self,
         query_txt: str,
         reranker: Reranker,
         select_fields: Optional[List[str]] = None,
-        top_n: int = 5,
+        top_n: Optional[int] = None,
         where: str = "",
-    ) -> List[dict]:
+    ) -> pa.Table:
         try:
             query_builder = self.table.search(
                 query=query_txt, query_type="hybrid", vector_column_name=self.vector_source_name
             )
             query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where)
-
-            results = query_builder.limit(1000).rerank(reranker).to_arrow()
-            results = results.to_pylist()
+            if not top_n:
+                top_n = self.table.count_rows(where if where else None)
+            results = query_builder.limit(top_n * 2).rerank(reranker).to_arrow()
             if len(results) > top_n:
                 results = results[:top_n]
             return results
         except Exception as e:
-            logger.warning(f"Failed to search hybird: {str(e)}, use vector search instead")
+            logger.warning(f"Failed to search hybrid: {str(e)}, use vector search instead")
             return self._search_vector(query_txt, select_fields, top_n, where)
 
     def _search_vector(
         self,
         query_txt: str,
         select_fields: Optional[List[str]] = None,
-        top_n: int = 5,
+        top_n: Optional[int] = None,
         where: str = "",
-    ) -> List[dict]:
+    ) -> pa.Table:
         query_builder = self.table.search(
             query=query_txt, query_type="vector", vector_column_name=self.vector_column_name
         )
         query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where)
-        return query_builder.limit(top_n).to_list()
+        if not top_n:
+            top_n = self.table.count_rows(where if where else None)
+        return query_builder.limit(top_n).to_arrow()
 
     def table_size(self) -> int:
         return self.table.count_rows()

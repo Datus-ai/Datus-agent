@@ -39,7 +39,7 @@ def test_get_table_schema(duckdb_connector: DuckdbConnector):
 
     assert len(duckdb_connector.get_schema()) == 0
 
-    with pytest.raises(DatusException, match=ErrorCode.TOOL_DB_FAILED.code):
+    with pytest.raises(DatusException, match=ErrorCode.DB_QUERY_METADATA_FAILED.code):
         duckdb_connector.get_schema(table_name="unexist_table")
 
 
@@ -50,7 +50,7 @@ def test_execute_query(duckdb_connector: DuckdbConnector):
     res = duckdb_connector.execute_query("select * from bank_failures limit 10")
     assert len(res) > 0
 
-    with pytest.raises(DatusException, match=ErrorCode.TOOL_DB_EXECUTE_QUERY_FAILED.code):
+    with pytest.raises(DatusException, match=ErrorCode.DB_EXECUTION_ERROR.code):
         duckdb_connector.execute_query("select * from unexist_table")
 
 

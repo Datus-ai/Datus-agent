@@ -91,7 +91,7 @@ def do_process_by_database(
     process_data_size = 0
     for schema_name in os.listdir(datasource_dir):
         dir_path = os.path.join(datasource_dir, schema_name)
-        logger.info(f"Processe {db_id}.{schema_name} begin")
+        logger.info(f"Process {db_id}.{schema_name} begin")
         if not os.path.isdir(dir_path):
             continue
         batch_records = []

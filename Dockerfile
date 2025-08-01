@@ -18,12 +18,12 @@ RUN pip install -U huggingface_hub
 ENV HF_ENDPOINT=https://hf-mirror.com
 RUN huggingface-cli download intfloat/multilingual-e5-large-instruct
 
-COPY ./requirements.txt /app/requirements.txt
-RUN pip install -r requirements.txt
+#COPY ./requirements.txt /app/requirements.txt
+#RUN pip install -r requirements.txt
 
 # Copy source code to the container (excluding tests directory)
 COPY ./benchmark /app/benchmark
-COPY ./conf/agent.yml.example /app/.datus/agent.example.yml
+COPY ./conf/agent.yml.example ~/.datus/agent.example.yml
 
 
 # Download and extract benchmark data
@@ -38,7 +38,7 @@ RUN mkdir -p /app/benchmark && \
 
 RUN cd /app
 # Create .datus directory and agent.yml
-RUN mkdir -p /app/.datus/conf && echo 'agent:\n\
+RUN mkdir -p ~/.datus/conf && echo 'agent:\n\
   target: deepseek\n\
   models:\n\
     deepseek:\n\
@@ -87,7 +87,7 @@ RUN mkdir -p /app/.datus/conf && echo 'agent:\n\
       type: sqlite\n\
       path_pattern: /app/benchmark/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern\n\
   storage:\n\
-    base_path: /app/.datus/data\n\
+    base_path: ~/.datus/data\n\
     database:\n\
       registry_name: sentence-transformers\n\
       model_name: intfloat/multilingual-e5-large-instruct\n\
@@ -97,15 +97,15 @@ RUN mkdir -p /app/.datus/conf && echo 'agent:\n\
       dim_size: 384\n\
     metric:\n\
       model_name: intfloat/multilingual-e5-small\n\
-      dim_size: 384' > .datus/conf/agent.yml
+      dim_size: 384' > ~/.datus/conf/agent.yml
 
 # Run uv sync
 # RUN pip install datus-agent
-RUN pip install -i https://test.pypi.org/simple/ datus-agent==0.1.5a2 --no-deps
+RUN pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ datus-agent==0.1.5a4 --no-deps
 
-RUN datus-agent bootstrap-kb --config /app/.datus/agent.yml --namespace bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite --pool_size 6
+RUN datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite --pool_size 6
 
-RUN datus-agent bootstrap-kb --config /app/.datus/agent.yml --namespace snowflake --benchmark spider2 --kb_update_strategy overwrite --pool_size 8
+RUN datus-agent bootstrap-kb --namespace snowflake --benchmark spider2 --kb_update_strategy overwrite --pool_size 8
 
 # Set the working directory
 WORKDIR /app

@@ -76,7 +76,7 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         top_n: int = 5,
         table_type: TABLE_TYPE = "table",
         reranker: Optional[Reranker] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> pa.Table:
         where = _build_where_clause(
             catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_type=table_type
         )
@@ -88,26 +88,13 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         top_n: int = 5,
         where: str = "",
         reranker: Optional[Reranker] = None,
-    ) -> List[Dict[str, Any]]:
-        search_result = self.search(
+    ) -> pa.Table:
+        return self.search(
             query_text,
             top_n=top_n,
             where=where,
             reranker=reranker,
         )
-        return [self._clean_query_result(result) for result in search_result]
-
-    def _clean_query_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "identifier": result["identifier"],
-            "catalog_name": result["catalog_name"],
-            "database_name": result["database_name"],
-            "schema_name": result["schema_name"],
-            "table_name": result["table_name"],
-            "table_type": result["table_type"],
-            self.vector_source_name: result[self.vector_source_name],
-            "vector": result["vector"],
-        }
 
     def create_indices(self):
         # create scalar index
@@ -124,8 +111,8 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         self.create_fts_index(["database_name", "schema_name", "table_name", self.vector_source_name])
 
     def search_all(
-        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "table"
-    ) -> List[Dict[str, Any]]:
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "full"
+    ) -> pa.Table:
         """Search all schemas for a given database name."""
         where = _build_where_clause(
             catalog_name=catalog_name,
@@ -133,15 +120,9 @@ class BaseMetadataStorage(BaseEmbeddingStore):
             schema_name=schema_name,
             table_type=table_type,
         )
-        if not where:
-            search_result = self.table.to_pandas().to_dict(orient="records")
-
-        else:
-            search_result = self.table.search().where(where).limit(100000).to_list()
-        return [self._clean_query_result(result) for result in search_result]
+        return self.table.search().where(where).limit(self.table.count_rows(where if where else None)).to_arrow()
 
 
-# ToDo: use arrow flight to improve performance
 class SchemaStorage(BaseMetadataStorage):
     """Store and manage schema lineage data in LanceDB."""
 
@@ -175,9 +156,8 @@ class SchemaStorage(BaseMetadataStorage):
             query_txt="",
             where=_build_where_clause(database_name=database_name, catalog_name=catalog_name),
             select_fields=["schema_name"],
-            top_n=100000,
         )
-        return set([result["schema_name"] for result in search_result])
+        return {search_result["schema_name"]}
 
     def search_top_tables_by_every_schema(
         self,
@@ -186,12 +166,12 @@ class SchemaStorage(BaseMetadataStorage):
         catalog_name: str = "",
         all_schemas: Optional[Set[str]] = None,
         top_n: int = 20,
-    ) -> List[Dict[str, Any]]:
+    ) -> pa.Table:
         if all_schemas is None:
             all_schemas = self.search_all_schemas(catalog_name=catalog_name, database_name=database_name)
         result = []
         for schema in all_schemas:
-            result.extend(
+            result.append(
                 self.search_similar(
                     query_text=query_text,
                     database_name=database_name,
@@ -200,7 +180,7 @@ class SchemaStorage(BaseMetadataStorage):
                     top_n=top_n,
                 )
             )
-        return result
+        return pa.concat_tables(result, promote_options="default")
 
 
 class SchemaValueStorage(BaseMetadataStorage):
@@ -271,7 +251,7 @@ class SchemaWithValueRAG:
         use_rerank: bool = False,
         table_type: TABLE_TYPE = "table",
         top_n: int = 5,
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    ) -> Tuple[pa.Table, pa.Table]:
         where = _build_where_clause(
             catalog_name=catalog_name,
             database_name=database_name,
@@ -293,11 +273,13 @@ class SchemaWithValueRAG:
         return schema_results, value_results
 
     def search_all_schemas(
-        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "table"
-    ) -> List[Dict[str, Any]]:
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "full"
+    ) -> pa.Table:
         """Search all schemas for a given database name.
-        Args:
-            database_name: The database name to search for. If not provided, search all databases.
+        :param database_name: The catalog name to search for. If not provided, search all catalogs.
+        :param catalog_name:  The database name to search for. If not provided, search all databases.
+        :param schema_name: The schema name to search for. If not provided, search all schemas.
+        :param table_type: The table type to search for.
         Returns:
             A list of dictionaries containing the schema information.
         """
@@ -306,11 +288,13 @@ class SchemaWithValueRAG:
         )
 
     def search_all_value(
-        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "table"
-    ) -> List[Dict[str, Any]]:
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "full"
+    ) -> pa.Table:
         """Search all schemas for a given database name.
-        Args:
-            database_name: The database name to search for. If not provided, search all databases.
+        :param database_name: The catalog name to search for. If not provided, search all catalogs.
+        :param catalog_name:  The database name to search for. If not provided, search all databases.
+        :param schema_name: The schema name to search for. If not provided, search all schemas.
+        :param table_type: The table type to search for.
         Returns:
             A list of dictionaries containing the schema information.
         """
@@ -337,13 +321,12 @@ class SchemaWithValueRAG:
             else:
                 conditions.append(f"(database_name='{database_name}' AND table_name='{full_table}')")
         where_clause = " OR ".join(conditions)
-
         # Search schemas
-        schema_results = self.schema_store.table.search().where(where_clause).limit(len(tables)).to_list()
-        schemas_result = [TableSchema.from_dict(result) for result in schema_results]
+        schema_results = self.schema_store.table.search().where(where_clause).limit(len(tables)).to_arrow()
+        schemas_result = TableSchema.from_arrow(schema_results)
 
-        value_results = self.value_store.table.search().where(where_clause).limit(len(tables)).to_list()
-        values_result = [TableValue.from_dict(result) for result in value_results]
+        value_results = self.value_store.table.search().where(where_clause).limit(len(tables)).to_arrow()
+        values_result = TableValue.from_arrow(value_results)
 
         return schemas_result, values_result
 

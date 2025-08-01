@@ -61,7 +61,7 @@ class TestLLMsTools:
         assert hasattr(tool, "generate_sql"), "Tool should have generate_sql function"
         assert hasattr(tool, "match_schema"), "Tool should have match_schema function"
 
-    @pytest.mark.acceptance
+    # @pytest.mark.acceptance
     def test_generate_sql(self, setup_tool, test_data):
         """Test basic tool execution."""
         tool = setup_tool
@@ -243,8 +243,12 @@ class TestDBTools:
 
         # Verify we can convert Arrow data to pandas DataFrame
         import pandas as pd
+        import pyarrow as pa
 
         df = result.sql_return
+        if isinstance(df, pa.lib.Table):
+            df = df.to_pandas()
+
         assert isinstance(df, pd.DataFrame), "Result should be a pandas DataFrame"
         assert df.shape[0] > 0, "DataFrame should have at least one row"
 
@@ -377,8 +381,10 @@ class TestLineageTools:
                 )
             )
 
-    def test_get_table_and_values(self, setup_lineage_tool):
+    def test_get_table_and_values(self, agent_config: AgentConfig):
         """Test get table and values functionality"""
+        agent_config.current_namespace = "snowflake"
+        setup_lineage_tool = SchemaLineageTool(agent_config=agent_config)
         # Use test data from YAML
         input_data = {
             "database_type": DBType.SNOWFLAKE,
@@ -389,11 +395,14 @@ class TestLineageTools:
                 "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.BLOCKS",
             ],
         }
-        schemas, values = setup_lineage_tool.get_table_and_values(input_data["table_names"])
+        schemas, values = setup_lineage_tool.get_table_and_values(
+            database_name=input_data["database_name"], table_names=input_data["table_names"]
+        )
 
         logger.debug(f"Result schemas: {schemas}")
         assert len(schemas) == 3, "Invalid schema count"
         assert len(values) == 3, "Invalid value count"
+        agent_config.current_namespace = "bird_sqlite"
 
     def test_get_table_and_values2(self, setup_lineage_tool):
         """Test get table and values functionality"""

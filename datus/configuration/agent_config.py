@@ -129,7 +129,9 @@ class AgentConfig:
         self._output_dir = kwargs.get("output_dir", "output")
         self.db_type = ""
 
-        self.benchmark_paths = {k: v["benchmark_path"] for k, v in kwargs.get("benchmark", {}).items()}
+        self.benchmark_paths = {
+            k: os.path.expanduser(v["benchmark_path"]) for k, v in kwargs.get("benchmark", {}).items()
+        }
         self._reflection_nodes = DEFAULT_REFLECTION_NODES
         self._reflection_nodes.update(kwargs.get("reflection_nodes", {}))
 
@@ -358,8 +360,11 @@ class AgentConfig:
         )
 
     def save_storage_config(self, storage_type: str):
-        if storage_type in self.storage_configs:
-            save_storage_config(storage_type, self.storage_configs[storage_type], self.rag_storage_path())
+        save_storage_config(
+            storage_type,
+            self.rag_storage_path(),
+            config=None if storage_type not in self.storage_configs else self.storage_configs[storage_type],
+        )
 
 
 def rag_storage_path(namespace: str, rag_base_path: str = "data") -> str:

@@ -30,8 +30,8 @@ def load_agent_config(**kwargs) -> AgentConfig:
         pass
 
     yaml_path = None
-    if "config" in kwargs and kwargs["config"]:
-        yaml_path = kwargs["config"]
+    if config_path := kwargs.get("config"):
+        yaml_path = os.path.expanduser(config_path)
 
     if not yaml_path and os.path.exists("conf/agent.yml"):
         yaml_path = "conf/agent.yml"

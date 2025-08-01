@@ -54,7 +54,7 @@ def get_device():
                 _DEVICE = "cuda"
                 return _DEVICE
         except Exception as e:
-            logger.error(f"Error getting device: {e}")
+            logger.warn(f"Error getting device: {str(e)}")
 
         # Check for AMD GPU
         try:
@@ -68,7 +68,7 @@ def get_device():
                 _DEVICE = "rocm"
                 return _DEVICE
         except Exception as e:
-            logger.error(f"Error getting device: {e}")
+            logger.warn(f"Error getting device: {str(e)}")
 
     _DEVICE = "cpu"
     return _DEVICE
