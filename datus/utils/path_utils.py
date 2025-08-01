@@ -1,5 +1,6 @@
 import glob
 import os.path
+from pathlib import Path
 from typing import Dict, List
 
 from datus.utils.constants import DBType
@@ -42,8 +43,10 @@ def get_files_from_glob_pattern(path_pattern: str, dialect: str = DBType.SQLITE)
     files = glob.glob(path_pattern, recursive=True)
     result = []
     for file_path in files:
-        file_name = file_path.split("/")[name_index]
+        path = Path(file_path)
+        file_name = path.parts[name_index]
         if name_index == -1 and "." in file_name:
-            file_name = file_name[: file_name.rfind(".")]
-        result.append({"name": file_name, "uri": f"{dialect}:///{file_path}"})
+            file_name = file_name.rsplit(".", 1)[0]
+        uri = f"{dialect}:///{path.as_posix()}"
+        result.append({"name": file_name, "uri": uri})
     return result
