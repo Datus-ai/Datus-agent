@@ -13,7 +13,8 @@ def save_storage_config(name: str, rag_path: str, config: Optional[EmbeddingMode
     if config:
         exist_config[name] = config.to_dict()
     else:
-        exist_config.pop(name)
+        if name in exist_config:
+            exist_config.pop(name)
     save_storage_configs(exist_config, rag_path)
 
 

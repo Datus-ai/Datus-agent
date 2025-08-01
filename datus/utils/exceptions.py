@@ -155,7 +155,12 @@ def setup_exception_handler(console_logger=None, prefix_wrap_func=None):
             if console_logger:
                 # print exception trace to file
                 logger.error(f"{log_prefix}: {format_ex}")
-                console_log(console_logger, log_prefix, value.message, prefix_wrap_func)
+                console_log(
+                    console_logger,
+                    log_prefix,
+                    str(value) if not hasattr(value, "message") else value.message,
+                    prefix_wrap_func,
+                )
             else:
                 # print exception trace to file
                 with log_manager.temporary_output("file"):

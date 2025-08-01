@@ -25,6 +25,7 @@ from rich.table import Table
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
 from datus.cli.context_commands import ContextCommands
+from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools.db_manager import db_manager_instance
@@ -56,6 +57,7 @@ class DatusCLI:
         self.console_column_width = 16
         self.selected_catalog_path = ""
         self.selected_catalog_data = {}
+
         setup_exception_handler(
             console_logger=self.console.print, prefix_wrap_func=lambda x: f"[bold red]{x}[/bold red]"
         )
@@ -86,6 +88,8 @@ class DatusCLI:
                 }
             ),
         )
+
+        self.agent_config = load_agent_config(**vars(self.args))
 
         # Initialize agent commands handler
         self.agent_commands = AgentCommands(self)
