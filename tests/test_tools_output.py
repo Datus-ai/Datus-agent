@@ -45,7 +45,7 @@ class TestBirdDevOutput:
         llm_model: LLMBaseModel,
     ):
         task_group = {}
-        benchmark_path = global_config.benchamrk_path(benchmark_platform)
+        benchmark_path = global_config.benchmark_path(benchmark_platform)
 
         # if 'db_path' in test_data:
         #     benchmark_config.test_path = test_data["db_path"]

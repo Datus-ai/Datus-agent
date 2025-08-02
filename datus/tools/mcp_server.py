@@ -370,7 +370,7 @@ class MCPServer:
         return cls._duckdb_mcp_server
 
     @classmethod
-    def get_metricflow_mcp_server(cls):
+    def get_metricflow_mcp_server(cls, database_name: str, db_config: DbConfig):
         if cls._metricflow_mcp_server is None:
             with cls._lock:
                 if cls._metricflow_mcp_server is None:
@@ -386,6 +386,27 @@ class MCPServer:
                             return None
                     logger.info(f"Using MetricFlow MCP server with directory: {directory}")
 
+                    env_settings = {
+                        "MF_MODEL_PATH": os.getenv("FILESYSTEM_MCP_DIRECTORY", "/tmp"),
+                        "MF_PATH": mf_path,
+                        "MF_PROJECT_DIR": mf_project_dir,
+                        "MF_VERBOSE": mf_verbose,
+                    }
+                    if db_config.type in (DBType.DUCKDB, DBType.SQLITE):
+                        env_settings["MF_DWH_SCHEMA"] = db_config.schema
+                        env_settings["MF_DWH_DIALECT"] = db_config.type
+                        env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
+                    elif db_config.type == DBType.STARROCKS:
+                        env_settings["MF_DWH_SCHEMA"] = db_config.schema
+                        env_settings["MF_DWH_DIALECT"] = DBType.MYSQL
+                        env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
+                        env_settings["MF_DWH_SCHEMA"] = db_config.schema
+                        env_settings["MF_DWH_HOST"] = db_config.host
+                        env_settings["MF_DWH_PORT"] = str(db_config.port)
+                        env_settings["MF_DWH_USER"] = db_config.username
+                        env_settings["MF_DWH_PASSWORD"] = db_config.password
+                        env_settings["MF_DWH_DB"] = database_name
+
                     mcp_server_params = MCPServerStdioParams(
                         command="uv",
                         args=[
@@ -394,11 +415,7 @@ class MCPServer:
                             "run",
                             "mcp-metricflow-server",
                         ],
-                        env={
-                            "MF_PATH": mf_path,
-                            "MF_PROJECT_DIR": mf_project_dir,
-                            "MF_VERBOSE": mf_verbose,
-                        },
+                        env=env_settings,
                     )
                     cls._metricflow_mcp_server = SilentMCPServerStdio(
                         params=mcp_server_params, client_session_timeout_seconds=20

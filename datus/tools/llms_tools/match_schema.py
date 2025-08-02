@@ -1,12 +1,15 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List
 
+import pyarrow as pa
+
 from datus.models.base import LLMBaseModel
 from datus.prompts.schema_lineage import gen_prompt, gen_summary_prompt
 from datus.schemas.node_models import TableSchema
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.storage.schema_metadata import SchemaStorage
 from datus.tools.base import BaseTool
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
@@ -29,7 +32,7 @@ class MatchSchemaTool(BaseTool):
 
     def execute(self, input_data: SchemaLinkingInput) -> SchemaLinkingResult:
         table_metadata = self.storage.search_all(database_name=input_data.database_name)
-        if len(table_metadata) == 0:
+        if table_metadata.num_rows == 0:
             return SchemaLinkingResult(
                 success=False,
                 error=f"No table metadata found in {input_data.database_name}",
@@ -39,7 +42,7 @@ class MatchSchemaTool(BaseTool):
                 value_count=0,
             )
         try:
-            all_tables = gen_all_table_dict(input_data.database_name, table_metadata)
+            all_tables = gen_all_table_dict(table_metadata)
             match_result = self.match_schema(input_data, table_metadata, all_tables)
             return self._process_match_result(input_data, match_result, input_data.database_name, all_tables)
         except Exception as e:
@@ -110,34 +113,40 @@ class MatchSchemaTool(BaseTool):
     def map_reduce_match_schema(
         self,
         input_data: SchemaLinkingInput,
-        table_metadata: List[Dict[str, Any]],
+        table_metadata: pa.Table,
         all_table_dict: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Any]:
-        all_schemas = set([item["schema_name"] for item in table_metadata])
-        logger.debug(
-            f"Current task should merge by schema: table_size={len(table_metadata)}, schemas={len(all_schemas)} "
-            f"question={input_data.input_text}"
-        )
-        should_match_tables = self.storage.search_top_tables_by_every_schema(
-            input_data.input_text,
-            database_name=input_data.database_name,
-            catalog_name=input_data.catalog_name,
-            all_schemas=all_schemas,
-            top_n=20,
-        )
-        return self._match_schema(input_data, all_table_dict, should_match_tables)
+        # Extract schema names from PyArrow Table using batch processing
+        if DBType.support_schema(input_data.database_type):
+            all_schemas = set(table_metadata["schema_name"].unique().to_pylist())
+
+            logger.debug(
+                f"Current task should merge by schema: table_size={table_metadata.num_rows}, schemas={len(all_schemas)}"
+                f", question={input_data.input_text}"
+            )
+            should_match_tables = self.storage.search_top_tables_by_every_schema(
+                input_data.input_text,
+                database_name=input_data.database_name,
+                catalog_name=input_data.catalog_name,
+                all_schemas=all_schemas,
+                top_n=20,
+            )
+            return self._match_schema(input_data, all_table_dict, should_match_tables)
+        else:
+            return self._match_schema(input_data, all_table_dict, table_metadata)
 
     def match_schema(
         self,
         input_data: SchemaLinkingInput,
-        table_metadata: List[Dict[str, Any]],
+        table_metadata: pa.Table,
         all_table_dict: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Any]:
         """Match the schema of the input database with the table metadata by LLM
 
         Args:
             input_data: Database name, user query and top_n
-            table_metadata: The table metadata
+            table_metadata: The table metadata as PyArrow Table
+            all_table_dict: Dictionary mapping full table names to their metadata
 
         Returns:
             json string: matched tables and their scores. Example:
@@ -146,24 +155,27 @@ class MatchSchemaTool(BaseTool):
                 {"table": "table2", "score": 0.9, "reasons": ["reason1", "reason2"]},
             ] //...
         """
-
-        if len(table_metadata) > 200:
+        # Check if we need to use map-reduce approach based on row count
+        if table_metadata.num_rows > 200:
             return self.map_reduce_match_schema(input_data, table_metadata, all_table_dict)
         else:
+            # Convert PyArrow Table to list for compatibility with existing methods
+            # Using batch processing to handle large datasets efficiently
+
             match_result = self._match_schema(input_data, all_table_dict, table_metadata)
-        return match_result
+            return match_result
 
     def _match_schema(
         self,
         input_data: SchemaLinkingInput,
         all_table_dict: Dict[str, Dict[str, Any]],
-        table_metadata: List[Dict[str, Any]],
+        table_metadata: pa.Table,
     ) -> Dict[str, Any]:
         messages = gen_prompt(
             input_data.database_type,
             input_data.database_name,
             input_data.input_text,
-            table_metadata,
+            table_metadata.to_pylist(),
             input_data.prompt_version,
             # input_data.top_n,
         )
@@ -261,8 +273,29 @@ def parse_matched_tables(
     return summary_metadata
 
 
-def gen_all_table_dict(database_name: str, all_tables: List[Dict[str, Any]]) -> Dict[str, Any]:
+def gen_all_table_dict(all_tables: pa.Table) -> Dict[str, Any]:
+    """
+    Convert PyArrow Table to dictionary with batch processing to handle large datasets efficiently.
+
+    Args:
+        database_name: Name of the database
+        all_tables: PyArrow Table containing table metadata
+
+    Returns:
+        Dictionary mapping full table names to their metadata
+    """
+    batch_size = 1000
     table_metadata = {}
-    for table in all_tables:
-        table_metadata[f"{database_name}.{table['schema_name']}.{table['table_name']}"] = table
+
+    # Process table in batches to handle large datasets efficiently
+    for i in range(0, all_tables.num_rows, batch_size):
+        current_batch_size = min(batch_size, all_tables.num_rows - i)
+        batch = all_tables.slice(i, current_batch_size)
+
+        # Convert batch to list of dictionaries for processing
+        batch_records = batch.to_pylist()
+
+        for record in batch_records:
+            table_metadata[record["identifier"]] = record
+
     return table_metadata

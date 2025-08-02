@@ -52,8 +52,10 @@ class DBManager:
         if isinstance(connector_or_dict, Dict):
             if db_name not in connector_or_dict:
                 raise DatusException(
-                    code=ErrorCode.TOOL_DB_FAILED,
-                    message=f"Database {db_name} not found in namespace {namespace}",
+                    code=ErrorCode.DB_CONNECTION_FAILED,
+                    message_args={
+                        "error_message": f"Database {db_name} not found in namespace {namespace}",
+                    },
                 )
             return connector_or_dict[db_name]
         else:

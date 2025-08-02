@@ -7,6 +7,7 @@ from enum import Enum
 from io import StringIO
 from typing import Any, Dict, List, Optional, Union
 
+import pyarrow as pa
 from pydantic import BaseModel, Field, field_validator
 
 from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
@@ -122,6 +123,23 @@ class TableSchema(BaseTableSchema):
             definition=data["definition"],
             table_type=data["table_type"],
         )
+
+    @classmethod
+    def from_arrow(cls, table: pa.Table) -> List[TableSchema]:
+        result = []
+        for index in range(table.num_rows):
+            result.append(
+                cls(
+                    identifier=table["identifier"][index].as_py(),
+                    catalog_name=table["catalog_name"][index].as_py(),
+                    table_name=table["table_name"][index].as_py(),
+                    database_name=table["database_name"][index].as_py(),
+                    schema_name=table["schema_name"][index].as_py(),
+                    definition=table["definition"][index].as_py(),
+                    table_type=table["table_type"][index].as_py(),
+                )
+            )
+        return result
 
     def to_dict(self):
         return self.model_dump()
@@ -253,6 +271,23 @@ class TableValue(BaseTableSchema):
             table_values=data["table_values"] if "table_values" in data else data["sample_rows"],
             table_type=data["table_type"],
         )
+
+    @classmethod
+    def from_arrow(cls, table: pa.Table) -> List[TableValue]:
+        result = []
+        for index in range(table.num_rows):
+            result.append(
+                cls(
+                    identifier=table["identifier"][index].as_py(),
+                    catalog_name=table["catalog_name"][index].as_py(),
+                    table_name=table["table_name"][index].as_py(),
+                    database_name=table["database_name"][index].as_py(),
+                    schema_name=table["schema_name"][index].as_py(),
+                    table_values=table["sample_rows"][index].as_py(),
+                    table_type=table["table_type"][index].as_py(),
+                )
+            )
+        return result
 
     def to_dict(self):
         return self.model_dump()
@@ -435,6 +470,11 @@ class Context(BaseModel):
     metrics: List[Metrics] = Field(default_factory=list, description="The metrics")
     doc_search_keywords: List[str] = Field(default_factory=list, description="The document search keywords")
     document_result: Optional[DocSearchResult] = Field(default=None, description="The document result")
+    parallel_results: Optional[Dict[str, Any]] = Field(default=None, description="Results from parallel node execution")
+    last_selected_result: Optional[Any] = Field(
+        default=None, description="The last selected result from selection node"
+    )
+    selection_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Metadata about selection process")
 
     def update_schema_and_values(self, table_schemas: List[TableSchema], table_values: List[TableValue]):
         self.table_schemas = table_schemas
@@ -452,6 +492,13 @@ class Context(BaseModel):
     def update_doc_search_keywords(self, doc_search_keywords: List[str]):
         self.doc_search_keywords = doc_search_keywords
 
+    def update_parallel_results(self, parallel_results: Dict[str, Any]):
+        self.parallel_results = parallel_results
+
+    def update_selection_result(self, selected_result: Any, metadata: Dict[str, Any]):
+        self.last_selected_result = selected_result
+        self.selection_metadata = metadata
+
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump()
 
@@ -467,11 +514,16 @@ class Context(BaseModel):
             f"return:{context.row_count} reflection:{context.reflection_explanation}"
             for context in self.sql_contexts
         ]
+        parallel_info = f"Parallel results: {len(self.parallel_results) if self.parallel_results else 0}"
+        selection_info = f"Selection made: {bool(self.last_selected_result)}"
+
         return (
             f"\nTable Schemas: {table_names}\n"
             f"Table Values: {table_values_names}\n"
             f"SQL Contexts: {sql_contexts}\n"
-            f"Metrics Count: {len(self.metrics)}"
+            f"Metrics Count: {len(self.metrics)}\n"
+            f"{parallel_info}\n"
+            f"{selection_info}"
         )
 
 

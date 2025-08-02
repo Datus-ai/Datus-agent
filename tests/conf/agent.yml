@@ -43,7 +43,7 @@ agent:
   # benchmark configuration
   benchmark:
     bird_dev: # this is namespace of benchmark
-      benchmark_path: benchmark/bird/dev_20240627
+      benchmark_path: ~/benchmark/bird/dev_20240627
     spider2:
       benchmark_path: benchmark/spider2/spider2-snow
 
@@ -56,7 +56,7 @@ agent:
       password: ${SNOWFLAKE_PASSWORD}
     bird_sqlite:
       type: sqlite
-      path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
+      path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
     duckdb:
       type: duckdb
       name: duck

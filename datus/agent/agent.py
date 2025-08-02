@@ -21,6 +21,8 @@ from datus.models.qwen_model import QwenModel
 # Import model implementations
 from datus.schemas.node_models import BaseResult, SqlTask
 from datus.storage.document import DocumentStore
+from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge
+from datus.storage.ext_knowledge.store import ExtKnowledgeStore
 from datus.storage.metric.metrics_init import init_success_story_metrics
 from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
@@ -28,6 +30,11 @@ from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
 from datus.storage.schema_metadata.local_init import init_local_schema
 from datus.storage.schema_metadata.store import rag_by_configuration
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
+from datus.utils.benchmark_utils import (
+    evaluate_and_report_accuracy,
+    generate_gold_standard_results,
+    load_bird_dev_tasks,
+)
 from datus.utils.constants import DBType, LLMProvider
 from datus.utils.loggings import get_logger
 
@@ -384,7 +391,9 @@ class Agent:
                         pool_size=pool_size,
                     )
                 elif benchmark_platform == "spider2":
-                    benchmark_path = self.args.benchmark_path or self.global_config.benchamrk_path(benchmark_platform)
+                    benchmark_path = os.path.expanduser(
+                        self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
+                    )
 
                     init_snowflake_schema(
                         self.metadata_store,
@@ -393,7 +402,9 @@ class Agent:
                         pool_size=pool_size,
                     )
                 elif benchmark_platform == "bird_dev":
-                    benchmark_path = self.args.benchmark_path or self.global_config.benchamrk_path(benchmark_platform)
+                    benchmark_path = os.path.expanduser(
+                        self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
+                    )
                     init_dev_schema(
                         self.metadata_store,
                         self.db_manager,
@@ -441,6 +452,24 @@ class Agent:
             elif component == "document":
                 self.storage_modules["document_store"] = DocumentStore(dir_path)
                 # self.global_config.check_init_storage_config("document")
+            elif component == "ext_knowledge":
+                ext_knowledge_path = os.path.join(dir_path, "ext_knowledge.lance")
+                if kb_update_strategy == "overwrite":
+                    if os.path.exists(ext_knowledge_path):
+                        shutil.rmtree(ext_knowledge_path)
+                        logger.info(f"Deleted existing directory {ext_knowledge_path}")
+                    self.global_config.save_storage_config("ext_knowledge")
+                else:
+                    self.global_config.check_init_storage_config("ext_knowledge")
+                self.ext_knowledge_store = ExtKnowledgeStore(dir_path)
+                init_ext_knowledge(
+                    self.ext_knowledge_store, self.args, build_mode=kb_update_strategy, pool_size=pool_size
+                )
+                return {
+                    "status": "success",
+                    "message": f"ext_knowledge bootstrap completed, "
+                    f"knowledge_size={self.ext_knowledge_store.table_size()}",
+                }
             results[component] = True
 
         # Initialize success story storage (always created)
@@ -460,23 +489,26 @@ class Agent:
         logger.info("Benchmarking begins")
         benchmark_platform = self.args.benchmark
 
-        benchmark_path = self.args.benchmark_path or self.global_config.benchamrk_path(benchmark_platform)
+        benchmark_path = self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
         if not benchmark_path:
             raise ValueError("benchmark_path is not set, please setup in config file or set --benchmark_path")
 
         if not os.path.exists(benchmark_path):
             raise FileNotFoundError(f"Benchmark_path not found: {benchmark_path}")
 
-        self.global_config.check_init_storage_config("database")
         target_task_ids = getattr(self.args, "benchmark_task_ids", [])
         target_task_ids = set(target_task_ids) if target_task_ids else None
         if benchmark_platform == "spider2":
+            self.global_config.check_init_storage_config("database")
             return self.benchmark_spider2(benchmark_path, target_task_ids)
         elif benchmark_platform == "bird_dev":
+            self.global_config.check_init_storage_config("database")
             return self.benchmark_bird_dev(benchmark_path, target_task_ids)
         elif benchmark_platform == "semantic_layer":
+            self.global_config.check_init_storage_config("metric")
             return self.benchmark_semantic_layer(benchmark_path, target_task_ids)
         elif benchmark_platform == "bird_critic":
+            self.global_config.check_init_storage_config("database")
             logger.info(f"Benchmark {benchmark_platform} not support now, please wait for update.")
         return {"status": "success", "message": "Benchmarking completed"}
 
@@ -510,10 +542,7 @@ class Agent:
             )
 
     def benchmark_bird_dev(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
-        task_file = f"{benchmark_path}/dev.json"
-        self._check_benchmark_file(task_file)
-        with open(task_file, "r") as f:
-            tasks = json.load(f)
+        tasks = load_bird_dev_tasks(benchmark_path)
 
         logger.info(f"Benchmarking tasks: {target_task_ids}")
         task_group = {}
@@ -560,7 +589,12 @@ class Agent:
                     )
 
         logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
+        logger.info("Phase 1: Generating gold standard results...")
+        current_db_config = self.global_config.current_db_config()
+        generate_gold_standard_results(tasks, benchmark_path, current_db_config, target_task_ids)
+        metric_meta = self.global_config.current_metric_meta(self.args.metric_meta)
 
+        logger.info("Phase 2: Running agent benchmark tests...")
         for task in tasks:
             task_id = str(task["question_id"])
             if target_task_ids and task_id not in target_task_ids:
@@ -572,21 +606,30 @@ class Agent:
             self.run(
                 SqlTask(
                     id=task_id,
-                    database_type=DBType.DUCKDB,
+                    database_type=current_db_config.type,
                     task=question,
-                    database_name=self.args.task_db_name,
-                    schema_name=self.args.task_schema,
-                    domain=self.args.domain,
-                    layer1=self.args.layer1,
-                    layer2=self.args.layer2,
+                    database_name=current_db_config.database,
+                    schema_name=current_db_config.schema,
+                    domain=metric_meta.domain,
+                    layer1=metric_meta.layer1,
+                    layer2=metric_meta.layer2,
                     output_dir=self.global_config.output_dir,
-                    external_knowledge=self.args.task_ext_knowledge,
+                    external_knowledge=metric_meta.ext_knowledge,
                 )
             )
 
             logger.info(
                 f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
             )
+
+        logger.info("Phase 3: Evaluating benchmark accuracy...")
+        return evaluate_and_report_accuracy(
+            benchmark_path,
+            self.global_config.trajectory_dir,
+            self.global_config.current_namespace,
+            self.global_config.output_dir,
+            target_task_ids,
+        )
 
     def _check_benchmark_file(self, file_path: str):
         if not os.path.exists(file_path):

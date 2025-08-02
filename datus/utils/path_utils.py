@@ -1,4 +1,5 @@
 import glob
+import os.path
 from typing import Dict, List
 
 from datus.utils.constants import DBType
@@ -29,6 +30,7 @@ def get_files_from_glob_pattern(path_pattern: str, dialect: str = DBType.SQLITE)
     """
     if not has_glob_pattern(path_pattern):
         return []
+    path_pattern = os.path.expanduser(path_pattern)
     paths = path_pattern.split("/")
     if len(paths) == 1:
         name_index = -1

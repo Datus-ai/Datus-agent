@@ -44,30 +44,127 @@ def create_nodes_from_config(
     )
     nodes.append(start_node)
 
-    for index, node_type in enumerate(workflow_config, start=1):
-        node_id = f"node_{index}"
-        description = NodeType.get_description(node_type)
-
-        input_data = None
-        if node_type == NodeType.TYPE_SCHEMA_LINKING:
-            input_data = SchemaLinkingInput.from_sql_task(
-                sql_task=sql_task,
-                matching_rate=agent_config.schema_linking_rate if agent_config else "fast",
-            )
-
-        node = Node.new_instance(
-            node_id=node_id,
-            description=description,
-            node_type=node_type,
-            input_data=input_data,
-            agent_config=agent_config,
-        )
-
-        nodes.append(node)
+    # Process workflow config that may contain nested structures
+    processed_nodes = _process_workflow_config(workflow_config, sql_task, agent_config)
+    nodes.extend(processed_nodes)
 
     logger.info(f"Generated workflow with {len(nodes)} nodes")
 
     return nodes
+
+
+def _process_workflow_config(
+    config: list,
+    sql_task: SqlTask,
+    agent_config: Optional[AgentConfig] = None,
+    start_index: int = 1,
+    node_id_prefix: str = "node",
+) -> List[Node]:
+    """Process workflow configuration that may contain nested parallel structures"""
+    nodes = []
+    current_index = start_index
+
+    for item in config:
+        if isinstance(item, str):
+            # Simple node type
+            node_id = f"{node_id_prefix}_{current_index}"
+            node = _create_single_node(item, node_id, sql_task, agent_config)
+            nodes.append(node)
+            current_index += 1
+
+        elif isinstance(item, dict):
+            # Handle nested structures like parallel
+            for key, value in item.items():
+                if key == "parallel" and isinstance(value, list):
+                    # Create a parallel node
+                    parallel_children = value
+                    node_id = f"{node_id_prefix}_{current_index}"
+
+                    from datus.schemas.parallel_node_models import ParallelInput
+
+                    parallel_input = ParallelInput(
+                        child_nodes=parallel_children, shared_input=None  # Will be set up during execution
+                    )
+
+                    parallel_node = Node.new_instance(
+                        node_id=node_id,
+                        description=NodeType.get_description(NodeType.TYPE_PARALLEL),
+                        node_type=NodeType.TYPE_PARALLEL,
+                        input_data=parallel_input,
+                        agent_config=agent_config,
+                    )
+                    nodes.append(parallel_node)
+                    current_index += 1
+
+                elif key == "selection":
+                    # Create a selection node (if it's specified as dict with criteria)
+                    node_id = f"{node_id_prefix}_{current_index}"
+
+                    from datus.schemas.parallel_node_models import SelectionInput
+
+                    selection_criteria = value if isinstance(value, str) else "best_quality"
+                    selection_input = SelectionInput(
+                        candidate_results={},  # Will be populated during execution
+                        selection_criteria=selection_criteria,
+                    )
+
+                    selection_node = Node.new_instance(
+                        node_id=node_id,
+                        description=NodeType.get_description(NodeType.TYPE_SELECTION),
+                        node_type=NodeType.TYPE_SELECTION,
+                        input_data=selection_input,
+                        agent_config=agent_config,
+                    )
+                    nodes.append(selection_node)
+                    current_index += 1
+                else:
+                    # Handle other dict-based configurations if needed
+                    logger.warning(f"Unknown configuration item: {key}")
+
+        elif item == "selection":
+            # Simple selection node
+            node_id = f"{node_id_prefix}_{current_index}"
+
+            from datus.schemas.parallel_node_models import SelectionInput
+
+            selection_input = SelectionInput(
+                candidate_results={}, selection_criteria="best_quality"  # Will be populated during execution
+            )
+
+            selection_node = Node.new_instance(
+                node_id=node_id,
+                description=NodeType.get_description(NodeType.TYPE_SELECTION),
+                node_type=NodeType.TYPE_SELECTION,
+                input_data=selection_input,
+                agent_config=agent_config,
+            )
+            nodes.append(selection_node)
+            current_index += 1
+
+    return nodes
+
+
+def _create_single_node(
+    node_type: str, node_id: str, sql_task: SqlTask, agent_config: Optional[AgentConfig] = None
+) -> Node:
+    description = NodeType.get_description(node_type)
+
+    input_data = None
+    if node_type == NodeType.TYPE_SCHEMA_LINKING:
+        input_data = SchemaLinkingInput.from_sql_task(
+            sql_task=sql_task,
+            matching_rate=agent_config.schema_linking_rate if agent_config else "fast",
+        )
+
+    node = Node.new_instance(
+        node_id=node_id,
+        description=description,
+        node_type=node_type,
+        input_data=input_data,
+        agent_config=agent_config,
+    )
+
+    return node
 
 
 def generate_workflow(

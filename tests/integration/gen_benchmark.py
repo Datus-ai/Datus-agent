@@ -1,5 +1,4 @@
 import argparse
-import csv
 import json
 import os
 
@@ -29,8 +28,6 @@ def get_benchmark_file_path(config, benchmark, workdir):
         benchmark_file = os.path.join(workdir, benchmark_path, "spider2-snow.jsonl")
     elif benchmark == "bird_dev":
         benchmark_file = os.path.join(workdir, benchmark_path, "dev.json")
-    elif benchmark == "semantic_layer":
-        benchmark_file = os.path.join(workdir, benchmark_path, "testing_set.csv")
     else:
         benchmark_file = os.path.join(workdir, benchmark_path, f"{benchmark}.jsonl")
 
@@ -42,15 +39,6 @@ def load_benchmark_data(benchmark_path):
         raise FileNotFoundError(f"test file not exists: {benchmark_path}")
 
     instance_ids = []
-
-    # Handle CSV files (for semantic_layer)
-    if benchmark_path.endswith(".csv"):
-        with open(benchmark_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for line_no, row in enumerate(reader, 1):
-                if "question" in row and "sql" in row and row["question"].strip() and row["sql"].strip():
-                    instance_ids.append(str(line_no))
-        return instance_ids
 
     # Handle JSON files (for spider2 and bird_dev)
     with open(benchmark_path, "r", encoding="utf-8") as f:
