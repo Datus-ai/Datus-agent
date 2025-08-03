@@ -29,7 +29,6 @@ def test_multiprocessing_start_method_base(platform_name, expected_method):
     """
     with patch("platform.system", return_value=platform_name):
         with patch("multiprocessing.set_start_method") as mock_set:
-
             import importlib
 
             import datus.models.base
@@ -95,21 +94,19 @@ def test_detect_toxicology_db(tmp_path):
 
     expected_uri = (
         f"{DBType.SQLITE}:///" f"{tmp_path}/benchmark/bird/dev_20240627/dev_databases/medical/toxicology.sqlite"
-    ).replace(
-        "\\", "/"
-    )
+    ).replace("\\", "/")
 
     assert toxicology_files[0]["uri"] == expected_uri
 
 
 def test_load_agent_config_utf8_with_real_args():
     cfg = load_agent_config(
-        config=str(Path(__file__).with_suffix('').parent.parent / "conf" / "agent.yml.qs"),
+        config=str(Path(__file__).with_suffix("").parent.parent / "conf" / "agent.yml.qs"),
         debug=False,
         save_llm_trace=True,
         action="benchmark",
         benchmark="bird_dev",
         benchmark_task_ids=["0"],
-        namespace="bird_sqlite"
+        namespace="bird_sqlite",
     )
     assert cfg is not None
