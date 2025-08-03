@@ -1,8 +1,9 @@
 import glob
+import pathlib as Path
 from typing import Dict, List
 
 from datus.utils.constants import DBType
-import pathlib  as Path
+
 
 def has_glob_pattern(path: str) -> bool:
     """Check if a path contains glob patterns.
