@@ -38,6 +38,7 @@ def get_files_from_glob_pattern(path_pattern: str, dialect: str = DBType.SQLITE)
             name_index = -2
         else:
             name_index = -1
+
     # Transfer to Path type
     files = glob.glob(str(pattern), recursive=True)
     result = []
