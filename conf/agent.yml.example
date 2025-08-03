@@ -5,7 +5,7 @@ agent:
       type: openai
       vendor: openai
       base_url: https://api.openai.com/v1
-      api_key: sk-xxxxxx
+      api_key: ${OPENAI_API_KEY}
       model: gpt-4-turbo
 
     google:
@@ -19,22 +19,15 @@ agent:
       type: claude
       vendor: anthropic
       base_url: https://api.anthropic.com
-      api_key: sk-xxxxx
+      api_key: ${ANTHROPIC_API_KEY}
       model: claude-3-sonnet-20241022
 
-    deep_seek_v3:
+    deepseek_v3:
       type: deepseek
       vendor: deepseek
       base_url: https://api.deepseek.com
-      api_key: sk-xxxxxx
-      model: deepseek-r1-250120
-
-    deep_seek_ark:
-      type: deepseek
-      vendor: ark
-      base_url: https://ark.cn-beijing.volces.com/api/v3
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-v3-250324
+      model: deepseek-chat
 
   nodes:
     schema_linking:
@@ -42,7 +35,7 @@ agent:
       matching_rate: fast
       prompt_version: "1.0"
     generate_sql:
-      model: deep_seek_ark
+      model: deepseek_v3
       prompt_version: "1.0"
       max_table_schemas_length: 4000
       max_data_details_length: 2000
@@ -67,6 +60,8 @@ agent:
       benchmark_path: benchmark/bird/dev_20240627
     spider2:
       benchmark_path: benchmark/spider2/spider2-snow
+    semantic_layer:
+      benchmark_path: benchmark/semantic_layer
 
   # local databases configuration
   namespace:
@@ -105,8 +100,16 @@ agent:
       password: ${STARROCKS_PASSWORD}
       database: ${STARROCKS_DATABASE}
 
+  metrics:
+    duckdb:
+      domain: sale
+      layer1: layer1
+      layer2: layer2
+      ext_knowledge: ""
+
   storage:
     base_path: data # rag storage base path,final data path is 'data/datus_db_spider2',  'data/datus_db_bird_dev', 'data/datus_db_local1' ...
+    embedding_device_type: cpu # If set to cpu, it will be specified as cpu, otherwise, it will be automatically selected based on the current machine
     # Local model suggestions:
     # 1. if you want extreme performance, choose the small multilingual model with 384 dimensions: all-MiniLM-L6-v2 (~100M) or intfloat/multilingual-e5-small (~460M).
     # 2. if you want performance and retrieval quality, choose the 1024-dimension multilingual model: intfloat/multilingual-e5-large-instruct (~1.2G)
@@ -119,6 +122,7 @@ agent:
       model_name: text-embedding-v3
       dim_size: 1024
       batch_size: 10 # Aliyun only supports no more than 10
+      target_model: openai # target model in agent.models, if not set, the agent's target configuration will be used
     document:
       model_name: all-MiniLM-L6-v2 #～100MB The lightest model
       dim_size: 384
@@ -159,3 +163,16 @@ agent:
       - reasoning
       - execute_sql
       - reflect
+
+  # Workflow configuration with parallel execution and selection
+  workflow:
+    plan: bird_para
+
+    bird_para:
+      - schema_linking
+      - parallel:
+        - generate_sql
+        - reasoning
+      - selection
+      - execute_sql
+      - output

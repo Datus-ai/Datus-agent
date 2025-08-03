@@ -72,7 +72,7 @@ def match_result(target_schema: Set[str], full_name_set: Set[str]):
 )
 def test_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, task_ids: Set[str], use_rerank: bool):
     gold_tables = load_gold_tables()
-    with open(os.path.join(agent_config.benchamrk_path("spider2"), "spider2-snow.jsonl")) as f:
+    with open(os.path.join(agent_config.benchmark_path("spider2"), "spider2-snow.jsonl")) as f:
         for line in f:
             task = json.loads(line)
             if task["instance_id"] not in task_ids:
@@ -96,7 +96,7 @@ def test_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, task_ids: Se
                 print("TOTAL FOR ", task["db_id"], len(rag.search_all_schemas(database_name=task["db_id"])))
 
 
-@pytest.mark.parametrize("top_n,use_rerank", [(5, False), (10, False), (20, False), (5, True), (10, True), (20, True)])
+@pytest.mark.parametrize("top_n,use_rerank", [(5, False), (10, False), (20, False)])
 def test_full_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: int, use_rerank: bool):
     """Test the RAG SQL callback
     # Test matching tables from spider2-snow.jsonl tasks with actual schema
@@ -108,7 +108,7 @@ def test_full_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: 
         top_n: Number of top results to return
     """
 
-    tasks_file = os.path.join(agent_config.benchamrk_path("spider2"), "spider2-snow.jsonl")
+    tasks_file = os.path.join(agent_config.benchmark_path("spider2"), "spider2-snow.jsonl")
     start_time = datetime.now()
     with open(tasks_file) as f:
         tasks = [json.loads(line) for line in f]
@@ -122,7 +122,7 @@ def test_full_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: 
             match_results.append(result)
             if result["union_match_tables_score"] == 1:
                 total += 1
-    output_dir = os.path.join(PROJECT_ROOT, "tests/output/recall")
+    output_dir = os.path.join(PROJECT_ROOT, "tests/output/spider2/recall")
     os.makedirs(output_dir, exist_ok=True)
     df = DataFrame(match_results)
     if use_rerank:

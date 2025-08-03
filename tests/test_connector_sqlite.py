@@ -26,16 +26,16 @@ def sqlite_connector(db_path):
     connector.close()
 
 
-def test_connection(sqlite_connector, db_path):
+def test_connection(sqlite_connector: SQLiteConnector, db_path):
     """Test database connection and close operations"""
     # Test connection
     sqlite_connector.connect()
-    assert sqlite_connector._conn is not None
+    assert sqlite_connector.connection is not None
     assert os.path.exists(db_path)
 
     # Test close
     sqlite_connector.close()
-    assert sqlite_connector._conn is None
+    assert sqlite_connector.connection is None
 
 
 def test_test_connection(tmp_path):

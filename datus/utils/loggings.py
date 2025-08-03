@@ -20,7 +20,7 @@ class DynamicLogManager:
 
     def __init__(self, debug=False, log_dir="logs"):
         self.debug = debug
-        self.log_dir = log_dir
+        self.log_dir = os.path.expanduser(log_dir)
         self.root_logger = logging.getLogger()
         self.file_handler = None
         self.console_handler = None

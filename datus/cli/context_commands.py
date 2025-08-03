@@ -3,12 +3,17 @@ Datus-CLI Context Commands
 This module provides context-related commands for the Datus CLI.
 """
 
+from typing import TYPE_CHECKING
+
 from rich.table import Table
 from rich.tree import Tree
 
-from datus.utils.constants import DBType
+from datus.storage.schema_metadata.store import rag_by_configuration
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
+
+if TYPE_CHECKING:
+    from datus.cli import DatusCLI
 
 logger = get_logger(__name__)
 
@@ -16,44 +21,45 @@ logger = get_logger(__name__)
 class ContextCommands:
     """Handles all context-related commands in the CLI."""
 
-    def __init__(self, cli):
+    def __init__(self, cli: "DatusCLI"):
         """Initialize with a reference to the CLI instance."""
         self.cli = cli
         self.console = cli.console
+        self.rag_metadata = rag_by_configuration(cli.agent_config)
 
     def cmd_catalogs(self, args: str):
-        """Display database catalogs."""
+        """Display database catalogs using Textual tree interface."""
         try:
-            if not self.cli.db_connector:
-                self.console.print("[bold red]Error:[/] No database connection.")
+            # Import here to avoid circular imports
+
+            if not self.cli.db_connector and not self.cli.agent_config:
+                self.console.print("[bold red]Error:[/] No database connection or configuration.")
                 return
 
-            # Get metadata from the connector
-            metadata = self.cli.db_connector.get_metadata()
+            # Get storage path from config
 
-            # Create a table to display the catalog
-            table = Table(title="Database Catalog", show_header=True, header_style="bold green")
-            table.add_column("Database")
-            table.add_column("Schema")
-            table.add_column("Table")
+            if not self.rag_metadata:
+                self.console.print("[bold red]Error:[/] Storage path not configured.")
+                return
+            from datus.cli.context_screen import show_catalogs_screen
 
-            # Add rows to the table
-            for item in metadata:
-                db_name = item.get("database_name", "")
-                schema_name = item.get("schema_name", "")
-                table_name = item.get("table_name", "")
-
-                table.add_row(db_name, schema_name, table_name)
-
-            # Display the table
-            self.console.print(table)
-
-            # Add usage info
-            self.console.print("[dim]Tip: Use '@tables <table_name>' to see details of a specific table.[/]")
+            # Push the catalogs screen
+            show_catalogs_screen(
+                title="Database Catalogs",
+                data={
+                    "db_type": self.cli.agent_config.db_type,
+                    "schemas": self.rag_metadata.schema_store.search_all(
+                        catalog_name=self.cli.current_catalog,
+                        database_name=self.cli.current_db_name,
+                        schema_name=self.cli.current_schema,
+                    ),
+                },
+                inject_callback=self.cli.catalogs_callback,
+            )
 
         except Exception as e:
-            logger.error(f"Catalog fetch error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] Failed to fetch catalog: {str(e)}")
+            logger.error(f"Catalog display error: {str(e)}")
+            self.console.print(f"[bold red]Error:[/] Failed to display catalog: {str(e)}")
 
     def cmd_context(self, args: str = "sql"):
         """Display the current context."""
@@ -159,26 +165,24 @@ class ContextCommands:
 
         try:
             # For SQLite, query the sqlite_master table
-            if self.cli.db_connector.get_type() == DBType.SQLITE:
-                sql = "SELECT type, name FROM sqlite_master WHERE type='table' ORDER BY name"
-                result = self.cli.db_connector.execute_arrow(sql)
-                self.cli.last_result = result
+            result = self.cli.db_connector.get_tables(
+                catalog_name=self.cli.current_catalog,
+                database_name=self.cli.current_db_name,
+                schema_name=self.cli.current_schema,
+            )
+            self.cli.last_result = result
 
+            if result:
                 # Display results
                 table = Table(title="Show tables", show_header=True, header_style="bold green")
-                if result is not None and result.success:
-                    # Add columns
-                    for col in result.sql_return.column_names:
-                        table.add_column(col)
-                    # Add rows
-                    for row in result.sql_return.to_pylist():
-                        table.add_row(*[str(cell) for cell in row.values()])
-                    self.console.print(table)
-                else:
-                    self.console.print("[bold red]Error:[/] Failed to retrieve table list")
+                # Add columns
+                table.add_column("Table Name")
+                # Add rows
+                for row in result.sql_return.to_pylist():
+                    table.add_row(*[str(cell) for cell in row.values()])
+                self.console.print(table)
             else:
-                # For other database types, execute the appropriate query
-                self.console.print("[yellow]Table listing not implemented for this database type.[/]")
+                self.console.print("Empty set.")
 
         except Exception as e:
             logger.error(f"Table listing error: {str(e)}")

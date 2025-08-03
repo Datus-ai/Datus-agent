@@ -40,15 +40,14 @@ dependencies = [
     "openai-agents>=0.1.0",
     "pydantic>=2.11.7",
     "Markdown==3.8",
-    # "sqllineage>=0.20.0",
     "lancedb==0.18.0",
+    # This library is required by lancedb
     "pylance==0.22.0",
     "datasets>=3.5.1",
     "transformers>=4.51.3",
     "sentence-transformers==4.1.0",
     # this verison is required by pandas 2.1.4
     "pyarrow<19.0.0",
-    # This library is required by lancedb
     "rich==14.0.0",
     "prompt_toolkit>=3.0.51",
     "textual==3.2.0",

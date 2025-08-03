@@ -45,3 +45,14 @@ Datus-agent
 * Added the check-mcp command to confirm the MCP server configuration and availability.
 * Added support for both DuckDB and SQLite MCP servers.
 * Implemented automatic installation of the MCP server into the datus-mcp directory.
+
+
+### 0.1.5
+
+Datus-agent
+* Automated semantic layer generation.
+* Introduced a new internal workflow: metrics2SQL.
+* Added save_llm_trace to facilitate training dataset collection.
+
+Datus-cli
+* Enhanced !reason and !gen_semantic_model commands for a more agentic and intuitive experience.

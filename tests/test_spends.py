@@ -1,7 +1,5 @@
 from datetime import datetime
 
-import pytest
-
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.storage.schema_metadata.store import rag_by_configuration
@@ -9,7 +7,6 @@ from datus.tools.lineage_graph_tools import SchemaLineageTool
 from datus.utils.constants import DBType
 
 
-@pytest.mark.acceptance
 def test_storage_spends():
     for _ in range(10):
         first_start = datetime.now()

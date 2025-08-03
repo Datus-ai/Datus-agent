@@ -1,0 +1,211 @@
+from typing import Any, Dict
+
+from datus.agent.node import Node
+from datus.agent.workflow import Workflow
+from datus.prompts.selection import create_selection_prompt
+from datus.schemas.parallel_node_models import SelectionResult
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
+
+class SelectionNode(Node):
+    """Node that selects the best result from multiple parallel candidates"""
+
+    def update_context(self, workflow: Workflow) -> Dict:
+        """Update workflow context with selected result"""
+        if self.result and self.result.success and self.result.selected_result:
+            # Update context with the selected result
+            workflow.context.update_selection_result(
+                self.result.selected_result,
+                {
+                    "selected_source": self.result.selected_source,
+                    "selection_reason": self.result.selection_reason,
+                    "score_analysis": self.result.score_analysis,
+                },
+            )
+
+            # Extract and add SQL context from the selected result
+            selected_data = self.result.selected_result
+            if isinstance(selected_data, dict) and "result" in selected_data:
+                # Get the actual result object from the child node result
+                child_result = selected_data["result"]
+
+                # Check if it's a SQL generation result
+                if hasattr(child_result, "sql_query") and hasattr(child_result, "explanation"):
+                    from datus.schemas.node_models import SQLContext
+
+                    # Create SQL context from the selected result
+                    sql_context = SQLContext(
+                        sql_query=child_result.sql_query, explanation=child_result.explanation or ""
+                    )
+
+                    # Add to workflow context
+                    workflow.context.sql_contexts.append(sql_context)
+                    logger.info(f"Added selected SQL to context: {child_result.sql_query[:100]}...")
+
+                    return {"success": True, "message": "Selection node context updated with SQL"}
+
+        return {"success": True, "message": "Selection node context updated"}
+
+    def setup_input(self, workflow: Workflow) -> Dict:
+        """Setup input for selection node"""
+        # Get parallel results from workflow context
+        parallel_results = workflow.context.parallel_results
+
+        if not parallel_results:
+            return {"success": False, "message": "No parallel results available in workflow context"}
+
+        # Create or update the SelectionInput with parallel results
+        from datus.schemas.parallel_node_models import SelectionInput
+
+        # If input already exists and is SelectionInput, update it; otherwise create new
+        if isinstance(self.input, SelectionInput):
+            self.input.candidate_results = parallel_results
+        else:
+            self.input = SelectionInput(
+                candidate_results=parallel_results, selection_criteria="best_quality", prompt_version="1.0"
+            )
+
+        logger.info(f"Setup selection input with {len(parallel_results)} candidates")
+        return {"success": True, "message": "Selection node input setup complete"}
+
+    def execute(self) -> SelectionResult:
+        """Select the best result from candidates"""
+        if not self.input or not self.input.candidate_results:
+            result = SelectionResult(
+                success=False,
+                error="No candidate results provided for selection",
+                selected_result=None,
+                selected_source="",
+                selection_reason="No candidates available",
+                all_candidates={},
+            )
+            self.result = result
+            return result
+
+        candidates = self.input.candidate_results
+
+        logger.info(f"Starting selection from {len(candidates)} candidates")
+
+        try:
+            # If only one candidate, select it directly
+            if len(candidates) == 1:
+                candidate_id = list(candidates.keys())[0]
+                candidate_result = candidates[candidate_id]
+
+                result = SelectionResult(
+                    success=True,
+                    selected_result=candidate_result,
+                    selected_source=candidate_id,
+                    selection_reason="Only one candidate available",
+                    all_candidates=candidates,
+                    score_analysis={candidate_id: {"score": 10, "reason": "Single candidate"}},
+                )
+                self.result = result
+                return result
+
+            # Use LLM-based selection for multiple candidates
+            if self.model:
+                result = self._llm_based_selection(candidates)
+            else:
+                # Fallback to rule-based selection
+                result = self._rule_based_selection(candidates)
+
+            self.result = result
+            return result
+
+        except Exception as e:
+            logger.error(f"Selection failed: {str(e)}")
+            result = SelectionResult(
+                success=False,
+                error=f"Selection failed: {str(e)}",
+                selected_result=None,
+                selected_source="",
+                selection_reason="Selection process failed",
+                all_candidates=candidates,
+            )
+            self.result = result
+            return result
+
+    def _llm_based_selection(self, candidates: Dict[str, Any]) -> SelectionResult:
+        """Use LLM to select the best candidate"""
+        prompt_version = self.input.prompt_version if self.input else "1.0"
+        prompt = create_selection_prompt(candidates, prompt_version=prompt_version)
+
+        try:
+            logger.info("Calling LLM for candidate selection...")
+            response = self.model.generate_with_json_output(prompt)
+
+            best_candidate_id = response.get("best_candidate", "")
+            selection_reason = response.get("reason", "LLM-based selection")
+            score_analysis = response.get("score_analysis", {})
+
+            if best_candidate_id not in candidates:
+                # Fallback if LLM returns invalid candidate
+                logger.warning(f"LLM returned invalid candidate: {best_candidate_id}")
+                return self._rule_based_selection(candidates)
+
+            selected_result = candidates[best_candidate_id]
+
+            return SelectionResult(
+                success=True,
+                selected_result=selected_result,
+                selected_source=best_candidate_id,
+                selection_reason=selection_reason,
+                all_candidates=candidates,
+                score_analysis=score_analysis,
+            )
+
+        except Exception as e:
+            logger.error(f"LLM-based selection failed: {str(e)}")
+            # Fallback to rule-based selection
+            return self._rule_based_selection(candidates)
+
+    def _rule_based_selection(self, candidates: Dict[str, Any]) -> SelectionResult:
+        """Fallback rule-based selection"""
+        logger.info("Using rule-based selection as fallback")
+
+        # Score candidates based on simple rules
+        scores = {}
+
+        for candidate_id, candidate in candidates.items():
+            score = 0
+            reasons = []
+
+            # Check if candidate has a successful result
+            if isinstance(candidate, dict):
+                if candidate.get("success", False):
+                    score += 5
+                    reasons.append("Successful execution")
+
+                # Check if result exists and has content
+                result = candidate.get("result")
+                if result:
+                    score += 3
+                    reasons.append("Has result content")
+
+                    # For SQL results, prefer results with data
+                    if hasattr(result, "sql_result_final") and result.sql_result_final:
+                        score += 2
+                        reasons.append("Has SQL result")
+
+                # Check error status
+                if not candidate.get("error"):
+                    score += 2
+                    reasons.append("No errors")
+
+            scores[candidate_id] = {"score": score, "reason": "; ".join(reasons) if reasons else "Basic scoring"}
+
+        # Select candidate with highest score
+        best_candidate_id = max(scores.keys(), key=lambda x: scores[x]["score"])
+        best_score = scores[best_candidate_id]["score"]
+
+        return SelectionResult(
+            success=True,
+            selected_result=candidates[best_candidate_id],
+            selected_source=best_candidate_id,
+            selection_reason=f"Rule-based selection (score: {best_score})",
+            all_candidates=candidates,
+            score_analysis=scores,
+        )

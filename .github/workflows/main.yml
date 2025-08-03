@@ -18,7 +18,9 @@ jobs:
     uses: ./.github/workflows/pr-title-checker.yml
   format-check:
     needs: title-check
+    if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
     uses: ./.github/workflows/python-format-check.yml
   run-ut:
     needs: format-check
+    if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
     uses: ./.github/workflows/run-ut.yml

@@ -54,6 +54,10 @@ async def reasoning_sql_with_mcp_stream(
     db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
     mcp_servers = {input_data.sql_task.database_name: db_mcp_server}
 
+    # If no action history manager provided, create one to track the final result
+    if action_history_manager is None:
+        action_history_manager = ActionHistoryManager()
+
     async for action in base_mcp_stream(
         model=model,
         input_data=input_data,
@@ -65,6 +69,69 @@ async def reasoning_sql_with_mcp_stream(
         action_history_manager=action_history_manager,
     ):
         yield action
+
+    # After streaming completes, extract final result and add to SQLContext
+    try:
+        # Find the final message/result from action history
+        final_message_action = None
+        sql_contexts = []
+
+        # Look for actions that contain SQL execution results
+        for action in action_history_manager.actions:
+            if action.action_type == "read_query" and action.status.value == "success":
+                # This is a SQL execution result, create SQLContext from it
+                from datus.schemas.node_models import SQLContext
+
+                sql_input = action.input or {}
+                sql_output = action.output or {}
+
+                sql_context = SQLContext(
+                    sql_query=sql_input.get("sql", ""),
+                    explanation="",
+                    sql_return=sql_output.get("result", ""),
+                    sql_error=sql_output.get("error", ""),
+                    row_count=0,
+                )
+                sql_contexts.append(sql_context)
+
+            elif action.action_type == "message" and action.role.value == "assistant":
+                # This could be the final reasoning result
+                final_message_action = action
+
+        # Extract the final SQL from the final message if available
+        if final_message_action and final_message_action.output:
+            raw_output = final_message_action.output.get("raw_output", "")
+            if raw_output:
+                try:
+                    # Parse the final result to extract SQL
+                    content_dict = llm_result2json(raw_output)
+                    sql_query = content_dict.get("sql", "")
+
+                    if sql_query:
+                        # Create SQLContext with the final result SQL
+                        from datus.schemas.node_models import SQLContext
+
+                        final_sql_context = SQLContext(
+                            sql_query=sql_query,
+                            explanation=content_dict.get("explanation", ""),
+                            sql_return="",  # Will be filled by execution
+                            sql_error="",
+                            row_count=0,
+                        )
+                        sql_contexts.append(final_sql_context)
+                        logger.info(f"Added final result SQL to SQLContext: {sql_query[:100]}...")
+
+                except Exception as e:
+                    logger.debug(f"Could not parse final message as JSON: {e}")
+
+        # Store sql_contexts in action history manager for later retrieval
+        if not hasattr(action_history_manager, "sql_contexts"):
+            action_history_manager.sql_contexts = []
+        action_history_manager.sql_contexts.extend(sql_contexts)
+
+    except Exception as e:
+        logger.warning(f"Failed to extract final result SQL for SQLContext: {e}")
+        # Don't fail the entire process, just log the warning
 
 
 @traceable

@@ -11,6 +11,8 @@
 /output*
 /tests/*.xlsx
 /tests/llm_find_tables
+tests/data/datus*
+tests/data/metricflow_csv/*
 /conf/agent.yml
 /save
 uv.lock

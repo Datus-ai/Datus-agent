@@ -1,16 +1,28 @@
 import argparse
-import csv
 import glob
 import json
 import os
+import re
 import sqlite3
 import sys
 
+import duckdb
 import pandas as pd
 import yaml
 
-from datus.tools.db_tools.duckdb_connector import DuckdbConnector
-from datus.utils.constants import DBType
+
+def resolve_env(value: str) -> str:
+    """Resolve environment variables in a string"""
+    if not value or not isinstance(value, str):
+        return value
+
+    pattern = r"\${([^}]+)}"
+
+    def replace_env(match):
+        env_var = match.group(1)
+        return os.getenv(env_var, f"<MISSING:{env_var}>")
+
+    return re.sub(pattern, replace_env, value)
 
 
 def load_config(config_path):
@@ -82,27 +94,6 @@ def parse_dev_sql(dev_sql_path):
     return sql_data
 
 
-def parse_success_story_csv(csv_path):
-    """Parse success_story.csv file and return SQL statements"""
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"success_story.csv file not found: {csv_path}")
-
-    sql_data = []
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for line_no, row in enumerate(reader, 1):
-            if "sql" in row and row["sql"].strip():
-                sql_data.append(
-                    {
-                        "question_id": line_no,
-                        "sql": row["sql"].strip(),
-                        "question": row.get("question", "").strip() if "question" in row else "",
-                    }
-                )
-
-    return sql_data
-
-
 def find_sqlite_database(path_pattern, db_id):
     """Find SQLite database file based on path pattern and database ID"""
     sqlite_files = glob.glob(path_pattern, recursive=True)
@@ -151,11 +142,14 @@ def execute_duckdb_query(namespace_config, sql_query):
         if not db_path:
             raise Exception("DuckDB URI not found in namespace config")
 
-        # Create DuckDB connector
-        connector = DuckdbConnector(db_path)
+        # Connect to DuckDB directly
+        conn = duckdb.connect(db_path)
 
         # Execute query and get results as DataFrame
-        result_df = connector.execute_query(sql_query)
+        result_df = conn.execute(sql_query).df()
+
+        # Close connection
+        conn.close()
 
         # Convert DataFrame to the expected format
         if result_df is not None and not result_df.empty:
@@ -192,7 +186,9 @@ def save_results_to_csv(results, output_path):
         if results["error"]:
             error_df = pd.DataFrame([["error", results["error"]]], columns=["status", "message"])
         else:
-            error_df = pd.DataFrame([["message", "no results"]], columns=["status", "message"])
+            # there are columns but no data, pandas dataframe will ignore header when comparing,
+            # so column names don't matter
+            error_df = pd.DataFrame(columns=["status", "message"])
 
         error_df.to_csv(output_path, index=False, encoding="utf-8")
 
@@ -230,14 +226,6 @@ def main():
                 print(f"Using dev.sql with {len(sql_data)} questions")
             else:
                 raise FileNotFoundError("Neither dev.json nor dev.sql found")
-        elif args.type == "semantic_layer":
-            # Parse success_story.csv file
-            success_story_path = os.path.join(full_benchmark_path, "testing_set.csv")
-            if not os.path.exists(success_story_path):
-                raise FileNotFoundError(f"success_story.csv file not found: {success_story_path}")
-
-            sql_data = parse_success_story_csv(success_story_path)
-            print(f"Using success_story.csv with {len(sql_data)} questions")
         else:
             raise Exception(f"Unsupported type: {args.type}")
 
@@ -257,18 +245,15 @@ def main():
                 print(f"Error: Task ID {task_id} not found")
                 return
 
-            if args.type == "semantic_layer":
-                print(f"Processing task {task_id}")
-            else:
-                print(f"Processing task {task_id}: database={task_data['db_id']}")
+            print(f"Processing task {task_id}: database={task_data['db_id']}")
 
-            if namespace_config.get("type") == DBType.SQLITE:
+            if namespace_config.get("type") == "sqlite":
                 path_pattern = namespace_config.get("path_pattern", "")
                 full_path_pattern = os.path.join(args.workdir, path_pattern)
                 db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])
                 print(f"Executing SQL: {task_data['sql'][:100]}...")
                 results = execute_sql_query(db_path, task_data["sql"])
-            elif namespace_config.get("type") == DBType.DUCKDB:
+            elif namespace_config.get("type") == "duckdb":
                 print(f"Executing SQL: {task_data['sql'][:100]}...")
                 results = execute_duckdb_query(namespace_config, task_data["sql"])
             else:
@@ -288,18 +273,15 @@ def main():
 
             for task_data in sql_data:
                 task_id = task_data["question_id"]
-                if args.type == "semantic_layer":
-                    print(f"Processing task {task_id}/{len(sql_data)}")
-                else:
-                    print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
+                print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
 
                 try:
-                    if namespace_config.get("type") == DBType.SQLITE:
+                    if namespace_config.get("type") == "sqlite":
                         path_pattern = namespace_config.get("path_pattern", "")
                         full_path_pattern = os.path.join(args.workdir, path_pattern)
                         db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])
                         results = execute_sql_query(db_path, task_data["sql"])
-                    elif namespace_config.get("type") == DBType.DUCKDB:
+                    elif namespace_config.get("type") == "duckdb":
                         results = execute_duckdb_query(namespace_config, task_data["sql"])
                     else:
                         raise Exception(f"Unsupported database type: {namespace_config.get('type')}")

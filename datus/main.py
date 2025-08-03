@@ -91,7 +91,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--components",
         type=str,
         nargs="+",
-        choices=["metrics", "metadata", "table_lineage", "document"],
+        choices=["metrics", "metadata", "table_lineage", "document", "ext_knowledge"],
         default=["metadata"],
         help="Knowledge base components to initialize",
     )
@@ -122,10 +122,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="Number of threads to initialize bootstrap-kb, default is 4",
     )
     bootstrap_parser.add_argument("--success_story", type=str, help="Path to success story file")
+    bootstrap_parser.add_argument("--metric_meta", type=str, help="Metric meta for the success story")
     bootstrap_parser.add_argument("--domain", type=str, help="Domain of the success story")
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
     bootstrap_parser.add_argument("--layer1", type=str, help="Layer1 of the metrics")
     bootstrap_parser.add_argument("--layer2", type=str, help="Layer2 of the metrics")
+    bootstrap_parser.add_argument("--ext_knowledge", type=str, help="Path to external knowledge CSV file")
 
     # benchmark command
     benchmark_parser = subparsers.add_parser(
@@ -148,9 +150,11 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
     benchmark_parser.add_argument("--task_db_name", type=str, help="Database name for the task")
     benchmark_parser.add_argument("--task_schema", type=str, help="Schema name for the task")
+    benchmark_parser.add_argument("--metric_meta", type=str, help="Metric meta for the task")
     benchmark_parser.add_argument("--domain", type=str, help="Domain for the task")
     benchmark_parser.add_argument("--layer1", type=str, help="Layer1 for the task")
     benchmark_parser.add_argument("--layer2", type=str, help="Layer2 for the task")
+    benchmark_parser.add_argument("--task_ext_knowledge", type=str, default="", help="External knowledge for the task")
 
     # generate-dataset command
     generate_dataset_parser = subparsers.add_parser(
@@ -220,6 +224,14 @@ def create_parser() -> argparse.ArgumentParser:
             choices=["fast", "medium", "slow", "from_llm"],
             default="fast",
             help="Schema linking node strategy",
+        )
+
+        node_group.add_argument(
+            "--search_metrics_rate",
+            type=str,
+            choices=["fast", "medium", "slow"],
+            default="fast",
+            help="Search metrics node query strategy",
         )
 
     # Workflow configuration group (available for run and benchmark)

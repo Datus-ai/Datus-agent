@@ -61,7 +61,7 @@ class QwenModel(LLMBaseModel):
         return self._async_client
 
     @traceable
-    def generate(self, prompt: Any, **kwargs) -> str:
+    def generate(self, prompt: Any, response_type: str = "text", **kwargs) -> str:
         """
         Generate a response from the Qwen model.
 
@@ -78,8 +78,10 @@ class QwenModel(LLMBaseModel):
             "temperature": kwargs.get("temperature", 0.7),
             "max_tokens": kwargs.get("max_tokens", 2000),
             "top_p": 1.0,
+            "response_format": {"type": response_type},
             **kwargs,
         }
+        enable_thinking = not response_type == "json_object"
 
         # Create messages format expected by Qwen
         if isinstance(prompt, list):
@@ -87,7 +89,7 @@ class QwenModel(LLMBaseModel):
         else:
             messages = [{"role": "user", "content": prompt}]
 
-        logger.debug(f"params: {params}")
+        logger.debug(f"Request QWEN params: {params}")
 
         chunks = []
         is_answering = False
@@ -97,7 +99,7 @@ class QwenModel(LLMBaseModel):
                 completion = self.client.chat.completions.create(
                     messages=messages,
                     stream=True,
-                    response_format={"type": "text"},
+                    extra_body={"enable_thinking": enable_thinking},
                     **params,
                 )
                 break
@@ -154,8 +156,8 @@ class QwenModel(LLMBaseModel):
             A dictionary representing the JSON response
         """
         # Generate the response
-        response_text = self.generate(prompt, **kwargs)
-
+        response_text = self.generate(prompt, response_type="json_object", **kwargs)
+        logger.debug(f"Qwen response: {response_text}")
         # Parse the JSON response
         try:
             return llm_result2json(response_text)

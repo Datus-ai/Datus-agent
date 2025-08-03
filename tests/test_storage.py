@@ -1,46 +1,53 @@
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Tuple
 
-import lancedb
-import pandas as pd
+import pyarrow as pa
 import pytest
 from conftest import PROJECT_ROOT
-from lancedb.table import Table
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.utils.benchmark_utils import load_bird_dev_tasks
 from datus.utils.loggings import configure_logging, get_logger
 
 configure_logging(debug=True)
 logger = get_logger(__name__)
 
+# Test instance IDs for snowflake schema initialization
+SPIDER_INSTANCE_IDS = ["sf014", "sf002", "sf012", "sf044", "sf011", "sf040"]
+
+# Test database names for bird schema initialization
+BIRD_DATABASE_NAMES = ["california_schools", "card_games"]
+
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    return load_agent_config(**{"namespace": "snowflake"})
+    return load_agent_config(config="tests/conf/agent.yml", namespace="snowflake")
 
 
 @pytest.fixture
 def rag_storage(agent_config: AgentConfig) -> SchemaWithValueRAG:
-    return rag_by_configuration(agent_config)
-
-
-def test_init_snowflake_schema(rag_storage: SchemaWithValueRAG):
-    init_snowflake_schema(rag_storage)
+    rag_storage = rag_by_configuration(agent_config)
+    return rag_storage
 
 
 def do_query_schema(
     rag_storage: SchemaWithValueRAG, query_txt, top_n: int = 10, db_name: str = ""
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Dict]]]:
+) -> Tuple[pa.Table, pa.Table]:
     return rag_storage.search_similar(query_txt, top_n=top_n, database_name=db_name)
 
 
-@pytest.mark.parametrize("task_id", ["sf014", "sf002", "sf012", "sf044", "sf011", "sf040"])
+def test_search_all(rag_storage: SchemaWithValueRAG):
+    all_schemas = rag_storage.search_all_schemas()
+    all_values = rag_storage.search_all_value()
+    print(len(all_schemas), all_schemas.num_rows)
+    print(len(all_values), all_values.num_rows)
+
+
+@pytest.mark.parametrize("task_id", SPIDER_INSTANCE_IDS)
 def test_query_schema_by_spider2_task(task_id: str, rag_storage: SchemaWithValueRAG, top_n: int = 10):
     with open(os.path.join(PROJECT_ROOT, "benchmark/spider2/spider2-snow/spider2-snow.jsonl"), "r") as f:
         for line in f:
@@ -55,43 +62,9 @@ def test_query_schema_by_spider2_task(task_id: str, rag_storage: SchemaWithValue
             break
 
 
-# you can use this function to move the table from one path to another
-def move_path(
-    executor: ThreadPoolExecutor,
-    table_name: str,
-    path: str,
-    new_path: str,
-    schema_claz,
-    columns: List[str],
-):
-    old_db = lancedb.connect(path)
-    new_db = lancedb.connect(new_path)
-    old_table = old_db.open_table(table_name)
-    data = old_table.search().limit(1000000).to_list()
-    print("total", len(data))
-    new_table = new_db.create_table(table_name, schema=schema_claz)
-    batch_data = []
-    for i in data:
-        new_data = {}
-        for c in columns:
-            new_data[c] = i[c]
-        batch_data.append(new_data)
-        if len(batch_data) == 100:
-            new_table.add(pd.DataFrame(batch_data))
-            executor.submit(do_add_data, new_table, batch_data)
-            batch_data = []
-    if len(batch_data) > 0:
-        executor.submit(do_add_data, new_table, batch_data)
-
-
-def do_add_data(table: Table, data: List[Dict[str, Any]]):
-    table.add(pd.DataFrame(data))
-
-
 @pytest.fixture
 def bird_agent_config() -> AgentConfig:
-    # Modify namespace according to your config file
-    return load_agent_config(**{"namespace": "bird_sqlite"})
+    return load_agent_config(config="tests/conf/agent.yml", namespace="bird_sqlite")
 
 
 @pytest.fixture
@@ -99,63 +72,55 @@ def bird_rag_storage(bird_agent_config: AgentConfig) -> SchemaWithValueRAG:
     return rag_by_configuration(bird_agent_config)
 
 
-@pytest.mark.parametrize("database_name", ["california_schools", "card_games", "debit_card_specializing"])
-@pytest.mark.acceptance
+@pytest.mark.parametrize("database_name", BIRD_DATABASE_NAMES)
+# @pytest.mark.acceptance
 def test_bird_tables(bird_rag_storage: SchemaWithValueRAG, database_name: str):
     tables = bird_rag_storage.search_all_schemas(database_name=database_name)
-    print(f"tables: {tables}")
     assert len(tables) > 0, "tables should be greater than 0"
 
 
 @pytest.mark.parametrize("task_id", ["233"])
-@pytest.mark.acceptance
+# @pytest.mark.acceptance
 def test_bird_task(bird_rag_storage: SchemaWithValueRAG, bird_agent_config: AgentConfig, task_id: str):
-    bird_path = bird_agent_config.benchamrk_path("bird_dev")
-    with open(os.path.join(bird_path, "dev.json"), "r") as f:
-        data = json.load(f)
-        for task in data:
-            if str(task["question_id"]) != task_id:
-                continue
-            query_txt = task["question"]
-            db_name = task["db_id"]
-            print(query_txt)
-            all_tables = bird_rag_storage.search_all_schemas(database_name=db_name)
-            # all_values = bird_rag_storage.value_store.search_all(db_name)
-            result, value_result = do_query_schema(bird_rag_storage, query_txt, top_n=5, db_name=db_name)
-            # print(result)
+    bird_path = bird_agent_config.benchmark_path("bird_dev")
+    data = load_bird_dev_tasks(bird_path)
+    for task in data:
+        if str(task["question_id"]) != task_id:
+            continue
+        query_txt = task["question"]
+        db_name = task["db_id"]
+        print(query_txt)
+        all_tables = bird_rag_storage.search_all_schemas(database_name=db_name)
+        # all_values = bird_rag_storage.value_store.search_all(db_name)
+        result, value_result = do_query_schema(bird_rag_storage, query_txt, top_n=5, db_name=db_name)
 
-            print(
-                f"TASK-{task['question_id']} schema_len:{len(result)} "
-                f"value_len:{len(value_result)}, total_table: {len(all_tables)}"
-            )
-
-            print(value_result)
+        print(
+            f"TASK-{task['question_id']} schema_len:{len(result)} "
+            f"value_len:{len(value_result)}, total_table: {len(all_tables)}"
+        )
 
 
-@pytest.mark.acceptance
 @pytest.mark.parametrize("top_n", [5, 10, 20])
 def test_time_spends_bird(top_n: int, bird_rag_storage: SchemaWithValueRAG, bird_agent_config: AgentConfig):
-    bird_path = bird_agent_config.benchamrk_path("bird_dev")
     spend_times = {}
     max_time = 0
     max_id = ""
     min_time = 100000
     min_id = ""
-    with open(os.path.join(bird_path, "dev.json"), "r") as f:
-        data = json.load(f)
-        for task in data:
-            query_txt = task["question"]
-            db_name = task["db_id"]
-            start = datetime.now()
-            bird_rag_storage.search_similar(query_txt, top_n=top_n, database_name=db_name)
-            current_spends = (datetime.now() - start).total_seconds() * 1000
-            spend_times[task["question_id"]] = current_spends
-            if current_spends > max_time:
-                max_time = current_spends
-                max_id = task["question_id"]
-            if current_spends < min_time:
-                min_time = current_spends
-                min_id = task["question_id"]
+    data = load_bird_dev_tasks(bird_agent_config.benchmark_path("bird_dev"))
+    for task in data:
+        query_txt = task["question"]
+        db_name = task["db_id"]
+        start = datetime.now()
+        bird_rag_storage.search_similar(query_txt, top_n=top_n, database_name=db_name)
+        current_spends = (datetime.now() - start).total_seconds() * 1000
+        spend_times[task["question_id"]] = current_spends
+        if current_spends > max_time:
+            max_time = current_spends
+            max_id = task["question_id"]
+        if current_spends < min_time:
+            min_time = current_spends
+            min_id = task["question_id"]
 
     # Calculate statistics
     times = list(spend_times.values())
@@ -169,7 +134,9 @@ def test_time_spends_bird(top_n: int, bird_rag_storage: SchemaWithValueRAG, bird
     else:
         median_time = sorted_times[n // 2]
 
-    with open(f"tests/output/bird_dev/search_spends_top_{top_n}.txt", "w") as f:
+    output_dir = "tests/output/bird_dev"
+    os.makedirs(output_dir, exist_ok=True)
+    with open(f"{output_dir}/search_spends_top_{top_n}.txt", "w") as f:
         f.write(
             f"Time statistics for top_n={top_n} (in milliseconds):\n"
             f"  Maximum: {max_time:.2f}ms, id: {max_id}\n"

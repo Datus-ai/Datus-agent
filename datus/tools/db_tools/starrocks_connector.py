@@ -3,7 +3,7 @@ import threading
 import weakref
 from typing import Any, Dict, List, Optional, override
 
-from datus.tools.db_tools.mysql_connector import MySQLConnectorBase
+from datus.tools.db_tools.mysql_connector import MySQLConnectorBase, list_to_in_str
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -50,7 +50,7 @@ class StarRocksConnector(MySQLConnectorBase):
         database: str = "",
     ):
         super().__init__(host, port, user, password, database)
-
+        self.catalog_name = catalog
         # Register this connection for cleanup and ensure global cleanup is registered
         _starrocks_connections.add(self)
         _register_cleanup()
@@ -73,25 +73,11 @@ class StarRocksConnector(MySQLConnectorBase):
             # Silently ignore all errors during destruction
             logger.warning(f"StarRocks connection close error: {e}")
 
-    def get_tables(self, **kwargs) -> List[str]:
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of tables in the database."""
         # FIXME use full name?
-        result = self._get_metadatas(**kwargs)
+        result = self._get_metadatas(catalog_name=catalog_name, database_name=database_name)
         return [table["table_name"] for table in result]
-
-    @override
-    def sqlalchemy_schema(self, **kwargs) -> Optional[str]:
-        catalog_name = kwargs.get("catalog_name", "")
-        database_name = kwargs.get("database_name", "")
-        if catalog_name:
-            if database_name:
-                return f"{catalog_name}.{database_name}"
-            else:
-                return catalog_name
-        elif database_name:
-            return database_name
-        else:
-            return None
 
     # @override
     # def catalog_valid(self) -> bool:
@@ -105,10 +91,12 @@ class StarRocksConnector(MySQLConnectorBase):
         return ["sys", "information_schema", "_statistics_"]
 
     @override
-    def db_meta_table_type(self) -> str:
-        return "TABLE"
+    def db_meta_table_type(self) -> List[str]:
+        return ["TABLE", "BASE TABLE"]
 
-    def get_materialized_views_with_ddl(self, **kwargs) -> List[Dict[str, str]]:
+    def get_materialized_views_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[Dict[str, str]]:
         """
         Get all materialized views with DDL from the database.
         Namespace parameters (such as catalog_name, database_name, schema_name)
@@ -118,7 +106,6 @@ class StarRocksConnector(MySQLConnectorBase):
             database_name: The database name to filter the materialized views.
             schema_name: The schema name to filter the materialized views.
         """
-        database_name = kwargs.get("database_name", "")
         if database_name:
             query_sql = (
                 "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION "
@@ -127,8 +114,8 @@ class StarRocksConnector(MySQLConnectorBase):
             )
         else:
             query_sql = (
-                "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION "
-                f"FROM information_schema.materialized_views where  not in ({str(self.ignore_schemas())[1:-1]})"
+                "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION FROM information_schema.materialized_views"
+                f"{list_to_in_str(' where TABLE_SCHEMA not in ', self.ignore_schemas())}"
             )
         result = self.execute_query(query_sql)
         view_list = []
@@ -154,12 +141,13 @@ class StarRocksConnector(MySQLConnectorBase):
         self,
         tables: Optional[List[str]] = None,
         top_n: int = 5,
-        **kwargs,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
     ) -> List[Dict[str, str]]:
         """Get sample values from tables."""
         self.connect()
-        catalog_name = self.reset_catalog_to_default(kwargs.get("catalog_name", ""))
-        database_name = kwargs.get("database_name", "")
+        catalog_name = self.reset_catalog_to_default(catalog_name)
         result = []
         if tables:
             for table_name in tables:
@@ -189,7 +177,7 @@ class StarRocksConnector(MySQLConnectorBase):
                         }
                     )
         else:
-            for table in self._get_metadatas(**kwargs):
+            for table in self._get_metadatas(catalog_name=catalog_name, database_name=database_name):
                 sql = (
                     f"SELECT * FROM `{table['catalog_name']}`.`{table['database_name']}`.`{table['table_name']}` "
                     "LIMIT {top_n}"
@@ -207,7 +195,9 @@ class StarRocksConnector(MySQLConnectorBase):
                     )
         return result
 
-    def get_schema(self, table_name: str = "", **kwargs) -> List[Dict[str, str]]:
+    def get_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+    ) -> List[Dict[str, str]]:
         """Get schema information for a specific table."""
         if not table_name:
             return []
@@ -239,19 +229,9 @@ class StarRocksConnector(MySQLConnectorBase):
         """Return the database type."""
         return DBType.STARROCKS
 
-    def get_databases(self) -> List[str]:
+    def get_databases(self, catalog_name: str = "default_catalog") -> List[str]:
         """Get list of available databases."""
-        try:
-            result = self.execute_query("SHOW DATABASES")
-            if result.empty:
-                return []
-
-            # Get the database names from the first column
-            database_column = result.columns[0]
-            return result[database_column].tolist()
-        except Exception as e:
-            logger.error(f"Error getting databases: {e}")
-            return []
+        return super().get_databases(catalog_name)
 
     def test_connection(self) -> bool:
         """Test the database connection."""
@@ -262,11 +242,9 @@ class StarRocksConnector(MySQLConnectorBase):
             raise e
         except Exception as e:
             raise DatusException(
-                ErrorCode.TOOL_DB_FAILED,
+                ErrorCode.DB_CONNECTION_FAILED,
                 message_args={
-                    "operation": "test_connection",
                     "error_message": str(e),
-                    "uri": self.connection_string,
                 },
             ) from e
         finally:

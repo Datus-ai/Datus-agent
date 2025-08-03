@@ -16,6 +16,7 @@ def has_glob_pattern(path: str) -> bool:
     glob_chars = ["*", "?", "[", "]"]
     return any(char in path for char in glob_chars)
 
+
 def get_files_from_glob_pattern(path_pattern: str, dialect: str = DBType.SQLITE) -> List[Dict[str, str]]:
     """Get files from glob pattern
 
@@ -28,25 +29,19 @@ def get_files_from_glob_pattern(path_pattern: str, dialect: str = DBType.SQLITE)
     """
     if not has_glob_pattern(path_pattern):
         return []
-    # Use pathlib
-    pattern = Path(path_pattern)
-    parts = pattern.parts
-    if len(parts) == 1:
+    paths = path_pattern.split("/")
+    if len(paths) == 1:
         name_index = -1
     else:
-        if "*" in parts[-2] or "?" in parts[-2]:
+        if "*" in paths[-2] or "?" in paths[-2]:
             name_index = -2
         else:
             name_index = -1
-
-    # Transfer to Path type
-    files = glob.glob(str(pattern), recursive=True)
+    files = glob.glob(path_pattern, recursive=True)
     result = []
     for file_path in files:
-        path = Path(file_path)
-        file_name = path.parts[name_index]
+        file_name = file_path.split("/")[name_index]
         if name_index == -1 and "." in file_name:
-            file_name = file_name.rsplit(".", 1)[0]
-        uri = f"{dialect}:///{path.as_posix()}"  # 使用 as_posix 保证 URI 格式
-        result.append({"name": file_name, "uri": uri})
+            file_name = file_name[: file_name.rfind(".")]
+        result.append({"name": file_name, "uri": f"{dialect}:///{file_path}"})
     return result

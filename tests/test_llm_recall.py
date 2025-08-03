@@ -60,7 +60,7 @@ def test_match_schema(
             continue
         need_matched_data.append(json_line)
 
-    do_gen_match_schema(agent_config, rag, need_matched_data, top_n, check_exists)
+    do_gen_match_schema(agent_config, rag, need_matched_data, top_n, check_exists, gold_sql_tables=gold_sql_tables)
 
 
 def test_full_match_schema(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: int = 10, check_exists=True):
@@ -110,7 +110,7 @@ def test_full_match_schema(agent_config: AgentConfig, rag: SchemaWithValueRAG, t
             if match_result["matched_score"] != 1:
                 need_matched_data.append(json_line)
 
-        recall_result = do_gen_match_schema(agent_config, rag, need_matched_data, top_n, check_exists)
+        recall_result = do_gen_match_schema(agent_config, rag, need_matched_data, top_n, check_exists, gold_sql_tables)
         logger.info(f"Full-Match-Schema done {recall_result}")
 
         if recall_result:
@@ -178,7 +178,7 @@ def do_gen_match_schema(
                     top_n=top_n,
                 ),
                 all_tables,
-                gen_all_table_dict(database_name, all_tables),
+                gen_all_table_dict(all_tables),
             )
             logger.info(f"{task_id} result: {response}")
             result.append(do_match_recall(task_id, database_name, response, gold_sql_tables))

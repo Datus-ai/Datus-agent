@@ -61,13 +61,12 @@ class TestLLMsTools:
         assert hasattr(tool, "generate_sql"), "Tool should have generate_sql function"
         assert hasattr(tool, "match_schema"), "Tool should have match_schema function"
 
-    @pytest.mark.acceptance
+    # @pytest.mark.acceptance
     def test_generate_sql(self, setup_tool, test_data):
         """Test basic tool execution."""
         tool = setup_tool
         # using test data from YAML
         input_data = GenerateSQLInput(**test_data[0]["input"])
-        print(input_data)
         result = tool.generate_sql(input_data)
         assert result is not None, "Tool execution should return a result"
 
@@ -82,7 +81,7 @@ class TestLLMsTools:
             database_name="card_games",
         )
         match_result = setup_tool.match_schema(input_data=input_data, rag_storage=rag_storage)
-        logger.info(f"match result {match_result}")
+        logger.info(f"match result: {len(match_result.table_schemas)} schemas, {len(match_result.table_values)} values")
         assert len(match_result.table_schemas) > 0
 
     def test_reasoning_sql(self, setup_tool, test_data):
@@ -192,7 +191,7 @@ class TestDBTools:
         assert result["success"] is True
         assert result["message"] == "Connection successful"
 
-    @pytest.mark.acceptance
+    # @pytest.mark.acceptance
     def test_execute_query(self, snowflake_connector):
         """Test SQL query execution functionality"""
         # Test simple query
@@ -244,12 +243,16 @@ class TestDBTools:
 
         # Verify we can convert Arrow data to pandas DataFrame
         import pandas as pd
+        import pyarrow as pa
 
         df = result.sql_return
+        if isinstance(df, pa.lib.Table):
+            df = df.to_pandas()
+
         assert isinstance(df, pd.DataFrame), "Result should be a pandas DataFrame"
         assert df.shape[0] > 0, "DataFrame should have at least one row"
 
-    @pytest.mark.acceptance
+    # @pytest.mark.acceptance
     def test_execute_multiple_queries_arrow(self, snowflake_connector: SnowflakeConnector):
         """Test execution of multiple SQL queries with Arrow format"""
         queries = [
@@ -313,7 +316,7 @@ class TestLineageTools:
         with open(yaml_path, "r") as f:
             return yaml.safe_load(f)
 
-    @pytest.mark.acceptance
+    # @pytest.mark.acceptance
     def test_search(self, setup_lineage_tool: SchemaLineageTool, test_data):
         """Test store and search functionality
         Need to init spider snowflake dataset first and set the db_path to
@@ -378,8 +381,10 @@ class TestLineageTools:
                 )
             )
 
-    def test_get_table_and_values(self, setup_lineage_tool):
+    def test_get_table_and_values(self, agent_config: AgentConfig):
         """Test get table and values functionality"""
+        agent_config.current_namespace = "snowflake"
+        setup_lineage_tool = SchemaLineageTool(agent_config=agent_config)
         # Use test data from YAML
         input_data = {
             "database_type": DBType.SNOWFLAKE,
@@ -390,11 +395,14 @@ class TestLineageTools:
                 "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.BLOCKS",
             ],
         }
-        schemas, values = setup_lineage_tool.get_table_and_values(input_data["table_names"])
+        schemas, values = setup_lineage_tool.get_table_and_values(
+            database_name=input_data["database_name"], table_names=input_data["table_names"]
+        )
 
         logger.debug(f"Result schemas: {schemas}")
         assert len(schemas) == 3, "Invalid schema count"
         assert len(values) == 3, "Invalid value count"
+        agent_config.current_namespace = "bird_sqlite"
 
     def test_get_table_and_values2(self, setup_lineage_tool):
         """Test get table and values functionality"""

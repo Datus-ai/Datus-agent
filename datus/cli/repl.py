@@ -16,17 +16,17 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style
 from pygments.lexers.sql import SqlLexer
+from rich.box import SIMPLE_HEAD
 from rich.console import Console
+from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
 from datus.cli.context_commands import ContextCommands
-from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import SQLContext
-from datus.tools.db_tools import SQLiteConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.constants import DBType
 from datus.utils.exceptions import setup_exception_handler
@@ -54,6 +54,8 @@ class DatusCLI:
         self.args = args
         self.console = Console()
         self.console_column_width = 16
+        self.selected_catalog_path = ""
+        self.selected_catalog_data = {}
         setup_exception_handler(
             console_logger=self.console.print, prefix_wrap_func=lambda x: f"[bold red]{x}[/bold red]"
         )
@@ -102,13 +104,14 @@ class DatusCLI:
             "!fix": self.agent_commands.cmd_fix,
             "!daend": self.agent_commands.cmd_daend,
             # "!rf": self.agent_commands.cmd_reflect,
-            # "!compare": self.agent_commands.cmd_compare,
-            "!reason": self.agent_commands.cmd_reason,
-            "!reason_stream": self.agent_commands.cmd_reason_stream,
-            "!gen_metrics": self.agent_commands.cmd_gen_metrics,
-            "!gen_metrics_stream": self.agent_commands.cmd_gen_metrics_stream,
-            "!gen_semantic_model": self.agent_commands.cmd_gen_semantic_model,
-            "!gen_semantic_model_stream": self.agent_commands.cmd_gen_semantic_model_stream,
+            "!compare": self.agent_commands.cmd_compare_stream,
+            # "!compare_stream": self.agent_commands.cmd_compare_stream,
+            "!reason": self.agent_commands.cmd_reason_stream,
+            # "!reason_stream": self.agent_commands.cmd_reason_stream,
+            "!gen_metrics": self.agent_commands.cmd_gen_metrics_stream,
+            # "!gen_metrics_stream": self.agent_commands.cmd_gen_metrics_stream,
+            "!gen_semantic_model": self.agent_commands.cmd_gen_semantic_model_stream,
+            # "!gen_semantic_model_stream": self.agent_commands.cmd_gen_semantic_model_stream,
             "!set": self.agent_commands.cmd_set_context,
             "!save": self.agent_commands.cmd_save,
             "!bash": self._cmd_bash,
@@ -125,6 +128,8 @@ class DatusCLI:
             ".database": self._cmd_switch_database,
             ".tables": self._cmd_tables,
             ".schemas": self._cmd_schemas,
+            ".schema": self._cmd_switch_schema,
+            ".table_schema": self._cmd_table_schema,
             ".show": self._cmd_show,
             ".namespace": self._cmd_switch_namespace,
         }
@@ -134,12 +139,14 @@ class DatusCLI:
         self.last_result = None
         self.chat_history = []
 
-        self.agent_config = load_agent_config(**vars(self.args))
         self.current_db_name = getattr(args, "database", "")
+        self.current_catalog = getattr(args, "catalog", "")
+        self.current_schema = getattr(args, "schema", "")
         self.db_manager = db_manager_instance(self.agent_config.namespaces)
 
         # Start agent initialization in background
         self._async_init_agent()
+        self._init_connection()
 
     def run(self):
         """Run the REPL loop."""
@@ -147,20 +154,30 @@ class DatusCLI:
 
         while True:
             try:
+                # Check if we have a selected catalog path to inject
+                prompt_text = "Datus-sql> "
+                # TODO use selected_catalog_path
+                if self.selected_catalog_path:
+                    # prompt_text = f"Datus-sql> {self.selected_catalog_path}"
+                    selected_path = self.selected_catalog_path
+                    self.console.print(f"Selected catalog: {selected_path}")
+                    self.selected_catalog_path = None
+
                 # Get user input
-                text = self.session.prompt("Datus-sql> ")
-                if not text.strip():
+                user_input = self.session.prompt(
+                    message=prompt_text,
+                ).strip()
+                if not user_input:
                     continue
 
                 # Parse and execute the command
-                cmd_type, cmd, args = self._parse_command(text)
-
+                cmd_type, cmd, args = self._parse_command(user_input)
                 if cmd_type == CommandType.EXIT:
-                    return 0
+                    return True
 
                 # Execute the command based on type
                 if cmd_type == CommandType.SQL:
-                    self._execute_sql(text)
+                    self._execute_sql(user_input)
                 elif cmd_type == CommandType.TOOL:
                     self._execute_tool_command(cmd, args)
                 elif cmd_type == CommandType.CONTEXT:
@@ -177,6 +194,26 @@ class DatusCLI:
             except Exception as e:
                 logger.error(f"Error: {str(e)}")
                 self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+    def _process_command(self, user_input: str) -> bool:
+        # Parse and execute the command
+        cmd_type, cmd, args = self._parse_command(user_input)
+        if cmd_type == CommandType.EXIT:
+            return True
+
+        # Execute the command based on type
+        if cmd_type == CommandType.SQL:
+            self._execute_sql(user_input)
+        elif cmd_type == CommandType.TOOL:
+            self._execute_tool_command(cmd, args)
+        elif cmd_type == CommandType.CONTEXT:
+            self._execute_context_command(cmd, args)
+        elif cmd_type == CommandType.CHAT:
+            self._execute_chat_command(args)
+        elif cmd_type == CommandType.INTERNAL:
+            self._execute_internal_command(cmd, args)
+
+        return False
 
     def _async_init_agent(self):
         """Initialize the agent asynchronously in a background thread."""
@@ -205,6 +242,7 @@ class DatusCLI:
                 max_steps=20,
                 debug=self.args.debug,
                 load_cp=False,
+                components=["metrics", "metadata", "table_lineage", "document"],
             )
 
             from datus.agent.agent import Agent
@@ -215,7 +253,6 @@ class DatusCLI:
             self.agent_initializing = False
 
             self.agent_commands.update_agent_reference()
-            self._init_connection()
             # self.console.print("[dim]Agent initialized successfully in background[/]")
         except Exception as e:
             self.console.print(f"[bold red]Error:[/]Failed to initialize agent in background: {str(e)}")
@@ -320,7 +357,7 @@ class DatusCLI:
             self.db_connector = self.db_manager.get_conn(
                 self.agent_config.current_namespace, self.agent_config.db_type, self.current_db_name
             )
-
+        self.db_connector.switch_context(database_name=new_db)
         self.console.print(f"[bold green]Database switched to: {self.current_db_name}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
@@ -485,7 +522,6 @@ class DatusCLI:
 
     def _execute_sqlite_internal_command(self, cmd: str, args: str):
         """Execute an internal command for SQLite."""
-        self.console.print(f"[bold green]Executing internal command:[/] {cmd}, {args}")
         base_cmd = cmd
 
         try:
@@ -501,15 +537,33 @@ class DatusCLI:
 
                 # Check if result is None or failed
                 if result is None or not result.success:
-                    self.console.print("[bold red]Error:[/] Query failed")
+                    error_msg = result.error if result and hasattr(result, "error") else "Query failed"
+                    self.console.print(f"[bold red]Error:[/] {error_msg}")
                     return True
 
-                schemas = result.sql_return.to_pylist()
-                if schemas:
-                    for schema in schemas:
-                        self.console.print(Syntax(schema[0], "sql"))
+                # Check if sql_return is an Arrow table
+                if hasattr(result.sql_return, "to_pylist"):
+                    schemas = result.sql_return.to_pylist()
+                    if schemas:
+                        for schema in schemas:
+                            # Handle both tuple/list and dict formats
+                            sql_text = None
+                            if isinstance(schema, (list, tuple)) and len(schema) > 0:
+                                sql_text = schema[0]
+                            elif isinstance(schema, dict) and "sql" in schema:
+                                sql_text = schema["sql"]
+                            elif hasattr(schema, "sql"):
+                                sql_text = schema.sql
+
+                            if sql_text:
+                                self.console.print(Syntax(sql_text, "sql", theme="default"))
+                    else:
+                        if table_name:
+                            self.console.print(f"[yellow]Table '{table_name}' not found[/]")
+                        else:
+                            self.console.print("[yellow]No table schemas found[/]")
                 else:
-                    self.console.print("[yellow]No table schema found[/]")
+                    self.console.print(f"[bold red]Error:[/] Unexpected result format: {type(result.sql_return)}")
                 return True
             elif base_cmd == ".show":
                 settings = {"database": self.args.db_path, "Python": sys.version.split()[0]}
@@ -549,6 +603,7 @@ class DatusCLI:
                 self.console.print(f"[bold red]未知命令:[/] {cmd}")
                 return True
         except Exception as e:
+            logger.error(f"Internal command error: {e}", exc_info=True)
             self.console.print(f"[bold red]Command execution error:[/] {e}")
             return True
 
@@ -614,26 +669,32 @@ class DatusCLI:
 
         try:
             # For SQLite, query the sqlite_master table
-            if self.db_connector.get_type() in [DBType.SQLITE, DBType.STARROCKS, DBType.DUCKDB]:
-                result = self.db_connector.get_tables()
-                self.last_result = result
-                self.console.print(result)
-
+            result = self.db_connector.get_tables(
+                catalog_name=self.current_catalog, database_name=self.current_db_name, schema_name=self.current_schema
+            )
+            self.last_result = result
+            if result:
                 # Display results
                 table = Table(
-                    title=f"Tables in Database {self.agent_config.current_namespace}",
                     show_header=True,
                     header_style="bold green",
                 )
-
                 # Add columns
                 table.add_column("Table Name")
                 for row in result:
                     table.add_row(row)
-                self.console.print(table)
+                if self.current_schema:
+                    if self.current_db_name:
+                        show_name = f"{self.current_db_name}.{self.current_schema}"
+                    else:
+                        show_name = self.current_schema
+                else:
+                    show_name = self.current_db_name
+                panel = Panel(table, title=f"Tables in Database {show_name}", title_align="left", box=SIMPLE_HEAD)
+                self.console.print(panel)
             else:
                 # For other database types, execute the appropriate query
-                self.console.print("[yellow]Table listing not implemented for this database type.[/]")
+                self.console.print("[yellow]Empty set.[/]")
 
         except Exception as e:
             logger.error(f"Table listing error: {str(e)}")
@@ -717,43 +778,49 @@ class DatusCLI:
                 logger.warning(f"Database connection closed failed, reason:{e}")
         sys.exit(0)
 
+    def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
+        if not selected_path:
+            return
+        self.selected_catalog_path = selected_path
+        self.selected_catalog_data = selected_data
+
     def _cmd_databases(self, args: str):
         """List all databases in the current connection."""
-        # if not self.db_connector:
-        #     self.console.print("[bold red]Error:[/] No database connection.")
-        #     return
-
         try:
             # For SQLite, this is simply the current database file
             namespace = self.agent_config.current_namespace
-            db_uris = self.db_manager.get_db_uris(namespace)
+            connections = self.db_manager.get_connections(namespace)
             result = []
-            if namespace == "bird_dev":
-                for db_name, db_uri in db_uris.items():
-                    result.append({"name": db_name, "path": db_uri.replace("sqlite:///", "")})
-                self.last_result = result
-                # Display results
-            elif namespace == "spider2":
-                pass
+            show_uri = False
+            if isinstance(connections, dict):
+                show_uri = True
+                for name, conn in connections.items():
+                    result.append({"name": name, "uri": conn.connection_string})
             else:
-                result = []
-                # FIXME need to support other database types
-                if isinstance(db_uris, dict):
-                    for db_name, db_uri in db_uris.items():
-                        if db_uri.startswith("sqlite:///"):
-                            result.append({"name": db_name, "path": db_uri.replace("sqlite:///", "")})
-                        else:
-                            result.append({"name": db_name, "path": db_uri})
+                db_type = connections.dialect
+                self.db_connector = connections
+                if db_type == DBType.SQLITE:
+                    show_uri = True
+                    result.append({"name": namespace, "uri": connections.connection_string})
+                elif db_type == DBType.DUCKDB:
+                    show_uri = True
+                    result.append({"name": connections.database_name, "uri": connections.connection_string})
                 else:
-                    result.append({"name": namespace, "path": db_uris})
-                self.last_result = result
+                    for db_name in connections.get_databases(catalog_name=self.current_catalog):
+                        result.append({"name": db_name})
+
+            self.last_result = result
 
             # Display results
             table = Table(title="Databases", show_header=True, header_style="bold green")
             table.add_column("Database Name")
-            table.add_column("Path")
-            for db_config in result:
-                table.add_row(db_config["name"], db_config["path"])
+            if show_uri:
+                table.add_column("URI")
+                for db_config in result:
+                    table.add_row(db_config["name"], db_config["uri"])
+            else:
+                for db_config in result:
+                    table.add_row(db_config["name"])
             self.console.print(table)
 
         except Exception as e:
@@ -761,99 +828,101 @@ class DatusCLI:
             self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     def _cmd_schemas(self, args: str):
+        dialect = self.db_connector.dialect
+        if not DBType.support_schema(dialect):
+            self.console.print(f"[bold red]The {dialect} database does not support schema[/]")
+            return
+        result = self.db_connector.get_schemas(catalog_name=self.current_catalog, database_name=self.current_db_name)
+        self.last_result = result
+        if result:
+            # Display results
+            table = Table(
+                show_header=True,
+                header_style="bold green",
+            )
+            # Add columns
+            table.add_column("Schema Name")
+            for row in result:
+                table.add_row(row)
+            if self.current_catalog:
+                if self.current_db_name:
+                    show_name = f"{self.current_catalog}.{self.current_db_name}"
+                else:
+                    show_name = self.current_catalog
+            else:
+                show_name = self.current_db_name
+            panel = Panel(table, title=f"Schema in Database {show_name}", title_align="left", box=SIMPLE_HEAD)
+            self.console.print(panel)
+        else:
+            # For other database types, execute the appropriate query
+            self.console.print("[yellow]Empty set.[/]")
+
+    def _cmd_switch_schema(self, args: str):
+        dialect = self.db_connector.dialect
+        if not DBType.support_schema(dialect):
+            self.console.print(f"[bold red]The {dialect} database does not support schema[/]")
+            return
+        schema_name = args.strip()
+        if not schema_name:
+            self.console.print("[yellow]You need to give the name of the schema you want to switch to[/]")
+            return
+        self.db_connector.switch_context(
+            catalog_name=self.current_catalog, database_name=self.current_db_name, schema_name=schema_name
+        )
+
+    def _cmd_table_schema(self, args: str):
         """Show schema information for tables."""
         if not self.db_connector:
             self.console.print("[bold red]Error:[/] No database connection.")
             return
 
         try:
-            # For SQLite, get table schema information
-            if isinstance(self.db_connector, SQLiteConnector):
-                # If a specific table is provided, show its schema
-                # FIXME other database
-                if args.strip():
-                    table_name = args.strip()
-                    # sql = f"PRAGMA table_info('{table_name}')"
-                    result = self.db_connector.get_schema(table_name)
-                    self.last_result = result
+            if args.strip():
+                table_name = args.strip()
+                # sql = f"PRAGMA table_info('{table_name}')"
+                result = self.db_connector.get_schema(table_name=table_name)
+                self.last_result = result
 
-                    # Display schema for the specific table
-                    schema_table = Table(
-                        title=f"Schema for {table_name}",
-                        show_header=True,
-                        header_style="bold green",
+                # Display schema for the specific table
+                schema_table = Table(
+                    title=f"Schema for {table_name}",
+                    show_header=True,
+                    header_style="bold green",
+                )
+                schema_table.add_column("Column Position")
+                schema_table.add_column("Name")
+                schema_table.add_column("Type")
+                schema_table.add_column("NotNull")
+                schema_table.add_column("Default")
+                schema_table.add_column("PK")
+
+                for row in result:
+                    schema_table.add_row(
+                        str(row.get("cid", "")),
+                        str(row.get("name", "")),
+                        str(row.get("type", "")),
+                        str(row.get("notnull", "")),
+                        str(row.get("dflt_value", "")) if row.get("dflt_value") is not None else "",
+                        str(row.get("pk", "")),
                     )
-                    schema_table.add_column("Column Position")
-                    schema_table.add_column("Name")
-                    schema_table.add_column("Type")
-                    schema_table.add_column("NotNull")
-                    schema_table.add_column("Default")
-                    schema_table.add_column("PK")
 
-                    for row in result:
-                        schema_table.add_row(
-                            str(row.get("cid", "")),
-                            str(row.get("name", "")),
-                            str(row.get("type", "")),
-                            str(row.get("notnull", "")),
-                            str(row.get("dflt_value", "")) if row.get("dflt_value") is not None else "",
-                            str(row.get("pk", "")),
-                        )
-
-                    self.console.print(schema_table)
-                else:
-                    # List all tables with basic schema info
-                    sql = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                    result = self.db_connector.execute({"sql_query": sql})
-                    self.last_result = result
-
-                    # Extract result data
-                    success = False
-                    rows = []
-
-                    # Handle different result types
-                    if isinstance(result, dict):
-                        success = result.get("success", False)
-                        rows = result.get("rows", [])
-                    elif hasattr(result, "success"):
-                        # Handle ExecuteSQLResult object
-                        success = result.success
-                        if hasattr(result, "rows"):
-                            rows = result.rows
-                        elif hasattr(result, "__dict__"):
-                            rows = result.__dict__.get("rows", [])
-
-                    if not success:
-                        error_message = "Unknown error"
-                        if isinstance(result, dict):
-                            error_message = result.get("error", "Unknown error")
-                        elif hasattr(result, "error"):
-                            error_message = result.error
-                        elif hasattr(result, "__dict__"):
-                            error_message = result.__dict__.get("error", "Unknown error")
-
-                        self.console.print(f"[bold red]Error:[/] {error_message}")
-                        return
-
-                    # Display list of tables
-                    self.console.print("[bold green]Available tables:[/]")
-
-                    # Process rows to extract table names
-                    table_names = []
-                    for row in rows:
-                        if isinstance(row, dict):
-                            table_names.append(row.get("name", ""))
-                        elif isinstance(row, (list, tuple)) and len(row) > 0:
-                            table_names.append(row[0])
-
-                    # Display table list
-                    for idx, table_name in enumerate(table_names):
-                        self.console.print(f"{idx + 1}. {table_name}")
-
-                    self.console.print("\n[dim]Use .schemas [table_name] to view detailed schema.[/]")
+                self.console.print(schema_table)
             else:
-                # For other database types
-                self.console.print("[yellow]Schema listing not implemented for this database type.[/]")
+                # List all tables with basic schema info
+                table_names = self.db_connector.get_tables(
+                    catalog_name=self.current_catalog,
+                    database_name=self.current_db_name,
+                    schema_name=self.current_schema,
+                )
+                self.last_result = table_names
+
+                # Display list of tables
+                self.console.print("[bold green]Available tables:[/]")
+                # Display table list
+                for idx, table_name in enumerate(table_names):
+                    self.console.print(f"{idx + 1}. {table_name}")
+
+                self.console.print("\n[dim]Use .schemas [table_name] to view detailed schema.[/]")
 
         except Exception as e:
             logger.error(f"Schema listing error: {str(e)}")
@@ -877,10 +946,13 @@ class DatusCLI:
         [bold green]Available Commands:[/]
 
         [bold].namespace[/]           Switch the current namespace
+        [bold].catalog[/]             Switch the current catalog
         [bold].databases[/]           List all databases
         [bold].database[/]            Switch the current database
         [bold].tables[/]              List all tables in the current database
-        [bold].schemas [table][/]     Show schema information for all tables or a specific table
+        [bold].schemas[/]             Show schemas in current database
+        [bold].schema [schema][/]     Switch schema
+        [bold].table_schema [table][/]Show schema information for all tables or a specific table
         [bold].help[/]                Display help information
         [bold].exit, .quit[/]         Exit the CLI
         """
@@ -901,31 +973,27 @@ Type '.help' for a list of commands or '.exit' to quit.
             self.console.print(f"Namespace [bold green]{namespace}[/] selected")
         else:
             self.console.print("[yellow]Warning: No namespace selected, please use .namespace to select a namespace[/]")
-
         # Display connection info
         if self.db_connector:
-            db_info = f"Connected to [bold green]{self.args.db_type}[/]"
-            if self.args.db_type == DBType.SQLITE:
-                db_path = self.args.db_path or ":memory:"
-                db_info += f" at [bold]{db_path}[/]"
-            elif self.args.db_type == DBType.SNOWFLAKE:
-                db_info += f" as [bold]{self.args.sf_user}[/]@[bold]{self.args.sf_account}[/]"
-                if self.args.sf_database:
-                    db_info += f" using database [bold]{self.args.sf_database}[/]"
+            db_info = f"Connected to [bold green]{self.agent_config.db_type}[/]"
+            if self.current_db_name:
+                db_info += f" using database [bold]{self.current_db_name}[/]"
 
             self.console.print(db_info)
-            self.console.print("Type SQL statements or use ! @ / commands to interact.")
+            self.console.print("Type SQL statements or use ! @ . commands to interact.")
         # else:
         #    self.console.print("[yellow]Warning: No database connection initialized.[/]")
 
     def _init_connection(self):
         """Initialize database connection."""
-        default_db = getattr(self.args, "database", None)
-        current_namespace = self.agent.global_config.current_namespace
-        if not default_db:
-            self.db_connector = self.agent.db_manager.first_conn(current_namespace)
+        self.current_db_name
+        current_namespace = self.agent_config.current_namespace
+        if not self.current_db_name:
+            self.current_db_name, self.db_connector = self.db_manager.first_conn_with_name(current_namespace)
         else:
-            self.db_connector = self.agent.db_manager.get_conn(current_namespace, self.agent_config.db_type, default_db)
+            self.db_connector = self.db_manager.get_conn(
+                current_namespace, self.agent_config.db_type, self.current_db_name
+            )
         if not self.db_connector:
             self.console.print("[bold red]Error:[/] No database connection.")
             return

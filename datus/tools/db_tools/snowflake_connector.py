@@ -1,6 +1,8 @@
-from typing import Any, Dict, List, Literal, Sequence
+from typing import Any, Dict, List, Literal, Sequence, override
 
-import snowflake.connector
+from pandas import DataFrame
+from snowflake.connector import Connect, SnowflakeConnection
+from snowflake.connector.errors import ProgrammingError
 
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.db_tools.base import BaseSqlConnector
@@ -25,7 +27,8 @@ class SnowflakeConnector(BaseSqlConnector):
         schema: str = "",
     ):
         super().__init__(dialect=DBType.SNOWFLAKE)
-        self.connection = snowflake.connector.Connect(
+        # FIXME lazy init
+        self.connection: SnowflakeConnection = Connect(
             account=account,
             user=user,
             password=password,
@@ -33,6 +36,8 @@ class SnowflakeConnector(BaseSqlConnector):
             database=database if database else None,
             schema=schema if schema else None,
         )
+        self.database_name = database
+        self.schema_name = schema
 
     def test_connection(self) -> Dict[str, Any]:
         """"""
@@ -86,7 +91,7 @@ class SnowflakeConnector(BaseSqlConnector):
                     error=None,
                     result_format=result_format,
                 )
-        except snowflake.connector.errors.ProgrammingError as e:
+        except ProgrammingError as e:
             return ExecuteSQLResult(
                 sql_query=input_params["sql_query"] if isinstance(input_params, dict) else str(input_params),
                 row_count=0,
@@ -104,6 +109,15 @@ class SnowflakeConnector(BaseSqlConnector):
                 error=f"Unknown error: {str(e)}",
                 result_format="csv",
             )
+
+    def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
+        with self.connection.cursor() as cursor:
+            if not schema_name:
+                if not database_name:
+                    return
+                cursor.execute(f'USE DATABASE "{database_name}"')
+            else:
+                cursor.execute(f'USE SCHEMA "{database_name}"."{schema_name}"')
 
     def do_execute_arrow(self, input_params) -> ExecuteSQLResult:
         """Execute SQL query on Snowflake and return results in Apache Arrow format.
@@ -146,7 +160,7 @@ class SnowflakeConnector(BaseSqlConnector):
                     error=None,
                     result_format="arrow",
                 )
-        except snowflake.connector.errors.ProgrammingError as e:
+        except ProgrammingError as e:
             logger.debug(f"[DEBUG] Snowflake ProgrammingError: errno={e.errno}, sqlstate={e.sqlstate}, msg={e.msg}")
             return ExecuteSQLResult(
                 sql_query=input_params["sql_query"] if isinstance(input_params, dict) else str(input_params),
@@ -176,7 +190,9 @@ class SnowflakeConnector(BaseSqlConnector):
             if not isinstance(input_params["params"], Sequence) and not isinstance(input_params["params"], dict):
                 raise ValueError("params must be dict or Sequence")
 
-    def get_schema(self, schema_name: str = "", **kwargs) -> List[Dict[str, str]]:
+    def get_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+    ) -> List[Dict[str, str]]:
         """
         Get the schema of the database.
         1. Get All Databases
@@ -221,6 +237,55 @@ class SnowflakeConnector(BaseSqlConnector):
                         }
                     )
             return schema_list
+
+    def execute_query_to_df(
+        self,
+        sql: str,
+        params: Sequence[Any] | dict[Any, Any] | None = None,
+    ) -> DataFrame:
+        with self.connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            return cursor.fetch_pandas_all()
+
+    def execute_query(
+        self,
+        sql: str,
+        params: Sequence[Any] | dict[Any, Any] | None = None,
+    ) -> list[tuple] | list[dict]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            return cursor.fetchall()
+
+    @override
+    def get_databases(self, catalog_name: str = "") -> List[str]:
+        res = self.execute_query(sql="SHOW DATABASES")
+        return [it[1] for it in res]
+
+    @override
+    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
+        database_name = database_name or self.database_name
+        select_table_name = (
+            "INFORMATION_SCHEMA.SCHEMATA" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.SCHEMATA'
+        )
+        sql = f"SELECT SCHEMA_NAME FROM {select_table_name} WHERE SCHEMA_NAME NOT IN ('PUBLIC', 'INFORMATION_SCHEMA')"
+        if database_name:
+            sql += f" AND CATALOG_NAME='{database_name}'"
+        df = self.execute_query_to_df(sql=sql)
+        return [item for item in df["SCHEMA_NAME"]]
+
+    @override
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
+        database_name = database_name or self.database_name
+        schema_name = schema_name or self.schema_name
+        select_table_name = (
+            "INFORMATION_SCHEMA.TABLES" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.TABLES'
+        )
+        sql = f"SELECT TABLE_SCHEMA, TABLE_NAME FROM {select_table_name} WHERE TABLE_TYPE = 'BASE TABLE'"
+        if schema_name:
+            sql += f" AND TABLE_SCHEMA= '{schema_name}'"
+
+        df = self.execute_query_to_df(sql)
+        return [item for item in df["TABLE_NAME"]]
 
     def get_type(self) -> str:
         return DBType.SNOWFLAKE

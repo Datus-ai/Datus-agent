@@ -2,11 +2,13 @@ from typing import Optional, get_type_hints
 
 from pydantic import BaseModel, create_model
 
+from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.doc_search_node_models import DocSearchInput
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, ReflectionInput
+from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
@@ -18,9 +20,11 @@ class NodeType:
     # TYPE_EVALUATE = "evaluate"
     TYPE_HITL = "hitl"
     TYPE_REFLECT = "reflect"
+    TYPE_PARALLEL = "parallel"
+    TYPE_SELECTION = "selection"
 
     # Control node types list
-    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT]
+    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT, TYPE_PARALLEL, TYPE_SELECTION]
 
     # SQL workflow action types
     TYPE_SCHEMA_LINKING = "schema_linking"  # For database schema analysis
@@ -33,6 +37,7 @@ class NodeType:
     TYPE_GENERATE_METRICS = "generate_metrics"  # For generating metrics
     TYPE_GENERATE_SEMANTIC_MODEL = "generate_semantic_model"  # For generating semantic models
     TYPE_SEARCH_METRICS = "search_metrics"  # For search metrics
+    TYPE_COMPARE = "compare"  # For comparing SQL with expectations
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
@@ -45,6 +50,7 @@ class NodeType:
         TYPE_GENERATE_METRICS,
         TYPE_GENERATE_SEMANTIC_MODEL,
         TYPE_SEARCH_METRICS,
+        TYPE_COMPARE,
     ]
 
     NODE_TYPE_DESCRIPTIONS = {
@@ -61,6 +67,9 @@ class NodeType:
         TYPE_GENERATE_METRICS: "Generate metrics",
         TYPE_GENERATE_SEMANTIC_MODEL: "Generate semantic model",
         TYPE_SEARCH_METRICS: "Search metrics",
+        TYPE_PARALLEL: "Execute child nodes in parallel",
+        TYPE_SELECTION: "Select best result from multiple candidates",
+        TYPE_COMPARE: "Compare SQL with expectations",
     }
 
     @classmethod
@@ -92,6 +101,12 @@ class NodeType:
             input_data_cls = GenerateSemanticModelInput
         elif node_type == NodeType.TYPE_SEARCH_METRICS:
             input_data_cls = SearchMetricsInput
+        elif node_type == NodeType.TYPE_PARALLEL:
+            input_data_cls = ParallelInput
+        elif node_type == NodeType.TYPE_SELECTION:
+            input_data_cls = SelectionInput
+        elif node_type == NodeType.TYPE_COMPARE:
+            input_data_cls = CompareInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 

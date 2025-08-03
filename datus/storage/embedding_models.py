@@ -1,12 +1,33 @@
+import multiprocessing
+import os
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from datus.utils.constants import EmbeddingProvider
 from datus.utils.device_utils import get_device
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
+if TYPE_CHECKING:
+    from datus.configuration.agent_config import ModelConfig
+
+# Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
+try:
+    multiprocessing.set_start_method("fork", force=True)
+except RuntimeError:
+    # set_start_method can only be called once
+    pass
+
+# Set environment variables to prevent multiprocessing issues
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 logger = get_logger(__name__)
+
+EMBEDDING_DEVICE_TYPE = ""
 
 
 @dataclass
@@ -20,13 +41,13 @@ class EmbeddingModel:
         model_name: str,
         dim_size: int,
         registry_name: str = EmbeddingProvider.SENTENCE_TRANSFORMERS,
-        openai_config: Optional[dict[str, Any]] = None,
+        openai_config: Optional["ModelConfig"] = None,
         batch_size: int = 32,
     ):
         self.registry_name = registry_name
         self.model_name = model_name
         self._dim_size = dim_size
-        self.device = get_device()
+        self.device = "cpu" if EMBEDDING_DEVICE_TYPE and "cpu" == EMBEDDING_DEVICE_TYPE else get_device()
         self._model = None
         self.batch_size = batch_size
         self.openai_config = openai_config
@@ -53,16 +74,28 @@ class EmbeddingModel:
 
     def init_model(self):
         """Pre-download the model to local cache. Now we only support sentence-transformers and openai."""
+        # Additional PyTorch-specific threading controls
+        try:
+            import torch
+
+            torch.set_num_threads(1)
+        except ImportError:
+            pass
 
         if self.registry_name == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             logger.info(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")
             from lancedb.embeddings import SentenceTransformerEmbeddings
 
-            # Method `get_registry` has a multi-threading problem
-            self._model = SentenceTransformerEmbeddings.create(name=self.model_name, device=self.device)
-            # first download
-            self._model.generate_embeddings(["foo"])
-            logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
+            try:
+                # Method `get_registry` has a multi-threading problem
+                self._model = SentenceTransformerEmbeddings.create(name=self.model_name, device=self.device)
+                # first download
+                self._model.generate_embeddings(["foo"])
+                logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
+            except Exception as e:
+                raise DatusException(
+                    ErrorCode.MODEL_EMBEDDING_ERROR, message=f"Embedding Model initialized faield because of {str(e)}"
+                ) from e
 
         elif self.registry_name == EmbeddingProvider.OPENAI:
             logger.info(f"Initializing model {self.registry_name}/{self.model_name}")
@@ -72,8 +105,8 @@ class EmbeddingModel:
                 self._model = OpenAIEmbeddings.create(
                     name=self.model_name,
                     dim=self._dim_size,
-                    api_key=self.openai_config["api_key"],
-                    base_url=self.openai_config["base_url"],
+                    api_key=self.openai_config.api_key,
+                    base_url=self.openai_config.base_url,
                 )
             else:
                 self._model = OpenAIEmbeddings.create(name=self.model_name, dim=self._dim_size)
@@ -81,7 +114,10 @@ class EmbeddingModel:
             self._model.generate_embeddings(["foo"])
             logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
         else:
-            raise ValueError(f"Unsupported registry: {self.registry_name}")
+            raise DatusException(
+                ErrorCode.MODEL_EMBEDDING_ERROR,
+                message=f"Unsupported EmbeddingModel registration by `{self.registry_name}`",
+            )
 
     @property
     def dim_size(self):
@@ -95,9 +131,13 @@ DEFAULT_MODEL_CONFIG = {"model_name": "all-MiniLM-L6-v2", "dim_size": 384}
 
 
 def init_embedding_models(
-    storage_config: dict[str, dict[str, any]], openai_config: Optional[dict[str, Any]] = None
+    storage_config: dict[str, dict[str, Any]],
+    openai_configs: Dict[str, "ModelConfig"],
+    default_openai_config: "ModelConfig",
 ) -> dict[str, EmbeddingModel]:
     # ensure model just load once
+    global EMBEDDING_DEVICE_TYPE
+    EMBEDDING_DEVICE_TYPE = str(storage_config.get("embedding_device_type", ""))
     models = {}
     for name, config in storage_config.items():
         if not isinstance(config, dict):
@@ -105,12 +145,22 @@ def init_embedding_models(
         if config["model_name"] in models:
             target_model = models[config["model_name"]]
         else:
+            target_openai_config = config.get("target_model")
+            if target_openai_config:
+                if target_openai_config not in openai_configs:
+                    raise DatusException(
+                        ErrorCode.COMMON_CONFIG_ERROR,
+                        message=f"Model {target_openai_config} not found in storage openai configuration",
+                    )
+                target_openai_config = openai_configs[target_openai_config]
+            else:
+                target_openai_config = default_openai_config
             target_model = EmbeddingModel(
                 model_name=config["model_name"],
                 dim_size=config["dim_size"],
                 registry_name=config.get("registry_name", EmbeddingProvider.SENTENCE_TRANSFORMERS),
                 batch_size=config.get("batch_size", 32),
-                openai_config=openai_config,
+                openai_config=target_openai_config,
             )
             models[config["model_name"]] = target_model
         EMBEDDING_MODELS[name] = target_model
@@ -130,7 +180,7 @@ def get_embedding_model(store_name: str) -> EmbeddingModel:
     if target_model is not None:
         EMBEDDING_MODELS[store_name] = target_model
         return target_model
-    target_model = EmbeddingModel(model_name=model_name, dim_size=DEFAULT_MODEL_CONFIG["dim_size"])
+    target_model = EmbeddingModel(model_name=str(model_name), dim_size=DEFAULT_MODEL_CONFIG["dim_size"])
     EMBEDDING_MODELS[store_name] = target_model
     return target_model
 

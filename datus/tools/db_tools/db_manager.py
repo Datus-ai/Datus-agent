@@ -1,4 +1,5 @@
-from typing import Any, Dict, Optional
+from collections import defaultdict
+from typing import Dict, Optional, Tuple, Union
 from urllib.parse import quote_plus
 
 from datus.configuration.agent_config import DbConfig
@@ -12,6 +13,7 @@ from datus.tools.db_tools.starrocks_connector import StarRocksConnector
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.path_utils import get_files_from_glob_pattern
 
 logger = get_logger(__name__)
 
@@ -40,107 +42,145 @@ def gen_uri(db_config: DbConfig) -> str:
 
 
 class DBManager:
-    def __init__(self, db_configs: Dict[str, DbConfig]):
-        self._conn_dict: Dict[str, Optional[BaseSqlConnector]] = {}
-        self._db_configs: Dict[str, Dict[str, Any]] = {}
-        for name, db_config in db_configs.items():
-            if not db_config.uri:
-                uri = gen_uri(db_config)
-            else:
-                uri = db_config.uri
+    def __init__(self, db_configs: Dict[str, Dict[str, DbConfig]]):
+        self._conn_dict: Dict[str, Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]] = defaultdict(dict)
+        self._db_configs: Dict[str, Dict[str, DbConfig]] = db_configs
 
-            self._db_configs[name] = {
-                "type": db_config.type,
-                "uri": uri,
-                "host": getattr(db_config, "host", ""),
-                "port": getattr(db_config, "port", 0),
-                "account": getattr(db_config, "account", ""),
-                "username": getattr(db_config, "username", ""),
-                "password": str(getattr(db_config, "password", "")),
-                "warehouse": getattr(db_config, "warehouse", ""),
-                "database": getattr(db_config, "database", ""),
-                "catalog": getattr(db_config, "catalog", ""),
-            }
+    def get_conn(self, namespace: str, db_type: str, db_name: str = "") -> BaseSqlConnector:
+        self._init_connections(namespace)
+        connector_or_dict = self._conn_dict[namespace]
+        if isinstance(connector_or_dict, Dict):
+            if db_name not in connector_or_dict:
+                raise DatusException(
+                    code=ErrorCode.DB_CONNECTION_FAILED,
+                    message_args={
+                        "error_message": f"Database {db_name} not found in namespace {namespace}",
+                    },
+                )
+            return connector_or_dict[db_name]
+        else:
+            return connector_or_dict
 
-    def get_conn(self, name: str, db_type: str, db_name: str = "") -> BaseSqlConnector:
-        current_name = db_config_name(name, db_type, db_name)
-        if current_name not in self._db_configs:
-            namespace_configs = []
-            for k, v in self._db_configs.items():
-                if k.startswith(f"{name}::"):
-                    namespace_configs.append(v)
-            if len(namespace_configs) == 1:
-                return self._get_conn(current_name, namespace_configs[0])
+    def get_connections(self, namespace: str = "") -> Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]:
+        self._init_connections(namespace)
+        return self._conn_dict[namespace]
+
+    def current_dbconfigs(self, namespace: str) -> Dict[str, DbConfig]:
+        return self._db_configs[namespace]
+
+    def _init_connections(self, namespace):
+        if namespace in self._conn_dict:
+            return
+        if namespace not in self._db_configs:
             raise DatusException(
-                code=ErrorCode.TOOL_DB_FAILED,
-                message=f"Database config not found, namespace: {name}, db_type: {db_type}, name: {db_name}",
+                code=ErrorCode.COMMON_CONFIG_ERROR, message=f"Namespace {namespace} not found in config"
             )
+        configs = self._db_configs[namespace]
+        if len(configs) == 1:
+            db_config = list(configs.values())[0]
+            db_type = db_config.type
+            if db_type == DBType.SQLITE or db_type == DBType.DUCKDB:
+                if db_config.path_pattern:
+                    any_db_path = False
+                    for db_path in get_files_from_glob_pattern(db_config.path_pattern, db_type):
+                        uri = db_path["uri"]
+                        database_name = db_path["name"]
+                        import os
 
-        return self._get_conn(current_name, self._db_configs[current_name])
+                        file_path = uri[len(f"{db_type}:///") :]
+                        if not os.path.exists(file_path):
+                            continue
+                        any_db_path = True
+                        temp_config = DbConfig(
+                            type=db_type,
+                            uri=uri,
+                            database=database_name,
+                            schema=db_config.schema,
+                        )
+                        self._init_conn(namespace, temp_config, database_name=database_name)
+                    if not any_db_path:
+                        raise DatusException(
+                            code=ErrorCode.COMMON_CONFIG_ERROR,
+                            message=(
+                                f"No available database files found under namespace {namespace},"
+                                f" path_pattern: `{db_config.path_pattern}`"
+                            ),
+                        )
+                else:
+                    self._init_conn(namespace, db_config)
+            else:
+                self._init_conn(namespace, db_config)
+            return
+        # Multiple database configuration
+        for database_name, db_config in configs.items():
+            self._init_conn(namespace, db_config, database_name=database_name)
 
-    def _get_conn(self, current_name: str, config: Dict[str, str]) -> BaseSqlConnector:
-        if current_name not in self._conn_dict:
-            self._init_conn(current_name, config)
-        conn = self._conn_dict[current_name]
-        if conn is None:
-            self._init_conn(current_name, config)
-        conn = self._conn_dict[current_name]
-        return conn
+        if namespace not in self._conn_dict:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    f"Database initialization under namespace {namespace} failed with the current configuration:"
+                    f" {configs}"
+                ),
+            )
 
     def first_conn(self, namespace: str) -> BaseSqlConnector:
-        for k, v in self._db_configs.items():
-            if k == namespace or k.startswith(f"{namespace}::"):
-                return self._get_conn(k, v)
-        raise DatusException(
-            code=ErrorCode.TOOL_DB_FAILED,
-            message=f"Database config not found, namespace: {namespace}",
-        )
+        self._init_connections(namespace)
+        dbs: Union[BaseSqlConnector, Dict[str, BaseSqlConnector]] = self._conn_dict[namespace]
+        if isinstance(dbs, dict):
+            return list(dbs.values())[0]
+        return dbs
+
+    def first_conn_with_name(self, namespace: str) -> Tuple[str, BaseSqlConnector]:
+        self._init_connections(namespace)
+        dbs: Union[BaseSqlConnector, Dict[str, BaseSqlConnector]] = self._conn_dict[namespace]
+        if isinstance(dbs, dict):
+            name = list(dbs.keys())[0]
+            conn = dbs[name]
+            return name, conn
+        config = list(self._db_configs[namespace].values())[0]
+        return config.database, dbs
 
     def get_db_uris(self, namespace: str) -> Dict[str, str]:
-        result = {}
-        for k, v in self._db_configs.items():
-            if k == namespace:
-                return v["uri"]
-            elif k.startswith(f"{namespace}::"):
-                a, b = k.split("::")
-                if a == namespace:
-                    result[b] = v["uri"]
-        return result
+        dbs = self._db_configs.get(namespace, {})
+        return {name: db.uri for name, db in dbs.items()}
 
-    def _init_conn(self, name: str, db_config: Dict[str, str]) -> BaseSqlConnector:
-        if db_config["type"] == DBType.SQLITE:
-            conn = SQLiteConnector(db_config["uri"])
-        elif db_config["type"] == DBType.DUCKDB:
-            conn = DuckdbConnector(db_config["uri"])
-        elif db_config["type"] == DBType.SNOWFLAKE:
+    def _init_conn(self, namespace: str, db_config: DbConfig, database_name: Optional[str] = None) -> BaseSqlConnector:
+        if db_config.type == DBType.SQLITE:
+            conn: BaseSqlConnector = SQLiteConnector(db_config.uri)
+        elif db_config.type == DBType.DUCKDB:
+            conn = DuckdbConnector(db_config.uri)
+        elif db_config.type == DBType.SNOWFLAKE:
             conn = SnowflakeConnector(
-                account=self._db_configs[name]["account"],
-                user=self._db_configs[name]["username"],
-                password=self._db_configs[name]["password"],
-                warehouse=self._db_configs[name]["warehouse"],
-                database=self._db_configs[name]["database"],
+                account=db_config.account,
+                user=db_config.username,
+                password=db_config.password,
+                warehouse=db_config.warehouse,
+                database=db_config.database,
             )
-        elif db_config["type"] == DBType.MYSQL:
+        elif db_config.type == DBType.MYSQL:
             conn = MySQLConnector(
-                host=self._db_configs[name]["host"],
-                port=self._db_configs[name]["port"],
-                user=self._db_configs[name]["username"],
-                password=self._db_configs[name]["password"],
-                database=self._db_configs[name].get("database", ""),
+                host=db_config.host,
+                port=int(db_config.port) if db_config.port else 0,
+                user=db_config.username,
+                password=db_config.password,
+                database=db_config.database,
             )
-        elif db_config["type"] == DBType.STARROCKS:
+        elif db_config.type == DBType.STARROCKS:
             conn = StarRocksConnector(
-                host=self._db_configs[name]["host"],
-                port=self._db_configs[name]["port"],
-                user=self._db_configs[name]["username"],
-                password=self._db_configs[name]["password"],
-                catalog=self._db_configs[name]["catalog"] or "default_catalog",
-                database=self._db_configs[name]["database"],
+                host=db_config.host,
+                port=int(db_config.port) if db_config.port else 0,
+                user=db_config.username,
+                password=db_config.password,
+                catalog=db_config.catalog or "default_catalog",
+                database=db_config.database,
             )
         else:
-            conn = SQLAlchemyConnector(db_config["uri"])
-
-        self._conn_dict[name] = conn
+            conn = SQLAlchemyConnector(db_config.uri)
+        if database_name:
+            self._conn_dict[namespace][database_name] = conn
+        else:
+            self._conn_dict[namespace] = conn
         return conn
 
     def close(self):
@@ -193,16 +233,7 @@ def db_manager_instance(
 def _db_manager(
     db_configs: Optional[Dict[str, Dict[str, DbConfig]]] = None,
 ) -> DBManager:
-    configs = {}
-
     if db_configs is None:
         return DBManager({})
-
-    for name, db_config in db_configs.items():
-        for db_name, db in db_config.items():
-            full_name = db_config_name(name, db.type, db_name)
-            if full_name in configs:
-                raise ValueError(f"Database config for {full_name} already exists")
-            configs[full_name] = db
-    manager = DBManager(configs)
+    manager = DBManager(db_configs)
     return manager

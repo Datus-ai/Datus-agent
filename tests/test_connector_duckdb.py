@@ -33,14 +33,14 @@ def test_get_views_with_ddl(duckdb_connector: DuckdbConnector):
 
 
 @pytest.mark.acceptance
-def test_get_schema(duckdb_connector: DuckdbConnector):
+def test_get_table_schema(duckdb_connector: DuckdbConnector):
     schema = duckdb_connector.get_schema(table_name="search_trends")
     assert len(schema) > 0
 
     assert len(duckdb_connector.get_schema()) == 0
 
-    with pytest.raises(DatusException, match=ErrorCode.TOOL_DB_FAILED.code):
-        duckdb_connector.get_schema("unexist_table")
+    with pytest.raises(DatusException, match=ErrorCode.DB_QUERY_METADATA_FAILED.code):
+        duckdb_connector.get_schema(table_name="unexist_table")
 
 
 @pytest.mark.acceptance
@@ -50,5 +50,10 @@ def test_execute_query(duckdb_connector: DuckdbConnector):
     res = duckdb_connector.execute_query("select * from bank_failures limit 10")
     assert len(res) > 0
 
-    with pytest.raises(DatusException, match=ErrorCode.TOOL_DB_EXECUTE_QUERY_FAILED.code):
+    with pytest.raises(DatusException, match=ErrorCode.DB_EXECUTION_ERROR.code):
         duckdb_connector.execute_query("select * from unexist_table")
+
+
+@pytest.mark.acceptance
+def test_get_schemas(duckdb_connector: DuckdbConnector):
+    assert len(duckdb_connector.get_schemas()) > 0

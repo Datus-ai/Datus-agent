@@ -1,19 +1,12 @@
 question,sql
 Which country has the highest number of transactions? (Using transactions aggregated by country.),"SELECT
 c.country,
-c.region,
 SUM(1) as transactions
 FROM mf_demo.mf_demo_transactions t
 JOIN mf_demo.mf_demo_customers cust ON t.id_customer = cust.id_customer
 JOIN mf_demo.mf_demo_countries c ON cust.country = c.country
 GROUP BY c.country, c.region
-ORDER BY transactions DESC;"
-What percentage of transactions were cancellations? (Use the cancellation_rate metric defined as cancellations_usd divided by transaction_amount_usd.),"SELECT
-SUM(CASE WHEN transaction_type_name = 'cancellation' THEN transaction_amount_usd ELSE 0 END) as cancellations_usd,
-SUM(transaction_amount_usd) as total_transaction_amount_usd,
-(SUM(CASE WHEN transaction_type_name = 'cancellation' THEN transaction_amount_usd ELSE 0 END) /
-SUM(transaction_amount_usd)) * 100 as cancellation_rate_percent
-FROM mf_demo.mf_demo_transactions;"
+ORDER BY transactions DESC limit 1;"
 "What is the total transaction amount (USD) by region (NA, EU, SA)? (Use the mf_demo_countries table to map country to region and aggregate transaction amounts accordingly.)","SELECT
 c.region,
 SUM(t.transaction_amount_usd) as total_transaction_amount_usd,
@@ -77,32 +70,6 @@ COUNT(CASE WHEN c.id_customer IS NOT NULL THEN 1 END) as quick_buy_with_cancella
 (COUNT(CASE WHEN c.id_customer IS NOT NULL THEN 1 END) * 1.0 / COUNT(qb.id_customer)) as probability
 FROM quick_buy_customers qb
 LEFT JOIN cancellation_customers c ON qb.id_customer = c.id_customer;"
-"What is the month-to-date (MTD) transaction amount (USD) up to 2022-03-31, and how does it compare with the 7-day rolling total for the same date? Use transaction_usd_mtd versus a window-based cumulative metric.","WITH march_data AS (
-SELECT
-DATE(ds) as transaction_date,
-SUM(transaction_amount_usd) as daily_amount
-FROM mf_demo.mf_demo_transactions
-WHERE DATE(ds) >= '2022-03-01' AND DATE(ds) <= '2022-03-31'
-GROUP BY DATE(ds)
-),
-cumulative_data AS (
-SELECT
-transaction_date,
-daily_amount,
-SUM(daily_amount) OVER (ORDER BY transaction_date) as mtd_amount,
-SUM(daily_amount) OVER (
-ORDER BY transaction_date
-ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-) as rolling_7day_amount
-FROM march_data
-)
-SELECT
-transaction_date,
-daily_amount,
-mtd_amount,
-rolling_7day_amount
-FROM cumulative_data
-WHERE transaction_date = '2022-03-31';"
 "For each region (NA, EU, SA), what is the cumulative 7-day quick-buy amount (USD) as of 2022-04-04?","WITH quick_buy_by_region AS (
 SELECT
 DATE(t.ds) as transaction_date,
@@ -120,17 +87,6 @@ SUM(daily_quick_buy_amount) as cumulative_7day_quick_buy_amount_usd
 FROM quick_buy_by_region
 GROUP BY region
 ORDER BY cumulative_7day_quick_buy_amount_usd DESC;"
-Which customers generated the top-10 highest net revenue (using the revenue_usd metric) during March 2022?,"SELECT
-t.id_customer,
-SUM(t.transaction_amount_usd) -
-SUM(CASE WHEN t.transaction_type_name = 'cancellation' THEN t.transaction_amount_usd ELSE 0 END) +
-SUM(CASE WHEN t.transaction_type_name = 'alteration' THEN t.transaction_amount_usd ELSE 0 END) as revenue_usd,
-COUNT(t.id_transaction) as total_transactions
-FROM mf_demo.mf_demo_transactions t
-WHERE DATE(t.ds) >= '2022-03-01' AND DATE(t.ds) < '2022-04-01'
-GROUP BY t.id_customer
-ORDER BY revenue_usd DESC
-LIMIT 10;"
 What is the daily cancellation rate trend in NA versus EU from 2022-03-07 to 2022-04-04? Plot or tabulate cancellation_rate by ds and region.,"SELECT
 DATE(t.ds) as transaction_date,
 c.region,

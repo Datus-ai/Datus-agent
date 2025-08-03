@@ -15,6 +15,7 @@ from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.base import BaseInput
+from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
@@ -92,7 +93,7 @@ class AgentCommands:
 
             while not hasattr(self.agent, "workflow") or not self.agent.workflow_ready:
                 self.console.print("[bold yellow]Waiting for workflow to be initialized...[/]")
-                time.sleep(7)
+                time.sleep(1)
 
             # Store the new workflow
             self.workflow = self.agent.workflow
@@ -153,8 +154,8 @@ class AgentCommands:
             # Task description - required input from user
             if args.strip():
                 task_description = args
-                # Use current_database from CLI args, fallback to db_path
-                database_name = self.current_database or self.cli.args.db_path
+                # Use current_db_name from CLI (updated by .database command), fallback to current_database from args
+                database_name = self.cli.current_db_name or self.current_database or self.cli.args.db_path
                 output_dir = "output"
                 external_knowledge = ""
             else:  # If no input, use a prompt to get the task info
@@ -163,13 +164,16 @@ class AgentCommands:
                 if not task_description.strip():
                     self.console.print("[bold red]Error:[/] Task description is required")
                     return
-                # Database name - optional input, use current_database as default
-                default_db = self.current_database or (
-                    self.cli.args.db_path if hasattr(self.cli.args, "db_path") else ""
+                # Database name - optional input, use current_db_name from CLI as default
+                default_db = (
+                    self.cli.current_db_name
+                    or self.current_database
+                    or (self.cli.args.db_path if hasattr(self.cli.args, "db_path") else "")
                 )
                 database_name = Prompt.ask("[bold]Enter database name[/]", default=default_db)
                 # Output directory - optional input
-                output_dir = Prompt.ask("[bold]Enter output directory[/]", default="output")
+                output_dir = "output"
+                # output_dir = Prompt.ask("[bold]Enter output directory[/]", default="output")
                 # External knowledge - optional input
                 external_knowledge = Prompt.ask("[bold]Enter external knowledge (optional)[/]", default="")
 
@@ -325,6 +329,11 @@ class AgentCommands:
 
             prompt_version = Prompt.ask("[bold]Enter prompt version[/]", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()
+        elif isinstance(input, CompareInput):
+            # Allow user to modify expectation
+            if not input.expectation:
+                expectation = Prompt.ask("[bold]Enter expectation (SQL query or expected data)[/]", default="")
+                input.expectation = expectation.strip()
 
     def cmd_gen(self, args: str):
         """Generate SQL for a task."""
@@ -604,19 +613,19 @@ class AgentCommands:
 
     def cmd_set_context(self, context_type: str = "sql"):
         """Set the context for the agent."""
-        if not self.agent.workflow:
+        if not self.workflow:
             self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
             self.cmd_dastart()
 
         # get lastest sql context
         if context_type == "sql":
-            if not self.agent.workflow.context.sql_contexts:
+            if not self.workflow.context.sql_contexts:
                 self.console.print("[yellow]No SQL contexts available[/]")
                 return
 
             # Display all SQL contexts
             self.console.print("[bold blue]SQL Contexts:[/]")
-            for i, sql_context in enumerate(self.agent.workflow.context.sql_contexts):
+            for i, sql_context in enumerate(self.workflow.context.sql_contexts):
                 self.console.print(f"\n[bold]Context {i + 1}:[/]")
                 self.console.print(sql_context.to_dict())
 
@@ -628,7 +637,7 @@ class AgentCommands:
             # update context
         elif context_type == "schema":
             self.console.print("[bold blue]Table Context:[/]")
-            for i, table_schema in enumerate(self.agent.workflow.context.table_schemas):
+            for i, table_schema in enumerate(self.workflow.context.table_schemas):
                 self.console.print(f"{i + 1}. {table_schema.to_dict()}")
 
             tables = Prompt.ask("[bold]Enter table names you want to update the context for[/]", default="")
@@ -636,11 +645,11 @@ class AgentCommands:
                 self.console.print("[bold red]Error:[/] Table names are required")
                 return
 
-            schema_tool = SchemaLineageTool(agent_config=self.agent.global_config)
+            schema_tool = SchemaLineageTool(agent_config=self.cli.agent_config)
             table_schemas, table_values = schema_tool.get_table_and_values(
-                self.agent.workflow.task.database_name, tables.strip().split(",")
+                self.workflow.task.database_name, tables.strip().split(",")
             )
-            self.agent.workflow.context.update_schema_and_values(table_schemas, table_values)
+            self.workflow.context.update_schema_and_values(table_schemas, table_values)
             self.console.print(f"[bold green]Table context updated to {tables}[/]")
 
         elif context_type == "metrics":
@@ -652,7 +661,36 @@ class AgentCommands:
         self.console.print("[yellow]Feature not implemented in MVP.[/]")
 
     def cmd_compare(self, args: str):
-        pass
+        """Compare SQL with expectations - interactive analysis."""
+        if not self.workflow:
+            self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
+            self.cmd_dastart()
+
+        # Get expectation from user
+        expectation = Prompt.ask("[bold blue]Enter expectation[/] (SQL query or expected data format)", default="")
+
+        if not expectation.strip():
+            self.console.print("[bold red]Error:[/] Expectation cannot be empty")
+            return
+
+        # Run compare node with expectation
+        self.run_node(NodeType.TYPE_COMPARE, expectation)
+
+    def cmd_compare_stream(self, args: str):
+        """Compare SQL with streaming output and action history."""
+        if not self.workflow:
+            self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
+            self.cmd_dastart()
+
+        # Get expectation from user
+        expectation = Prompt.ask("[bold blue]Enter expectation[/] (SQL query or expected data format)", default="")
+
+        if not expectation.strip():
+            self.console.print("[bold red]Error:[/] Expectation cannot be empty")
+            return
+
+        # Run compare node with streaming, passing expectation as args
+        self._run_node_stream(NodeType.TYPE_COMPARE, expectation)
 
     def _run_node_stream(self, node_type: str, node_args: str):
         """Run a node with streaming output and action history display."""
@@ -704,6 +742,8 @@ class AgentCommands:
                 streaming_method = next_node._generate_metrics_stream
             elif hasattr(next_node, "_reason_sql_stream"):
                 streaming_method = next_node._reason_sql_stream
+            elif hasattr(next_node, "_compare_sql_stream"):
+                streaming_method = next_node._compare_sql_stream
 
             if streaming_method:
                 actions = []
@@ -720,9 +760,10 @@ class AgentCommands:
                     # Execute the streaming
                     asyncio.run(run_stream())
 
-                # Display final action history
-                self.console.print("\n[bold blue]Final Action History:[/]")
-                action_display.display_final_action_history(actions)
+                show_details = Prompt.ask("\n[bold blue]Show Full Action History? (y/N):[/]").strip().lower()
+                if show_details == "y":
+                    self.console.print("\n[bold blue]Full Action History:[/]")
+                    action_display.display_final_action_history(actions)
 
                 # Extract result from final action
                 if actions:
@@ -731,6 +772,15 @@ class AgentCommands:
                         success = final_action.output.get("success", False)
                         if success:
                             self.console.print("[bold green]Streaming execution completed successfully![/]")
+
+                            # For _reason_sql_stream, extract SQL from the final action and add to workflow context
+                            if node_type == NodeType.TYPE_REASONING and hasattr(next_node, "_reason_sql_stream"):
+                                logger.debug("Detected _reason_sql_stream node, calling SQL extraction...")
+                                self._extract_sql_from_streaming_actions(actions, workflow, next_node)
+                            else:
+                                has_method = hasattr(next_node, "_reason_sql_stream") if next_node else False
+                                logger.debug(f"Not a _reason_sql_stream node (type: {node_type}, method: {has_method})")
+
                             return {"success": True, "actions": actions}
                         else:
                             error_msg = final_action.output.get("error", "Unknown error")
@@ -786,3 +836,104 @@ class AgentCommands:
                     self.console.print(f"[bold red]Error:[/] {str(e)}")
 
             return {"success": False, "error": str(e)}
+
+    def _extract_sql_from_streaming_actions(self, actions, workflow, node):
+        """
+        Extract SQL from streaming actions and add to workflow context.
+        This method handles the _reason_sql_stream case where we need to update
+        the workflow context with the SQL from the final action.
+        """
+        try:
+            from datus.schemas.node_models import SQLContext
+            from datus.utils.json_utils import llm_result2json
+
+            logger.debug(f"Starting SQL extraction from streaming actions. Total actions: {len(actions)}")
+            logger.debug(f"Workflow context before extraction: {len(workflow.context.sql_contexts)} SQL contexts")
+
+            # Look for actions that contain SQL execution results or final message
+            sql_contexts = []
+
+            # First, check if the node has an action_history_manager with sql_contexts
+            if hasattr(node, "action_history_manager") and node.action_history_manager:
+                if hasattr(node.action_history_manager, "sql_contexts"):
+                    sql_contexts.extend(node.action_history_manager.sql_contexts)
+                    logger.info(f"Found {len(sql_contexts)} SQL contexts from action history manager")
+
+            # If no SQL contexts found, try to extract from actions
+            if not sql_contexts:
+                # Look for SQL execution results in actions
+                for action in actions:
+                    # Handle both string and enum status
+                    status_value = action.status.value if hasattr(action.status, "value") else action.status
+
+                    if action.action_type == "read_query" and status_value == "success":
+                        # This is a SQL execution result, create SQLContext from it
+                        sql_input = action.input or {}
+                        sql_output = action.output or {}
+
+                        sql_query = sql_input.get("sql", "")
+                        sql_result = sql_output.get("result", "")
+                        sql_error = sql_output.get("error", "")
+
+                        sql_context = SQLContext(
+                            sql_query=sql_query,
+                            explanation="",
+                            sql_return=sql_result,
+                            sql_error=sql_error,
+                            row_count=0,
+                        )
+                        sql_contexts.append(sql_context)
+                        logger.info(f"Added SQL context from read_query action: {sql_query[:100]}...")
+
+                # Look for final message with SQL result
+                for action in reversed(actions):  # Start from the last action
+                    # Handle both string and enum role
+                    role_value = action.role.value if hasattr(action.role, "value") else action.role
+                    if action.action_type == "message" and role_value == "assistant":
+                        # This could be the final reasoning result
+                        if action.output and action.output.get("raw_output"):
+                            raw_output = action.output.get("raw_output", "")
+
+                            try:
+                                # Parse the final result to extract SQL
+                                content_dict = llm_result2json(raw_output)
+                                sql_query = content_dict.get("sql", "")
+                                explanation = content_dict.get("explanation", "")
+
+                                if sql_query:
+                                    # Create SQLContext with the final result SQL
+                                    final_sql_context = SQLContext(
+                                        sql_query=sql_query,
+                                        explanation=explanation,
+                                        sql_return="",  # Will be filled by execution
+                                        sql_error="",
+                                        row_count=0,
+                                    )
+                                    sql_contexts.append(final_sql_context)
+                                    logger.info(f"Added final result SQL to SQLContext: {sql_query[:100]}...")
+                                    break  # Only take the first (last) valid final result
+
+                            except Exception as e:
+                                logger.debug(f"Could not parse final message as JSON: {e}")
+
+            # Add successful SQL contexts to workflow context
+            added_count = 0
+            for sql_ctx in sql_contexts:
+                if sql_ctx.sql_error == "":  # only add the successful sql context
+                    workflow.context.sql_contexts.append(sql_ctx)
+                    added_count += 1
+                    logger.info(f"✓ Added SQL context to workflow: {sql_ctx.sql_query[:100]}...")
+                else:
+                    logger.warning(
+                        f"✗ Skipping failed SQL context: {sql_ctx.sql_query[:100]}..., error: {sql_ctx.sql_error}"
+                    )
+
+            if added_count == 0:
+                logger.warning("No successful SQL contexts found in streaming execution")
+
+        except Exception as e:
+            logger.error(f"Failed to extract SQL from streaming actions: {str(e)}")
+            import traceback
+
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Don't fail the entire process, just log the error

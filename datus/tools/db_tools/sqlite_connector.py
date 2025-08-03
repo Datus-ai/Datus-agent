@@ -25,9 +25,16 @@ class SQLiteConnector(SQLAlchemyConnector):
         return f'"{table_name}"'
 
     @override
-    def sqlalchemy_schema(self, **kwargs) -> Optional[str]:
+    def sqlalchemy_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> Optional[str]:
         # sqlite has no schema
         return None
+
+    @override
+    def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
+        """SQLite not support switch context"""
+        pass
 
     def _get_schema_with_ddl(
         self, database_name: str = "", table_type: str = "table", filter_tables: Optional[List[str]] = None
@@ -65,7 +72,9 @@ class SQLiteConnector(SQLAlchemyConnector):
 
         return schema_list
 
-    def get_tables_with_ddl(self, tables: Optional[List[str]] = None, **kwargs) -> List[Dict[str, str]]:
+    def get_tables_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", tables: Optional[List[str]] = None
+    ) -> List[Dict[str, str]]:
         """
         Get the database schema as a list of dictionaries.
 
@@ -75,12 +84,14 @@ class SQLiteConnector(SQLAlchemyConnector):
             - table_schema: The CREATE TABLE statement for the table
         """
         return self._get_schema_with_ddl(
-            database_name=kwargs.get("database_name", "") or kwargs.get("schema_name", ""),
+            database_name=database_name,
             table_type="table",
             filter_tables=tables,
         )
 
-    def get_views_with_ddl(self, **kwargs) -> List[Dict[str, str]]:
+    def get_views_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[Dict[str, str]]:
         """
         Get the database schema as a list of dictionaries.
 
@@ -89,17 +100,7 @@ class SQLiteConnector(SQLAlchemyConnector):
             - table_name: The name of the table
             - table_schema: The CREATE TABLE statement for the table
         """
-        return self._get_schema_with_ddl(
-            database_name=kwargs.get("database_name", "") or kwargs.get("schema_name", ""), table_type="view"
-        )
-
-    def get_schema(self, table_name: str = "", **kwargs) -> List[Dict[str, str]]:
-        if table_name:
-            sql = f"PRAGMA table_info('{table_name}')"
-            result = self.execute_query(sql).to_dict(orient="records")
-            return result
-        else:
-            return []
+        return self._get_schema_with_ddl(database_name=database_name, table_type="view")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert connector to serializable dictionary with only essential info."""

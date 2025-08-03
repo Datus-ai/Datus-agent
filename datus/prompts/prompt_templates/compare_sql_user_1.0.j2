@@ -1,0 +1,31 @@
+Database Type: {{ database_type }}
+Database Name: {{ database_name }}
+
+SQL Task: {{ sql_task }}
+
+{% if external_knowledge %}
+External Knowledge (Important, Please Consider): {{ external_knowledge }}
+{% endif %}
+
+Current SQL Query:
+```sql
+{{ sql_query }}
+```
+
+{% if sql_explanation %}
+SQL Explanation: {{ sql_explanation }}
+{% endif %}
+
+{% if sql_error %}
+SQL Error: {{ sql_error }}
+{% endif %}
+
+{% if sql_result %}
+Current SQL Result:
+{{ sql_result }}
+{% endif %}
+
+Expectation:
+{{ expectation }}
+
+Please analyze the differences between the current SQL query and the expectation, and provide suggestions for improvement.

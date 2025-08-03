@@ -304,24 +304,21 @@ class ActionHistoryDisplay:
                 self.display = display_instance
 
             def __rich_console__(self, console, options):
+                # Always create the same panel structure to avoid duplicate headers
                 if not self.actions:
-                    yield Panel("[dim]Waiting for actions...[/dim]", title="Real-time Action History")
-                    return
+                    content = "[dim]Waiting for actions...[/dim]"
+                else:
+                    # Create simple list of actions with colored dots
+                    lines = []
+                    for action in self.actions:
+                        # Get appropriate dot based on role and status
+                        dot = self.display._get_action_dot(action)
+                        # Format the action line
+                        action_line = self.display._format_streaming_action(action, dot)
+                        lines.append(action_line)
+                    content = "\n".join(lines)
 
-                # Create simple list of actions with colored dots
-                lines = []
-                lines.append("[bold]Real-time Action History[/bold]\n")
-
-                for i, action in enumerate(self.actions, 1):
-                    # Get appropriate dot based on role and status
-                    dot = self.display._get_action_dot(action)
-
-                    # Format the action line
-                    action_line = self.display._format_streaming_action(action, dot)
-                    lines.append(action_line)
-
-                # Join all lines and display in a panel
-                content = "\n".join(lines)
+                # Always yield the same panel structure
                 yield Panel(content, title="[bold cyan]Action Stream[/bold cyan]", border_style="cyan")
 
         # Create the content object that will update dynamically
