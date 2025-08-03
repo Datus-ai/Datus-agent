@@ -5,11 +5,11 @@ from unittest.mock import patch
 
 import pytest
 
+from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel  # 根据你的实际导入路径调整
 from datus.storage.embedding_models import EmbeddingModel
 from datus.utils.constants import DBType
 from datus.utils.path_utils import get_files_from_glob_pattern
-from datus.configuration.agent_config_loader import load_agent_config
 
 
 # test datus.models.base
