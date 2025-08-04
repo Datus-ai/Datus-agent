@@ -332,7 +332,13 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
                     yield f"event: execution_complete\ndata: {json.dumps(result_data)}\n\n"
 
             elif action.action_type == "output_generation" and action.status == "success":
-                yield f"event: output_ready\ndata: {json.dumps({'output_generated': True})}\n\n"
+                output = action.output or {}
+                output_data = {
+                    "output_generated": output.get("output_generated", True),
+                    "sql_query": output.get("sql_query", ""),
+                    "sql_result": output.get("sql_result", ""),
+                }
+                yield f"event: output_ready\ndata: {json.dumps(output_data)}\n\n"
 
             elif action.action_type == "workflow_completion":
                 logger.info(
@@ -365,10 +371,6 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
                     "message": action.messages,
                 }
                 yield f"event: node_progress\ndata: {json.dumps(node_data)}\n\n"
-
-            elif action.action_id.startswith("evaluation_"):
-                eval_data = {"action": "evaluation", "status": action.status, "message": action.messages}
-                yield f"event: progress\ndata: {json.dumps(eval_data)}\n\n"
 
             # Send node-specific progress for streaming operations
             elif action.action_type in [

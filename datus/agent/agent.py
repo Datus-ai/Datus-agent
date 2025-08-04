@@ -417,40 +417,15 @@ class Agent:
                 logger.error(f"Node execution error: {e}")
                 break
 
-            # Evaluate the task result
-            evaluation_action = self._create_action_history(
-                action_id=f"evaluation_{current_node.id}",
-                messages="Evaluating results and updating workflow context",
-                action_type="evaluation",
-                input_data={
-                    "node_id": current_node.id,
-                    "node_type": current_node.type,
-                },
-            )
-            yield evaluation_action
-
             try:
                 evaluation = evaluate_result(current_node, self.workflow)
                 logger.debug(f"Evaluation result: {evaluation}")
 
                 if not evaluation["success"]:
                     current_node.status = "failed"
-                    self._update_action_status(
-                        evaluation_action, success=False, error="Evaluation failed", output_data={"details": evaluation}
-                    )
                     break
 
-                self._update_action_status(
-                    evaluation_action,
-                    success=True,
-                    output_data={
-                        "evaluation_successful": True,
-                        "context_updated": True,
-                    },
-                )
-
             except Exception as e:
-                self._update_action_status(evaluation_action, success=False, error=str(e))
                 logger.error(f"Evaluation error: {e}")
                 break
 

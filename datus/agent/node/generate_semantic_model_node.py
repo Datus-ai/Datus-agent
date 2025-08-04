@@ -40,6 +40,13 @@ class GenerateSemanticModelNode(Node):
     def execute(self):
         self.result = self._generate_semantic_model()
 
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute semantic model generation with streaming support."""
+        async for action in self._generate_semantic_model_stream(action_history_manager):
+            yield action
+
     def validate_input(self):
         if not isinstance(self.input, GenerateSemanticModelInput):
             raise ValueError("Input must be a GenerateSemanticModelInput instance")

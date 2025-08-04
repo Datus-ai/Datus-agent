@@ -17,6 +17,13 @@ class CompareNode(Node):
     def execute(self):
         self.result = self._execute_compare()
 
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute SQL comparison with streaming support."""
+        async for action in self._compare_sql_stream(action_history_manager):
+            yield action
+
     def setup_input(self, workflow: Workflow) -> Dict:
         # Use the expectation from input_data if provided, otherwise empty string
         expectation = self.input if isinstance(self.input, str) and self.input.strip() else ""

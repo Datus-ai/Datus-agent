@@ -16,6 +16,13 @@ class ExecuteSQLNode(Node):
     def execute(self):
         self.result = self._execute_sql()
 
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute SQL execution with streaming support."""
+        async for action in self._execute_sql_stream(action_history_manager):
+            yield action
+
     def setup_input(self, workflow: Workflow) -> Dict:
         next_input = ExecuteSQLInput(
             sql_query=self._strip_sql_markdown(workflow.get_last_sqlcontext().sql_query),
@@ -185,10 +192,3 @@ class ExecuteSQLNode(Node):
         except Exception as e:
             logger.error(f"SQL execution streaming error: {str(e)}")
             raise
-
-    async def execute_stream(
-        self, action_history_manager: Optional[ActionHistoryManager] = None
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """Execute SQL execution with streaming support."""
-        async for action in self._execute_sql_stream(action_history_manager):
-            yield action

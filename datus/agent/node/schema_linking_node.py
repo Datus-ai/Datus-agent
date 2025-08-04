@@ -15,6 +15,13 @@ class SchemaLinkingNode(Node):
     def execute(self):
         self.result = self._execute_schema_linking()
 
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute schema linking with streaming support."""
+        async for action in self._schema_linking_stream(action_history_manager):
+            yield action
+
     def update_context(self, workflow: Workflow) -> Dict:
         """Update schema linking results to workflow context."""
         result = self.result
@@ -265,10 +272,3 @@ class SchemaLinkingNode(Node):
         except Exception as e:
             logger.error(f"Schema linking streaming error: {str(e)}")
             raise
-
-    async def execute_stream(
-        self, action_history_manager: Optional[ActionHistoryManager] = None
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """Execute schema linking with streaming support."""
-        async for action in self._schema_linking_stream(action_history_manager):
-            yield action
