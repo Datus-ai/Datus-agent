@@ -1,9 +1,11 @@
 import argparse
+import csv
 import os
 import time
-import uuid
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Dict
+from datetime import datetime
+from io import StringIO
+from typing import Any, AsyncGenerator, Dict, List
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,6 +67,23 @@ class DatusAPIService:
             logger.error(f"Failed to load agent configuration: {e}")
             self.agent_config = None
 
+    def _parse_csv_to_list(self, csv_string: str) -> List[Dict[str, Any]]:
+        """Parse CSV string to list of dictionaries."""
+        try:
+            if not csv_string or not csv_string.strip():
+                return []
+
+            reader = csv.DictReader(StringIO(csv_string.strip()))
+            return [dict(row) for row in reader]
+        except Exception as e:
+            logger.warning(f"Failed to parse CSV data: {e}")
+            return []
+
+    def _generate_task_id(self, client_id: str) -> str:
+        """Generate task ID using client_id and timestamp."""
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        return f"{client_id}_{timestamp}"
+
     def get_agent(self, namespace: str) -> Agent:
         """Get or create an agent for the specified namespace."""
         if namespace not in self.agents:
@@ -113,9 +132,9 @@ class DatusAPIService:
             execution_time=execution_time,
         )
 
-    async def run_workflow(self, request: RunWorkflowRequest) -> RunWorkflowResponse:
+    async def run_workflow(self, request: RunWorkflowRequest, client_id: str = None) -> RunWorkflowResponse:
         """Execute a workflow synchronously and return results."""
-        task_id = request.task_id or str(uuid.uuid4())
+        task_id = request.task_id or self._generate_task_id(client_id or "unknown")
         start_time = time.time()
 
         try:
@@ -138,18 +157,30 @@ class DatusAPIService:
                 sql_query = None
                 query_results = None
 
-                if "final_result" in result:
-                    final_result = result["final_result"]
-                    if hasattr(final_result, "sql_contexts") and final_result.sql_contexts:
-                        sql_query = final_result.sql_contexts[-1].sql
-                        # Update task in database
+                # Get the last SQL context from workflow using the correct method
+                try:
+                    workflow = agent.workflow
+                    if workflow:
+                        last_sql_context = workflow.get_last_sqlcontext()
+                        sql_query = last_sql_context.sql_query
+                        query_results_raw = last_sql_context.sql_return
+
+                        # Convert CSV string to list of dictionaries for API response
+                        if query_results_raw and isinstance(query_results_raw, str):
+                            query_results = self._parse_csv_to_list(query_results_raw)
+                        else:
+                            query_results = None
+
+                        # Update task in database (store as string)
                         if self.task_store:
-                            self.task_store.update_task(task_id, sql_query=sql_query)
-                    if hasattr(final_result, "execution_result"):
-                        query_results = final_result.execution_result
-                        # Update task in database
-                        if self.task_store:
-                            self.task_store.update_task(task_id, sql_result=str(query_results))
+                            self.task_store.update_task(
+                                task_id,
+                                sql_query=sql_query,
+                                sql_result=str(query_results_raw) if query_results_raw else "",
+                            )
+                except Exception as e:
+                    logger.warning(f"Could not extract SQL context for task {task_id}: {e}")
+                    # Continue without SQL data
 
                 # Update task status to completed
                 if self.task_store:
@@ -187,9 +218,11 @@ class DatusAPIService:
                 task_id=task_id, request=request, status="error", error=str(e), execution_time=time.time() - start_time
             )
 
-    async def run_workflow_stream(self, request: RunWorkflowRequest) -> AsyncGenerator[ActionHistory, None]:
+    async def run_workflow_stream(
+        self, request: RunWorkflowRequest, client_id: str = None
+    ) -> AsyncGenerator[ActionHistory, None]:
         """Execute a workflow with streaming support and yield progress updates."""
-        task_id = request.task_id or str(uuid.uuid4())
+        task_id = request.task_id or self._generate_task_id(client_id or "unknown")
 
         try:
             # Get agent for the namespace
@@ -322,7 +355,7 @@ async def run_workflow(req: RunWorkflowRequest, request: Request, current_client
             )
         else:
             # Synchronous mode - original behavior
-            return await service.run_workflow(req)
+            return await service.run_workflow(req, current_client)
 
     except Exception as e:
         logger.error(f"Workflow execution error: {e}")
@@ -333,7 +366,7 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
     """Generate Server-Sent Events stream for workflow execution."""
     import json
 
-    task_id = req.task_id or str(uuid.uuid4())
+    task_id = req.task_id or service._generate_task_id(current_client)
     start_time = time.time()
 
     try:
@@ -347,7 +380,7 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
         # Execute workflow with streaming
         sql_query = None
 
-        async for action in service.run_workflow_stream(req):
+        async for action in service.run_workflow_stream(req, current_client):
             # Map different action types to SSE events
             if action.action_type == "sql_generation" and action.status == "success":
                 if action.output and "sql_query" in action.output:
