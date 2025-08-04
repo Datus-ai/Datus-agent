@@ -4,8 +4,8 @@ import platform
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional
 
-from agents.mcp import MCPServerStdio
 from agents import SQLiteSession
+from agents.mcp import MCPServerStdio
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
@@ -116,21 +116,22 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         """Lazy initialization of session manager."""
         if self._session_manager is None:
             from datus.models.session_manager import SessionManager
+
             self._session_manager = SessionManager()
         return self._session_manager
-    
+
     def create_session(self, session_id: str) -> SQLiteSession:
         """Create or get a session for multi-turn conversations."""
         return self.session_manager.create_session(session_id)
-    
+
     def clear_session(self, session_id: str) -> None:
         """Clear conversation history for a session."""
         self.session_manager.clear_session(session_id)
-    
+
     def delete_session(self, session_id: str) -> None:
         """Delete a session completely."""
         self.session_manager.delete_session(session_id)
-    
+
     def list_sessions(self) -> List[str]:
         """List all available sessions."""
         return self.session_manager.list_sessions()
@@ -146,28 +147,27 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         output_type: type = str,
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict:
         """Generate response with unified tool support.
-        
+
         This replaces generate_with_mcp and supports both MCP servers and regular tools.
-        
+
         Args:
             prompt: Input prompt
             mcp_servers: Optional MCP servers to use
-            tools: Optional regular tools to use  
+            tools: Optional regular tools to use
             instruction: System instruction
             output_type: Expected output type
             max_turns: Maximum conversation turns
             session: Optional session for multi-turn context
             **kwargs: Additional parameters
-            
+
         Returns:
             Result with content and sql_contexts
         """
-        pass
-    
-    @abstractmethod 
+
+    @abstractmethod
     async def generate_with_tools_stream(
         self,
         prompt: str,
@@ -178,12 +178,12 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
-        **kwargs
+        **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support.
-        
+
         This replaces generate_with_mcp_stream and supports both MCP servers and regular tools.
-        
+
         Args:
             prompt: Input prompt
             mcp_servers: Optional MCP servers
@@ -194,11 +194,10 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             session: Optional session for multi-turn context
             action_history_manager: Action history manager for streaming
             **kwargs: Additional parameters
-            
+
         Yields:
             ActionHistory objects for streaming updates
         """
-        pass
 
     # Backward compatibility - concrete implementation using new methods
     async def generate_with_mcp(
@@ -228,10 +227,9 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             The result from the MCP agent execution with content and sql_contexts
         """
         import warnings
+
         warnings.warn(
-            "generate_with_mcp is deprecated. Use generate_with_tools instead.", 
-            DeprecationWarning, 
-            stacklevel=2
+            "generate_with_mcp is deprecated. Use generate_with_tools instead.", DeprecationWarning, stacklevel=2
         )
         return await self.generate_with_tools(
             prompt=prompt,
@@ -239,5 +237,5 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             instruction=instruction,
             output_type=output_type,
             max_turns=max_turns,
-            **kwargs
+            **kwargs,
         )

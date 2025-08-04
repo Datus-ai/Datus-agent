@@ -9,9 +9,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import anthropic
 import httpx
-from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, Usage
+from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, SQLiteSession, Usage
 from agents.mcp import MCPServerStdio
-from agents import SQLiteSession
 from langsmith.wrappers import wrap_anthropic, wrap_openai
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from pydantic import AnyUrl
@@ -31,19 +30,18 @@ logger = get_logger(__name__)
 try:
     from agents.models.chatcmpl_stream_handler import ResponseTextDeltaEvent
     from pydantic import Field
-    from typing import Optional, Any
-    
+
     # Get the original fields and make logprobs optional
     original_fields = ResponseTextDeltaEvent.model_fields.copy()
-    if 'logprobs' in original_fields:
+    if "logprobs" in original_fields:
         # Create a new field annotation that allows None
-        original_fields['logprobs'] = Field(default=None)
-        
+        original_fields["logprobs"] = Field(default=None)
+
         # Rebuild the model with optional logprobs
-        ResponseTextDeltaEvent.__annotations__['logprobs'] = Optional[Any]
-        ResponseTextDeltaEvent.model_fields['logprobs'] = Field(default=None)
+        ResponseTextDeltaEvent.__annotations__["logprobs"] = Optional[Any]
+        ResponseTextDeltaEvent.model_fields["logprobs"] = Field(default=None)
         ResponseTextDeltaEvent.model_rebuild()
-        
+
         logger.debug("Successfully patched ResponseTextDeltaEvent to make logprobs optional")
 except ImportError:
     logger.warning("Could not import ResponseTextDeltaEvent - patch not applied")
@@ -162,7 +160,7 @@ class ClaudeModel(LLMBaseModel):
                     base_url=self.api_base if self.api_base else None,
                 )
             )
-        
+
         # Session manager is initialized lazily in the base class via property
 
     def generate(self, prompt: Any, **kwargs) -> str:
@@ -248,7 +246,7 @@ class ClaudeModel(LLMBaseModel):
         output_type: type = str,
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict:
         """Generate response with unified tool support."""
         # For now, primarily support MCP servers as that's what the existing code uses
@@ -256,15 +254,13 @@ class ClaudeModel(LLMBaseModel):
             # Fallback to basic generation if no tools
             response = self.generate(f"{instruction}\n\n{prompt}", **kwargs)
             return {"content": response, "sql_contexts": []}
-        
+
         # Use existing generate_with_mcp implementation
-        return await self.generate_with_mcp(
-            prompt, mcp_servers, instruction, output_type, max_turns, **kwargs
-        )
-    
+        return await self.generate_with_mcp(prompt, mcp_servers, instruction, output_type, max_turns, **kwargs)
+
     async def generate_with_tools_stream(
         self,
-        prompt: str, 
+        prompt: str,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         tools: Optional[List[Any]] = None,
         instruction: str = "",
@@ -272,21 +268,20 @@ class ClaudeModel(LLMBaseModel):
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
-        **kwargs
+        **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support."""
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
-        
+
         # For now, primarily support MCP servers
         if not mcp_servers:
             # Basic streaming not implemented for Claude without tools
             return
-        
+
         # Use existing generate_with_mcp_stream implementation
         async for action in self.generate_with_mcp_stream(
-            prompt, mcp_servers, instruction, output_type, max_turns,
-            action_history_manager, **kwargs
+            prompt, mcp_servers, instruction, output_type, max_turns, action_history_manager, **kwargs
         ):
             yield action
 

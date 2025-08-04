@@ -1,21 +1,12 @@
-import json
 import os
-import uuid
-from datetime import date, datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any
 
 import yaml
-from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
-from agents.mcp import MCPServerStdio
-from langsmith.wrappers import wrap_openai
-from openai import AsyncOpenAI, OpenAI
-from pydantic import AnyUrl
+from agents import set_tracing_disabled
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_compatible import OpenAICompatibleModel
-from datus.models.mcp_result_extractors import extract_sql_contexts
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -36,14 +27,14 @@ class DeepSeekModel(OpenAICompatibleModel):
     ):
         super().__init__(model_config, **kwargs)
         logger.debug(f"Using DeepSeek model: {self.model_name} base Url: {self.base_url}")
-    
+
     def _get_api_key(self) -> str:
         """Get DeepSeek API key from config or environment."""
         api_key = self.model_config.api_key or os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             raise ValueError("DeepSeek API key must be provided or set as DEEPSEEK_API_KEY environment variable")
         return api_key
-    
+
     def _get_base_url(self) -> str:
         """Get DeepSeek base URL from config or environment."""
         return self.model_config.base_url or os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com")
@@ -108,7 +99,6 @@ class DeepSeekModel(OpenAICompatibleModel):
 
         except Exception as e:
             logger.error(f"Failed to save LLM trace: {str(e)}")
-
 
     def token_count(self, prompt: str) -> int:
         """Estimate the number of tokens in a text using the deepseek tokenizer.

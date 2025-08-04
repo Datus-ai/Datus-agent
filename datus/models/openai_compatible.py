@@ -7,18 +7,16 @@ import warnings
 from datetime import date, datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from agents import Agent, OpenAIChatCompletionsModel, Runner
+from agents import Agent, OpenAIChatCompletionsModel, Runner, SQLiteSession
 from agents.mcp import MCPServerStdio
-from agents import SQLiteSession
 from langsmith.wrappers import wrap_openai
-from openai import AsyncOpenAI, OpenAI, APIConnectionError, APIError, APITimeoutError, RateLimitError
+from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
-from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -29,7 +27,6 @@ logger = get_logger(__name__)
 try:
     from agents.models.chatcmpl_stream_handler import ResponseTextDeltaEvent
     from pydantic import Field
-    from typing import Optional, Any
 
     # Get the original fields and make logprobs optional
     original_fields = ResponseTextDeltaEvent.model_fields.copy()
@@ -268,7 +265,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                     continue
                 else:
                     logger.error(
-                        f"API error in JSON generation after {attempt + 1} attempts: {error_code.code} - {error_code.desc}"
+                        f"API error in JSON generation after {attempt + 1} attempts: "
+                        f"{error_code.code} - {error_code.desc}"
                     )
                     raise DatusException(error_code)
 
@@ -416,7 +414,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                     continue
                 else:
                     logger.error(
-                        f"API error in MCP execution after {attempt + 1} attempts: {error_code.code} - {error_code.desc}"
+                        f"API error in MCP execution after {attempt + 1} attempts: "
+                        f"{error_code.code} - {error_code.desc}"
                     )
                     raise DatusException(error_code)
 
@@ -490,7 +489,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                     continue
                 else:
                     logger.error(
-                        f"API error in MCP streaming after {attempt + 1} attempts: {error_code.code} - {error_code.desc}"
+                        f"API error in MCP streaming after {attempt + 1} attempts: "
+                        f"{error_code.code} - {error_code.desc}"
                     )
                     raise DatusException(error_code)
 
@@ -575,8 +575,9 @@ class OpenAICompatibleModel(LLMBaseModel):
 
     def _process_message_output(self, event, action_history_manager: ActionHistoryManager) -> Optional[ActionHistory]:
         """Process message_output_item events."""
-        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
         import uuid
+
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
         if not (hasattr(event.item, "raw_item") and hasattr(event.item.raw_item, "content")):
             return None

@@ -835,6 +835,5 @@ def load_bird_dev_tasks(benchmark_path: str) -> List[Dict[str, Any]]:
     except json.JSONDecodeError as e:
         logger.error(f"JSON parsing error in file '{file_path}': {str(e)}")
         raise DatusException(
-            ErrorCode.COMMON_JSON_PARSE_ERROR,
-            message_args={"file_path": file_path, "error_detail": str(e)}
+            ErrorCode.COMMON_JSON_PARSE_ERROR, message_args={"file_path": file_path, "error_detail": str(e)}
         )

@@ -2,9 +2,8 @@ import asyncio
 import os
 import threading
 from pathlib import Path
-from typing import Dict, Union
 
-from agents import Agent, AgentBase, RunContextWrapper, Usage
+from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdio, MCPServerStdioParams
 
 from datus.configuration.agent_config import DbConfig
@@ -136,7 +135,7 @@ class MCPServer:
                 return cls.get_duckdb_mcp_server()
 
         db_path = cls._extract_db_path_from_uri(db_config.uri, db_config.type)
-        
+
         if db_config.type == DBType.SQLITE:
             logger.info(f"Initializing SQLite MCP server with database: {db_path}")
             return cls.get_sqlite_mcp_server(db_path=db_path)
@@ -188,7 +187,8 @@ class MCPServer:
                         tools = await mcp_server.list_tools(run_context, agent)
                         tool_count = len(tools) if tools else 0
                         logger.info(
-                            f"{db_config.type} MCP Server has {tool_count} tools available: {[tool.name for tool in tools]}"
+                            f"{db_config.type} MCP Server has {tool_count} tools available: "
+                            f"{[tool.name for tool in tools]}"
                         )
 
                 except Exception as e:
@@ -271,13 +271,11 @@ class MCPServer:
     def get_sqlite_mcp_server(cls, db_path: str = "./sqlite_mcp_server.db"):
         # Convert db_path to absolute path to avoid confusion with relative paths
         absolute_db_path = os.path.abspath(db_path)
-        
+
         # Check if we need to create a new server for a different database
-        if (cls._sqlite_mcp_server is None or 
-            getattr(cls, '_current_sqlite_db_path', None) != absolute_db_path):
+        if cls._sqlite_mcp_server is None or getattr(cls, "_current_sqlite_db_path", None) != absolute_db_path:
             with cls._lock:
-                if (cls._sqlite_mcp_server is None or 
-                    getattr(cls, '_current_sqlite_db_path', None) != absolute_db_path):
+                if cls._sqlite_mcp_server is None or getattr(cls, "_current_sqlite_db_path", None) != absolute_db_path:
                     directory = os.environ.get("SQLITE_MCP_DIR", "mcp/mcp-sqlite-server")
                     if not directory:
                         try:
@@ -285,7 +283,7 @@ class MCPServer:
                         except FileNotFoundError as e:
                             logger.error(f"Could not find SQLite MCP directory: {e}")
                             return None
-                    
+
                     logger.info(f"Using SQLite database: {absolute_db_path}")
 
                     mcp_server_params = MCPServerStdioParams(
