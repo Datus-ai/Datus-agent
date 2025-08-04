@@ -4,74 +4,31 @@ on:
   schedule:
     - cron: '0 1 * * 1' # Monday, 1 a.m. UTC
   workflow_dispatch: # Allow manual trigger
-  push:
-    branches: [ main, dev ]
-    paths: [ 'tests/**', 'datus/**', 'requirements.txt' ]
 
 jobs:
-  integration-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    
+  run-integration:
+    runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-xdist
-
-      - name: Create config directory
-        run: mkdir -p conf
 
       - name: Setup config file
         run: |
-          # Create minimal test config
-          cat > conf/agent.yml << 'EOF'
-          server:
-            host: "localhost"
-            port: 8080
-          
-          database:
-            type: "sqlite"
-            path: ":memory:"
-          
-          logging:
-            level: "INFO"
-          EOF
-          
-          # Create test environment
-          cat > .env << 'EOF'
-          PYTHONPATH=.
-          ENV=test
-          LOG_LEVEL=INFO
-          EOF
+          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
+          cp /home/datus_ci/ci_template/ci.env .env
+          source .env
 
-      - name: Run integration tests
-        env:
-          PYTHONPATH: .
+      - name: run integration
         run: |
-          python -m pytest tests/test_integration_benchmark.py -v --tb=short
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-test-results
-          path: |
-            test-results.xml
-            .pytest_cache/
-
-      - name: Notify on failure
-        if: failure()
-        run: echo "Integration tests failed - check logs for details"
+          python -m pytest tests/test_integration_benchmark.py
