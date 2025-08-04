@@ -33,7 +33,7 @@ class TestDeepSeekModel:
         config = load_agent_config(config="tests/conf/agent.yml")
         model = DeepSeekModel(config["deepseek-r1"])
 
-        result = model.generate("Hello", max_tokens=50)
+        result = model.generate("Hello", max_tokens=200)
 
         assert result is not None, "Response should not be None"
         assert isinstance(result, str), "Response should be a string"

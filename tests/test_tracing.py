@@ -7,7 +7,7 @@ in a test class using LangSmith, but only if LangSmith is available.
 
 import functools
 import inspect
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 # Try to import langsmith, but don't fail if it's not available
 try:
@@ -29,7 +29,8 @@ def auto_traceable(cls):
     This decorator will:
     1. Find all methods starting with 'test_' in the class
     2. Apply @traceable decorator with the method name as the trace name
-    3. Only apply tracing if langsmith is installed and available
+    3. Capture test inputs and outputs for meaningful tracing
+    4. Only apply tracing if langsmith is installed and available
     
     Args:
         cls: The test class to decorate
@@ -41,11 +42,67 @@ def auto_traceable(cls):
         # If langsmith is not available, return the class unchanged
         return cls
     
+    def create_traced_method(original_method, method_name):
+        """Create a traced wrapper for a test method."""
+        
+        @traceable(name=method_name, run_type="chain")
+        @functools.wraps(original_method)
+        def sync_wrapper(self, *args, **kwargs):
+            
+            try:
+                # Execute the test method
+                result = original_method(self, *args, **kwargs)
+                
+                # Return meaningful test result for tracing
+                trace_result = {
+                    "status": "PASSED",
+                    "test_method": method_name,
+                    "test_class": cls.__name__,
+                    "test_type": "sync",
+                    "result": "Test completed successfully",
+                    "details": str(result) if result is not None else "No return value"
+                }
+                
+                return trace_result
+                
+            except Exception as e:
+                # Re-raise the exception to maintain test framework behavior
+                raise
+        
+        @traceable(name=method_name, run_type="chain")
+        @functools.wraps(original_method)
+        async def async_wrapper(self, *args, **kwargs):
+            
+            try:
+                # Execute the async test method
+                result = await original_method(self, *args, **kwargs)
+                
+                # Return meaningful test result for tracing
+                trace_result = {
+                    "status": "PASSED",
+                    "test_method": method_name,
+                    "test_class": cls.__name__,
+                    "test_type": "async",
+                    "result": "Async test completed successfully",
+                    "details": str(result) if result is not None else "No return value"
+                }
+                
+                return trace_result
+                
+            except Exception as e:
+                # Re-raise the exception to maintain test framework behavior
+                raise
+        
+        # Choose the appropriate wrapper based on whether the method is async
+        if inspect.iscoroutinefunction(original_method):
+            return async_wrapper
+        else:
+            return sync_wrapper
+    
     for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
         # Only trace test methods (starting with 'test_')
         if name.startswith('test_'):
-            # Apply traceable decorator with method name and chain run type
-            traced_method = traceable(name=name, run_type="chain")(method)
+            traced_method = create_traced_method(method, name)
             setattr(cls, name, traced_method)
     
     return cls

@@ -13,6 +13,7 @@ agent:
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-reasoner
+      enable_thinking: true
     qwen:
       type: qwen
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
