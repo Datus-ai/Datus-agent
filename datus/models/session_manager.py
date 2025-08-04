@@ -134,7 +134,23 @@ class SessionManager:
             return {"exists": False}
         
         session = self.get_session(session_id)
-        items = session.get_items()
+        
+        # Handle async get_items() call synchronously
+        import asyncio
+        try:
+            # Try to get existing event loop
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is running, we need to run in thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, session.get_items())
+                    items = future.result()
+            else:
+                items = loop.run_until_complete(session.get_items())
+        except RuntimeError:
+            # No event loop, create new one
+            items = asyncio.run(session.get_items())
         
         return {
             "exists": True,
