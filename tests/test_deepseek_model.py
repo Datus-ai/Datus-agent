@@ -1,14 +1,10 @@
-import os
-
 import pytest
 from agents import set_tracing_disabled
 from dotenv import load_dotenv
 
-from datus.configuration.agent_config import DbConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.deepseek_model import DeepSeekModel
 from datus.tools.mcp_server import MCPServer
-from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
 from tests.test_tracing import auto_traceable
