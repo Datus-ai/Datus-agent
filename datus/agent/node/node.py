@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
@@ -209,46 +210,38 @@ class Node(ABC):
     def execute(self) -> BaseResult:
         pass
 
+    @abstractmethod
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """
+        Execute the node with streaming support.
+
+        Each subclass should implement this method to call their corresponding _stream() method.
+
+        Args:
+            action_history_manager: Manager for tracking action history
+
+        Yields:
+            ActionHistory: Progress updates during node execution
+        """
+        pass
+
     def run(self):
         """Execute the node based on its type and update status."""
         try:
             self._initialize()
             self.start()
 
-            if self.type in NodeType.ACTION_TYPES:
-                try:
-                    self.execute()
+            if self.type in NodeType.ACTION_TYPES or self.type in NodeType.CONTROL_TYPES:
+                self.execute()
 
-                    if self.result is not None and self.result.success:
-                        self.complete(self.result)
-                    else:
-                        logger.error(f"Node execution failed: {self.result}")
-                        self.fail(f"Node execution failed: {self.result}")
-                except Exception as e:
-                    logger.error(f"Node execution failed: {str(e)}")
-                    self.fail(str(e))
-            elif self.type in NodeType.CONTROL_TYPES:
-                if self.type == NodeType.TYPE_REFLECT:
-                    self.execute()
+                # REFLECT type always completes successfully, others check result
+                if self.type == NodeType.TYPE_REFLECT or (self.result is not None and self.result.success):
                     self.complete(self.result)
-                    # strategy_result = execute_strategy(self, strategy, details, model)
-                    # logger.info(f"Execute strategy result: {strategy_result}")
-                elif self.type == NodeType.TYPE_PARALLEL:
-                    self.execute()
-                    if self.result is not None and self.result.success:
-                        self.complete(self.result)
-                    else:
-                        logger.error(f"Parallel node execution failed: {self.result}")
-                        self.fail(f"Parallel node execution failed: {self.result}")
-                elif self.type == NodeType.TYPE_SELECTION:
-                    self.execute()
-                    if self.result is not None and self.result.success:
-                        self.complete(self.result)
-                    else:
-                        logger.error(f"Selection node execution failed: {self.result}")
-                        self.fail(f"Selection node execution failed: {self.result}")
                 else:
-                    pass
+                    logger.error(f"{self.type} node execution failed: {self.result}")
+                    self.fail(f"{self.type} node execution failed: {self.result}")
             else:
                 raise ValueError(f"Invalid node type: {self.type}")
         except Exception as e:
@@ -256,6 +249,29 @@ class Node(ABC):
             self.fail(str(e))
 
         return self.result
+
+    async def run_stream(self, action_history_manager: Optional[ActionHistoryManager] = None):
+        """Execute the node with streaming support based on its type and update status."""
+        try:
+            self._initialize()
+            self.start()
+
+            if self.type in NodeType.ACTION_TYPES or self.type in NodeType.CONTROL_TYPES:
+                # Execute with streaming and collect results
+                async for action in self.execute_stream(action_history_manager):
+                    yield action
+
+                # REFLECT type always completes successfully, others check result
+                if self.type == NodeType.TYPE_REFLECT or (self.result is not None and self.result.success):
+                    self.complete(self.result)
+                else:
+                    logger.error(f"{self.type} node execution failed: {self.result}")
+                    self.fail(f"{self.type} node execution failed: {self.result}")
+            else:
+                raise ValueError(f"Invalid node type: {self.type}")
+        except Exception as e:
+            logger.error(f"Node streaming execution failed: {str(e)}")
+            self.fail(str(e))
 
     def add_dependency(self, node_id: str):
         """

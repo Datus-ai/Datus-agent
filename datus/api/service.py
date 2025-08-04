@@ -3,13 +3,15 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict
+from typing import Any, AsyncGenerator, Dict
 
-from fastapi import Depends, FastAPI, Form, HTTPException, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from datus.agent.agent import Agent
 from datus.configuration.agent_config_loader import load_agent_config
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SqlTask
 from datus.storage.feedback import FeedbackStore
 from datus.utils.loggings import get_logger
@@ -19,6 +21,7 @@ from .models import (
     FeedbackRequest,
     FeedbackResponse,
     HealthResponse,
+    Mode,
     RunWorkflowRequest,
     RunWorkflowResponse,
     TokenResponse,
@@ -71,6 +74,41 @@ class DatusAPIService:
 
         return self.agents[namespace]
 
+    def _create_sql_task(self, request: RunWorkflowRequest, task_id: str, agent: Agent) -> SqlTask:
+        """Create SQL task from request parameters."""
+        return SqlTask(
+            id=task_id,
+            task=request.task,
+            catalog_name=request.catalog_name or "",
+            database_name=request.database_name or "default",
+            schema_name=request.schema_name or "",
+            external_knowledge="",
+            output_dir=agent.global_config.output_dir,
+        )
+
+    def _create_response(
+        self,
+        task_id: str,
+        request: RunWorkflowRequest,
+        status: str,
+        sql_query: str = None,
+        query_results: list = None,
+        metadata: dict = None,
+        error: str = None,
+        execution_time: float = None,
+    ) -> RunWorkflowResponse:
+        """Create standardized workflow response."""
+        return RunWorkflowResponse(
+            task_id=task_id,
+            status=status,
+            workflow=request.workflow,
+            sql=sql_query,
+            result=query_results,
+            metadata=metadata,
+            error=error,
+            execution_time=execution_time,
+        )
+
     async def run_workflow(self, request: RunWorkflowRequest) -> RunWorkflowResponse:
         """Execute a workflow synchronously and return results."""
         task_id = request.task_id or str(uuid.uuid4())
@@ -81,15 +119,7 @@ class DatusAPIService:
             agent = self.get_agent(request.namespace)
 
             # Create SQL task
-            sql_task = SqlTask(
-                id=task_id,
-                task=request.task,
-                catalog_name=request.catalog_name or "",
-                database_name=request.database_name or "default",
-                schema_name=request.schema_name or "",
-                external_knowledge="",
-                output_dir=agent.global_config.output_dir,
-            )
+            sql_task = self._create_sql_task(request, task_id, agent)
 
             # Execute workflow synchronously
             result = agent.run(sql_task)
@@ -107,23 +137,20 @@ class DatusAPIService:
                     if hasattr(final_result, "execution_result"):
                         query_results = final_result.execution_result
 
-                return RunWorkflowResponse(
+                return self._create_response(
                     task_id=task_id,
+                    request=request,
                     status="completed",
-                    workflow=request.workflow,
-                    sql=sql_query,
-                    result=query_results,
+                    sql_query=sql_query,
+                    query_results=query_results,
                     metadata=result,
-                    error=None,
                     execution_time=execution_time,
                 )
             else:
-                return RunWorkflowResponse(
+                return self._create_response(
                     task_id=task_id,
+                    request=request,
                     status="failed",
-                    workflow=request.workflow,
-                    sql=None,
-                    result=None,
                     metadata=result,
                     error="Workflow execution failed",
                     execution_time=execution_time,
@@ -131,16 +158,41 @@ class DatusAPIService:
 
         except Exception as e:
             logger.error(f"Error executing workflow {task_id}: {e}")
-            return RunWorkflowResponse(
-                task_id=task_id,
-                status="error",
-                workflow=request.workflow,
-                sql=None,
-                result=None,
-                metadata=None,
-                error=str(e),
-                execution_time=time.time() - start_time,
+            return self._create_response(
+                task_id=task_id, request=request, status="error", error=str(e), execution_time=time.time() - start_time
             )
+
+    async def run_workflow_stream(self, request: RunWorkflowRequest) -> AsyncGenerator[ActionHistory, None]:
+        """Execute a workflow with streaming support and yield progress updates."""
+        task_id = request.task_id or str(uuid.uuid4())
+
+        try:
+            # Get agent for the namespace
+            agent = self.get_agent(request.namespace)
+
+            # Create SQL task
+            sql_task = self._create_sql_task(request, task_id, agent)
+
+            # Create action history manager for tracking
+            action_history_manager = ActionHistoryManager()
+
+            # Execute workflow with streaming
+            async for action in agent.run_stream(sql_task, action_history_manager=action_history_manager):
+                yield action
+
+        except Exception as e:
+            logger.error(f"Error executing streaming workflow {task_id}: {e}")
+            # Yield error action
+            error_action = ActionHistory(
+                action_id="workflow_error",
+                role=ActionRole.WORKFLOW,
+                messages=f"Workflow execution failed: {str(e)}",
+                action_type="error",
+                input={"task_id": task_id},
+                status=ActionStatus.FAILED,
+                output={"error": str(e)},
+            )
+            yield error_action
 
     async def record_feedback(self, request: FeedbackRequest) -> FeedbackResponse:
         """Record user feedback for a task."""
@@ -220,14 +272,119 @@ async def authenticate(
     return TokenResponse(**token_data)
 
 
-async def run_workflow(req: RunWorkflowRequest, current_client: str = _depends_get_current_client):
+async def run_workflow(req: RunWorkflowRequest, request: Request, current_client: str = _depends_get_current_client):
     """Execute a workflow based on the request parameters."""
     try:
-        logger.info(f"Workflow request from client: {current_client}")
-        return await service.run_workflow(req)
+        logger.info(f"Workflow request from client: {current_client}, mode: {req.mode}")
+
+        # Check if client accepts server-sent events for async mode
+        if req.mode == Mode.ASYNC:
+            accept_header = request.headers.get("accept", "")
+            if "text/event-stream" not in accept_header:
+                raise HTTPException(
+                    status_code=400, detail="For async mode, Accept header must include 'text/event-stream'"
+                )
+
+            # Return streaming response
+            return StreamingResponse(
+                generate_sse_stream(req, current_client),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",  # Disable nginx buffering
+                },
+            )
+        else:
+            # Synchronous mode - original behavior
+            return await service.run_workflow(req)
+
     except Exception as e:
         logger.error(f"Workflow execution error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
+    """Generate Server-Sent Events stream for workflow execution."""
+    import json
+
+    task_id = req.task_id or str(uuid.uuid4())
+    start_time = time.time()
+
+    try:
+        # Send started event
+        yield f"event: started\ndata: {json.dumps({'task_id': task_id, 'client': current_client})}\n\n"
+
+        # Execute workflow with streaming
+        sql_query = None
+
+        async for action in service.run_workflow_stream(req):
+            # Map different action types to SSE events
+            if action.action_type == "sql_generation" and action.status == "success":
+                if action.output and "sql_query" in action.output:
+                    sql_query = action.output["sql_query"]
+                    yield f"event: sql_generated\ndata: {json.dumps({'sql': sql_query})}\n\n"
+
+            elif action.action_type == "sql_execution" and action.status == "success":
+                output = action.output or {}
+                if output.get("has_results"):
+                    result_data = {"row_count": output.get("row_count", 0), "sql_result": output.get("sql_result", "")}
+                    yield f"event: execution_complete\ndata: {json.dumps(result_data)}\n\n"
+
+            elif action.action_type == "output_generation" and action.status == "success":
+                yield f"event: output_ready\ndata: {json.dumps({'output_generated': True})}\n\n"
+
+            elif action.action_type == "workflow_completion":
+                logger.info(
+                    f"Workflow completion action: {action}, action_type: {action.action_type}, status: {action.status}"
+                )
+                if action.status == "success":
+                    execution_time_ms = int((time.time() - start_time) * 1000)
+                    yield f"event: done\ndata: {json.dumps({'exec_time_ms': execution_time_ms})}\n\n"
+                elif action.status == "failed":
+                    error_msg = (action.output or {}).get("error", "Unknown error")
+                    yield f"event: error\ndata: {json.dumps({'error': error_msg})}\n\n"
+                # For status="processing", do nothing and wait for final status
+
+            elif action.status == "failed":
+                error_msg = (action.output or {}).get("error", "Action failed")
+                yield f"event: error\ndata: {json.dumps({'error': error_msg, 'action_id': action.action_id})}\n\n"
+
+            # Send progress updates for workflow steps and node execution
+            elif action.action_id == "workflow_initialization":
+                progress_data = {"action": "initialization", "status": action.status, "message": action.messages}
+                yield f"event: progress\ndata: {json.dumps(progress_data)}\n\n"
+
+            elif action.action_id.startswith("node_execution_"):
+                node_info = action.input or {}
+                node_data = {
+                    "action": "node_execution",
+                    "status": action.status,
+                    "node_type": node_info.get("node_type", ""),
+                    "description": node_info.get("description", ""),
+                    "message": action.messages,
+                }
+                yield f"event: node_progress\ndata: {json.dumps(node_data)}\n\n"
+
+            elif action.action_id.startswith("evaluation_"):
+                eval_data = {"action": "evaluation", "status": action.status, "message": action.messages}
+                yield f"event: progress\ndata: {json.dumps(eval_data)}\n\n"
+
+            # Send node-specific progress for streaming operations
+            elif action.action_type in [
+                "schema_linking",
+                "sql_preparation",
+                "sql_generation",
+                "sql_execution",
+                "output_preparation",
+                "output_generation",
+            ]:
+                detail_data = {"action_type": action.action_type, "status": action.status, "message": action.messages}
+                yield f"event: node_detail\ndata: {json.dumps(detail_data)}\n\n"
+
+    except Exception as e:
+        logger.error(f"SSE stream error for task {task_id}: {e}")
+        yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
 
 async def record_feedback(req: FeedbackRequest, current_client: str = _depends_get_current_client):

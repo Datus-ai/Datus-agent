@@ -8,6 +8,13 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class Mode(str, Enum):
+    """Execution mode enum."""
+
+    SYNC = "sync"
+    ASYNC = "async"
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 
@@ -23,6 +30,7 @@ class RunWorkflowRequest(BaseModel):
     workflow: str = Field(..., description="Workflow name, e.g., nl2sql")
     namespace: str = Field(..., description="Database namespace")
     task: str = Field(..., description="Natural language task description")
+    mode: Mode = Field(Mode.SYNC, description="Execution mode: sync or async")
     task_id: Optional[str] = Field(None, description="Custom task ID for idempotency")
     catalog_name: Optional[str] = Field(None, description="Catalog name")
     database_name: Optional[str] = Field(None, description="Database name")

@@ -1,7 +1,8 @@
-from typing import Dict
+from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.base import BaseResult
 
 
@@ -14,3 +15,12 @@ class BeginNode(Node):
 
     def execute(self) -> BaseResult:
         pass
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Begin node has no streaming output, just regular execution."""
+        # Begin node doesn't yield any actions
+        self.execute()
+        return
+        yield  # This makes it a generator but never actually yields
