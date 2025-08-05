@@ -273,7 +273,7 @@ class MCPServer:
                     logger.info(f"Snowflake MCP server params: {mcp_server_params}")
                     cls._snowflake_mcp_server = SilentMCPServerStdio(
                         params=mcp_server_params,
-                        client_session_timeout_seconds=10,
+                        client_session_timeout_seconds=120,
                     )
         return cls._snowflake_mcp_server
 
@@ -365,7 +365,7 @@ class MCPServer:
                         env={},  # DuckDB doesn't need additional environment variables for local usage
                     )
                     cls._duckdb_mcp_server = SilentMCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=10
+                        params=mcp_server_params, client_session_timeout_seconds=30
                     )
         return cls._duckdb_mcp_server
 
@@ -442,6 +442,6 @@ class MCPServer:
                         },
                     )
                     cls._filesystem_mcp_server = SilentMCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=10
+                        params=mcp_server_params, client_session_timeout_seconds=30
                     )
         return cls._filesystem_mcp_server

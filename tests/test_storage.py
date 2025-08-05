@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 from datetime import datetime
 from typing import Tuple
 
@@ -9,8 +10,12 @@ from conftest import PROJECT_ROOT
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
+from datus.storage.base import BaseEmbeddingStore
+from datus.storage.embedding_models import get_db_embedding_model
+from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
 from datus.utils.benchmark_utils import load_bird_dev_tasks
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import configure_logging, get_logger
 
 configure_logging(debug=True)
@@ -149,3 +154,55 @@ def test_time_spends_bird(top_n: int, bird_rag_storage: SchemaWithValueRAG, bird
         for task_id, spend_time in spend_times.items():
             if spend_time > 500:
                 f.write(f"  id: {task_id}, spends {spend_time}\n")
+
+
+@pytest.fixture
+def temp_db_path():
+    """Create a temporary directory for testing storage operations."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        yield temp_dir
+
+
+def test_save_batch(temp_db_path: str):
+    storage = SchemaStorage(db_path=temp_db_path, embedding_model=get_db_embedding_model())
+    storage.store(
+        [
+            {
+                "identifier": "1",
+                "catalog_name": "c1",
+                "database_name": "d1",
+                "schema_name": "s1",
+                "table_name": "table1",
+                "table_type": "table",
+                "definition": "create table table1(id int)",
+            },
+            {
+                "identifier": "2",
+                "catalog_name": "c1",
+                "database_name": "d1",
+                "schema_name": "s1",
+                "table_name": "table2",
+                "table_type": "table",
+                "definition": "create table table2(id int)",
+            },
+        ]
+    )
+
+    result = storage.search_all(catalog_name="c1")
+    assert result.num_rows == 2
+
+
+def test_create_table_exception(temp_db_path: str):
+    """Test search with valid parameters but empty results."""
+    model = get_db_embedding_model()
+    with pytest.raises(DatusException) as exc_info:
+        BaseEmbeddingStore(db_path=temp_db_path, table_name="empty_table", embedding_model=model)
+
+    assert exc_info.value.code == ErrorCode.STORAGE_TABLE_OPERATION_FAILED
+
+
+def test_store_exception(rag_storage: SchemaWithValueRAG):
+    with pytest.raises(DatusException) as exc_info:
+        rag_storage.store_batch(schemas=[{"id": "1", "title": "1"}], values=[])
+
+    assert exc_info.value.code == ErrorCode.STORAGE_SAVE_FAILED

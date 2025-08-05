@@ -49,7 +49,23 @@ class ErrorCode(Enum):
     # Tool errors - General
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
-    TOOL_STORE_FAILED = ("400003", "Store failed")
+
+    # Storage errors - Vector Database Operations
+    STORAGE_FAILED = ("410000", "Vector database operation failed: {error_message}")
+    STORAGE_CONNECTION_FAILED = ("410001", "Failed to connect to vector database at path: {storage_path}")
+    STORAGE_TABLE_OPERATION_FAILED = (
+        "410002",
+        "Vector database table operation failed: {operation} on collection '{table_name}' failed with {error_message}",
+    )
+    STORAGE_SAVE_FAILED = ("410003", "Failed to save data to vector database: {error_message}")
+    STORAGE_SEARCH_FAILED = (
+        "410004",
+        (
+            "Vector database search operation failed: {error_message}. "
+            "Query vector: '{query}', Filter: '{where_clause}', Limit: {top_n}"
+        ),
+    )
+    STORAGE_INDEX_FAILED = ("410005", "Vector database index operation failed: {error_message}")
 
     # Database errors
     DB_FAILED = ("500000", "Database operation failed. Error details: {error_message}")

@@ -125,13 +125,14 @@ def search_all(self, catalog_name: str = "", database_name: str = "") -> pa.Tabl
 Always wrap storage operations in try/except blocks and use the DatusException for consistent error reporting:
 
 ```python
+import pandas as pd
 from datus.utils.exceptions import DatusException, ErrorCode
 
 try:
     self.table.add(pd.DataFrame(data))
 except Exception as e:
     raise DatusException(
-        ErrorCode.TOOL_STORE_FAILED,
+        ErrorCode.STORAGE_FAILED,
         message=f"Failed to store batch because {str(e)}",
     ) from e
 ```
@@ -168,11 +169,11 @@ def store_batch(self, data: List[Dict[str, Any]]):
             return
         # Split the data into batches and store them
         for i in range(0, len(data), self.batch_size):
-            batch = data[i : i + self.batch_size]
+            batch = data[i: i + self.batch_size]
             self.table.add(pd.DataFrame(batch))
     except Exception as e:
         raise DatusException(
-            ErrorCode.TOOL_STORE_FAILED,
+            ErrorCode.STORAGE_FAILED,
             message=f"Failed to store batch because {str(e)}",
         ) from e
 ```
