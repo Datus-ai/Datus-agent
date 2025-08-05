@@ -155,6 +155,12 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--layer1", type=str, help="Layer1 for the task")
     benchmark_parser.add_argument("--layer2", type=str, help="Layer2 for the task")
     benchmark_parser.add_argument("--task_ext_knowledge", type=str, default="", help="External knowledge for the task")
+    benchmark_parser.add_argument(
+        "--max_workers",
+        type=int,
+        default=1,
+        help="Maximum number of worker threads for parallel execution (default: 1)",
+    )
 
     # generate-dataset command
     generate_dataset_parser = subparsers.add_parser(

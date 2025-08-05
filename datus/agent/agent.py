@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Set
 
 from langsmith import traceable
@@ -518,15 +519,26 @@ class Agent:
 
         with open(task_file, "r") as f:
             task_configs = [json.loads(line) for line in f]
+
+        # Filter tasks by target_task_ids if specified
+        filtered_tasks = []
         for task_config in task_configs:
             task_id = task_config["instance_id"]
             if target_task_ids and task_id not in target_task_ids:
                 continue
+            filtered_tasks.append(task_config)
 
+        logger.info(f"Loaded {len(filtered_tasks)} tasks from Spider2 benchmark")
+        logger.info("Phase 1: Running agent benchmark tests...")
+
+        def run_single_spider2_task(task_config):
+            """Execute a single Spider2 benchmark task"""
+            task_id = task_config["instance_id"]
             task = task_config["instruction"]
             database_name = task_config["db_id"]
-            logger.info(f"start benchmark with {task_config['instance_id']}, database: {database_name}")
-            self.run(
+            logger.info(f"start benchmark with {task_id}: {task}")
+
+            result = self.run(
                 SqlTask(
                     id=task_id,
                     database_type="snowflake",
@@ -536,43 +548,118 @@ class Agent:
                 )
             )
             logger.info(
-                f"Finish benchmark_ids with {task_id}, "
-                f"database: {database_name}, "
-                f"file saved in {self.global_config.output_dir}/{task_id}.csv."
+                f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
             )
+            return task_id, result
+
+        # Get concurrency level from args or default to 1
+        max_workers = getattr(self.args, "max_workers", 1)
+        logger.info(f"Using {max_workers} worker threads for parallel execution")
+
+        # Execute tasks with thread pool
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_task = {
+                executor.submit(run_single_spider2_task, task_config): task_config for task_config in filtered_tasks
+            }
+
+            # Wait for completion
+            for future in as_completed(future_to_task):
+                task_config = future_to_task[future]
+                try:
+                    task_id, _ = future.result()
+                    logger.debug(f"Task {task_id} completed successfully")
+                except Exception as exc:
+                    task_id = task_config["instance_id"]
+                    logger.error(f"Task {task_id} generated an exception: {exc}")
+
+        logger.info("Phase 2: Evaluating benchmark accuracy...")
+        return evaluate_and_report_accuracy(
+            benchmark_path,
+            self.global_config.trajectory_dir,
+            self.global_config.current_namespace,
+            self.global_config.output_dir,
+            target_task_ids,
+        )
 
     def benchmark_bird_dev(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
         tasks = load_bird_dev_tasks(benchmark_path)
 
-        logger.info(f"Benchmarking tasks: {target_task_ids}")
-        task_group = {}
-        # group tasks by database_name
+        # Convert Bird tasks to format expected by generate_gold_standard_results
+        converted_tasks = []
         for task in tasks:
             task_id = str(task["question_id"])
             if target_task_ids and task_id not in target_task_ids:
                 continue
+
+            converted_tasks.append(
+                {"question_id": task["question_id"], "sql": task["SQL"], "question": task["question"]}
+            )
+
+        logger.info(f"Loaded {len(converted_tasks)} tasks from Bird benchmark")
+        logger.info("Phase 1: Generating gold standard results...")
+        current_db_config = self.global_config.current_db_config()
+        generate_gold_standard_results(converted_tasks, benchmark_path, current_db_config, target_task_ids)
+
+        logger.info("Phase 2: Running agent benchmark tests...")
+
+        # Prepare filtered tasks for parallel execution
+        filtered_bird_tasks = []
+        for task in tasks:
+            task_id = str(task["question_id"])
+            if target_task_ids and task_id not in target_task_ids:
+                continue
+            filtered_bird_tasks.append(task)
+
+        def run_single_bird_task(task):
+            """Execute a single Bird benchmark task"""
+            task_id = str(task["question_id"])
+            question = task["question"]
             database_name = task["db_id"]
-            if database_name not in task_group:
-                task_group[database_name] = []
-            task_group[database_name].append(task)
-        for database_name, tasks in task_group.items():
-            for task in tasks:
-                self.run(
-                    SqlTask(
-                        id=str(task["question_id"]),
-                        database_type=DBType.SQLITE,
-                        task=task["question"],
-                        database_name=database_name,
-                        external_knowledge="" if "evidence" not in task else task["evidence"],
-                        output_dir=self.global_config.output_dir,
-                    )
+            logger.info(f"start benchmark with {task_id}: {question}")
+
+            result = self.run(
+                SqlTask(
+                    id=task_id,
+                    database_type=DBType.SQLITE,
+                    task=question,
+                    database_name=database_name,
+                    external_knowledge="" if "evidence" not in task else task["evidence"],
+                    output_dir=self.global_config.output_dir,
                 )
-                task_id = str(task["question_id"])
-                logger.info(
-                    f"Finish benchmark_ids with {task_id}, "
-                    f"database: {database_name}, "
-                    f"file saved in {self.global_config.output_dir}/{task_id}.csv."
-                )
+            )
+            logger.info(
+                f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
+            )
+            return task_id, result
+
+        # Get concurrency level from args or default to 1
+        max_workers = getattr(self.args, "max_workers", 1)
+        logger.info(f"Using {max_workers} worker threads for parallel execution")
+
+        # Execute tasks with thread pool
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_task = {executor.submit(run_single_bird_task, task): task for task in filtered_bird_tasks}
+
+            # Wait for completion
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    task_id, _ = future.result()
+                    logger.debug(f"Task {task_id} completed successfully")
+                except Exception as exc:
+                    task_id = str(task["question_id"])
+                    logger.error(f"Task {task_id} generated an exception: {exc}")
+
+        logger.info("Phase 3: Evaluating benchmark accuracy...")
+        return evaluate_and_report_accuracy(
+            benchmark_path,
+            self.global_config.trajectory_dir,
+            self.global_config.current_namespace,
+            self.global_config.output_dir,
+            target_task_ids,
+        )
 
     def benchmark_semantic_layer(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
         task_file = os.path.join(benchmark_path, "testing_set.csv")

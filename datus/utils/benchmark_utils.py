@@ -852,10 +852,18 @@ def _log_accuracy_summary(accuracy_report: Dict):
     def format_task_list(task_list, max_display=10):
         if not task_list:
             return "None"
+
+        # Try to sort as integers first, fallback to string sorting
+        try:
+            sorted_list = sorted(task_list, key=int)
+        except ValueError:
+            # If any task_id can't be converted to int, sort as strings
+            sorted_list = sorted(task_list, key=str)
+
         if len(task_list) <= max_display:
-            return ", ".join(sorted(task_list, key=int))
+            return ", ".join(sorted_list)
         else:
-            displayed = sorted(task_list, key=int)[:max_display]
+            displayed = sorted_list[:max_display]
             return f"{', '.join(displayed)} ... (+{len(task_list) - max_display} more)"
 
     report_lines.append(f"Matched tasks ({len(matched_ids)}):")
