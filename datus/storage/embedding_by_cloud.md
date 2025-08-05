@@ -20,7 +20,7 @@ Unsupported
 
 ## Claude
 
-## Window Context
+### Window Context
 200K
 
 ### Embeddings

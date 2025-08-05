@@ -90,8 +90,8 @@ agent:
       dbs:
         - name: ssb
           uri: duckdb:////absolute/path/to/db.db # absolute path
-        - name abc
-          uri: duckdb:///relative/path/to/abc.sqlite # relative path
+        - name: abc
+          uri: duckdb:///relative/path/to/abc.duckdb # relative path
     starrocks:
       type: starrocks
       host: ${STARROCKS_HOST}
