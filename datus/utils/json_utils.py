@@ -1,5 +1,6 @@
 import io
 import json
+import os
 from typing import Any, Dict, List, Optional, Union
 
 import json_repair
@@ -256,3 +257,27 @@ def load_jsonl_dict(file_path, key_field: str = "instance_id") -> Dict[str, Dict
             item = json.loads(line)
             data[item[key_field]] = item
     return data
+
+
+def resolve_json_env(value: str) -> str:
+    if not value or not isinstance(value, str):
+        return value
+
+    import re
+
+    # add new pattern ${VAR:-default}, two match groups 1=VAR, 2=default
+    pattern_with_default = r"\$\{([^:]+):-([^}]+)\}"
+    # match pattern ${VAR}, one match group 1=VAR
+    pattern = r"\${([^}]+)}"
+
+    def replace_env(match):
+        if len(match.groups()) == 2:
+            env_var, default_value = match.group(1), match.group(2)
+            return os.getenv(env_var, default_value)
+        else:
+            env_var = match.group(1)
+            return os.getenv(env_var, f"<MISSING:{env_var}>")
+
+    value = re.sub(pattern_with_default, replace_env, value)
+    value = re.sub(pattern, replace_env, value)
+    return value

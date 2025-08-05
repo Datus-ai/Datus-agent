@@ -108,6 +108,12 @@ class ErrorCode(Enum):
     # Database errors - Transaction (SQLAlchemy transaction issues)
     DB_TRANSACTION_FAILED = ("500009", "Database transaction failed. Error details: {error_message}")
 
+    # ...
+    # MCP Tool errors
+    MCP_SERVER_NOT_FOUND = ("600001", "MCP server not found")
+    MCP_TYPE_NOT_FOUND = ("600002", "MCP type not exist")
+    # ...
+
     def __init__(self, code: str, desc: str):
         self.code = code
         self.desc = desc
