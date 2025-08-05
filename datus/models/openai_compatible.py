@@ -521,18 +521,24 @@ class OpenAICompatibleModel(LLMBaseModel):
     def _process_tool_call_start(self, event, action_history_manager: ActionHistoryManager) -> Optional[ActionHistory]:
         """Process tool_call_item events."""
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+        import uuid
 
         raw_item = event.item.raw_item
         call_id = getattr(raw_item, "call_id", None)
         function_name = getattr(raw_item, "name", None)
         arguments = getattr(raw_item, "arguments", None)
 
-        # Check if action with this call_id already exists
-        if call_id and action_history_manager.find_action_by_id(call_id):
+        # Generate unique action_id if call_id is None or empty to prevent duplicates
+        if not call_id:
+            logger.warning("No call_id found in tool_call event; generating a unique action_id.")
+        action_id = call_id if call_id else f"tool_call_{uuid.uuid4().hex[:8]}"
+
+        # Check if action with this action_id already exists
+        if action_history_manager.find_action_by_id(action_id):
             return None
 
         action = ActionHistory(
-            action_id=call_id,
+            action_id=action_id,
             role=ActionRole.TOOL,
             messages="MCP call",
             action_type=function_name or "unknown",
