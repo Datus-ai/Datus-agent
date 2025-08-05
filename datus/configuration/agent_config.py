@@ -132,7 +132,6 @@ class AgentConfig:
         self.benchmark_paths = {
             k: os.path.expanduser(v["benchmark_path"]) for k, v in kwargs.get("benchmark", {}).items()
         }
-        logger.info(f"benchmark_paths: {self.benchmark_paths}")
         self._reflection_nodes = DEFAULT_REFLECTION_NODES
         self._reflection_nodes.update(kwargs.get("reflection_nodes", {}))
 

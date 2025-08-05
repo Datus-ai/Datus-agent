@@ -662,7 +662,7 @@ class Agent:
         )
 
     def benchmark_semantic_layer(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
-        task_file = os.path.join(benchmark_path, "testing_set.csv")
+        task_file = self.args.testing_set
         self._check_benchmark_file(task_file)
 
         tasks = []

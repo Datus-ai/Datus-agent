@@ -4,7 +4,7 @@ This document outlines testing workflows and utilities for benchmarks.
 
 ## Automated Benchmark Testing
 
-The Bird and Spider2 benchmarks now have fully automated testing integrated into the main benchmark functions. Simply run:
+The Bird, Spider2, and Semantic Layer benchmarks now have fully automated testing integrated into the main benchmark functions. Simply run:
 
 ### Bird Benchmark
 ```shell
@@ -30,17 +30,30 @@ python -m datus.main benchmark --namespace snowflake --benchmark spider2 --bench
 python -m datus.main benchmark --namespace snowflake --benchmark spider2 --max_workers 2
 ```
 
+### Semantic Layer Benchmark
+```shell
+# Basic usage
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial
+
+# With custom testing set file
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial --testing_set /path/to/custom_test.csv
+
+# With specific task IDs(line numbers)
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial --benchmark_task_ids <id1>  <id2>...
+```
+
 These commands will automatically:
-1. Generate gold standard results (Bird only)
-2. Run benchmark tests in parallel (configurable concurrency)
+1. Generate gold standard results (Bird and Semantic Layer)
+2. Run benchmark tests (Bird/Spider2 support parallel execution)
 3. Evaluate accuracy and generate reports
 
 ### Parallel Execution Options
 
-The `--max_workers` parameter controls the number of concurrent threads:
+The `--max_workers` parameter controls the number of concurrent threads for **Bird and Spider2** benchmarks:
 - **Default**: `--max_workers 1` (single-threaded, safest)
 - **Recommended**: `--max_workers 2-3` for most systems
 - **Note**: Higher concurrency may cause API rate limits or resource contention
+- **Semantic Layer**: Does not support parallel execution (runs sequentially)
 
 ## Multi-agent testing
 

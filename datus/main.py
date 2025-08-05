@@ -121,7 +121,12 @@ def create_parser() -> argparse.ArgumentParser:
         default=4,
         help="Number of threads to initialize bootstrap-kb, default is 4",
     )
-    bootstrap_parser.add_argument("--success_story", type=str, help="Path to success story file")
+    bootstrap_parser.add_argument(
+        "--success_story",
+        type=str,
+        default="benchmark/semantic_layer/success_story.csv",
+        help="Path to success story file",
+    )
     bootstrap_parser.add_argument("--metric_meta", type=str, help="Metric meta for the success story")
     bootstrap_parser.add_argument("--domain", type=str, help="Domain of the success story")
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
@@ -160,6 +165,12 @@ def create_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Maximum number of worker threads for parallel execution (default: 1)",
+    )
+    benchmark_parser.add_argument(
+        "--testing_set",
+        type=str,
+        default="benchmark/semantic_layer/testing_set.csv",
+        help="Full path to testing set file for semantic_layer benchmark",
     )
 
     # generate-dataset command

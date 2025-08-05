@@ -328,7 +328,7 @@ benchmark:
     benchmark_path: benchmark/semantic_layer
 
 metrics:
-  duckdb:
+  tutorial:
     domain: sale
     layer1: layer1
     layer2: layer2
@@ -345,11 +345,11 @@ export FILESYSTEM_MCP_DIRECTORY=</path/to/semantic-models-dir>
 ### Bootstrap Metrics Generation
 
 ```bash
-python -m datus.main bootstrap-kb --namespace duckdb --components metrics --success_story benchmark/semantic_layer/success_story.csv --metric_meta duckdb --kb_update_strategy overwrite
+python -m datus.main bootstrap-kb --namespace duckdb --components metrics --metric_meta tutorial --kb_update_strategy overwrite
 ```
 
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --plan metric_to_sql --metric_meta duckdb
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --plan metric_to_sql --metric_meta tutorial
 ```
