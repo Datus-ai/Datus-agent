@@ -63,7 +63,7 @@ def _find_config_differences(
         existing_config["registry_name"] = EmbeddingProvider.SENTENCE_TRANSFORMERS
 
     if "registry_name" not in new_config:
-        existing_config["registry_name"] = EmbeddingProvider.SENTENCE_TRANSFORMERS
+        new_config["registry_name"] = EmbeddingProvider.SENTENCE_TRANSFORMERS
 
     for key, value in existing_config.items():
         if key not in new_config:
