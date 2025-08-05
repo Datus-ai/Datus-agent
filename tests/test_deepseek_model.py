@@ -123,8 +123,9 @@ class TestDeepSeekModel:
 
         logger.debug(f"MCP response: {result.get('content', '')}")
 
+    @pytest.mark.acceptance
     @pytest.mark.asyncio
-    async def test_generate_with_mcp_stream(self):
+    async def test_generate_with_mcp_stream_acceptance(self):
         """Test MCP streaming functionality with SSB database."""
         instructions = """You are a SQLite expert analyzing the Star Schema Benchmark database.
         Provide comprehensive business analysis with multiple SQL queries.
@@ -221,9 +222,8 @@ class TestDeepSeekModel:
             logger.debug(f"Acceptance scenario {i+1} completed: {scenario['task']}")
             logger.info(f"Final result: {result}")
 
-    @pytest.mark.acceptance
     @pytest.mark.asyncio
-    async def test_generate_with_mcp_stream_acceptance(self):
+    async def test_generate_with_mcp_stream(self):
         """Acceptance test for MCP streaming with complex SSB analytics."""
         instructions = """You are a SQLite expert performing comprehensive analysis on the Star Schema Benchmark database. 
         Provide detailed business analytics with multiple queries and insights."""
