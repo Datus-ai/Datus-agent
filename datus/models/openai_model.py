@@ -84,23 +84,19 @@ class OpenAIModel(LLMBaseModel):
         # Extract and return the generated text
         return response.choices[0].message.content
 
-    def generate_with_json_output(self, prompt: Any, json_schema: Dict, **kwargs) -> Dict:
+    def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
         """
         Generate a response and ensure it conforms to the provided JSON schema.
 
         Args:
             prompt: The input prompt to send to the model
-            json_schema: The JSON schema that the output should conform to
             **kwargs: Additional generation parameters
 
         Returns:
             A dictionary representing the JSON response
         """
         # Add instructions to format the response as JSON according to the schema
-        json_prompt = (
-            f"{prompt}\n\nRespond with a JSON object that conforms to the following schema:\n"
-            f"{json.dumps(json_schema, indent=2)}"
-        )
+        json_prompt = f"{prompt}\n\nRespond with a JSON object that conforms to the following schema:\n"
 
         # Set response format to JSON
         params = {**kwargs, "response_format": {"type": "json_object"}}
