@@ -49,7 +49,7 @@ dependencies = [
     # this verison is required by pandas 2.1.4
     "pyarrow<19.0.0",
     "rich==14.0.0",
-    "prompt_toolkit>=3.0.51",
+    "prompt-toolkit>=3.0.43",
     "textual==3.2.0",
     "anthropic==0.51.0",
     "duckdb-engine>=0.17.0",
@@ -59,11 +59,6 @@ dependencies = [
     # MCP (Model Context Protocol) support
     "mcp>=1.11.0",
     "anyio>=4.9.0",
-    # sentence-transformers and lancedb depends on the torch. 
-    # For Apple Silicon (arm64) Macs, use latest torch version
-    # For Intel Macs or other platforms, use torch 2.2.2 for Python 3.12 compatibility
-    "torch==2.2.2; sys_platform != 'darwin' or platform_machine != 'arm64'",
-    "torch>=2.3.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "pymysql>=1.1.1",
     "json-repair>=0.47.6",
 ]

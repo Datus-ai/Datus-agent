@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from datus.models.base import LLMBaseModel  # 根据你的实际导入路径调整
+from datus.configuration.agent_config_loader import load_agent_config
+from datus.models.base import LLMBaseModel
 from datus.storage.embedding_models import EmbeddingModel
 from datus.utils.constants import DBType
 from datus.utils.path_utils import get_files_from_glob_pattern
@@ -100,7 +101,7 @@ def test_detect_toxicology_db(tmp_path):
            and r["uri"].endswith("toxicology.sqlite")
     ]
 
-    assert len(toxicology_files) == 1, "应检测到1个toxicology数据库"
+    assert len(toxicology_files) == 1, "1 toxicology database should be detected"
 
     # 4. 验证完整URI格式
     expected_uri = (
