@@ -4,10 +4,10 @@ import json
 import os
 import shutil
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import AsyncGenerator, Optional, Set
 
-from black.trans import defaultdict
 from langsmith import traceable
 
 from datus.agent.evaluate import evaluate_result, setup_node_input
@@ -895,7 +895,6 @@ class Agent:
         logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
         logger.info("Phase 1: Generating gold standard results...")
 
-        # current_db_config = self.global_config.current_db_config()
         generate_gold_standard_results(
             tasks, benchmark_path, self.db_manager.get_conn(self.global_config.current_namespace), target_task_ids
         )
