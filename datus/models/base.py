@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import platform
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict
 
@@ -10,7 +11,10 @@ from datus.utils.constants import LLMProvider
 
 # Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
 try:
-    multiprocessing.set_start_method("fork", force=True)
+    if platform.system() == "Windows":
+        multiprocessing.set_start_method("spawn", force=True)
+    else:
+        multiprocessing.set_start_method("fork", force=True)
 except RuntimeError:
     # set_start_method can only be called once
     pass

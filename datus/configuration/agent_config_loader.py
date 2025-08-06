@@ -57,7 +57,8 @@ def load_agent_config(**kwargs) -> AgentConfig:
         )
     with open(yaml_path, "r") as f:
         logger.info(f"Loading agent config from {yaml_path}")
-        config = yaml.safe_load(f)
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
     agent_raw = config["agent"]
     nodes = {}
     if "nodes" in agent_raw:

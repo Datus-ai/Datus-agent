@@ -59,7 +59,7 @@ dependencies = [
     # MCP (Model Context Protocol) support
     "mcp>=1.11.0",
     "anyio>=4.9.0",
-    # sentence-transformers and lancedb depends on the torch. 
+    # sentence-transformers and lancedb depends on the torch.
     # For Apple Silicon (arm64) Macs, use latest torch version
     # For Intel Macs or other platforms, use torch 2.2.2 for Python 3.12 compatibility
     "torch==2.2.2; sys_platform != 'darwin' or platform_machine != 'arm64'",
