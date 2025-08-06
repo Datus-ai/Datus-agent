@@ -26,6 +26,19 @@ agent:
       api_key: ${ANTHROPIC_API_KEY}
       #model: claude-3-7-sonnet-latest
       model: claude-sonnet-4-20250514
+    kimi-k2:
+      type: openai
+      vendor: openai
+      base_url: https://api.moonshot.cn/v1
+      api_key: ${KIMI_API_KEY}
+      model: kimi-k2-0711-preview
+    openai-o4-mini:
+      type: openai
+      vendor: openai
+      base_url: https://api.openai.com/v1
+      api_key: ${OPENAI_API_KEY}
+      model: gpt-o4-mini
+
 
   nodes:
     schema_linking:
