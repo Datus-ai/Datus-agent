@@ -7,6 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import AsyncGenerator, Optional, Set
 
+from black.trans import defaultdict
 from langsmith import traceable
 
 from datus.agent.evaluate import evaluate_result, setup_node_input
@@ -515,7 +516,7 @@ class Agent:
         try:
             from datus.tools.mcp_server import MCPServer
 
-            db_configs = self.db_manager.current_dbconfigs(self.global_config.current_namespace)
+            db_configs = self.db_manager.current_db_configs(self.global_config.current_namespace)
             db_type = self.global_config.db_type
 
             logger.info(f"Checking MCP server for database type: {db_type}")
@@ -796,20 +797,26 @@ class Agent:
         tasks = load_bird_dev_tasks(benchmark_path)
 
         # Convert Bird tasks to format expected by generate_gold_standard_results
-        converted_tasks = []
+        task_size = 0
+        group_task_ids = defaultdict(list)
         for task in tasks:
             task_id = str(task["question_id"])
             if target_task_ids and task_id not in target_task_ids:
                 continue
-
-            converted_tasks.append(
+            db_id = task["db_id"]
+            group_task_ids[db_id].append(
                 {"question_id": task["question_id"], "sql": task["SQL"], "question": task["question"]}
             )
-
-        logger.info(f"Loaded {len(converted_tasks)} tasks from Bird benchmark")
+            task_size += 1
+        if task_size == 0:
+            logger.warn("There are no benchmarks that need to be run.")
+            return {}
+        logger.info(f"Loaded {task_size} tasks from Bird benchmark")
         logger.info("Phase 1: Generating gold standard results...")
-        current_db_config = self.global_config.current_db_config()
-        generate_gold_standard_results(converted_tasks, benchmark_path, current_db_config, target_task_ids)
+
+        for db_id, converted_tasks in group_task_ids.items():
+            current_db_config = self.global_config.current_db_config(db_id)
+            generate_gold_standard_results(converted_tasks, benchmark_path, current_db_config, target_task_ids)
 
         logger.info("Phase 2: Running agent benchmark tests...")
 
@@ -887,6 +894,7 @@ class Agent:
 
         logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
         logger.info("Phase 1: Generating gold standard results...")
+
         current_db_config = self.global_config.current_db_config()
         generate_gold_standard_results(tasks, benchmark_path, current_db_config, target_task_ids)
         metric_meta = self.global_config.current_metric_meta(self.args.metric_meta)
