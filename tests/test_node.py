@@ -154,7 +154,7 @@ def sql_connector(db_manager: DBManager):
     load_dotenv()
 
     # Use connection info from environment variables
-    db = db_manager.get_conn("snowflake", db_type=DBType.SNOWFLAKE)
+    db = db_manager.get_conn("snowflake")
 
     res = db.test_connection()
     logger.debug(f"connection test {res}")

@@ -286,7 +286,6 @@ class Node(ABC):
     def _sql_connector(self) -> BaseSqlConnector:
         return db_manager_instance(self.agent_config.namespaces).get_conn(
             self.agent_config.current_namespace,
-            self.agent_config.db_type,
             self.input.database_name,
         )
 

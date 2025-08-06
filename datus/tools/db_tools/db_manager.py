@@ -45,7 +45,7 @@ class DBManager:
         self._conn_dict: Dict[str, Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]] = defaultdict(dict)
         self._db_configs: Dict[str, Dict[str, DbConfig]] = db_configs
 
-    def get_conn(self, namespace: str, db_type: str, db_name: str = "") -> BaseSqlConnector:
+    def get_conn(self, namespace: str, db_name: str = "") -> BaseSqlConnector:
         self._init_connections(namespace)
         connector_or_dict = self._conn_dict[namespace]
         if isinstance(connector_or_dict, Dict):

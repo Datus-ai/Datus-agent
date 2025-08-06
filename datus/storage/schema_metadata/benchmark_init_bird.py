@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Set, Tuple
 from datus.storage.schema_metadata.init_utils import exists_table_value
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.db_tools.db_manager import DBManager
-from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -184,7 +183,7 @@ def init_db(
     desc_path = os.path.join(db_path, "database_description")
     schema_result = []
     value_result = []
-    sql_conn = db_manager.get_conn(namespace, DBType.SQLITE, database_name)
+    sql_conn = db_manager.get_conn(namespace, database_name)
     for table_csv in os.listdir(desc_path):
         if not table_csv.endswith(".csv"):
             continue

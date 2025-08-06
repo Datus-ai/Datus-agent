@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Set
 import pandas as pd
 import yaml
 
+from datus.tools.db_tools import BaseSqlConnector
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -499,15 +500,14 @@ def evaluate_benchmark_accuracy(
 
 
 def execute_sql_and_save_results(
-    sql_query: str, task_id: str, db_executor_func, namespace_config, output_dir: str = None
+    sql_query: str, task_id: str, sql_connector: BaseSqlConnector, output_dir: str = None
 ) -> Dict:
     """Execute SQL query and save results to CSV file for benchmark evaluation.
 
     Args:
         sql_query: The SQL query to execute
         task_id: Task identifier for file naming
-        db_executor_func: Function to execute SQL query based on DB type
-        namespace_config: Database configuration
+        sql_connector: The connection of db
         output_dir: Output directory path
 
     Returns:
@@ -522,8 +522,17 @@ def execute_sql_and_save_results(
 
     try:
         # Execute SQL using provided function
-        results = db_executor_func(namespace_config, sql_query)
+        query_result = sql_connector.execute_arrow(sql_query)
+        if not query_result.success:
+            return {"success": False, "error": query_result.error or "", "output_path": None, "rows_returned": 0}
 
+        query_result = query_result.sql_return
+        results = {
+            "success": True,
+            "columns": query_result.column_names,
+            "results": query_result.to_pylist(),
+            "error": None,
+        }
         # Save results to CSV
         output_path = os.path.join(gold_dir, f"{task_id}.csv")
         save_results_to_csv(results, output_path)
@@ -549,7 +558,7 @@ def save_results_to_csv(results: Dict, output_path: str):
     """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    if results["success"] and results["results"]:
+    if results["success"] and "results" in results:
         if results["columns"] and results["results"]:
             df = pd.DataFrame(results["results"], columns=results["columns"])
         elif results["results"]:
@@ -592,99 +601,8 @@ def execute_duckdb_query(namespace_config, sql_query: str) -> Dict:
         return {"success": False, "columns": [], "results": [], "error": str(e)}
 
 
-def execute_starrocks_query(namespace_config, sql_query: str) -> Dict:
-    """Execute StarRocks query and return results."""
-    import pymysql
-
-    conn = None
-    cursor = None
-    try:
-        # Get connection parameters
-        host = namespace_config.host if hasattr(namespace_config, "host") else namespace_config.get("host", "")
-        port = namespace_config.port if hasattr(namespace_config, "port") else namespace_config.get("port", 9030)
-        username = (
-            namespace_config.username if hasattr(namespace_config, "username") else namespace_config.get("username", "")
-        )
-        password = (
-            namespace_config.password if hasattr(namespace_config, "password") else namespace_config.get("password", "")
-        )
-        database = (
-            namespace_config.database if hasattr(namespace_config, "database") else namespace_config.get("database", "")
-        )
-
-        if not all([host, username, password, database]):
-            raise Exception("Missing required StarRocks connection parameters")
-
-        conn = pymysql.connect(
-            host=host,
-            port=int(port),
-            user=username,
-            password=password,
-            database=database,
-            charset="utf8mb4",
-            autocommit=True,
-        )
-
-        cursor = conn.cursor()
-        cursor.execute(sql_query)
-        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
-        results = cursor.fetchall()
-
-        return {"success": True, "columns": column_names, "results": results, "error": None}
-
-    except Exception as e:
-        return {"success": False, "columns": [], "results": [], "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-def execute_sqlite_query(namespace_config, sql_query: str) -> Dict:
-    """Execute SQLite query and return results."""
-    import sqlite3
-
-    try:
-        db_path = namespace_config.uri if hasattr(namespace_config, "uri") else namespace_config.get("uri", "")
-        if not db_path:
-            raise Exception("SQLite database path not found in namespace config")
-
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute(sql_query)
-
-        column_names = [description[0] for description in cursor.description] if cursor.description else []
-        results = cursor.fetchall()
-        conn.close()
-
-        return {"success": True, "columns": column_names, "results": results, "error": None}
-
-    except Exception as e:
-        return {"success": False, "columns": [], "results": [], "error": str(e)}
-
-
-def get_db_executor_function(db_type: str):
-    """Get the appropriate database executor function based on DB type.
-
-    Args:
-        db_type: Database type ('duckdb', 'starrocks', 'sqlite')
-
-    Returns:
-        Function to execute SQL queries for the specified database type
-    """
-    if db_type == "duckdb":
-        return execute_duckdb_query
-    elif db_type == "starrocks":
-        return execute_starrocks_query
-    elif db_type == "sqlite":
-        return execute_sqlite_query
-    else:
-        raise Exception(f"Unsupported database type: {db_type}")
-
-
 def generate_gold_standard_results(
-    tasks: List[Dict], benchmark_path: str, db_config, target_task_ids: Optional[Set[str]] = None
+    tasks: List[Dict], benchmark_path: str, sql_connector: BaseSqlConnector, target_task_ids: Optional[Set[str]] = None
 ) -> Dict:
     """Generate gold standard results by executing expected SQL queries.
 
@@ -693,7 +611,6 @@ def generate_gold_standard_results(
     Args:
         tasks: List of task dictionaries containing question_id and sql
         benchmark_path: Path to benchmark directory for saving gold standard results
-        db_config: Database configuration object
         target_task_ids: Optional set of specific task IDs to process
 
     Returns:
@@ -702,8 +619,6 @@ def generate_gold_standard_results(
     gold_results = {}
 
     # Get appropriate executor function based on DB type
-    db_type = db_config.type
-    db_executor_func = get_db_executor_function(db_type)
 
     for task in tasks:
         task_id = str(task["question_id"])
@@ -712,9 +627,7 @@ def generate_gold_standard_results(
 
         logger.info(f"Generating gold standard for task {task_id}")
         try:
-            gold_result = execute_sql_and_save_results(
-                task["sql"], task_id, db_executor_func, db_config, benchmark_path
-            )
+            gold_result = execute_sql_and_save_results(task["sql"], task_id, sql_connector, benchmark_path)
             gold_results[task_id] = gold_result
 
             if gold_result["success"]:

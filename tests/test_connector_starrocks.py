@@ -15,7 +15,7 @@ def agent_config(namespace: str = "starrocks") -> AgentConfig:
 @pytest.fixture
 def connector(agent_config: AgentConfig) -> StarRocksConnector:
     db_manager = db_manager_instance(agent_config.namespaces)
-    connector = db_manager.get_conn(agent_config.current_namespace, agent_config.db_type)
+    connector = db_manager.get_conn(agent_config.current_namespace)
     assert isinstance(connector, StarRocksConnector)
     return connector
 

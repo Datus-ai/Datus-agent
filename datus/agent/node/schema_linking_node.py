@@ -120,7 +120,7 @@ class SchemaLinkingNode(Node):
             database_name = self.input.database_name if hasattr(self.input, "database_name") else ""
 
             # Get database connector
-            connector = db_manager.get_conn(current_namespace, self.agent_config.db_type, database_name)
+            connector = db_manager.get_conn(current_namespace, database_name)
 
             return tool.get_schems_by_db(connector=connector, input_param=self.input)
 
