@@ -60,14 +60,8 @@ class GeminiModel(LLMBaseModel):
             logger.error(f"Error generating content with Gemini: {str(e)}")
             raise
 
-    def generate_with_json_output(self, prompt: Any, json_schema: Dict = None, **kwargs) -> Dict:
-        if json_schema:
-            json_prompt = (
-                f"{prompt}\n\nRespond with a JSON object that conforms to the following schema:\n"
-                f"{json.dumps(json_schema, indent=2)}"
-            )
-        else:
-            json_prompt = f"{prompt}\n\nRespond with a valid JSON object."
+    def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
+        json_prompt = f"{prompt}\n\nRespond with a valid JSON object."
 
         response_text = self.generate(json_prompt, **kwargs)
 

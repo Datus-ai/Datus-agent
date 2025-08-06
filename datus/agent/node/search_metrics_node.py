@@ -1,7 +1,8 @@
-from typing import Dict
+from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.generate_semantic_model_node_models import SemanticModelMeta
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.tools.metric_tools.search_metric import SearchMetricsTool
@@ -41,6 +42,13 @@ class SearchMetricsNode(Node):
 
     def execute(self):
         self.result = self._execute_search_metrics()
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute metrics search with streaming support."""
+        async for action in self._search_metrics_stream(action_history_manager):
+            yield action
 
     def _execute_search_metrics(self) -> SearchMetricsResult:
         """Execute schema linking action to analyze database schema.
@@ -100,3 +108,45 @@ class SearchMetricsNode(Node):
         except Exception as e:
             logger.error(f"Failed to update search metrics context: {str(e)}")
             return {"success": False, "message": f"Search metrics context update failed: {str(e)}"}
+
+    async def _search_metrics_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute metrics search with streaming support and action history tracking."""
+        try:
+            # Metrics search action
+            search_action = ActionHistory(
+                action_id="metrics_search",
+                role=ActionRole.WORKFLOW,
+                messages="Searching for relevant metrics and business logic",
+                action_type="metrics_search",
+                input={
+                    "input_text": getattr(self.input, "input_text", ""),
+                    "matching_rate": getattr(self.input, "matching_rate", "medium"),
+                    "database_name": getattr(self.input.semantic_model_meta, "database_name", "")
+                    if hasattr(self.input, "semantic_model_meta")
+                    else "",
+                },
+                status=ActionStatus.PROCESSING,
+            )
+            yield search_action
+
+            # Execute metrics search
+            result = self._execute_search_metrics()
+
+            search_action.status = ActionStatus.SUCCESS if result.success else ActionStatus.FAILED
+            search_action.output = {
+                "success": result.success,
+                "metrics_found": result.metrics_count if hasattr(result, "metrics_count") else 0,
+                "error": result.error if hasattr(result, "error") and result.error else None,
+            }
+
+            # Store result for later use
+            self.result = result
+
+            # Yield the updated action with final status
+            yield search_action
+
+        except Exception as e:
+            logger.error(f"Metrics search streaming error: {str(e)}")
+            raise

@@ -1,9 +1,10 @@
-from typing import Dict
+from typing import AsyncGenerator, Dict, Optional
 
 from pydantic import ValidationError
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
 from datus.tools.db_tools import DBTool
 from datus.utils.loggings import get_logger
@@ -14,6 +15,13 @@ logger = get_logger(__name__)
 class ExecuteSQLNode(Node):
     def execute(self):
         self.result = self._execute_sql()
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute SQL execution with streaming support."""
+        async for action in self._execute_sql_stream(action_history_manager):
+            yield action
 
     def setup_input(self, workflow: Workflow) -> Dict:
         next_input = ExecuteSQLInput(
@@ -98,3 +106,89 @@ class ExecuteSQLNode(Node):
                 error=str(e),
                 sql_query=self.input.sql_query if hasattr(self.input, "sql_query") else "",
             )
+
+    async def _execute_sql_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute SQL with streaming support and action history tracking."""
+        try:
+            # Database connection action
+            connection_action = ActionHistory(
+                action_id="database_connection",
+                role=ActionRole.WORKFLOW,
+                messages="Establishing database connection for SQL execution",
+                action_type="database_connection",
+                input={
+                    "database_name": self.input.database_name if hasattr(self.input, "database_name") else "",
+                    "sql_query_preview": self.input.sql_query[:50] + "..."
+                    if hasattr(self.input, "sql_query") and len(self.input.sql_query) > 50
+                    else getattr(self.input, "sql_query", ""),
+                },
+                status=ActionStatus.PROCESSING,
+            )
+            yield connection_action
+
+            # Initialize database connection
+            try:
+                sql_connector = self._sql_connector()
+                tool = DBTool(sql_connector)
+
+                if not tool:
+                    connection_action.status = ActionStatus.FAILED
+                    connection_action.output = {"error": "Database connection not initialized"}
+                    logger.error("Database connection not initialized in workflow")
+                    return
+
+                connection_action.status = ActionStatus.SUCCESS
+                connection_action.output = {
+                    "connection_established": True,
+                    "database_connected": True,
+                }
+            except Exception as e:
+                connection_action.status = ActionStatus.FAILED
+                connection_action.output = {"error": str(e)}
+                logger.error(f"Database connection failed: {e}")
+                raise
+
+            # SQL execution action
+            execution_action = ActionHistory(
+                action_id="sql_execution",
+                role=ActionRole.WORKFLOW,
+                messages="Executing SQL query against the database",
+                action_type="sql_execution",
+                input={
+                    "sql_query": self.input.sql_query if hasattr(self.input, "sql_query") else "",
+                    "database_name": self.input.database_name if hasattr(self.input, "database_name") else "",
+                },
+                status=ActionStatus.PROCESSING,
+            )
+            yield execution_action
+
+            # Execute SQL - reuse existing logic
+            try:
+                result = self._execute_sql()
+
+                execution_action.status = ActionStatus.SUCCESS if result.success else ActionStatus.FAILED
+                execution_action.output = {
+                    "success": result.success,
+                    "row_count": result.row_count if hasattr(result, "row_count") else 0,
+                    "has_results": bool(result.sql_return) if hasattr(result, "sql_return") else False,
+                    "sql_result": result.sql_return if hasattr(result, "sql_return") else None,
+                    "error": result.error if hasattr(result, "error") and result.error else None,
+                }
+
+                # Store result for later use
+                self.result = result
+
+            except Exception as e:
+                execution_action.status = ActionStatus.FAILED
+                execution_action.output = {"error": str(e)}
+                logger.error(f"SQL execution error: {str(e)}")
+                raise
+
+            # Yield the updated execution action with final status
+            yield execution_action
+
+        except Exception as e:
+            logger.error(f"SQL execution streaming error: {str(e)}")
+            raise

@@ -36,3 +36,5 @@ duckdb-engine>=0.17.0
 uv>=0.7.19
 json-repair>=0.47.6
 pymysql>=1.1.1
+fastapi>=0.104.0
+uvicorn>=0.24.0

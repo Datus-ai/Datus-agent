@@ -90,8 +90,8 @@ agent:
       dbs:
         - name: ssb
           uri: duckdb:////absolute/path/to/db.db # absolute path
-        - name abc
-          uri: duckdb:///relative/path/to/abc.sqlite # relative path
+        - name: abc
+          uri: duckdb:///relative/path/to/abc.duckdb # relative path
     starrocks:
       type: starrocks
       host: ${STARROCKS_HOST}
@@ -119,7 +119,7 @@ agent:
     # Cloud model suggestions: Now we just support openai.
     database:
       registry_name: openai # default is sentence-transformers
-      model_name: text-embedding-v3
+      model_name: text-embedding-v3-small
       dim_size: 1024
       batch_size: 10 # Aliyun only supports no more than 10
       target_model: openai # target model in agent.models, if not set, the agent's target configuration will be used

@@ -1,7 +1,8 @@
-from typing import Dict
+from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
 from datus.tools.search_tools import SearchTool
 from datus.utils.loggings import get_logger
@@ -12,6 +13,13 @@ logger = get_logger(__name__)
 class DocSearchNode(Node):
     def execute(self):
         self.result = self._execute_document()
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute document search with streaming support."""
+        async for action in self._doc_search_stream(action_history_manager):
+            yield action
 
     def setup_input(self, workflow: Workflow) -> Dict:
         next_input = DocSearchInput(keywords=workflow.context.doc_search_keywords, top_n=3, method="external")
@@ -35,3 +43,41 @@ class DocSearchNode(Node):
             return DocSearchResult(success=False, error="Document search tool not found", docs={})
 
         return tool.execute(self.input)
+
+    async def _doc_search_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute document search with streaming support and action history tracking."""
+        try:
+            # Document search action
+            search_action = ActionHistory(
+                action_id="document_search",
+                role=ActionRole.WORKFLOW,
+                messages="Searching for relevant documentation",
+                action_type="document_search",
+                input={
+                    "keywords": getattr(self.input, "keywords", []),
+                    "top_n": getattr(self.input, "top_n", 3),
+                },
+                status=ActionStatus.PROCESSING,
+            )
+            yield search_action
+
+            # Execute document search
+            result = self._execute_document()
+
+            search_action.status = ActionStatus.SUCCESS if result.success else ActionStatus.FAILED
+            search_action.output = {
+                "success": result.success,
+                "documents_found": len(result.docs) if result.docs else 0,
+            }
+
+            # Store result for later use
+            self.result = result
+
+            # Yield the updated action with final status
+            yield search_action
+
+        except Exception as e:
+            logger.error(f"Document search streaming error: {str(e)}")
+            raise

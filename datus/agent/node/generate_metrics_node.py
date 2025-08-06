@@ -15,6 +15,13 @@ class GenerateMetricsNode(Node):
     def execute(self):
         self.result = self._generate_metrics()
 
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute metrics generation with streaming support."""
+        async for action in self._generate_metrics_stream(action_history_manager):
+            yield action
+
     def validate_input(self):
         if not isinstance(self.input, GenerateMetricsInput):
             raise ValueError("Input must be a GenerateMetricsInput instance")

@@ -5,6 +5,7 @@ import pyarrow as pa
 
 from datus.storage import BaseEmbeddingStore
 from datus.storage.embedding_models import get_document_embedding_model
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 class DocumentStore(BaseEmbeddingStore):
@@ -79,7 +80,7 @@ class DocumentStore(BaseEmbeddingStore):
                 )
             )
         except Exception as e:
-            raise Exception(f"Failed to store document: {str(e)}")
+            raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
 
     def search_similar_documents(self, query_embedding: List[float], top_n: int = 5) -> List[Dict[str, Any]]:
         """Search for similar documents using vector similarity.
@@ -91,12 +92,23 @@ class DocumentStore(BaseEmbeddingStore):
         Returns:
             List of similar documents with their metadata
         """
-        table = self.db.open_table("document")
-        results = (
-            table.search(query_embedding)
-            .limit(top_n)
-            .select(["title", "hierarchy", "keywords", "language", "chunk_text", "created_at"])
-            .to_list()
-        )
-
-        return results
+        try:
+            results = (
+                self.table.search(query_embedding)
+                .limit(top_n)
+                .select(["title", "hierarchy", "keywords", "language", "chunk_text", "created_at"])
+                .to_list()
+            )
+            return results
+        except Exception as e:
+            raise DatusException(
+                ErrorCode.STORAGE_SEARCH_FAILED,
+                message_args={
+                    "error_message": str(e),
+                    "query": str(query_embedding)[:50] + "..."
+                    if len(str(query_embedding)) > 50
+                    else str(query_embedding),
+                    "where_clause": "(none)",
+                    "top_n": str(top_n),
+                },
+            ) from e

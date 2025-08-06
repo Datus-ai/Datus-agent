@@ -1,0 +1,34 @@
+name: Run Integration Tests Every Monday
+
+on:
+  schedule:
+    - cron: '0 1 * * 1' # Monday, 1 a.m. UTC
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  run-integration:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Setup config file
+        run: |
+          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
+          cp /home/datus_ci/ci_template/ci.env .env
+          source .env
+
+      - name: run integration
+        run: |
+          python -m pytest tests/test_integration_benchmark.py

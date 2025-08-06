@@ -1,7 +1,8 @@
-from typing import Dict
+from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
@@ -13,6 +14,13 @@ logger = get_logger(__name__)
 class SchemaLinkingNode(Node):
     def execute(self):
         self.result = self._execute_schema_linking()
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute schema linking with streaming support."""
+        async for action in self._schema_linking_stream(action_history_manager):
+            yield action
 
     def update_context(self, workflow: Workflow) -> Dict:
         """Update schema linking results to workflow context."""
@@ -188,3 +196,79 @@ class SchemaLinkingNode(Node):
             parts.append(f"Relevant Business Knowledge:\n{enhanced}")
 
         return "\n\n".join(parts)
+
+    async def _schema_linking_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute schema linking with streaming support and action history tracking."""
+        try:
+            # External knowledge search action
+            knowledge_action = ActionHistory(
+                action_id="external_knowledge_search",
+                role=ActionRole.WORKFLOW,
+                messages="Searching external knowledge base for relevant business context",
+                action_type="knowledge_search",
+                input={
+                    "query": self.input.input_text if hasattr(self.input, "input_text") else "",
+                    "database_name": self.input.database_name if hasattr(self.input, "database_name") else "",
+                },
+                status=ActionStatus.PROCESSING,
+            )
+            yield knowledge_action
+
+            # Execute external knowledge search
+            try:
+                enhanced_knowledge = self._search_external_knowledge(
+                    self.input.input_text if hasattr(self.input, "input_text") else "",
+                    "",
+                    "",
+                    "",  # domain, layer1, layer2 - would need to get from workflow if available
+                )
+                knowledge_action.status = ActionStatus.SUCCESS
+                knowledge_action.output = {
+                    "knowledge_found": bool(enhanced_knowledge),
+                    "knowledge_length": len(enhanced_knowledge) if enhanced_knowledge else 0,
+                }
+            except Exception as e:
+                knowledge_action.status = ActionStatus.FAILED
+                knowledge_action.output = {"error": str(e)}
+                logger.warning(f"External knowledge search failed: {e}")
+
+            # Schema linking action
+            schema_action = ActionHistory(
+                action_id="schema_linking",
+                role=ActionRole.WORKFLOW,
+                messages="Analyzing database schema and linking relevant tables",
+                action_type="schema_linking",
+                input={
+                    "input_text": self.input.input_text if hasattr(self.input, "input_text") else "",
+                    "database_name": self.input.database_name if hasattr(self.input, "database_name") else "",
+                    "matching_rate": self.input.matching_rate if hasattr(self.input, "matching_rate") else "medium",
+                },
+                status=ActionStatus.PROCESSING,
+            )
+            yield schema_action
+
+            # Execute schema linking - reuse existing logic
+            try:
+                result = self._execute_schema_linking()
+
+                schema_action.status = ActionStatus.SUCCESS
+                schema_action.output = {
+                    "success": result.success,
+                    "tables_found": len(result.table_schemas) if result.table_schemas else 0,
+                    "values_found": len(result.table_values) if result.table_values else 0,
+                }
+
+                # Store result for later use
+                self.result = result
+
+            except Exception as e:
+                schema_action.status = ActionStatus.FAILED
+                schema_action.output = {"error": str(e)}
+                logger.error(f"Schema linking error: {str(e)}")
+                raise
+
+        except Exception as e:
+            logger.error(f"Schema linking streaming error: {str(e)}")
+            raise

@@ -21,6 +21,13 @@ class ReasonSQLNode(Node):
     def execute(self):
         self.result = self._reason_sql()
 
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute SQL reasoning with streaming support."""
+        async for action in self._reason_sql_stream(action_history_manager):
+            yield action
+
     def setup_input(self, workflow: Workflow) -> Dict:
         next_input = ReasoningInput(
             database_type=workflow.task.database_type,
