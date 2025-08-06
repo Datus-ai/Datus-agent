@@ -26,10 +26,3 @@ before_reflection_*.yaml
 /benchmark/semantic_layer/semantic_models
 /dist
 *.egg-info
-run_integration.sh
-save_ds/
-mcp/mcp-sqlite-server/sqlite_mcp_server.db
-save_qwen_plus/
-test_dataset.json
-test_dataset_parquet.parquet
-benchmark/spider2
