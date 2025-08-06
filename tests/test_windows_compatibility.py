@@ -13,7 +13,6 @@ from datus.utils.path_utils import get_files_from_glob_pattern
 
 
 # test datus.models.base
-@pytest.mark.acceptance
 @pytest.mark.parametrize(
     "platform_name, expected_method",
     [
@@ -35,13 +34,12 @@ def test_multiprocessing_start_method_base(platform_name, expected_method):
 
 
 # test datus.storage.embedding_models
-@pytest.mark.acceptance
 @pytest.mark.parametrize(
     "platform_name, expected_method",
     [
-        ("Windows", "spawn"),  # Windows
-        ("Linux", "fork"),  # not Windows
-        ("Darwin", "fork"),  # macOS
+        ("Windows", "spawn"),
+        ("Linux", "fork"),
+        ("Darwin", "fork"),
     ],
 )
 def test_multiprocessing_start_method_embedding(platform_name, expected_method):
@@ -55,8 +53,6 @@ def test_multiprocessing_start_method_embedding(platform_name, expected_method):
 
             mock_set.assert_called_once_with(expected_method, force=True)
 
-
-@pytest.mark.unit
 def test_detect_toxicology_db(tmp_path):
     test_files = [
         "benchmark/bird/dev_20240627/dev_databases/medical/toxicology.sqlite",
