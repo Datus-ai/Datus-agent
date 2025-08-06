@@ -111,7 +111,7 @@ async def run(model_name, max_turns=10, question=None):
         },
     ) as server:
         # Create minimal agent and run context for the new interface
-        temp_agent = Agent(name='test-agent')
+        temp_agent = Agent(name="test-agent")
         run_context = RunContextWrapper(context=None, usage=Usage())
         tools = await server.list_tools(run_context, temp_agent)
 
