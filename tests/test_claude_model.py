@@ -60,10 +60,10 @@ class TestClaudeModel:
     @pytest.mark.asyncio
     async def test_generate_with_mcp(self):
         """Test MCP integration with SSB database."""
-        instructions = """You are a SQLite expert working with the Star Schema Benchmark (SSB) database. 
+        instructions = """You are a SQLite expert working with the Star Schema Benchmark (SSB) database.
         The database contains tables: customer, supplier, part, date, and lineorder.
         Focus on business analytics and data relationships.
-        
+
         Output format: {
             "sql": "SELECT ...",
             "result": "Query results...",
@@ -89,31 +89,118 @@ class TestClaudeModel:
 
     @pytest.mark.asyncio
     async def test_generate_with_mcp_stream(self):
-        """Test MCP streaming functionality with SSB database."""
-        instructions = """You are a SQLite expert analyzing the Star Schema Benchmark database.
-        Provide comprehensive business insights with detailed SQL analysis.
-        
-        Output format: {
-            "sql": "SELECT ...",
-            "result": "Analysis results...",
-            "explanation": "Business insights..."
-        }"""
+        """Acceptance test for MCP streaming with complex SSB analytics."""
+        instructions = """You are a SQLite expert performing comprehensive analysis on the Star Schema Benchmark
+          database. Provide detailed business analytics with multiple queries and insights."""
 
-        question = (
-            """database_type='sqlite' task='Analyze seasonal sales patterns by month and region in the SSB database'"""
-        )
+        complex_scenarios = [
+            "Analyze revenue trends by customer region and supplier nation with year-over-year growth",
+            "Calculate profitability metrics by part category and manufacturer with discount impact analysis",
+            (
+                "Perform comprehensive supplier performance analysis including revenue, volume, and "
+                "geographic distribution"
+            ),
+        ]
+
+        ssb_db_path = "tests/data/SSB.db"
+
+        for i, scenario in enumerate(complex_scenarios):
+            question = f"database_type='sqlite' task='{scenario}'"
+            mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+
+            action_count = 0
+            total_content_length = 0
+
+            async for action in self.model.generate_with_mcp_stream(
+                prompt=question,
+                output_type=str,
+                mcp_servers={"sqlite": mcp_server},
+                instruction=instructions,
+            ):
+                action_count += 1
+                assert action is not None, f"Stream action should not be None for scenario {i+1}"
+
+                # Track content if available
+                if hasattr(action, "content") and action.content:
+                    total_content_length += len(str(action.content))
+
+                logger.debug(f"Acceptance stream scenario {i+1}, action {action_count}: {type(action)}")
+
+            assert action_count > 0, f"Should receive at least one streaming action for scenario {i+1}"
+            logger.debug(
+                f"Acceptance stream scenario {i+1} completed: {action_count} actions, "
+                f"{total_content_length} total content length"
+            )
+            logger.info(f"Final Action: {action}")
+
+            # Only run one scenario to avoid timeout in normal testing
+            break
+
+    @pytest.mark.asyncio
+    async def test_generate_with_tools_session(self):
+        """Test MCP integration with session management."""
+        import uuid
+
+        session_id = f"test_mcp_session_{uuid.uuid4().hex[:8]}"
+
+        # Create session
+        session = self.model.create_session(session_id)
+
+        instructions = """You are a SQLite expert working with the SSB database.
+        Answer questions about the database schema and data."""
+
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
-        action_count = 0
-        async for action in self.model.generate_with_mcp_stream(
-            prompt=question,
+        # First question: explore schema
+        question1 = "database_type='sqlite' task='Show me all the tables in the database'"
+        result1 = await self.model.generate_with_tools(
+            prompt=question1,
             output_type=str,
             mcp_servers={"sqlite": mcp_server},
             instruction=instructions,
-        ):
-            action_count += 1
-            assert action is not None, "Stream action should not be None"
-            logger.debug(f"Stream action {action_count}: {type(action)}")
+            session=session,
+        )
 
-        assert action_count > 0, "Should receive at least one streaming action"
+        assert result1 is not None
+        assert "content" in result1
+        assert "sql_contexts" in result1
+
+        # Second question in same session: follow-up query
+        question2 = "database_type='sqlite' task='Count the total number of rows in the customer table'"
+        result2 = await self.model.generate_with_tools(
+            prompt=question2,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            session=session,
+        )
+
+        assert result2 is not None
+        assert "content" in result2
+        assert "sql_contexts" in result2
+
+        # Third question: reference previous answer to test session continuity
+        question3 = "database_type='sqlite' task='What's the result of the previous number plus 5?'"
+        result3 = await self.model.generate_with_tools(
+            prompt=question3,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            session=session,
+        )
+
+        assert result3 is not None
+        assert "content" in result3
+        assert "sql_contexts" in result3
+
+        # Verify session persistence
+        session_info = self.model.session_manager.get_session_info(session_id)
+        assert session_info["exists"] is True
+        assert session_info["item_count"] > 0
+
+        # Cleanup
+        self.model.delete_session(session_id)
+
+        logger.debug(f"MCP session Q1: {result1.get('content', '')[:100]}...")
+        logger.debug(f"MCP session Q2: {result2.get('content', '')[:100]}...")

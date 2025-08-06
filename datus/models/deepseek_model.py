@@ -101,13 +101,8 @@ class DeepSeekModel(OpenAICompatibleModel):
             logger.error(f"Failed to save LLM trace: {str(e)}")
 
     def token_count(self, prompt: str) -> int:
-        """Estimate the number of tokens in a text using the deepseek tokenizer.
-
-        Args:
-            prompt (str): The text to count the tokens of.
-
-        Returns:
-            int: The number of tokens in the text.
+        """
+        Estimate the number of tokens in a text using the deepseek tokenizer.
         """
         return int(len(prompt) * 0.3 + 0.5)
 

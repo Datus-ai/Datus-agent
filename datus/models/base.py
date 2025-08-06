@@ -4,7 +4,7 @@ import platform
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional
 
-from agents import SQLiteSession
+from agents import FunctionTool, SQLiteSession
 from agents.mcp import MCPServerStdio
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
@@ -90,59 +90,12 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             A dictionary representing the JSON response
         """
 
-    def to_dict(self) -> Dict[str, str]:
-        return {"model_name": self.model_config.model}
-
-    @abstractmethod
-    def set_context(self, workflow=None, current_node=None):
-        """Set workflow and node context for potential trace saving.
-
-        Args:
-            workflow: Current workflow instance
-            current_node: Current node instance
-
-        Note:
-            This is a default implementation. Subclasses can override this
-            method to implement specific tracing functionality.
-        """
-
-    @abstractmethod
-    def token_count(self, prompt: str) -> int:
-        pass
-
-    # Session management - concrete implementation shared by all models
-    @property
-    def session_manager(self):
-        """Lazy initialization of session manager."""
-        if self._session_manager is None:
-            from datus.models.session_manager import SessionManager
-
-            self._session_manager = SessionManager()
-        return self._session_manager
-
-    def create_session(self, session_id: str) -> SQLiteSession:
-        """Create or get a session for multi-turn conversations."""
-        return self.session_manager.create_session(session_id)
-
-    def clear_session(self, session_id: str) -> None:
-        """Clear conversation history for a session."""
-        self.session_manager.clear_session(session_id)
-
-    def delete_session(self, session_id: str) -> None:
-        """Delete a session completely."""
-        self.session_manager.delete_session(session_id)
-
-    def list_sessions(self) -> List[str]:
-        """List all available sessions."""
-        return self.session_manager.list_sessions()
-
-    # New unified tool interface - abstract methods that models must implement
     @abstractmethod
     async def generate_with_tools(
         self,
         prompt: str,
+        tools: Optional[List[FunctionTool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
-        tools: Optional[List[Any]] = None,
         instruction: str = "",
         output_type: type = str,
         max_turns: int = 10,
@@ -151,13 +104,11 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     ) -> Dict:
         """Generate response with unified tool support.
 
-        This replaces generate_with_mcp and supports both MCP servers and regular tools.
-
         Args:
-            prompt: Input prompt
-            mcp_servers: Optional MCP servers to use
+            prompt: Input prompt(user prompt)
             tools: Optional regular tools to use
-            instruction: System instruction
+            mcp_servers: Optional MCP servers to use
+            instruction: System instruction(system prompt)
             output_type: Expected output type
             max_turns: Maximum conversation turns
             session: Optional session for multi-turn context
@@ -171,8 +122,8 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     async def generate_with_tools_stream(
         self,
         prompt: str,
+        tools: Optional[List[FunctionTool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
-        tools: Optional[List[Any]] = None,
         instruction: str = "",
         output_type: type = str,
         max_turns: int = 10,
@@ -199,6 +150,45 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             ActionHistory objects for streaming updates
         """
 
+    def set_context(self, workflow=None, current_node=None):
+        """
+        Set workflow and node context for potential trace saving.
+        """
+        self.workflow = workflow
+        self.current_node = current_node
+
+    @abstractmethod
+    def token_count(self, prompt: str) -> int:
+        pass
+
+    def to_dict(self) -> Dict[str, str]:
+        return {"model_name": self.model_config.model}
+
+    @property
+    def session_manager(self):
+        """Lazy initialization of session manager."""
+        if self._session_manager is None:
+            from datus.models.session_manager import SessionManager
+
+            self._session_manager = SessionManager()
+        return self._session_manager
+
+    def create_session(self, session_id: str) -> SQLiteSession:
+        """Create or get a session for multi-turn conversations."""
+        return self.session_manager.create_session(session_id)
+
+    def clear_session(self, session_id: str) -> None:
+        """Clear conversation history for a session."""
+        self.session_manager.clear_session(session_id)
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete a session completely."""
+        self.session_manager.delete_session(session_id)
+
+    def list_sessions(self) -> List[str]:
+        """List all available sessions."""
+        return self.session_manager.list_sessions()
+
     # Backward compatibility - concrete implementation using new methods
     async def generate_with_mcp(
         self,
@@ -210,18 +200,6 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         **kwargs,
     ) -> Dict:
         """Generate a response using multiple MCP (Machine Conversation Protocol) servers.
-
-        Args:
-            prompt: The input prompt to send to the model
-            mcp_servers: Dictionary of MCP servers to use for execution
-            instruction: The instruction for the agent
-            output_type: The type of output expected from the agent.
-                Note: DeepSeek and Qwen models don't support structured output,
-                so they will force this to 'str' regardless of the provided type.
-                Claude and OpenAI models support structured output and will use
-                the provided output_type.
-            max_turns: Maximum number of conversation turns
-            **kwargs: Additional parameters for the agent
 
         Returns:
             The result from the MCP agent execution with content and sql_contexts

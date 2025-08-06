@@ -25,6 +25,8 @@ The module uses a factory pattern for dynamic model instantiation, supports both
 
 ### Provider Implementations
 
+Currently, only Claude uses a separate implementation; all other models inherit from OpenAICompatibleModel.
+
 **`openai_model.py`** - OpenAI GPT models
 - Inherits from `OpenAICompatibleModel`
 - Uses tiktoken for accurate token counting
@@ -34,7 +36,7 @@ The module uses a factory pattern for dynamic model instantiation, supports both
 - Custom implementation for Claude's native API
 - Anthropic tool format conversion for MCP integration
 - Prompt caching support for improved performance
-- Dual client support (OpenAI-compatible and native Anthropic)
+- Using prompt cache mannually
 
 **`deepseek_model.py`** - DeepSeek models
 - OpenAI-compatible implementation with custom token counting
@@ -57,7 +59,7 @@ The module uses a factory pattern for dynamic model instantiation, supports both
 - Session lifecycle management (create, clear, delete, list)
 
 **`mcp_utils.py`** - Model Context Protocol utilities
-- `multiple_mcp_servers()`: Async context manager for MCP server lifecycle
+- `multiple_mcp_servers()`: Async context manager for MCP server lifecycle (This should be changed later)
 - Connection retry logic and error handling
 - Safe server startup and cleanup
 
@@ -67,126 +69,16 @@ The module uses a factory pattern for dynamic model instantiation, supports both
 - Reflection and reasoning content extraction
 
 ## Key Interface Methods
-
-The `LLMBaseModel` provides a unified interface across all model providers through four primary methods:
-
 ### `generate(prompt, enable_thinking=False, **kwargs) -> str`
 
-The fundamental text generation method for synchronous operations.
-
-```python
-# Basic text generation
-response = model.generate("Explain machine learning")
-
-# Enable reasoning for hybrid models (DeepSeek R1, OpenAI O-series)
-response = model.generate(
-    "Solve this complex problem step by step",
-    enable_thinking=True,
-    temperature=0.7,
-    max_tokens=2000
-)
-```
-
-**Key Features:**
-- Synchronous execution with retry logic and exponential backoff
-- Support for reasoning content in hybrid models
-- Provider-agnostic parameter handling
-- Automatic error classification and recovery
-
 ### `generate_with_json_output(prompt, **kwargs) -> Dict`
-
-Generates structured JSON responses with automatic parsing and validation.
-
-```python
-# Request structured output
-result = model.generate_with_json_output(
-    "Generate a product summary with title, description, and price",
-    response_format={"type": "json_object"},
-    temperature=0.3
-)
-print(result["title"])  # Parsed JSON dictionary
-```
-
-**Key Features:**
-- Automatic JSON parsing with fallback extraction
-- Structured output enforcement where supported (OpenAI, Claude)
-- Error handling for malformed JSON responses
-- Backward compatibility across all providers
-
 ### `generate_with_tools(prompt, mcp_servers=None, tools=None, **kwargs) -> Dict`
-
-**Primary method** for tool-enabled generation supporting both MCP servers and regular tools.
-
-```python
-# Use MCP servers for database access
-result = await model.generate_with_tools(
-    prompt="Show me quarterly sales trends",
-    mcp_servers={"db": snowflake_server},
-    instruction="Use available tools to query data",
-    output_type=str,
-    max_turns=10,
-    session=user_session
-)
-
-# Access results
-print(result["content"])        # Final response
-print(result["sql_contexts"])   # SQL execution history
-```
-
-**Key Features:**
-- Unified interface for MCP servers and regular tools
-- Multi-turn conversation support with context preservation
-- Session-based persistence for complex workflows
-- SQL context extraction for data analysis workflows
-- Comprehensive error handling and retry logic
-
-### `generate_with_tools_stream(prompt, **kwargs) -> AsyncGenerator[ActionHistory]`
-
-Streaming version of `generate_with_tools` for real-time applications and CLI integration.
-
-```python
-# Stream tool execution with action history
 async for action in model.generate_with_tools_stream(
     prompt="Analyze customer data and create report",
     mcp_servers=mcp_servers,
     instruction="You are a data analyst",
     action_history_manager=history_manager
-):
-    if action.role == ActionRole.TOOL:
-        print(f"🔧 Executing: {action.action_type}")
-    elif action.role == ActionRole.ASSISTANT:
-        print(f"💭 Thinking: {action.messages}")
-```
-
-**Key Features:**
-- Real-time streaming of tool execution steps
-- Detailed action history tracking for debugging
-- Support for workflow interruption and human-in-the-loop
-- Ideal for CLI applications and interactive sessions
-
-### Deprecated Methods (Backward Compatibility)
-
-⚠️ **These methods are deprecated and will be removed in a future version:**
-
-- `generate_with_mcp(prompt, mcp_servers, ...)` → Use `generate_with_tools` instead
-- `generate_with_mcp_stream(prompt, mcp_servers, ...)` → Use `generate_with_tools_stream` instead
-
-```python
-# OLD (deprecated)
-result = await model.generate_with_mcp(prompt, mcp_servers, instruction, str)
-
-# NEW (recommended)
-result = await model.generate_with_tools(
-    prompt=prompt, 
-    mcp_servers=mcp_servers, 
-    instruction=instruction, 
-    output_type=str
-)
-```
-
-The new methods provide the same functionality with improved parameter naming and future extensibility for non-MCP tools.
-
-## How to use this module
+):## How to use this module
 
 ### Basic Model Usage
 
@@ -416,49 +308,14 @@ For comprehensive testing including edge cases, streaming, MCP integration, and 
 pytest tests/test_*_model.py -v
 ```
 
-This executes the complete test suite covering:
-- All generation methods (sync/async, with/without tools)
-- MCP server integration and tool calling
-- Session management and persistence
-- Streaming responses and action history
-- Error handling and retry logic
-- Token counting accuracy
-- Configuration validation
-
-### Test Coverage by Model
-
-Each model implementation includes tests for:
-- **OpenAI**: tiktoken integration, structured output, reasoning content
-- **Claude**: Native API and OpenAI-compatible modes, prompt caching
-- **DeepSeek**: Reasoning models, trace saving, custom tokenization
-- **Qwen**: Transformers tokenizer, Dashscope API integration
-- **Gemini**: Google Generative AI client, native token counting
-
-### Running Tests for Specific Models
-
-```bash
-# Test individual model implementations
-pytest tests/test_openai_model.py -v
-pytest tests/test_claude_model.py -v
-pytest tests/test_deepseek_model.py -v
-pytest tests/test_qwen_model.py -v
-pytest tests/test_gemini_model.py -v
-
-# Test core base functionality
-pytest tests/test_base_model.py -v
-pytest tests/test_session_manager.py -v
-```
-
 ### Test Environment Setup
 
 Before running tests, ensure you have the required API keys configured:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
+export ANTHROPIC_API_KEY="sk-..."
 export DEEPSEEK_API_KEY="sk-..."
 export QWEN_API_KEY="sk-..."
 export GEMINI_API_KEY="..."
 ```
-
-Note: Tests use mock responses where possible to avoid API costs, but some integration tests require valid API keys.

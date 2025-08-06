@@ -467,7 +467,10 @@ class TestNode:
                 metrics=[],
                 sql_task=SqlTask(
                     id="revenue_test",
-                    task="Total revenue for January 1994 where discount was between 4 and 6 and quantity sold was between 26 and 35",
+                    task=(
+                        "Total revenue for January 1994 where discount was between 4 and 6 and "
+                        "quantity sold was between 26 and 35"
+                    ),
                     database_type="sqlite",
                     database_name="SSB",
                     output_dir="output/test",

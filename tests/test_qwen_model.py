@@ -65,14 +65,14 @@ class TestQwenModel:
         if not hasattr(self.model, "generate_with_mcp"):
             pytest.skip("QwenModel does not support generate_with_mcp")
 
-        instructions = """You are a SQLite expert working with the Star Schema Benchmark (SSB) database. 
+        instructions = """You are a SQLite expert working with the Star Schema Benchmark (SSB) database.
         The database contains tables: customer, supplier, part, date, and lineorder.
         Your task is to:
         1. Understand the user's business question
         2. Generate appropriate SQL queries for the SSB schema
         3. Execute the queries using the provided tools
         4. Present the results clearly
-        
+
         Output format: {
             "sql": "SELECT ...",
             "result": "Query results...",
@@ -107,14 +107,14 @@ class TestQwenModel:
 
         instructions = """You are a SQLite expert analyzing the Star Schema Benchmark database.
         Provide detailed analysis of the SSB data with business insights.
-        
+
         Output format: {
             "sql": "SELECT ...",
             "result": "Analysis results...",
             "explanation": "Business insights..."
         }"""
 
-        question = """database_type='sqlite' task='Analyze the revenue trends by year from the lineorder table in the SSB database'"""
+        question = "database_type='sqlite' task='Analyze the revenue trends by year from the lineorder table'"
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 

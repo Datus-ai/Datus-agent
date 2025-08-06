@@ -68,7 +68,7 @@ class TestDeepSeekModel:
         assert isinstance(result, dict), "Response should be a dictionary"
         assert len(result) > 0, "Response should not be empty"
 
-        logger.debug(f"JSON response: {result}")
+        logger.info(f"JSON response: {result}")
 
     def test_generate_with_system_prompt(self):
         """Test generation with system and user prompts."""
@@ -91,22 +91,26 @@ class TestDeepSeekModel:
     @pytest.mark.asyncio
     async def test_generate_with_mcp(self):
         """Test MCP integration with SSB database."""
-        instructions = """You are a SQLite expert working with the Star Schema Benchmark (SSB) database. 
+        instructions = """You are a SQLite expert working with the Star Schema Benchmark (SSB) database.
         The database contains tables: customer, supplier, part, date, and lineorder.
         Focus on business analytics queries.
-        
+
         Key tables and their relationships:
         - lineorder: main fact table with lo_revenue, lo_discount, lo_quantity, lo_extendedprice
-        - date: dimension table with d_year, d_datekey  
+        - date: dimension table with d_year, d_datekey
         - customer, supplier, part: other dimension tables
-        
+
         Output format: {
             "sql": "SELECT ...",
             "result": "Query results...",
             "explanation": "Business explanation..."
         }"""
 
-        question = """database_type='sqlite' task='Calculate the total revenue in 1993 from orders with a discount between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the extended price by the discount'"""
+        question = (
+            "database_type='sqlite' task='Calculate the total revenue in 1993 from orders with a discount "
+            "between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the "
+            "extended price by the discount'"
+        )
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
@@ -129,18 +133,19 @@ class TestDeepSeekModel:
         """Test MCP streaming functionality with SSB database."""
         instructions = """You are a SQLite expert analyzing the Star Schema Benchmark database.
         Provide comprehensive business analysis with multiple SQL queries.
-        
+
         Database schema: customer, supplier, part, date, lineorder tables.
         Focus on revenue and sales analysis with detailed explanations.
-        
+
         Output format: {
             "sql": "SELECT ...",
             "result": "Analysis results...",
             "explanation": "Business insights..."
         }"""
 
-        # question = """database_type='sqlite' task='Analyze the top 5 suppliers by total revenue and their regional distribution using the SSB database'"""
-        question = """database_type='sqlite' task='Calculate the total revenue in 1993 from orders with a discount between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the extended price by the discount'"""
+        question = """database_type='sqlite' task='Calculate the total revenue in 1993 from orders with a discount
+         between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the extended
+         price by the discount'"""
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
@@ -195,7 +200,7 @@ class TestDeepSeekModel:
             },
         ]
 
-        instructions = """You are a SQLite expert working with the Star Schema Benchmark database. 
+        instructions = """You are a SQLite expert working with the Star Schema Benchmark database.
         Execute business analytics queries and provide clear results with proper joins."""
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
@@ -225,13 +230,19 @@ class TestDeepSeekModel:
     @pytest.mark.asyncio
     async def test_generate_with_mcp_stream(self):
         """Acceptance test for MCP streaming with complex SSB analytics."""
-        instructions = """You are a SQLite expert performing comprehensive analysis on the Star Schema Benchmark database. 
-        Provide detailed business analytics with multiple queries and insights."""
+        instructions = """You are a SQLite expert performing comprehensive analysis on the Star Schema Benchmark
+        database. Provide detailed business analytics with multiple queries and insights."""
 
         complex_scenarios = [
-            "Analyze revenue trends by customer region and supplier nation with year-over-year growth in the SSB database",
+            (
+                "Analyze revenue trends by customer region and supplier nation with year-over-year "
+                "growth in the SSB database"
+            ),
             "Calculate profitability metrics by part category and manufacturer with discount impact analysis",
-            "Perform comprehensive supplier performance analysis including revenue, volume, and geographic distribution",
+            (
+                "Perform comprehensive supplier performance analysis including revenue, volume, and "
+                "geographic distribution"
+            ),
         ]
 
         ssb_db_path = "tests/data/SSB.db"
@@ -243,35 +254,26 @@ class TestDeepSeekModel:
             action_count = 0
             total_content_length = 0
 
-            try:
-                async for action in self.model.generate_with_mcp_stream(
-                    prompt=question,
-                    output_type=str,
-                    mcp_servers={"sqlite": mcp_server},
-                    instruction=instructions,
-                ):
-                    action_count += 1
-                    assert action is not None, f"Stream action should not be None for scenario {i+1}"
+            async for action in self.model.generate_with_mcp_stream(
+                prompt=question,
+                output_type=str,
+                mcp_servers={"sqlite": mcp_server},
+                instruction=instructions,
+                max_turns=30,
+            ):
+                action_count += 1
+                assert action is not None, f"Stream action should not be None for scenario {i+1}"
 
-                    # Track content if available
-                    if hasattr(action, "content") and action.content:
-                        total_content_length += len(str(action.content))
+                # Track content if available
+                if hasattr(action, "content") and action.content:
+                    total_content_length += len(str(action.content))
 
-                    logger.debug(f"Acceptance stream scenario {i+1}, action {action_count}: {type(action)}")
-            except Exception as e:
-                # Handle pydantic validation errors from openai-agents library
-                error_msg = str(e).lower()
-                if "responsetextdeltaevent" in error_msg and "logprobs" in error_msg:
-                    logger.warning(
-                        f"Skipping streaming acceptance test scenario {i+1} due to known openai-agents + DeepSeek compatibility issue: {e}"
-                    )
-                    pytest.skip("Pydantic validation error in MCP streaming - known openai-agents compatibility issue")
-                else:
-                    raise
+                logger.debug(f"Acceptance stream scenario {i+1}, action {action_count}: {type(action)}")
 
             assert action_count > 0, f"Should receive at least one streaming action for scenario {i+1}"
             logger.debug(
-                f"Acceptance stream scenario {i+1} completed: {action_count} actions, {total_content_length} total content length"
+                f"Acceptance stream scenario {i+1} completed: {action_count} actions, "
+                f"{total_content_length} total content length"
             )
             logger.info(f"Final Action: {action}")
 
@@ -293,7 +295,7 @@ class TestDeepSeekModel:
 
         # First question: explore schema
         question1 = "database_type='sqlite' task='Show me all the tables in the database'"
-        result1 = await self.model.generate_with_mcp(
+        result1 = await self.model.generate_with_tools(
             prompt=question1,
             output_type=str,
             mcp_servers={"sqlite": mcp_server},
@@ -307,7 +309,7 @@ class TestDeepSeekModel:
 
         # Second question in same session: follow-up query
         question2 = "database_type='sqlite' task='Count the total number of rows in the customer table'"
-        result2 = await self.model.generate_with_mcp(
+        result2 = await self.model.generate_with_tools(
             prompt=question2,
             output_type=str,
             mcp_servers={"sqlite": mcp_server},
@@ -321,7 +323,7 @@ class TestDeepSeekModel:
 
         # Third question: reference previous answer to test session continuity
         question3 = "database_type='sqlite' task='What's the result of the previous number plus 5?'"
-        result3 = await self.model.generate_with_mcp(
+        result3 = await self.model.generate_with_tools(
             prompt=question3,
             output_type=str,
             mcp_servers={"sqlite": mcp_server},
@@ -433,29 +435,17 @@ class TestDeepSeekModel:
         for i, scenario in enumerate(scenarios):
             action_count = 0
 
-            try:
-                async for action in self.model.generate_with_mcp_stream(
-                    prompt=scenario,
-                    output_type=str,
-                    mcp_servers={"sqlite": mcp_server},
-                    instruction=instructions,
-                    session=session,
-                ):
-                    action_count += 1
-                    total_actions += 1
-                    assert action is not None
-                    logger.debug(f"Acceptance scenario {i+1}, action {action_count}: {type(action)}")
-
-            except Exception as e:
-                # Handle known compatibility issues
-                error_msg = str(e).lower()
-                if "responsetextdeltaevent" in error_msg and "logprobs" in error_msg:
-                    logger.warning(
-                        f"Skipping acceptance scenario {i+1} due to known openai-agents + DeepSeek compatibility issue: {e}"
-                    )
-                    pytest.skip("Pydantic validation error in MCP streaming - known openai-agents compatibility issue")
-                else:
-                    raise
+            async for action in self.model.generate_with_mcp_stream(
+                prompt=scenario,
+                output_type=str,
+                mcp_servers={"sqlite": mcp_server},
+                instruction=instructions,
+                session=session,
+            ):
+                action_count += 1
+                total_actions += 1
+                assert action is not None
+                logger.debug(f"Acceptance scenario {i+1}, action {action_count}: {type(action)}")
 
             assert action_count > 0, f"Should receive at least one action for scenario {i+1}"
             logger.debug(f"Acceptance scenario {i+1} completed with {action_count} actions")
