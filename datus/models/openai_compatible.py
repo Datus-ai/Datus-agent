@@ -241,26 +241,26 @@ class OpenAICompatibleModel(LLMBaseModel):
             params = {
                 "model": self.model_name,
             }
-            
+
             # Add temperature and top_p only if explicitly provided
-            if 'temperature' in kwargs:
-                params['temperature'] = kwargs['temperature']
-            elif not hasattr(self, '_uses_completion_tokens_parameter') or not self._uses_completion_tokens_parameter():
+            if "temperature" in kwargs:
+                params["temperature"] = kwargs["temperature"]
+            elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
                 # Add default temperature only for non-reasoning models
-                params['temperature'] = 0.7
-                
-            if 'top_p' in kwargs:
-                params['top_p'] = kwargs['top_p']
-            elif not hasattr(self, '_uses_completion_tokens_parameter') or not self._uses_completion_tokens_parameter():
+                params["temperature"] = 0.7
+
+            if "top_p" in kwargs:
+                params["top_p"] = kwargs["top_p"]
+            elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
                 # Add default top_p only for non-reasoning models
-                params['top_p'] = 1.0
-            
+                params["top_p"] = 1.0
+
             # Handle both max_tokens and max_completion_tokens parameters (only if explicitly provided)
-            if 'max_tokens' in kwargs:
-                params['max_tokens'] = kwargs['max_tokens']
-            if 'max_completion_tokens' in kwargs:
-                params['max_completion_tokens'] = kwargs['max_completion_tokens']
-            
+            if "max_tokens" in kwargs:
+                params["max_tokens"] = kwargs["max_tokens"]
+            if "max_completion_tokens" in kwargs:
+                params["max_completion_tokens"] = kwargs["max_completion_tokens"]
+
             # Filter out handled parameters from remaining kwargs
             excluded_params = ["temperature", "top_p", "max_tokens", "max_completion_tokens"]
             params.update({k: v for k, v in kwargs.items() if k not in excluded_params})
