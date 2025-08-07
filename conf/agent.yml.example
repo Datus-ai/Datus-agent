@@ -71,9 +71,10 @@ agent:
       account: ${SNOWFLAKE_ACCOUNT}  # Use environment variables or real values
       username: ${SNWOFLAKE_USER}
       password: ${SNOWFLAKE_PASSWORD}
-    bird_dev: # this is namespace of databases
-      type: sqlite
-      path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
+    # bird_sqlite: # This section is configured for the bird-dev benchmarking, you should download the database file and unzip it before you can continue
+    #   type: sqlite
+    #   # just support glob pattern. Ensure that the corresponding database files exist in the configuration directory.
+    #   path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
     local_sqlite:
       type: sqlite
       # Only sqlite and duckdb support multiple data source configuration

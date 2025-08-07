@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.1.5a1" # this is a alpha version, use for testing only
+version = "0.1.8" # this is a alpha version, use for testing only
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -66,6 +66,7 @@ dependencies = [
     "torch>=2.3.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "pymysql>=1.1.1",
     "json-repair>=0.47.6",
+    "google-generativeai>=0.8.5",
 ]
 
 
@@ -85,6 +86,10 @@ datus-init = "datus.cli.init:main"
 requires = ["setuptools>=80.9.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[[tool.uv.index]]
+url = "http://mirrors.aliyun.com/pypi/simple"
+default = true
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["datus*", "mcp*"]
@@ -95,10 +100,6 @@ exclude = ["tests*", "benchmark*", "docs*"]
 "datus" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt"]
 "datus.prompts" = ["*.txt", "*.md", "*.j2"]
 "datus.prompts.prompt_templates" = ["*.j2"]
-
-[[tool.uv.index]]
-url = "http://mirrors.aliyun.com/pypi/simple"
-default = true
 [tool.uv.pip]
 index-url = "https://pypi.org/simple"
 

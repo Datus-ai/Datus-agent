@@ -13,7 +13,6 @@ from datus.tools.db_tools.starrocks_connector import StarRocksConnector
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.path_utils import get_files_from_glob_pattern
 
 logger = get_logger(__name__)
 
@@ -46,7 +45,7 @@ class DBManager:
         self._conn_dict: Dict[str, Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]] = defaultdict(dict)
         self._db_configs: Dict[str, Dict[str, DbConfig]] = db_configs
 
-    def get_conn(self, namespace: str, db_type: str, db_name: str = "") -> BaseSqlConnector:
+    def get_conn(self, namespace: str, db_name: str = "") -> BaseSqlConnector:
         self._init_connections(namespace)
         connector_or_dict = self._conn_dict[namespace]
         if isinstance(connector_or_dict, Dict):
@@ -65,7 +64,7 @@ class DBManager:
         self._init_connections(namespace)
         return self._conn_dict[namespace]
 
-    def current_dbconfigs(self, namespace: str) -> Dict[str, DbConfig]:
+    def current_db_configs(self, namespace: str) -> Dict[str, DbConfig]:
         return self._db_configs[namespace]
 
     def _init_connections(self, namespace):
@@ -78,38 +77,7 @@ class DBManager:
         configs = self._db_configs[namespace]
         if len(configs) == 1:
             db_config = list(configs.values())[0]
-            db_type = db_config.type
-            if db_type == DBType.SQLITE or db_type == DBType.DUCKDB:
-                if db_config.path_pattern:
-                    any_db_path = False
-                    for db_path in get_files_from_glob_pattern(db_config.path_pattern, db_type):
-                        uri = db_path["uri"]
-                        database_name = db_path["name"]
-                        import os
-
-                        file_path = uri[len(f"{db_type}:///") :]
-                        if not os.path.exists(file_path):
-                            continue
-                        any_db_path = True
-                        temp_config = DbConfig(
-                            type=db_type,
-                            uri=uri,
-                            database=database_name,
-                            schema=db_config.schema,
-                        )
-                        self._init_conn(namespace, temp_config, database_name=database_name)
-                    if not any_db_path:
-                        raise DatusException(
-                            code=ErrorCode.COMMON_CONFIG_ERROR,
-                            message=(
-                                f"No available database files found under namespace {namespace},"
-                                f" path_pattern: `{db_config.path_pattern}`"
-                            ),
-                        )
-                else:
-                    self._init_conn(namespace, db_config)
-            else:
-                self._init_conn(namespace, db_config)
+            self._init_conn(namespace, db_config)
             return
         # Multiple database configuration
         for database_name, db_config in configs.items():

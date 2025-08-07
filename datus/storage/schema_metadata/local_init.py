@@ -117,7 +117,7 @@ def init_sqlite_schema(
     build_mode: str = "overwrite",
 ):
     database_name = getattr(db_config, "database", "")
-    sql_connector = db_manager.get_conn(agent_config.current_namespace, db_config.type, database_name)
+    sql_connector = db_manager.get_conn(agent_config.current_namespace, database_name)
     all_schema_tables, all_value_tables = exists_table_value(
         table_lineage_store,
         database_name=database_name,
@@ -178,7 +178,7 @@ def init_duckdb_schema(
     logger.info(
         f"Exsits data from LanceDB {database_name}, tables={len(all_schema_tables)}," f"values={len(all_value_tables)}"
     )
-    sql_connector = db_manager.get_conn(agent_config.current_namespace, db_config.type, database_name)
+    sql_connector = db_manager.get_conn(agent_config.current_namespace, database_name)
     if table_type == "table" or table_type == "full":
         # Get all tables with DDL
         tables = sql_connector.get_tables_with_ddl(schema_name=schema_name)
@@ -237,7 +237,6 @@ def init_other_two_level_schema(
     )
     sql_connector = db_manager.get_conn(
         agent_config.current_namespace,
-        db_config.type,
     )
     if table_type == "table" or table_type == "full":
         # Get all tables with DDL
@@ -307,7 +306,7 @@ def init_other_three_level_schema(
     database_name = database_name or getattr(db_config, "database", "")
     schema_name = getattr(db_config, "schema", "")
     catalog_name = getattr(db_config, "catalog", "")
-    sql_connector = db_manager.get_conn(agent_config.current_namespace, db_config.type, "")
+    sql_connector = db_manager.get_conn(agent_config.current_namespace, "")
     if hasattr(sql_connector, "default_catalog"):
         catalog_name = catalog_name or sql_connector.default_catalog()
     all_schema_tables, all_value_tables = exists_table_value(

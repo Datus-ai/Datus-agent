@@ -358,9 +358,7 @@ class DatusCLI:
             return
         self.current_db_name = new_db
         if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
-            self.db_connector = self.db_manager.get_conn(
-                self.agent_config.current_namespace, self.agent_config.db_type, self.current_db_name
-            )
+            self.db_connector = self.db_manager.get_conn(self.agent_config.current_namespace, self.current_db_name)
         self.db_connector.switch_context(database_name=new_db)
         self.console.print(f"[bold green]Database switched to: {self.current_db_name}[/]")
 
@@ -995,9 +993,7 @@ Type '.help' for a list of commands or '.exit' to quit.
         if not self.current_db_name:
             self.current_db_name, self.db_connector = self.db_manager.first_conn_with_name(current_namespace)
         else:
-            self.db_connector = self.db_manager.get_conn(
-                current_namespace, self.agent_config.db_type, self.current_db_name
-            )
+            self.db_connector = self.db_manager.get_conn(current_namespace, self.current_db_name)
         if not self.db_connector:
             self.console.print("[bold red]Error:[/] No database connection.")
             return
