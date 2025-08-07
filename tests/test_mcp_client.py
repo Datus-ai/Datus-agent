@@ -39,19 +39,27 @@ async def test_mcp_sse_client():
                             result = await connected_server.call_tool(tool.name, {"message": "Hello SSE11111111!"})
                             print(
                                 f"call tool: {tool.name}  from {server_name} and get result: "
-                                f"{result.structuredContent['result']}"
+                                f"{result.structuredContent['result']} raw_result:{result}"
                             )
                         elif tool.name == "add_numbers":
                             result = await connected_server.call_tool(tool.name, {"a": 15, "b": 27})
                             print(
                                 f"call tool: {tool.name}  from {server_name} and get result: "
-                                f"{result.structuredContent['result']}"
+                                f"{result.structuredContent['result']} raw_result:{result}"
+                            )
+                        elif tool.name == "void_txt":
+                            result = await connected_server.call_tool(tool.name, {})
+                            if result.structuredContent is None:
+                                continue
+                            print(
+                                f"call tool: {tool.name}  from {server_name} and get result: "
+                                f"{result.structuredContent} raw_result:{result}"
                             )
                         else:
                             result = await connected_server.call_tool(tool.name, {})
                             print(
                                 f"call tool: {tool.name}  from {server_name} and get result: "
-                                f"{result.structuredContent['result']}"
+                                f"{result.structuredContent['result']} raw_result:{result}"
                             )
                 except Exception as e:
                     print(f"Error getting tools from {server_name}: {str(e)}")

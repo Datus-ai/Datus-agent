@@ -112,6 +112,7 @@ class ErrorCode(Enum):
     # MCP Tool errors
     MCP_SERVER_NOT_FOUND = ("600001", "MCP server not found")
     MCP_TYPE_NOT_FOUND = ("600002", "MCP type not exist")
+    MCP_SERVER_ADD_FAILED = ("600003", "Add a MCP server failed: {error_message}")
     # ...
 
     def __init__(self, code: str, desc: str):

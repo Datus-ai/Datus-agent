@@ -16,6 +16,10 @@ MCP_SERVERS = "mcp_servers"
 MCP_CONF_DIR = "conf"
 MCP_CONF_FILE = "mcp.json"
 
+STDIO_REQUIRED_FIELDS = ("command", "args", "env")
+SSE_REQUIRED_FIELDS = ("url", "headers", "timeout")
+HTTP_REQUIRED_FIELDS = ("url", "headers", "timeout")
+
 
 @dataclass
 class ServerConfig:
@@ -187,3 +191,21 @@ class McpConfig:
         with open(config_path, "w") as f:
             json.dump(mcp_servers, f, indent=2)
         pass
+
+    @classmethod
+    def check_required_params(cls, server_type: str, **kwargs):
+        if server_type == McpType.STDIO:
+            if all(key in kwargs for key in STDIO_REQUIRED_FIELDS):
+                pass
+            else:
+                raise ValueError(f"Check require params failed, miss required fields in {STDIO_REQUIRED_FIELDS}")
+        if server_type == McpType.SSE:
+            if all(key in kwargs for key in SSE_REQUIRED_FIELDS):
+                pass
+            else:
+                raise ValueError(f"Check require params failed, miss required fields in {SSE_REQUIRED_FIELDS}")
+        if server_type == McpType.STREAM_HTTP:
+            if all(key in kwargs for key in HTTP_REQUIRED_FIELDS):
+                pass
+            else:
+                raise ValueError(f"Check require params failed, miss required fields in {HTTP_REQUIRED_FIELDS}")
