@@ -32,7 +32,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
     Implements BaseSqlConnector interface.
     """
 
-    def __init__(self, connection_string: str, dialect: str = "", batch_size: int = 1024):
+    def __init__(self, connection_string: str, dialect: str = "", batch_size: int = 1024, timeout_seconds: int = 30):
         """
         Initialize SQLAlchemyConnector.
 
@@ -48,7 +48,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 self.dialect = DBType.MYSQL
             else:
                 self.dialect = prefix
-        super().__init__(self.dialect, batch_size)
+        super().__init__(self.dialect, batch_size, timeout_seconds)
         self.connection_string = connection_string
         self.engine = None
         self.connection = None
@@ -198,8 +198,14 @@ class SQLAlchemyConnector(BaseSqlConnector):
         if self.engine and self._owns_engine:
             return
         try:
-            self.engine = create_engine(self.connection_string)
-            self.connection = self.engine.connect()
+            self.engine = create_engine(
+                self.connection_string,
+                pool_size=3,
+                max_overflow=5,
+                pool_timeout=self.timeout_seconds * 1000,
+                pool_recycle=3600,
+            )
+            self.connection = self.engine.connect().execution_options(statement_timeout=self.timeout_seconds * 1000)
             self._owns_engine = True
         except Exception as e:
             raise self._trans_sqlalchemy_exception(e, "Connection initialization") from e
@@ -551,7 +557,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
     def get_schema(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
     ) -> List[Dict[str, Any]]:
-        """Get database schema information."""
+        """Get Table schema information."""
         sqlalchemy_schema = self.sqlalchemy_schema(
             catalog_name=catalog_name or self.catalog_name,
             database_name=database_name or self.database_name,
@@ -571,9 +577,9 @@ class SQLAlchemyConnector(BaseSqlConnector):
                         "name": col["name"],
                         "type": str(col["type"]),
                         "comment": str(col["comment"]) if "comment" in col else None,
-                        "notnull": not col["nullable"],
+                        "nullable": col["nullable"],
                         "pk": col["name"] in pk_columns,
-                        "dflt_value": col["default"],
+                        "default_value": col["default"],
                     }
                 )
             schemas.append(

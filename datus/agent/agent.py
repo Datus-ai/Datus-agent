@@ -4,10 +4,10 @@ import json
 import os
 import shutil
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import AsyncGenerator, Optional, Set
 
-from black.trans import defaultdict
 from langsmith import traceable
 
 from datus.agent.evaluate import evaluate_result, setup_node_input

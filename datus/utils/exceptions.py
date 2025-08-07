@@ -91,11 +91,11 @@ class ErrorCode(Enum):
         "Failed to execute query on database. SQL: {sql}, Error details: {error_message}",
     )
     DB_EXECUTION_TIMEOUT = (
-        "430003",
+        "500007",
         "Query execution timed out on database. SQL: {sql}, Error details: {error_message}",
     )
     DB_QUERY_METADATA_FAILED = (
-        "500007",
+        "500008",
         "Failed to retrieve metadata for query. SQL: {sql}, Error details: {error_message}",
     )
 

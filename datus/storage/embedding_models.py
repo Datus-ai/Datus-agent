@@ -88,7 +88,7 @@ class EmbeddingModel:
 
         if self.registry_name == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             logger.info(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")
-            from lancedb.embeddings import SentenceTransformerEmbeddings
+            from datus.storage.sentence_transformers import SentenceTransformerEmbeddings
 
             try:
                 # Method `get_registry` has a multi-threading problem

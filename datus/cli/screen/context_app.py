@@ -3,7 +3,8 @@ from typing import Dict
 
 from textual.app import App
 
-from .context_screen import CatalogScreen, CatalogsScreen, MetricsScreen, TableScreen, WorkloadContextScreen
+from .catalogs_screen import CatalogsScreen
+from .context_screen import CatalogScreen, MetricsScreen, TableScreen, WorkloadContextScreen
 
 
 class ScreenType(str, Enum):
@@ -116,10 +117,11 @@ def _show_screen(screen_type: ScreenType, title: str, data: Dict, inject_callbac
         import asyncio
 
         try:
-            asyncio.get_event_loop()
+            event_loop = asyncio.get_event_loop()
         except RuntimeError:
-            asyncio.set_event_loop(asyncio.new_event_loop())
-        app.run()
+            event_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(event_loop)
+        app.run(loop=event_loop)
     else:
         app.run()
 
