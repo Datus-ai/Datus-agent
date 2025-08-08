@@ -74,6 +74,9 @@ class BaseSqlConnector(ABC):
     def execute_arrow_iterator(self, query: str, max_rows: int = 100) -> Iterator[ArrowTable]:
         raise NotImplementedError
 
+    def get_catalogs(self) -> List[str]:
+        return []
+
     def get_databases(self, catalog_name: str = "") -> List[str]:
         return []
 

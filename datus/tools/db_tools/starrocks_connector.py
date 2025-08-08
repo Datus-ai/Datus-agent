@@ -195,25 +195,12 @@ class StarRocksConnector(MySQLConnectorBase):
                     )
         return result
 
-    def get_schema(
-        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
-    ) -> List[Dict[str, str]]:
-        """Get schema information for a specific table."""
-        if not table_name:
+    @override
+    def get_catalogs(self) -> List[str]:
+        result = self.execute_query("SHOW CATALOGS")
+        if result.empty:
             return []
-
-        try:
-            # Use DESCRIBE or SHOW COLUMNS to get table schema
-            if self.database:
-                sql = f"DESCRIBE `{self.database}`.`{table_name}`"
-            else:
-                sql = f"DESCRIBE `{table_name}`"
-
-            result = self.execute_query(sql)
-            return result.to_dict(orient="records")
-        except Exception as e:
-            logger.error(f"Error getting schema for table {table_name}: {e}")
-            return []
+        return result["Catalog"].tolist()
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert connector to serializable dictionary with only essential info."""
