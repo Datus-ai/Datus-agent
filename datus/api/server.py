@@ -1,14 +1,182 @@
 #!/usr/bin/env python3
 """
 Datus Agent FastAPI server startup script.
+Supports foreground and daemon (background) modes with start/stop/restart/status.
 """
 import argparse
+import atexit
+import os
+import signal
+import sys
+from pathlib import Path
+from typing import Optional, Tuple
 
 import uvicorn
 
 from datus.utils.loggings import configure_logging, get_logger
 
 logger = get_logger(__name__)
+
+
+def _default_paths() -> Tuple[Path, Path]:
+    """Return default pid and log file paths under ~/.datus."""
+    home = Path.home()
+    pid_file = home / ".datus" / "run" / "datus-agent-api.pid"
+    log_file = home / ".datus" / "logs" / "datus-agent-api.log"
+    return pid_file, log_file
+
+
+def _ensure_parent_dir(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _read_pid(pid_file: Path) -> Optional[int]:
+    if not pid_file.exists():
+        return None
+    try:
+        pid_text = pid_file.read_text().strip()
+        return int(pid_text) if pid_text else None
+    except Exception:
+        return None
+
+
+def _is_process_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    else:
+        return True
+
+
+def _write_pid_file(pid_file: Path, pid: int) -> None:
+    _ensure_parent_dir(pid_file)
+    pid_file.write_text(str(pid))
+
+
+def _remove_pid_file(pid_file: Path) -> None:
+    try:
+        if pid_file.exists():
+            pid_file.unlink()
+    except Exception:
+        pass
+
+
+def _redirect_stdio(log_file: Path) -> None:
+    _ensure_parent_dir(log_file)
+    # Open files
+    si = open(os.devnull, "rb", buffering=0)
+    so = open(log_file, "ab", buffering=0)
+    se = open(log_file, "ab", buffering=0)
+    # Duplicate fds
+    os.dup2(si.fileno(), sys.stdin.fileno())
+    os.dup2(so.fileno(), sys.stdout.fileno())
+    os.dup2(se.fileno(), sys.stderr.fileno())
+
+
+def _daemonize(pid_file: Path, log_file: Path) -> None:
+    """UNIX double-fork to background and detach from terminal."""
+    try:
+        pid = os.fork()
+        if pid > 0:
+            # Exit first parent
+            os._exit(0)
+    except OSError as exc:
+        print(f"First fork failed: {exc}", file=sys.stderr)
+        os._exit(1)
+
+    os.setsid()
+    os.umask(0)
+
+    try:
+        pid = os.fork()
+        if pid > 0:
+            # Exit second parent
+            os._exit(0)
+    except OSError as exc:
+        print(f"Second fork failed: {exc}", file=sys.stderr)
+        os._exit(1)
+
+    # In daemon process now
+    _redirect_stdio(log_file)
+    _write_pid_file(pid_file, os.getpid())
+
+    def _cleanup(*_args):
+        _remove_pid_file(pid_file)
+
+    atexit.register(_cleanup)
+    signal.signal(signal.SIGTERM, lambda *_a: (_cleanup(), os._exit(0)))
+
+
+def _stop(pid_file: Path, timeout_seconds: float = 10.0) -> int:
+    pid = _read_pid(pid_file)
+    if not pid:
+        logger.info("No PID file found; server not running?")
+        return 0
+    if not _is_process_running(pid):
+        logger.info("Stale PID file found; process not running. Cleaning up.")
+        _remove_pid_file(pid_file)
+        return 0
+
+    logger.info(f"Stopping server (pid={pid}) ...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        _remove_pid_file(pid_file)
+        return 0
+
+    import time
+
+    start = time.time()
+    while time.time() - start < timeout_seconds:
+        if not _is_process_running(pid):
+            _remove_pid_file(pid_file)
+            logger.info("Stopped.")
+            return 0
+        time.sleep(0.2)
+
+    # Fallback to SIGKILL
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    _remove_pid_file(pid_file)
+    logger.info("Force killed.")
+    return 0
+
+
+def _status(pid_file: Path) -> int:
+    pid = _read_pid(pid_file)
+    if pid and _is_process_running(pid):
+        print(f"running (pid={pid})")
+        return 0
+    print("stopped")
+    return 1
+
+
+def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
+    return argparse.Namespace(
+        namespace=args.namespace,
+        config=args.config,
+        max_steps=args.max_steps,
+        plan=args.plan,
+        load_cp=args.load_cp,
+    )
+
+
+def _run_server(args: argparse.Namespace, agent_args: argparse.Namespace) -> None:
+    from datus.api.service import create_app
+
+    app = create_app(agent_args)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        workers=args.workers if not args.reload else 1,
+        log_level=args.log_level,
+        access_log=True,
+    )
 
 
 def main():
@@ -38,38 +206,73 @@ def main():
     parser.add_argument("--plan", type=str, default="fixed", help="Workflow plan type")
     parser.add_argument("--load_cp", type=str, help="Load workflow from checkpoint file")
 
+    # Daemon control
+    parser.add_argument(
+        "--action",
+        choices=["start", "stop", "restart", "status"],
+        default="start",
+        help="Daemon action (default: start)",
+    )
+    parser.add_argument("--daemon", action="store_true", help="Run in background as a daemon")
+    parser.add_argument(
+        "--pid-file",
+        type=str,
+        help="PID file path (default: ~/.datus/run/datus-agent-api.pid)",
+    )
+    parser.add_argument(
+        "--daemon-log-file",
+        type=str,
+        help="Daemon log file path (default: ~/.datus/logs/datus-agent-api.log)",
+    )
+
     args = parser.parse_args()
 
+    # Resolve defaults for pid/log
+    default_pid, default_log = _default_paths()
+    pid_file = Path(args.pid_file) if args.pid_file else default_pid
+    log_file = Path(args.daemon_log_file) if args.daemon_log_file else default_log
+
+    if args.action in {"status", "stop"}:
+        configure_logging(args.log_level)
+        if args.action == "status":
+            raise SystemExit(_status(pid_file))
+        if args.action == "stop":
+            raise SystemExit(_stop(pid_file))
+
+    if args.action == "restart":
+        configure_logging(args.log_level)
+        _stop(pid_file)
+        # fall-through to start
+
+    # Start
+    if args.daemon and args.reload:
+        print("--daemon mode is mutually exclusive with --reload. Remove --reload.", file=sys.stderr)
+        raise SystemExit(2)
+
+    # Logging setup (stdout/err may be redirected later in daemon)
+    configure_logging(args.log_level)
+
+    if args.daemon:
+        if (pid := _read_pid(pid_file)) and _is_process_running(pid):
+            print(f"Already running (pid={pid})", file=sys.stderr)
+            raise SystemExit(0)
+
+        logger.info(
+            f"Starting Datus Agent API server (daemon) on {args.host}:{args.port} | "
+            f"Workers: {args.workers}, LogLevel: {args.log_level}"
+        )
+        _daemonize(pid_file, log_file)
+        # Child (daemon) continues here
+        agent_args = _build_agent_args(args)
+        _run_server(args, agent_args)
+        return
+
+    # Foreground run (existing behavior)
     logger.info(f"Starting Datus Agent API server on {args.host}:{args.port}")
     logger.info(f"Workers: {args.workers}, Reload: {args.reload}, Log Level: {args.log_level}")
     logger.info(f"Agent config - Namespace: {args.namespace}, Config: {args.config}")
-
-    configure_logging(args.log_level)
-
-    # Create agent args from command line args
-    agent_args = argparse.Namespace(
-        namespace=args.namespace,
-        config=args.config,
-        max_steps=args.max_steps,
-        plan=args.plan,
-        load_cp=args.load_cp,
-    )
-
-    # Create app with args
-    from datus.api.service import create_app
-
-    app = create_app(agent_args)
-
-    # Start the server
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-        workers=args.workers if not args.reload else 1,  # reload doesn't work with multiple workers
-        log_level=args.log_level,
-        access_log=True,
-    )
+    agent_args = _build_agent_args(args)
+    _run_server(args, agent_args)
 
 
 if __name__ == "__main__":
