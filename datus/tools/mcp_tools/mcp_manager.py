@@ -1,0 +1,537 @@
+"""
+MCP Manager - Core business logic for managing MCP servers.
+
+This module provides the main MCPManager class that handles all MCP server
+lifecycle operations including config management, server control,
+and status monitoring.
+"""
+
+import asyncio
+import json
+import threading
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from agents import Agent, RunContextWrapper, Usage
+from agents.mcp import MCPServerStdio, MCPServerStdioParams
+from agents.mcp.server import MCPServerSse, MCPServerSseParams, MCPServerStreamableHttp, MCPServerStreamableHttpParams
+
+from datus.utils.loggings import get_logger
+
+from .mcp_config import AnyMCPServerConfig, MCPConfig, MCPServerType, STDIOServerConfig, expand_config_env_vars
+
+logger = get_logger(__name__)
+
+
+def _validate_server_exists(manager, server_name: str) -> Tuple[bool, str, Optional[AnyMCPServerConfig]]:
+    """Validate that a server exists and return its config."""
+    config = manager.get_server_config(server_name)
+    if not config:
+        return False, f"Server '{server_name}' not found", None
+    return True, "", config
+
+
+class MCPManager:
+    """
+    Main manager class for MCP server operations.
+
+    Provides functionality for:
+    - Config management (CRUD operations)
+    - Server lifecycle management (start/stop/restart)
+    - Status monitoring and health checks
+    - Config file persistence
+
+    Configuration loading order:
+    1. Explicit config_path parameter
+    2. conf/.mcp.json (project directory)
+    3. ~/.datus/conf/.mcp.json (user home directory)
+    """
+
+    def __init__(self, config_path: Optional[str] = None):
+        """
+        Initialize the MCP manager.
+
+        Args:
+            config_path: Path to the config file (searches in order:
+                config_path > conf/.mcp.json > ~/.datus/conf/.mcp.json)
+        """
+        json_path = None
+        if config_path:
+            json_path = Path(config_path).expanduser()
+
+        if not json_path and Path("conf/.mcp.json").exists():
+            json_path = Path("conf/.mcp.json")
+
+        if not json_path:
+            home_config = Path.home() / ".datus" / "conf" / ".mcp.json"
+            if home_config.exists():
+                json_path = home_config
+
+        # Set config path (will create if doesn't exist)
+        if json_path:
+            self.config_path = json_path
+        else:
+            # Default fallback order: try project conf first, then home
+            if Path("conf").exists():
+                self.config_path = Path("conf/.mcp.json")
+            else:
+                home_conf_dir = Path.home() / ".datus" / "conf"
+                home_conf_dir.mkdir(parents=True, exist_ok=True)
+                self.config_path = home_conf_dir / ".mcp.json"
+
+        self.config: MCPConfig = MCPConfig()
+        self._lock = threading.Lock()
+
+        # Load existing config
+        self.load_config()
+
+    def load_config(self) -> bool:
+        """
+        Load config from file.
+
+        Returns:
+            True if loaded successfully, False otherwise
+        """
+        try:
+            if self.config_path.exists() and self.config_path.stat().st_size > 0:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                if "mcpServers" in data:
+                    self.config = MCPConfig.from_config_format(data)
+                    logger.info(f"Loaded MCP config from {self.config_path}")
+                else:
+                    # Invalid format, use defaults
+                    self.config = MCPConfig()
+                    logger.info("Config file format not recognized, using defaults")
+
+                return True
+            else:
+                if self.config_path.exists():
+                    logger.info(f"Config file at {self.config_path} is empty, using defaults")
+                else:
+                    logger.info(f"No config file found at {self.config_path}, using defaults")
+                return True
+        except Exception as e:
+            logger.error(f"Error loading config: {e}")
+            return False
+
+    def save_config(self) -> bool:
+        """
+        Save config to file.
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            # Ensure config directory exists
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                config_data = self.config.to_config_format()
+                json.dump(config_data, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Saved MCP config to {self.config_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving config: {e}")
+            return False
+
+    def add_server(self, config: AnyMCPServerConfig) -> Tuple[bool, str]:
+        """
+        Add a new MCP server config.
+
+        Args:
+            config: Server config
+
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            with self._lock:
+                if config.name in self.config.servers:
+                    return False, f"Server '{config.name}' already exists"
+
+                self.config.add_server(config)
+
+                if self.save_config():
+                    logger.info(f"Added MCP server: {config.name} ({config.type})")
+                    return True, f"Successfully added server '{config.name}'"
+                else:
+                    return False, "Failed to save config"
+
+        except Exception as e:
+            logger.error(f"Error adding server {config.name}: {e}")
+            return False, f"Error adding server: {e}"
+
+    def remove_server(self, name: str) -> Tuple[bool, str]:
+        """
+        Remove an MCP server config.
+
+        Args:
+            name: Server name
+
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            with self._lock:
+                if name not in self.config.servers:
+                    return False, f"Server '{name}' not found"
+
+                self.config.remove_server(name)
+
+                if self.save_config():
+                    logger.info(f"Removed MCP server: {name}")
+                    return True, f"Successfully removed server '{name}'"
+                else:
+                    return False, "Failed to save config"
+
+        except Exception as e:
+            logger.error(f"Error removing server {name}: {e}")
+            return False, f"Error removing server: {e}"
+
+    def list_servers(self, server_type: Optional[MCPServerType] = None) -> List[AnyMCPServerConfig]:
+        """
+        List MCP servers with optional filtering.
+
+        Args:
+            server_type: Filter by server type
+            status: Filter by status
+
+        Returns:
+            List of server configs
+        """
+        servers = self.config.list_servers(server_type=server_type)
+
+        return servers
+
+    def get_server_config(self, name: str) -> Optional[AnyMCPServerConfig]:
+        """
+        Get server config by name.
+
+        Args:
+            name: Server name
+
+        Returns:
+            Server config or None if not found
+        """
+        return self.config.get_server(name)
+
+    def check_connectivity(self, name: str) -> Tuple[bool, str, Dict[str, Any]]:
+        """Check server connectivity by attempting to connect and list tools."""
+        valid, error_msg, config = _validate_server_exists(self, name)
+        if not valid:
+            return False, error_msg, {}
+
+        # Create server instance
+        server_instance, connectivity_details = self._create_server_instance(config)
+        if not server_instance:
+            error_msg = connectivity_details.get("error", "Failed to create server instance")
+            return False, f"Failed to create server instance for '{name}': {error_msg}", connectivity_details
+
+        # Run connectivity test
+        success, tools_data = self._run_tools_operation(server_instance, name, "connectivity_test")
+        connectivity_details.update(tools_data)
+        connectivity_details["type"] = config.type
+
+        if success:
+            return True, f"Server '{name}' connectivity test passed", connectivity_details
+        else:
+            error_msg = tools_data.get("error", "Connectivity test failed")
+            return False, f"Server '{name}' connectivity test failed: {error_msg}", connectivity_details
+
+    def list_tools(self, server_name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        """List tools available on the specified MCP server."""
+        try:
+            valid, error_msg, config = _validate_server_exists(self, server_name)
+            if not valid:
+                return False, error_msg, []
+
+            # Create server instance
+            server_instance, details = self._create_server_instance(config)
+            if not server_instance:
+                error_msg = details.get("error", "Failed to create server instance")
+                return False, f"Failed to connect to server '{server_name}': {error_msg}", []
+
+            # Run list_tools operation
+            success, tools_data = self._run_tools_operation(server_instance, server_name, "list_tools")
+
+            if success:
+                tools_list = tools_data.get("tools", [])
+                return True, f"Found {len(tools_list)} tools on server '{server_name}'", tools_list
+            else:
+                error_msg = tools_data.get("error", "Failed to list tools")
+                return False, f"Failed to list tools on server '{server_name}': {error_msg}", []
+
+        except Exception as e:
+            logger.error(f"Error listing tools for server {server_name}: {e}")
+            return False, f"Error listing tools: {e}", []
+
+    def call_tool(
+        self, server_name: str, tool_name: str, arguments: Dict[str, Any]
+    ) -> Tuple[bool, str, Dict[str, Any]]:
+        """Call a tool on the specified MCP server."""
+        try:
+            valid, error_msg, config = _validate_server_exists(self, server_name)
+            if not valid:
+                return False, error_msg, {}
+
+            # Create server instance
+            server_instance, details = self._create_server_instance(config)
+            if not server_instance:
+                error_msg = details.get("error", "Failed to create server instance")
+                return False, f"Failed to connect to server '{server_name}': {error_msg}", {}
+
+            # Run call_tool operation
+            success, result_data = self._run_tools_operation(
+                server_instance, server_name, "call_tool", tool_name=tool_name, arguments=arguments
+            )
+
+            if success:
+                return True, f"Successfully called tool '{tool_name}' on server '{server_name}'", result_data
+            else:
+                error_msg = result_data.get("error", "Failed to call tool")
+                return False, f"Failed to call tool '{tool_name}' on server '{server_name}': {error_msg}", {}
+
+        except Exception as e:
+            logger.error(f"Error calling tool {tool_name} on server {server_name}: {e}")
+            return False, f"Error calling tool: {e}", {}
+
+    def _create_server_instance(self, config: AnyMCPServerConfig) -> Tuple[Any, Dict[str, Any]]:
+        """Create MCP server instance based on config type."""
+        try:
+            # Expand environment variables in config
+            config_dict = config.model_dump()
+            expanded_config = expand_config_env_vars(config_dict)
+
+            if config.type == MCPServerType.STDIO:
+                return self._create_stdio_server(config, expanded_config)
+            elif config.type == MCPServerType.SSE:
+                return self._create_sse_server(expanded_config)
+            elif config.type == MCPServerType.HTTP:
+                return self._create_http_server(expanded_config)
+            else:
+                return None, {"error": f"Unsupported server type: {config.type}"}
+        except Exception as e:
+            logger.error(f"Failed to create server instance: {e}")
+            return None, {"error": str(e)}
+
+    def _create_stdio_server(self, config: STDIOServerConfig, expanded_config: Dict[str, Any]):
+        """Create STDIO server instance."""
+        env_vars = config.env or {}
+
+        server_params = MCPServerStdioParams(
+            command=expanded_config.get("command"),
+            args=expanded_config.get("args", []),
+            env=env_vars,
+        )
+
+        server_instance = MCPServerStdio(params=server_params, client_session_timeout_seconds=60)
+        details = {
+            "command": expanded_config.get("command"),
+            "args": expanded_config.get("args", []),
+            "env_count": len(env_vars),
+        }
+        return server_instance, details
+
+    def _create_sse_server(self, expanded_config: Dict[str, Any]):
+        """Create SSE server instance."""
+        url = expanded_config.get("url")
+        if not url:
+            return None, {"error": "URL is required for SSE server"}
+
+        headers = expanded_config.get("headers", {})
+        timeout = float(expanded_config.get("timeout", 30.0))
+
+        server_params = MCPServerSseParams(url=url, headers=headers, timeout=timeout, sse_read_timeout=timeout)
+        server_instance = MCPServerSse(params=server_params, client_session_timeout_seconds=60)
+        details = {"url": url, "headers_count": len(headers), "timeout": timeout}
+        return server_instance, details
+
+    def _create_http_server(self, expanded_config: Dict[str, Any]):
+        """Create HTTP server instance."""
+        url = expanded_config.get("url")
+        if not url:
+            return None, {"error": "URL is required for HTTP server"}
+
+        headers = expanded_config.get("headers", {})
+        timeout = float(expanded_config.get("timeout", 30.0))
+
+        # Merge default headers with user-provided headers
+        merged_headers = {"Accept": "application/json, text/event-stream", **headers}
+
+        server_params = MCPServerStreamableHttpParams(
+            url=url,
+            headers=merged_headers,
+            timeout=timeout,
+            sse_read_timeout=timeout,
+            terminate_on_close=True,
+        )
+        server_instance = MCPServerStreamableHttp(params=server_params, client_session_timeout_seconds=60)
+        details = {"url": url, "headers_count": len(merged_headers), "timeout": timeout}
+        return server_instance, details
+
+    def _run_tools_operation(
+        self, server_instance, server_name: str, operation: str, **kwargs
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """Run tools operation with proper async handling."""
+        try:
+            # Create and run in new event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            result = loop.run_until_complete(
+                asyncio.wait_for(
+                    self._execute_tools_operation(server_instance, server_name, operation, **kwargs), timeout=30.0
+                )
+            )
+            return result
+
+        except asyncio.TimeoutError:
+            logger.error(f"Operation '{operation}' timed out for server '{server_name}'")
+            return False, {"error": "Operation timeout - exceeded 30 seconds"}
+        except Exception as e:
+            logger.error(f"Failed to run operation '{operation}' for server '{server_name}': {e}")
+            return False, {"error": str(e)}
+        finally:
+            self._cleanup_event_loop(loop if "loop" in locals() else None)
+
+    def _cleanup_event_loop(self, loop):
+        """Clean up event loop and pending tasks."""
+        if loop is None:
+            return
+        try:
+            # Cancel pending tasks
+            pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
+        except Exception:
+            pass
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    async def _execute_tools_operation(
+        self, server_instance, server_name: str, operation: str, **kwargs
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """Execute the actual tools operation."""
+        try:
+            # Connect to the server
+            await server_instance.connect()
+            logger.info(f"Successfully connected to MCP server '{server_name}' for {operation}")
+
+            # Create minimal agent and run context
+            agent = Agent(name=f"tools-agent-{server_name}")
+            run_context = RunContextWrapper(context=None, usage=Usage())
+
+            return await self._dispatch_operation(server_instance, server_name, operation, agent, run_context, **kwargs)
+
+        except Exception as e:
+            logger.error(f"Error executing {operation} on server '{server_name}': {e}")
+            return False, {"error": str(e)}
+        finally:
+            await self._cleanup_server_instance(server_instance)
+
+    async def _dispatch_operation(
+        self, server_instance, server_name: str, operation: str, agent, run_context, **kwargs
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """Dispatch operation to appropriate handler."""
+        if operation == "list_tools":
+            return await self._handle_list_tools(server_instance, server_name, run_context, agent)
+        elif operation == "call_tool":
+            return await self._handle_call_tool(server_instance, server_name, **kwargs)
+        elif operation == "connectivity_test":
+            return await self._handle_connectivity_test(server_instance, server_name, run_context, agent)
+        else:
+            return False, {"error": f"Unknown operation: {operation}"}
+
+    async def _handle_list_tools(self, server_instance, server_name: str, run_context, agent):
+        """Handle list_tools operation."""
+        tools = await server_instance.list_tools(run_context, agent)
+        tools_list = []
+
+        if tools:
+            for tool in tools:
+                input_schema = {}
+                if tool.inputSchema:
+                    if hasattr(tool.inputSchema, "model_dump"):
+                        input_schema = tool.inputSchema.model_dump()
+                    elif isinstance(tool.inputSchema, dict):
+                        input_schema = tool.inputSchema
+
+                tools_list.append(
+                    {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "inputSchema": input_schema,
+                    }
+                )
+
+        logger.info(f"Found {len(tools_list)} tools on server '{server_name}'")
+        return True, {"tools": tools_list}
+
+    async def _handle_call_tool(self, server_instance, server_name: str, **kwargs):
+        """Handle call_tool operation."""
+        tool_name = kwargs.get("tool_name")
+        arguments = kwargs.get("arguments", {})
+
+        if not tool_name:
+            return False, {"error": "Tool name is required"}
+
+        result = await server_instance.call_tool(tool_name, arguments)
+        result_dict = {"content": [], "isError": getattr(result, "isError", False)}
+
+        if hasattr(result, "content") and result.content:
+            for content_item in result.content:
+                content_dict = {"type": content_item.type}
+                if hasattr(content_item, "text"):
+                    content_dict["text"] = content_item.text
+                elif hasattr(content_item, "data"):
+                    content_dict["data"] = content_item.data
+                result_dict["content"].append(content_dict)
+
+        logger.info(f"Successfully called tool '{tool_name}' on server '{server_name}'")
+        return True, result_dict
+
+    async def _handle_connectivity_test(self, server_instance, server_name: str, run_context, agent):
+        """Handle connectivity_test operation."""
+        logger.info(f"Successfully connected to MCP server '{server_name}'")
+        tools_info = {"connected": True}
+
+        if hasattr(server_instance, "list_tools"):
+            try:
+                tools = await server_instance.list_tools(run_context, agent)
+                tool_count = len(tools) if tools else 0
+                tool_names = [tool.name for tool in tools] if tools else []
+
+                logger.info(f"MCP server '{server_name}' has {tool_count} tools available: {tool_names}")
+                tools_info.update({"tools_available": True, "tool_count": tool_count, "tool_names": tool_names})
+            except Exception as e:
+                logger.warning(f"Failed to list tools on server '{server_name}': {e}")
+                tools_info.update({"tools_available": False, "tools_error": str(e)})
+        else:
+            tools_info["tools_available"] = False
+            logger.warning(f"MCP server '{server_name}' does not support list_tools")
+
+        return True, tools_info
+
+    async def _cleanup_server_instance(self, server_instance):
+        """Clean up server instance resources."""
+        try:
+            if hasattr(server_instance, "cleanup"):
+                await server_instance.cleanup()
+            elif hasattr(server_instance, "disconnect"):
+                await server_instance.disconnect()
+            elif hasattr(server_instance, "close"):
+                await server_instance.close()
+        except Exception as cleanup_error:
+            logger.debug(f"Cleanup error (suppressed): {cleanup_error}")
+
+    def cleanup(self) -> None:
+        """Clean up MCP Manager."""
+        logger.info("MCP Manager cleanup complete")
