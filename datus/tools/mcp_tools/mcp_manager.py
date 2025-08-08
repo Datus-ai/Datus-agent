@@ -324,7 +324,6 @@ class MCPManager:
         server_params = MCPServerStdioParams(
             command=expanded_config.get("command"),
             args=expanded_config.get("args", []),
-            cwd=expanded_config.get("cwd"),
             env=env_vars,
         )
 
@@ -332,7 +331,6 @@ class MCPManager:
         details = {
             "command": expanded_config.get("command"),
             "args": expanded_config.get("args", []),
-            "cwd": expanded_config.get("cwd"),
             "env_count": len(env_vars),
         }
         return server_instance, details

@@ -73,8 +73,7 @@ mcp_tool.add_server(
     server_type="stdio",
     command="python",
     args=["-m", "my_mcp_server"],
-    env={"DEBUG": "1"},
-    cwd="/path/to/workdir"
+    env={"DEBUG": "1"}
 )
 ```
 
