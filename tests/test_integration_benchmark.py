@@ -24,7 +24,7 @@ def db_manager(agent_config: AgentConfig) -> DBManager:
 def test_benchmark_bird(agent_config: AgentConfig, db_manager: DBManager):
     # random some task_ids
     tasks = load_bird_dev_tasks(agent_config.benchmark_path("bird_dev"))
-    task_ids = set(generate_unique_random_numbers(2, len(tasks)))
+    task_ids = set(generate_unique_random_numbers(30, len(tasks)))
     args = argparse.Namespace(
         **{
             "components": ["metrics", "metadata", "table_lineage", "document"],
