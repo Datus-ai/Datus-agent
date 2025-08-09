@@ -194,7 +194,7 @@ class Node(ABC):
             result: The result of the node execution
         """
         final_status = "completed" if result.success else "failed"
-        logger.info(f"Node.complete: type={self.type}, result.success={result.success}, final_status={final_status}")
+        logger.debug(f"Node.complete: type={self.type}, result.success={result.success}, final_status={final_status}")
         self.status = final_status
         self.result = result
         self.end_time = time.time()
@@ -242,7 +242,7 @@ class Node(ABC):
                 self.execute()
 
                 # REFLECT type always completes successfully, others check result
-                logger.info(
+                logger.debug(
                     f"Node.run checking result: type={self.type}, result_type={type(self.result)}, "
                     f"result_is_not_None={self.result is not None}, "
                     f"result_success={getattr(self.result, 'success', 'N/A')}"

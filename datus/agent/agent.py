@@ -261,7 +261,7 @@ class Agent:
                     break
             # evaluate the task result, update the context and setup the next node input if needed
             evaluation = evaluate_result(current_node, self.workflow)
-            logger.info(f"Evaluation result for {current_node.type}: {evaluation}")
+            logger.debug(f"Evaluation result for {current_node.type}: {evaluation}")
             if not evaluation["success"]:
                 logger.error(f"Setting {current_node.type} status to failed due to evaluation failure")
                 current_node.status = "failed"

@@ -182,7 +182,8 @@ class ParallelNode(Node):
         child_nodes = []
 
         for i, child_node_type in enumerate(self.input.child_nodes):
-            # 支持 child 是 subworkflow 名称（字符串且在 custom_workflows 中），此时类型为 TYPE_SUBWORKFLOW
+            # Support `child` as the subworkflow name (a string that exists in `custom_workflows`),
+            # in which case the type is `TYPE_SUBWORKFLOW`.
             is_subworkflow_name = (
                 isinstance(child_node_type, str)
                 and self.agent_config

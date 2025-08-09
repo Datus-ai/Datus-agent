@@ -20,7 +20,7 @@ class ReasonSQLNode(Node):
 
     def execute(self):
         result = self._reason_sql()
-        logger.info(
+        logger.debug(
             f"ReasonSQLNode execute got result type: {type(result)}, success: {getattr(result, 'success', 'N/A')}"
         )
         self.result = result
@@ -48,7 +48,7 @@ class ReasonSQLNode(Node):
 
     def update_context(self, workflow: Workflow) -> Dict:
         """Update reasoning results to workflow context."""
-        logger.info(
+        logger.debug(
             f"ReasonSQLNode.update_context called: result_type={type(self.result)}, "
             f"result_success={getattr(self.result, 'success', 'N/A')}"
         )
@@ -188,14 +188,14 @@ class ReasonSQLNode(Node):
             result = tool.reasoning_sql(
                 self.input, self.agent_config.current_db_config(db_name=self.input.sql_task.database_name)
             )
-            logger.info(
+            logger.debug(
                 f"_reason_sql got result from tool: type={type(result)}, success={getattr(result, 'success', 'N/A')}"
             )
             return result
         except Exception as e:
             logger.error(f"SQL reasoning execution error: {str(e)}")
             fallback_result = ReasoningResult(success=False, error=str(e), sql_query="")
-            logger.info(
+            logger.debug(
                 f"_reason_sql returning fallback result: type={type(fallback_result)}, "
                 f"success={fallback_result.success}"
             )

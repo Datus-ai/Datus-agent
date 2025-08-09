@@ -286,23 +286,9 @@ class DeepSeekModel(LLMBaseModel):
                 )
                 logger.debug(f"Agent created with name: {agent.name}, {output_type}")
 
-                try:
-                    result = await Runner.run(agent, input=prompt, max_turns=max_turns)
-                    logger.info(f"deepseek mcp run Result: {result}")
-                except Exception as run_exc:
-                    # Check if it's a cancel scope error (non-critical cleanup issue)
-                    if any(keyword in str(run_exc).lower() for keyword in ["cancel", "scope", "task"]):
-                        logger.debug(f"Agent runner cleanup warning (non-critical): {str(run_exc)}")
-                        # If we have a partial result, try to use it
-                        if hasattr(run_exc, "result") and run_exc.result:
-                            result = run_exc.result
-                            logger.info(f"Using partial result after cleanup warning: {result}")
-                        else:
-                            # Re-raise the error if no partial result available
-                            raise
-                    else:
-                        # Re-raise non-cleanup related errors
-                        raise
+                result = await Runner.run(agent, input=prompt, max_turns=max_turns)
+
+                logger.info(f"deepseek mcp run Result: {result}")
                 # Build the result
                 final_result = {
                     "content": result.final_output,
