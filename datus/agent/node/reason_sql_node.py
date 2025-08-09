@@ -19,7 +19,11 @@ class ReasonSQLNode(Node):
         self.action_history_manager = None
 
     def execute(self):
-        self.result = self._reason_sql()
+        result = self._reason_sql()
+        logger.info(
+            f"ReasonSQLNode execute got result type: {type(result)}, success: {getattr(result, 'success', 'N/A')}"
+        )
+        self.result = result
 
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
@@ -44,6 +48,10 @@ class ReasonSQLNode(Node):
 
     def update_context(self, workflow: Workflow) -> Dict:
         """Update reasoning results to workflow context."""
+        logger.info(
+            f"ReasonSQLNode.update_context called: result_type={type(self.result)}, "
+            f"result_success={getattr(self.result, 'success', 'N/A')}"
+        )
         try:
             # Check if we have streaming results from action history manager
             if self.action_history_manager and hasattr(self.action_history_manager, "sql_contexts"):
@@ -172,14 +180,23 @@ class ReasonSQLNode(Node):
     def _reason_sql(self) -> ReasoningResult:
         """Reasoning and Exploring the database to refine SQL query.
         Returns:
-            GenerateSQLResult containing the generated SQL query
+            ReasoningResult containing the generated SQL query
         """
         try:
             tool = LLMTool(self.model)
             # TODO: pass the mcp_server to tools, don't repeat init the mcp server
-            return tool.reasoning_sql(
+            result = tool.reasoning_sql(
                 self.input, self.agent_config.current_db_config(db_name=self.input.sql_task.database_name)
             )
+            logger.info(
+                f"_reason_sql got result from tool: type={type(result)}, success={getattr(result, 'success', 'N/A')}"
+            )
+            return result
         except Exception as e:
             logger.error(f"SQL reasoning execution error: {str(e)}")
-            return ReasoningResult(success=False, error=str(e), sql_query="")
+            fallback_result = ReasoningResult(success=False, error=str(e), sql_query="")
+            logger.info(
+                f"_reason_sql returning fallback result: type={type(fallback_result)}, "
+                f"success={fallback_result.success}"
+            )
+            return fallback_result

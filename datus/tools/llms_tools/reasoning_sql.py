@@ -9,7 +9,6 @@ from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.prompts.reasoning_sql_with_mcp import get_reasoning_prompt
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
-from datus.schemas.node_models import ExecuteSQLResult
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
@@ -183,17 +182,22 @@ def reasoning_sql_with_mcp(
         try:
             logger.debug(f"exec_result: {exec_result['content']}")
             content_dict = llm_result2json(exec_result["content"])
+            logger.info(f"Successfully parsed JSON content: {content_dict}")
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse exec_result.content: {e}, exec_result_strip: {exec_result['content']}")
             content_dict = {}
         # content_dict = exec_result
         # Extract required pieces from the parsed dict
-        return ReasoningResult(
+        reasoning_result = ReasoningResult(
             success=True,
             sql_query=content_dict.get("sql", ""),
             sql_return="",  # Remove the result from the return to avoid large data return
             sql_contexts=exec_result["sql_contexts"],
         )
+        logger.info(
+            f"Created ReasoningResult: success={reasoning_result.success}, sql_query={reasoning_result.sql_query}"
+        )
+        return reasoning_result
     except Exception as e:
         # TODO : deal with excced the max round
         error_msg = str(e)
@@ -205,4 +209,4 @@ def reasoning_sql_with_mcp(
             raise
 
         # Return failed result for other errors
-        return ExecuteSQLResult(success=False, error=str(e), sql_query="", row_count=0, sql_return="")
+        return ReasoningResult(success=False, error=str(e), sql_query="")

@@ -157,10 +157,18 @@ def setup_exception_handler(console_logger=None, prefix_wrap_func=None):
             # Do not catch these exceptions, let the program exit or respond to the interrupt
             sys.__excepthook__(type, value, traceback)
             return
+
+        # Check if this is a cancel scope error (typically from agents library cleanup)
+        error_message = str(value).lower()
+        if any(keyword in error_message for keyword in ["cancel scope", "cancelled by cancel scope"]):
+            # Log as debug only (non-critical cleanup issue)
+            logger.debug(f"Agent cleanup warning (non-critical): {str(value)}")
+            return  # Don't propagate this error
+
         # Print exception
         format_ex = "\n".join(traceback.format_exception(type, value, tb))
         log_prefix = (
-            "Execution failed" if type == DatusException or issubclass(type, DatusException) else "Unexcepted failed"
+            "Execution failed" if type == DatusException or issubclass(type, DatusException) else "Unexpected failed"
         )
         log_manager = get_log_manager()
         if log_manager.debug:

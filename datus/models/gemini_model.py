@@ -39,7 +39,7 @@ class GeminiModel(LLMBaseModel):
         try:
             generation_config = genai.types.GenerationConfig(
                 temperature=kwargs.get("temperature", 0.7),
-                max_output_tokens=kwargs.get("max_tokens", 1000),
+                max_output_tokens=kwargs.get("max_tokens", 10000),
                 top_p=kwargs.get("top_p", 1.0),
                 top_k=kwargs.get("top_k", 40),
             )

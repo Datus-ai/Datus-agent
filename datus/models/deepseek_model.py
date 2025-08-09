@@ -18,6 +18,14 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
+# Import typing fix for Python 3.12+ compatibility
+try:
+    from datus.utils.typing_fix import patch_agents_typing_issue
+
+    patch_agents_typing_issue()
+except ImportError:
+    pass
+
 logger = get_logger(__name__)
 MAX_INPUT_DEEPSEEK = 52000  # 57344 - buffer of ~5000 tokens
 
@@ -278,9 +286,23 @@ class DeepSeekModel(LLMBaseModel):
                 )
                 logger.debug(f"Agent created with name: {agent.name}, {output_type}")
 
-                result = await Runner.run(agent, input=prompt, max_turns=max_turns)
-
-                logger.info(f"deepseek mcp run Result: {result}")
+                try:
+                    result = await Runner.run(agent, input=prompt, max_turns=max_turns)
+                    logger.info(f"deepseek mcp run Result: {result}")
+                except Exception as run_exc:
+                    # Check if it's a cancel scope error (non-critical cleanup issue)
+                    if any(keyword in str(run_exc).lower() for keyword in ["cancel", "scope", "task"]):
+                        logger.debug(f"Agent runner cleanup warning (non-critical): {str(run_exc)}")
+                        # If we have a partial result, try to use it
+                        if hasattr(run_exc, "result") and run_exc.result:
+                            result = run_exc.result
+                            logger.info(f"Using partial result after cleanup warning: {result}")
+                        else:
+                            # Re-raise the error if no partial result available
+                            raise
+                    else:
+                        # Re-raise non-cleanup related errors
+                        raise
                 # Build the result
                 final_result = {
                     "content": result.final_output,

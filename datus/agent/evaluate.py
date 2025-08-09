@@ -29,8 +29,11 @@ def update_context_from_node(node: Node, workflow: Workflow) -> Dict:
         or node.type == NodeType.TYPE_REFLECT
         or node.type == NodeType.TYPE_PARALLEL
         or node.type == NodeType.TYPE_SELECTION
+        or node.type == NodeType.TYPE_SUBWORKFLOW
     ):
-        return node.update_context(workflow)
+        result = node.update_context(workflow)
+        logger.info(f"update_context_from_node: node_type={node.type}, result={result}")
+        return result
     else:
         logger.warning(f"Unknown node type for context updating: {node.type}")
         return {"success": False, "message": f"Unknown node type: {node.type}"}

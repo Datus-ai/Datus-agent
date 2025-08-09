@@ -12,6 +12,7 @@ from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
+from datus.schemas.subworkflow_node_models import SubworkflowInput
 
 
 class NodeType:
@@ -22,9 +23,10 @@ class NodeType:
     TYPE_REFLECT = "reflect"
     TYPE_PARALLEL = "parallel"
     TYPE_SELECTION = "selection"
+    TYPE_SUBWORKFLOW = "subworkflow"
 
     # Control node types list
-    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT, TYPE_PARALLEL, TYPE_SELECTION]
+    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT, TYPE_PARALLEL, TYPE_SELECTION, TYPE_SUBWORKFLOW]
 
     # SQL workflow action types
     TYPE_SCHEMA_LINKING = "schema_linking"  # For database schema analysis
@@ -69,6 +71,7 @@ class NodeType:
         TYPE_SEARCH_METRICS: "Search metrics",
         TYPE_PARALLEL: "Execute child nodes in parallel",
         TYPE_SELECTION: "Select best result from multiple candidates",
+        TYPE_SUBWORKFLOW: "Execute a nested workflow",
         TYPE_COMPARE: "Compare SQL with expectations",
     }
 
@@ -105,6 +108,8 @@ class NodeType:
             input_data_cls = ParallelInput
         elif node_type == NodeType.TYPE_SELECTION:
             input_data_cls = SelectionInput
+        elif node_type == NodeType.TYPE_SUBWORKFLOW:
+            input_data_cls = SubworkflowInput
         elif node_type == NodeType.TYPE_COMPARE:
             input_data_cls = CompareInput
         else:
