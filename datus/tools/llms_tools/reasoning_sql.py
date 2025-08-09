@@ -143,7 +143,21 @@ def reasoning_sql_with_mcp(
         raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
 
     # logger.info(f"@@@@db_config: {db_config}, input_data: {input_data.sql_task.database_name}")
-    mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+    # Create a dedicated MCP server instance for this call to avoid races with parallel subworkflows
+    if db_config.type == DBType.SQLITE:
+        # Resolve db path like MCPServer.get_db_mcp_server does
+        from pathlib import Path
+
+        db_path = "./sqlite_mcp_server.db"
+        if db_config and db_config.uri:
+            if db_config.uri.startswith("sqlite///") or db_config.uri.startswith("sqlite:///"):
+                db_path = db_config.uri.replace("sqlite:///", "")
+            else:
+                db_path = db_config.uri
+            db_path = str(Path(db_path).expanduser())
+        mcp_server = MCPServer.create_sqlite_mcp_server(db_path=db_path)
+    else:
+        mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
 
     instruction = prompt_manager.get_raw_template("reasoning_system", input_data.prompt_version)
     # update to python 3.12 to enable structured output
