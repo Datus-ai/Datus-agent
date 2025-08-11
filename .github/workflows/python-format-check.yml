@@ -33,7 +33,8 @@ jobs:
 
       - name: Check formatting with Black
         run: |
-          black --line-length=120 --extend-exclude="/(mcp)/" --check .
+          black --line-length=120 --extend-exclude="/(mcp)/" --check datus/
+          black --line-length=120 --extend-exclude="/(mcp)/" --check tests/
 
       - name: Lint with flake8
         run: |
