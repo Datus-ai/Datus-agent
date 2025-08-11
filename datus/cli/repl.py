@@ -369,11 +369,11 @@ class DatusCLI:
         if not new_db:
             self.console.print("[bold red]Error:[/] Database name is required")
             return
-        self.current_db_name = new_db
         if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
             self.db_connector = self.db_manager.get_conn(self.agent_config.current_namespace, self.current_db_name)
         self.db_connector.switch_context(database_name=new_db)
         self.console.print(f"[bold green]Database switched to: {self.current_db_name}[/]")
+        self.current_db_name = new_db
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """
@@ -884,6 +884,8 @@ class DatusCLI:
         self.db_connector.switch_context(
             catalog_name=self.current_catalog, database_name=self.current_db_name, schema_name=schema_name
         )
+        self.console.print(f"[bold green]Schema switched to: {self.current_db_name}[/]")
+        self.current_schema = schema_name
 
     def _cmd_table_schema(self, args: str):
         """Show schema information for tables."""

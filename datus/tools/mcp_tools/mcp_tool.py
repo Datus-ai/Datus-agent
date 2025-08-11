@@ -5,13 +5,15 @@ This module provides the MCPTool class that implements the BaseTool interface
 for MCP server management operations. It acts as a wrapper around MCPManager
 providing a standardized tool interface.
 """
-
-from typing import Any, Dict, Optional
+import json
+import re
+import shlex
+from typing import Any, Dict, List, Optional, Tuple
 
 from datus.tools.base import BaseTool, BaseToolExecResult, ToolAction
+from datus.tools.mcp_tools.mcp_manager import MCPManager
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-
-from .mcp_manager import MCPManager
 
 logger = get_logger(__name__)
 
@@ -261,3 +263,185 @@ class MCPTool(BaseTool):
         """Clean up the MCP tool and manager."""
         if self.manager:
             self.manager.cleanup()
+
+
+def _parse_header_from_parts(parts: List[str]) -> Dict[str, str]:
+    """
+    Try strict JSON parse first, then do a best-effort token-level parse.
+    """
+    STRIP_CHARS = " \"' ,"
+    raw = " ".join(parts)
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    try:
+        norm = raw.replace("'", '"').replace('\\"', '"')
+        return json.loads(norm)
+    except Exception:
+        pass
+
+    # fallback: token-level parse like `Token: 1234a, header2: 1`
+    tokens = parts[:]
+    if tokens and tokens[0].startswith("{"):
+        tokens[0] = tokens[0][1:] or ""
+    if tokens and tokens[-1].endswith("}"):
+        tokens[-1] = tokens[-1][:-1] or ""
+    flattened = []
+    for t in tokens:
+        if not t:
+            continue
+        items = re.split(r"\s*,\s*", t)
+        for it in items:
+            if it:
+                flattened.append(it)
+    result: Dict[str, str] = {}
+    i = 0
+    while i < len(flattened):
+        part = flattened[i]
+        m = re.match(r'^\s*["\']?([A-Za-z0-9_\-]+)["\']?\s*:\s*(.*)$', part)
+        if m:
+            key = m.group(1)
+            rest = m.group(2).strip()
+            if rest != "":
+                val = rest.strip(STRIP_CHARS)
+                result[key] = val
+                i += 1
+            else:
+                if i + 1 < len(flattened):
+                    val = flattened[i + 1].strip(STRIP_CHARS)
+                    result[key] = val
+                    i += 2
+                else:
+                    i += 1
+        else:
+            i += 1
+    return result
+
+
+def parse_command_string(s: str) -> Tuple[str, Optional[str], Dict[str, Any]]:
+    """
+    Parse a command-line string into structured info depending on transport.
+
+    Return: (transport_type, name, payload)
+    - For 'studio'/'stdio': payload = {"command": str|None, "args": [...], "env": {...}}
+    - For 'sse'/'http':    payload = {"url": str|None, "headers": {...}, "timeout": float}
+    Comments are in English as requested.
+    """
+    tokens = shlex.split(s)
+    n = len(tokens)
+
+    # find the transport segment tokens (tokens immediately following --transport until next --option)
+    transport_seg: List[Tuple[int, str]] = []
+    for i, t in enumerate(tokens):
+        if t == "--transport":
+            j = i + 1
+            seg = []
+            while j < n and not tokens[j].startswith("--"):
+                seg.append((j, tokens[j]))
+                j += 1
+            transport_seg = seg
+            break
+
+    # default timeout
+    timeout: Optional[float] = None
+    # parse timeout only for sse/http later; but we still capture its value if present
+    for i, t in enumerate(tokens):
+        if t == "--timeout" and i + 1 < n:
+            try:
+                timeout = float(tokens[i + 1])
+            except Exception:
+                timeout = None
+
+    if not transport_seg:
+        raise DatusException(ErrorCode.COMMON_FIELD_INVALID, message="No --transport found.")
+
+    transport_type = transport_seg[0][1].lower()  # first token after --transport is type
+
+    # find first index of --env (if any)
+    first_env_idx = None
+    for i, t in enumerate(tokens):
+        if t == "--env":
+            first_env_idx = i
+            break
+
+    # parse --env KEY=VAL occurrences (may be multiple)
+    env: Dict[str, str] = {}
+    i = 0
+    while i < n:
+        if tokens[i] == "--env" and i + 1 < n:
+            kv = tokens[i + 1]
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                env[k] = v
+            i += 2
+        else:
+            i += 1
+
+    # branch by transport type
+    if transport_type in ("studio", "stdio"):
+        # determine name and command indices in tokens
+        name = transport_seg[1][1] if len(transport_seg) > 1 else None
+        # choose command index: prefer the 3rd token after --transport if present, else last seg token
+        if len(transport_seg) > 2:
+            command_idx = transport_seg[2][0]
+            command = transport_seg[2][1]
+        else:
+            # no explicit command token — fallback: use last token in transport segment as command if any
+            command_idx = transport_seg[-1][0]
+            command = transport_seg[-1][1]
+
+        # args start immediately after command token
+        args_start = command_idx + 1
+
+        # args end at the position of first --env (user requested "command 后面 到 --env 中间的所有 均是args")
+        args_end = first_env_idx if first_env_idx is not None else n
+
+        # Ensure indices validity
+        if args_start > args_end:
+            args = []
+        else:
+            args = tokens[args_start:args_end]
+
+        return transport_type, name, {"command": command, "args": args, "env": env}
+
+    if transport_type in ("sse", "http"):
+        name = transport_seg[1][1] if len(transport_seg) > 1 else None
+        url = transport_seg[2][1] if len(transport_seg) > 2 else None
+
+        # if url missing in transport_seg, try explicit --url or any http(s) token
+        if not url:
+            for i, t in enumerate(tokens):
+                if t == "--url" and i + 1 < n:
+                    url = tokens[i + 1]
+                    break
+            if not url:
+                for t in tokens:
+                    if t.startswith("http://") or t.startswith("https://"):
+                        url = t
+                        break
+
+        # parse header (only for sse/http)
+        header: Dict[str, str] = {}
+        for i, t in enumerate(tokens):
+            if t == "--header":
+                # collect header tokens until token that ends with '}'
+                j = i + 1
+                parts = []
+                while j < n:
+                    parts.append(tokens[j])
+                    if tokens[j].endswith("}"):
+                        break
+                    j += 1
+                if parts:
+                    header = _parse_header_from_parts(parts)
+                break
+
+        # default timeout fallback
+        if timeout is None:
+            timeout = 10.0
+
+        return transport_type, name, {"url": url, "headers": header or {}, "timeout": timeout}
+    raise DatusException(
+        ErrorCode.COMMON_FIELD_INVALID, message=f"Unsupported transport protocols: {transport_type}, full_params: {s}"
+    )

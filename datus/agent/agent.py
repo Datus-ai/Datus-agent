@@ -813,7 +813,7 @@ class Agent:
             )
             task_size += 1
         if task_size == 0:
-            logger.warn("There are no benchmarks that need to be run.")
+            logger.warning("There are no benchmarks that need to be run.")
             return {}
         logger.info(f"Loaded {task_size} tasks from Bird benchmark")
         logger.info("Phase 1: Generating gold standard results...")

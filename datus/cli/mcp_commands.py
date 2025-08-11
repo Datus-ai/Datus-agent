@@ -2,14 +2,13 @@
 MCP-related commands for the Datus CLI.
 This module provides commands to list and manage MCP configurations.
 """
-
 import json
-from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from rich.table import Table
 
 from datus.cli.screen.mcp_screen import MCPServerApp
+from datus.tools.mcp_tools import MCPTool, parse_command_string
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -25,69 +24,39 @@ class MCPCommands:
         """Initialize with reference to the CLI instance for shared resources."""
         self.cli = cli_instance
         self.console = cli_instance.console
-        # builtin MCP servers
-        mcp_server_json = {
-            "mcpServers": {
-                "filesystem": {
-                    "type": "builtin",
-                    "command": "npx",
-                    "args": [
-                        "-y",
-                        "@modelcontextprotocol/server-filesystem",
-                        "/Users/username/Desktop",
-                        "/path/to/other/allowed/dir",
-                    ],
-                },
-                "sqlite": {
-                    "type": "builtin",
-                    "command": "uv",
-                    "args": [
-                        "--directory",
-                        "mcp/mcp-sqlite-server/src/mcp_server_sqlite/sqlite",
-                        "run",
-                        "mcp-server-sqlite",
-                        "--db-path",
-                        "<your path>",
-                    ],
-                },
-                "jetbrains": {"type": "builtin", "command": "npx", "args": ["-y", "@jetbrains/mcp-proxy"]},
-            }
-        }
-        self.mcp_servers = mcp_server_json["mcpServers"]
+        self.mcp_tool = MCPTool()
 
     def cmd_mcp(self, args: str):
         if args == "list":
-            self.cmd_mcp_list(args)
+            self.cmd_mcp_list()
         elif args.startswith("add"):
             self.cmd_mcp_add(args[3:].strip())
+        elif args.startswith("remove"):
+            self.cmd_mcp_remove(args[6:].strip())
+        elif args.startswith("check"):
+            self.cmd_mcp_check(args[5:].strip())
+        elif args.startswith("call"):
+            self.cmd_call_tool(args[4:].strip())
         else:
             self.console.print("[red]Invalid MCP command[/red]")
 
-    def cmd_mcp_list(self, args: str):
-        user_mcp_config_path = Path.home() / ".datus" / "mcp.json"
-        user_mcps = {}
-        if user_mcp_config_path.exists():
-            try:
-                with open(user_mcp_config_path, "r") as f:
-                    user_config = json.load(f)
-                    user_mcps = user_config.get("mcpServers", {})
-            except Exception as e:
-                self.console.print(f"[red]Error reading user MCP config: {e}[/red]")
-        else:
-            self.console.print("[yellow]No user MCP configuration found at ~/.datus/mcp.json[/yellow]")
-
-        for mcp_name, mcp_config in user_mcps.items():
-            mcp_config["type"] = "user"
-            self.mcp_servers[mcp_name] = mcp_config
-
+    def cmd_mcp_list(self):
+        mcp_servers = self.mcp_tool.list_servers()
+        if not mcp_servers.success:
+            self.console.print(f"[bold red]Error listing MCP servers:[/] {mcp_servers.message}")
+            return
+        if not mcp_servers.result:
+            self.console.print("[bold yellow]No MCP servers found[/]")
+            return
+        servers = mcp_servers.result["servers"]
         try:
-            screen = MCPServerApp(self.mcp_servers)
+            screen = MCPServerApp(servers, self.mcp_tool)
             screen.run()
         except Exception as e:
             self.console.print(f"[yellow]Interactive mode error: {e}[/yellow]")
-            self._display_servers_table()
+            self._display_servers_table(servers)
 
-    def _display_servers_table(self):
+    def _display_servers_table(self, servers: List[Dict[str, Any]]):
         """Display servers in a formatted table."""
         table = Table(title="MCP Servers")
         table.add_column("Name", style="cyan")
@@ -96,7 +65,7 @@ class MCPCommands:
         table.add_column("Command", style="green")
         table.add_column("Args", style="yellow")
 
-        for name, config in self.mcp_servers:
+        for name, config in servers:
             server_type = config.get("type", "unknown")
             status = "[green]Available[/green]" if server_type == "builtin" else "[yellow]User[/yellow]"
 
@@ -112,46 +81,95 @@ class MCPCommands:
 
     def cmd_mcp_add(self, args: str):
         """Add a new MCP configuration."""
-
-        datus_dir = Path.home() / ".datus"
-        datus_dir.mkdir(exist_ok=True)
-
-        mcp_config_path = datus_dir / "mcp.json"
-
-        if not mcp_config_path.exists():
-            base_config = {"mcpServers": {}}
-            with open(mcp_config_path, "w") as f:
-                json.dump(base_config, f, indent=2)
-            self.console.print(f"[green]Created new MCP configuration file at {mcp_config_path}[/green]")
-
         try:
-            with open(mcp_config_path, "r") as f:
-                config = json.load(f)
+            transport_type, server_name, config_params = parse_command_string(args)
+            # Call the add_server method
+            result = self.mcp_tool.add_server(name=server_name, server_type=transport_type, **config_params)
+
+            if result.success:
+                self.console.print(f"[bold green]Successfully added MCP server: {server_name}[/]")
+                self.console.print(f"Type: {transport_type}")
+            else:
+                self.console.print(f"[bold red]Error adding MCP server: {result.message}[/]")
+
         except Exception as e:
-            self.console.print(f"[red]Error reading MCP config: {e}[/red]")
+            logger.error(f"Error in cmd_mcp_add: {e}")
+            self.console.print(f"[red]Error: {str(e)}[/red]")
+
+    def cmd_mcp_remove(self, args: str):
+        """Remove an MCP configuration."""
+        server_name = args.strip()
+        if not server_name:
+            self.console.print("[red]Please specify the name of the MCP server to remove[/red]")
+            return
+        remove_result = self.mcp_tool.remove_server(server_name)
+        if remove_result.success:
+            self.console.print(f"[bold green]Successfully removed MCP server: {server_name}[/]")
+        else:
+            self.console.print(f"[bold red]Error removing MCP server: {remove_result.message}[/]")
+
+    def cmd_mcp_check(self, args: str):
+        server_name = args.strip()
+        if not server_name:
+            self.console.print("[red]Please specify the name of the MCP server to check[/red]")
             return
 
-        mcp_name = input("Enter MCP name: ").strip()
-        if not mcp_name:
-            self.console.print("[red]MCP name cannot be empty[/red]")
+        result = self.mcp_tool.check_connectivity(server_name)
+
+        if result.success:
+            connectivity = result.result.get("connectivity", False)
+            details = result.result.get("details", {})
+
+            if connectivity:
+                self.console.print(f"[green]✓ Server '{server_name}' is reachable[/green]")
+                self.console.print(f"  Type: {details.get('type', 'unknown')}")
+                if "tools_count" in details:
+                    self.console.print(f"  Available tools: {details['tools_count']}")
+            else:
+                self.console.print(f"[red]✗ Server '{server_name}' is not reachable[/red]")
+                if "error" in details:
+                    self.console.print(f"  Error: {details['error']}")
+        else:
+            self.console.print(f"[red]✗ Error: {result.message}[/red]")
+
+    def cmd_call_tool(self, args: str):
+        """Call a tool on a MCP server."""
+        params = args.strip().split()
+        server_tool = params[0].split(".")
+        if len(server_tool) != 2:
+            self.console.print("[bold red]Invalid server.tool format[/]")
+            return
+        server_name, tool_name = server_tool
+        tool_params = None
+        if len(params) >= 2:
+            arguments = " ".join(params[1:])
+            if arguments:
+                try:
+                    tool_params = json.loads(arguments)
+                except Exception as e:
+                    self.console.print(
+                        f"[bold red]The parameters for calling the tool should be in json format: {e}[/]"
+                    )
+                    return
+        # parse arguments to dict
+        result = self.mcp_tool.call_tool(server_name, tool_name, tool_params)
+        if not result.success:
+            self.console.print(f"[bold red]Error calling tool: {result.message}[/]")
+            return
+        if not (result := result.result["result"]):
+            self.console.print("[bold yellow]No result returned[/]")
+            return
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except Exception:
+                self.console.print(result)
+                return
+        elif not isinstance(result, dict):
+            self.console.print(result)
+            return
+        if result.get("isError") or False:
+            self.console.print("[bold red]Call Tool Error:[/]", result["content"])
             return
 
-        command = input("Enter command to run MCP server (e.g., uvx, python): ").strip()
-        if not command:
-            self.console.print("[red]Command cannot be empty[/red]")
-            return
-
-        args_input = input("Enter command arguments (space-separated): ").strip()
-        args_list = args_input.split() if args_input else []
-
-        new_mcp_config = {"command": command, "args": args_list}
-
-        config["mcpServers"][mcp_name] = new_mcp_config
-
-        try:
-            with open(mcp_config_path, "w") as f:
-                json.dump(config, f, indent=2)
-            self.console.print(f"[green]Successfully added MCP configuration for '{mcp_name}'[/green]")
-        except Exception as e:
-            self.console.print(f"[red]Error saving MCP config: {e}[/red]")
-            return
+        self.console.print(result)

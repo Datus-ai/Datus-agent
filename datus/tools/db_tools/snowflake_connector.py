@@ -355,7 +355,6 @@ class SnowflakeConnector(BaseSqlConnector):
             sql = (
                 f"SELECT SCHEMA_NAME FROM {select_table_name} WHERE SCHEMA_NAME NOT IN ('PUBLIC', 'INFORMATION_SCHEMA')"
             )
-            logger.info(f"$$$$ get schemas: {sql}")
             if database_name:
                 sql += f" AND CATALOG_NAME='{database_name}'"
             df = self.execute_query_to_df(sql=sql)

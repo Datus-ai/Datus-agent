@@ -7,6 +7,7 @@ and status monitoring.
 """
 
 import asyncio
+import concurrent.futures
 import json
 import threading
 from pathlib import Path
@@ -342,11 +343,12 @@ class MCPManager:
             return None, {"error": "URL is required for SSE server"}
 
         headers = expanded_config.get("headers", {})
-        timeout = float(expanded_config.get("timeout", 30.0))
+        timeout = 30.0 if not expanded_config.get("timeout") else float(expanded_config.get("timeout"))
+        headers["Accept"] = "text/event-stream"
 
         server_params = MCPServerSseParams(url=url, headers=headers, timeout=timeout, sse_read_timeout=timeout)
         server_instance = MCPServerSse(params=server_params, client_session_timeout_seconds=60)
-        details = {"url": url, "headers_count": len(headers), "timeout": timeout}
+        details = {"url": url, "headers_count": len(headers) if headers else 0, "timeout": timeout}
         return server_instance, details
 
     def _create_http_server(self, expanded_config: Dict[str, Any]):
@@ -355,8 +357,8 @@ class MCPManager:
         if not url:
             return None, {"error": "URL is required for HTTP server"}
 
-        headers = expanded_config.get("headers", {})
-        timeout = float(expanded_config.get("timeout", 30.0))
+        headers = expanded_config.get("headers", {}) or {}
+        timeout = float(expanded_config.get("timeout")) if expanded_config.get("timeout") else 30.0
 
         # Merge default headers with user-provided headers
         merged_headers = {"Accept": "application/json, text/event-stream", **headers}
@@ -373,53 +375,44 @@ class MCPManager:
         return server_instance, details
 
     def _run_tools_operation(
-        self, server_instance, server_name: str, operation: str, **kwargs
+        self, server_instance, server_name: str, operation: str, timeout=30.0, **kwargs
     ) -> Tuple[bool, Dict[str, Any]]:
         """Run tools operation with proper async handling."""
+
         try:
-            # Create and run in new event loop
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # Use asyncio.run which works in both sync and async contexts
+            return asyncio.run(
+                self._run_tools_operation_async(server_instance, server_name, operation, timeout=timeout, **kwargs)
+            )
+
+        def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-
-            result = loop.run_until_complete(
-                asyncio.wait_for(
-                    self._execute_tools_operation(server_instance, server_name, operation, **kwargs), timeout=30.0
-                )
-            )
-            return result
-
-        except asyncio.TimeoutError:
-            logger.error(f"Operation '{operation}' timed out for server '{server_name}'")
-            return False, {"error": "Operation timeout - exceeded 30 seconds"}
-        except Exception as e:
-            logger.error(f"Failed to run operation '{operation}' for server '{server_name}': {e}")
-            return False, {"error": str(e)}
-        finally:
-            self._cleanup_event_loop(loop if "loop" in locals() else None)
-
-    def _cleanup_event_loop(self, loop):
-        """Clean up event loop and pending tasks."""
-        if loop is None:
-            return
-        try:
-            # Cancel pending tasks
-            pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
-            for task in pending_tasks:
-                task.cancel()
-            if pending_tasks:
-                loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
-        except Exception:
-            pass
-        finally:
             try:
+                task = loop.create_task(
+                    self._run_tools_operation_async(server_instance, server_name, operation, timeout=timeout, **kwargs)
+                )
+                loop.run_until_complete(task)
+                return task.result()
+            except asyncio.CancelledError:
+                return False, {"error": f"Operation '{operation}' cancelled"}
+            finally:
                 loop.close()
-            except Exception:
-                pass
 
-    async def _execute_tools_operation(
-        self, server_instance, server_name: str, operation: str, **kwargs
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_thread)
+            try:
+                return future.result()
+            except Exception as e:
+                logger.error(f"Failed to run operation '{operation}' for server '{server_name}': {e}")
+                return False, {"error": f"Operation failed - {str(e)}"}
+
+    async def _run_tools_operation_async(
+        self, server_instance, server_name: str, operation: str, timeout=30.0, **kwargs
     ) -> Tuple[bool, Dict[str, Any]]:
-        """Execute the actual tools operation."""
+        """Run tools operation with proper async handling."""
         try:
             # Connect to the server
             await server_instance.connect()
@@ -428,12 +421,24 @@ class MCPManager:
             # Create minimal agent and run context
             agent = Agent(name=f"tools-agent-{server_name}")
             run_context = RunContextWrapper(context=None, usage=Usage())
-
-            return await self._dispatch_operation(server_instance, server_name, operation, agent, run_context, **kwargs)
-
+            async with asyncio.timeout(timeout):
+                return await self._dispatch_operation(
+                    server_instance, server_name, operation, agent, run_context, **kwargs
+                )
         except Exception as e:
-            logger.error(f"Error executing {operation} on server '{server_name}': {e}")
-            return False, {"error": str(e)}
+            error_msg = str(e)
+            if "ConnectError" in str(type(e)):
+                error_msg = "Failed to connect to server. Please check the server address and network connectivity."
+
+            logger.error(f"Error executing {operation} on server '{server_name}': {error_msg}")
+            return False, {"error": error_msg}
+        except (asyncio.CancelledError, ExceptionGroup) as e:
+            error_msg = str(e)
+            if "ConnectError" in str(type(e)):
+                error_msg = "Failed to connect to server. Please check the server address and network connectivity."
+
+            logger.error(f"Error executing {operation} on server '{server_name}': {error_msg}")
+            return False, {"error": error_msg}
         finally:
             await self._cleanup_server_instance(server_instance)
 
@@ -530,6 +535,8 @@ class MCPManager:
             elif hasattr(server_instance, "close"):
                 await server_instance.close()
         except Exception as cleanup_error:
+            logger.debug(f"Cleanup error (suppressed): {cleanup_error}")
+        except (asyncio.CancelledError, ExceptionGroup) as cleanup_error:
             logger.debug(f"Cleanup error (suppressed): {cleanup_error}")
 
     def cleanup(self) -> None:
