@@ -127,7 +127,7 @@ testpaths = ["tests"]
 dev = [
     "pytest==8.0.2",
     "pytest-asyncio>=0.23.8",
-    "black>=23.12.1",
+    "black==23.12.1",
     "mypy==1.8.0",
     "tqdm>=4.27.0",
     "pytest-xdist>=3.7.0",
