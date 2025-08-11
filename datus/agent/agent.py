@@ -15,10 +15,6 @@ from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
-from datus.models.claude_model import ClaudeModel
-from datus.models.deepseek_model import DeepSeekModel
-from datus.models.openai_model import OpenAIModel
-from datus.models.qwen_model import QwenModel
 
 # Import model implementations
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -38,17 +34,10 @@ from datus.utils.benchmark_utils import (
     generate_gold_standard_results,
     load_bird_dev_tasks,
 )
-from datus.utils.constants import DBType, LLMProvider
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-
-MODEL_TYPE_MAP = {
-    LLMProvider.DEEPSEEK: DeepSeekModel,
-    LLMProvider.QWEN: QwenModel,
-    LLMProvider.OPENAI: OpenAIModel,
-    LLMProvider.CLAUDE: ClaudeModel,
-}
 
 
 class Agent:
