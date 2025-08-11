@@ -1,5 +1,4 @@
 import asyncio
-import json
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from langsmith import traceable
@@ -9,13 +8,12 @@ from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.prompts.reasoning_sql_with_mcp import get_reasoning_prompt
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
-from datus.schemas.node_models import ExecuteSQLResult
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
 from datus.utils.constants import DBType
-from datus.utils.json_utils import llm_result2json, llm_result2sql
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.json_utils import llm_result2json, llm_result2sql
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

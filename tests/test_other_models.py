@@ -1,8 +1,8 @@
 import os
 
 import pytest
-from dotenv import load_dotenv
 from agents import set_tracing_disabled
+from dotenv import load_dotenv
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.gemini_model import GeminiModel
