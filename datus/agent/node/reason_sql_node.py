@@ -157,7 +157,7 @@ class ReasonSQLNode(Node):
 
             # Stream the reasoning process
             # Get resolved database config for MCP server
-            db_config = self.agent_config.current_db_config()
+            db_config = self.agent_config.current_db_config(self.input.sql_task.database_name)
 
             async for action in reasoning_sql_with_mcp_stream(
                 model=self.model,
@@ -179,7 +179,7 @@ class ReasonSQLNode(Node):
         """
         try:
             tool = LLMTool(self.model)
-            db_config = self.agent_config.current_db_config()
+            db_config = self.agent_config.current_db_config(self.input.sql_task.database_name)
             return tool.reasoning_sql(self.input, db_config)
         except Exception as e:
             logger.error(f"SQL reasoning execution error: {str(e)}")

@@ -4,7 +4,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, Dict, Optional
 
-from datus.configuration.agent_config import AgentConfig, DbConfig
+from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
