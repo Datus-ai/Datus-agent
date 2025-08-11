@@ -1,5 +1,6 @@
 import pytest
 from dotenv import load_dotenv
+from agents import set_tracing_disabled
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.claude_model import ClaudeModel
@@ -9,6 +10,7 @@ from datus.utils.loggings import get_logger
 from tests.test_tracing import auto_traceable
 
 logger = get_logger(__name__)
+set_tracing_disabled(True)
 
 
 @auto_traceable

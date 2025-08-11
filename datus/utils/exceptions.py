@@ -48,6 +48,7 @@ class ErrorCode(Enum):
     MODEL_QUOTA_EXCEEDED = ("300020", "Usage quota exceeded - please check your billing plan")
     MODEL_TIMEOUT_ERROR = ("300021", "Request timeout - the API took too long to respond")
     MODEL_MAX_TURNS_EXCEEDED = ("300022", "Maximum turns ({max_turns}) exceeded - agent execution stopped")
+    MODEL_ILLEGAL_FORMAT_RESPONSE = ("300023", "Model returned response in illegal format - unable to extract JSON or SQL. Response: '{response_preview}' (length: {response_length})")
     # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
