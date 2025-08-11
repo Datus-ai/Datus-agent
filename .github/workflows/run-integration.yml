@@ -27,11 +27,7 @@ jobs:
         run: |
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
           cp /home/datus_ci/ci_template/ci.env .env
-
-      - name: Load .env into workflow
-        uses: mikeyaworski/dotenv-action@v2
-        with:
-          env-file: .env
+          source .env
 
       - name: Run integration tests
         id: integration_tests
