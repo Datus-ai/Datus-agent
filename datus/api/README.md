@@ -56,7 +56,7 @@ python datus/api/server.py \
 
 - **API Endpoint**: `http://localhost:8000`
 - **PID File**: `~/.datus/run/datus-agent-api.pid`
-- **Log File**: `~/.datus/logs/datus-agent-api.log`
+- **Log File**: `logs/datus-agent-api.log`
 
 ## API Endpoints
 
@@ -138,7 +138,7 @@ python datus/api/server.py --action status
 
 ### View logs
 ```bash
-tail -f ~/.datus/logs/datus-agent-api.log
+tail -f logs/datus-agent-api.log
 ```
 
 ### Force stop

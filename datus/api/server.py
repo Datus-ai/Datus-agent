@@ -19,10 +19,10 @@ logger = get_logger(__name__)
 
 
 def _default_paths() -> Tuple[Path, Path]:
-    """Return default pid and log file paths under ~/.datus."""
+    """Return default pid and log file paths."""
     home = Path.home()
     pid_file = home / ".datus" / "run" / "datus-agent-api.pid"
-    log_file = home / ".datus" / "logs" / "datus-agent-api.log"
+    log_file = Path("logs") / "datus-agent-api.log"  # Use logs/ directory like other modules
     return pid_file, log_file
 
 
@@ -222,7 +222,7 @@ def main():
     parser.add_argument(
         "--daemon-log-file",
         type=str,
-        help="Daemon log file path (default: ~/.datus/logs/datus-agent-api.log)",
+        help="Daemon log file path (default: logs/datus-agent-api.log)",
     )
 
     args = parser.parse_args()
@@ -249,23 +249,23 @@ def main():
         print("--daemon mode is mutually exclusive with --reload. Remove --reload.", file=sys.stderr)
         raise SystemExit(2)
 
-    # Logging setup (stdout/err may be redirected later in daemon)
-    configure_logging(args.log_level)
-
     if args.daemon:
         if (pid := _read_pid(pid_file)) and _is_process_running(pid):
             print(f"Already running (pid={pid})", file=sys.stderr)
             raise SystemExit(0)
 
+        configure_logging(args.log_level, log_dir="logs", console_output=False)
         logger.info(
             f"Starting Datus Agent API server (daemon) on {args.host}:{args.port} | "
             f"Workers: {args.workers}, LogLevel: {args.log_level}"
         )
         _daemonize(pid_file, log_file)
-        # Child (daemon) continues here
         agent_args = _build_agent_args(args)
         _run_server(args, agent_args)
         return
+    else:
+        # Foreground mode - normal logging setup with console output
+        configure_logging(args.log_level)
 
     # Foreground run (existing behavior)
     logger.info(f"Starting Datus Agent API server on {args.host}:{args.port}")
