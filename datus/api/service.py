@@ -306,62 +306,6 @@ class DatusAPIService:
 service = None
 
 
-# Route handlers
-async def health_check() -> HealthResponse:
-    """Health check endpoint (no authentication required)."""
-    return await service.health_check()
-
-
-async def authenticate(
-    client_id: str = _form_client_id, client_secret: str = _form_client_secret, grant_type: str = _form_grant_type
-) -> TokenResponse:
-    """
-    OAuth2 client credentials token endpoint.
-    """
-    if grant_type != "client_credentials":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid grant_type. Must be 'client_credentials'"
-        )
-
-    if not auth_service.validate_client_credentials(client_id, client_secret):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid client credentials")
-
-    token_data = auth_service.generate_access_token(client_id)
-    return TokenResponse(**token_data)
-
-
-async def run_workflow(req: RunWorkflowRequest, request: Request, current_client: str = _depends_get_current_client):
-    """Execute a workflow based on the request parameters."""
-    try:
-        logger.info(f"Workflow request from client: {current_client}, mode: {req.mode}")
-
-        # Check if client accepts server-sent events for async mode
-        if req.mode == Mode.ASYNC:
-            accept_header = request.headers.get("accept", "")
-            if "text/event-stream" not in accept_header:
-                raise HTTPException(
-                    status_code=400, detail="For async mode, Accept header must include 'text/event-stream'"
-                )
-
-            # Return streaming response
-            return StreamingResponse(
-                generate_sse_stream(req, current_client),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",  # Disable nginx buffering
-                },
-            )
-        else:
-            # Synchronous mode - original behavior
-            return await service.run_workflow(req, current_client)
-
-    except Exception as e:
-        logger.error(f"Workflow execution error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
     """Generate Server-Sent Events stream for workflow execution."""
     import json
@@ -464,21 +408,6 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
         yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
 
-async def record_feedback(req: FeedbackRequest, current_client: str = _depends_get_current_client):
-    """Record user feedback for a task."""
-    try:
-        logger.info(f"Feedback request from client: {current_client} for task: {req.task_id}")
-        return await service.record_feedback(req)
-    except Exception as e:
-        logger.error(f"Feedback recording error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-async def root():
-    """Root endpoint with API information."""
-    return {"message": "Datus Agent API", "version": "1.0.0", "docs": "/docs", "health": "/health"}
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application lifecycle."""
@@ -513,11 +442,75 @@ def create_app(agent_args: argparse.Namespace) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Add routes
-    app.add_api_route("/health", health_check, methods=["GET"], response_model=HealthResponse)
-    app.add_api_route("/auth/token", authenticate, methods=["POST"], response_model=TokenResponse)
-    app.add_api_route("/workflows/run", run_workflow, methods=["POST"])
-    app.add_api_route("/workflows/feedback", record_feedback, methods=["POST"], response_model=FeedbackResponse)
-    app.add_api_route("/", root, methods=["GET"])
+    # Route handlers with decorators
+    @app.get("/", tags=["root"])
+    async def root():
+        """Root endpoint with API information."""
+        return {"message": "Datus Agent API", "version": "1.0.0", "docs": "/docs", "health": "/health"}
+
+    @app.get("/health", response_model=HealthResponse, tags=["health"])
+    async def health_check() -> HealthResponse:
+        """Health check endpoint (no authentication required)."""
+        return await service.health_check()
+
+    @app.post("/auth/token", response_model=TokenResponse, tags=["auth"])
+    async def authenticate(
+        client_id: str = _form_client_id, client_secret: str = _form_client_secret, grant_type: str = _form_grant_type
+    ) -> TokenResponse:
+        """OAuth2 client credentials token endpoint."""
+        if grant_type != "client_credentials":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid grant_type. Must be 'client_credentials'"
+            )
+
+        if not auth_service.validate_client_credentials(client_id, client_secret):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid client credentials")
+
+        token_data = auth_service.generate_access_token(client_id)
+        return TokenResponse(**token_data)
+
+    @app.post("/workflows/run", tags=["workflows"])
+    async def run_workflow(
+        req: RunWorkflowRequest, request: Request, current_client: str = _depends_get_current_client
+    ):
+        """Execute a workflow based on the request parameters."""
+        try:
+            logger.info(f"Workflow request from client: {current_client}, mode: {req.mode}")
+
+            # Check if client accepts server-sent events for async mode
+            if req.mode == Mode.ASYNC:
+                accept_header = request.headers.get("accept", "")
+                if "text/event-stream" not in accept_header:
+                    raise HTTPException(
+                        status_code=400, detail="For async mode, Accept header must include 'text/event-stream'"
+                    )
+
+                # Return streaming response
+                return StreamingResponse(
+                    generate_sse_stream(req, current_client),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",  # Disable nginx buffering
+                    },
+                )
+            else:
+                # Synchronous mode - original behavior
+                return await service.run_workflow(req, current_client)
+
+        except Exception as e:
+            logger.error(f"Workflow execution error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/workflows/feedback", response_model=FeedbackResponse, tags=["workflows"])
+    async def record_feedback(req: FeedbackRequest, current_client: str = _depends_get_current_client):
+        """Record user feedback for a task."""
+        try:
+            logger.info(f"Feedback request from client: {current_client} for task: {req.task_id}")
+            return await service.record_feedback(req)
+        except Exception as e:
+            logger.error(f"Feedback recording error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     return app
