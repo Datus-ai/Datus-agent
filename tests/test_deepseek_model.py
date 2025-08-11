@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.deepseek_model import DeepSeekModel
 from datus.tools.mcp_server import MCPServer
-from datus.utils.loggings import get_logger
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
 from tests.test_tracing import auto_traceable
 
@@ -24,8 +24,8 @@ class TestDeepSeekModel:
         load_dotenv()
         config = load_acceptance_config()
         # self.model = DeepSeekModel(config.active_model())
-        # self.model = DeepSeekModel(model_config=config["deepseek"])
-        self.model = DeepSeekModel(model_config=config["deepseek-ark"])
+        self.model = DeepSeekModel(model_config=config["deepseek"])
+        # self.model = DeepSeekModel(model_config=config["deepseek-ark"])
 
     def test_initialization_deepseek_r1(self):
         """Test initialization with DeepSeek R1 model."""
@@ -33,6 +33,14 @@ class TestDeepSeekModel:
         model = DeepSeekModel(config["deepseek-r1"])
 
         result = model.generate("Hello", max_tokens=200)
+
+        assert result is not None, "Response should not be None"
+        assert isinstance(result, str), "Response should be a string"
+        assert len(result) > 0, "Response should not be empty"
+
+        logger.debug(f"R1 response: {result}")
+
+        result = model.generate("what's deepseek r1", enable_thinking=True, max_tokens=1000)
 
         assert result is not None, "Response should not be None"
         assert isinstance(result, str), "Response should be a string"

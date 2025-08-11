@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.claude_model import ClaudeModel
 from datus.tools.mcp_server import MCPServer
-from datus.utils.loggings import get_logger
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
 from tests.test_tracing import auto_traceable
 
 logger = get_logger(__name__)

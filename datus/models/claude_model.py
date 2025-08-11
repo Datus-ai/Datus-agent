@@ -532,7 +532,7 @@ class ClaudeModel(LLMBaseModel):
             except MaxTurnsExceeded as e:
                 logger.error(f"Max turns exceeded: {str(e)}")
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
-            
+
             except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
                 error_code, is_retryable = classify_api_error(e)
 
