@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from agents import Agent, FunctionTool, OpenAIChatCompletionsModel, Runner, SQLiteSession
+from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_openai
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
@@ -162,6 +163,12 @@ class OpenAICompatibleModel(LLMBaseModel):
         for attempt in range(max_retries + 1):
             try:
                 return operation_func()
+            except MaxTurnsExceeded as e:
+                logger.error(f"Max turns exceeded in {operation_name}: {str(e)}")
+                # Extract max_turns from kwargs or use default - this is a best effort approach  
+                max_turns = 10  # Default fallback
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+            
             except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
                 error_code, is_retryable = classify_openai_compatible_error(e)
 
@@ -202,6 +209,12 @@ class OpenAICompatibleModel(LLMBaseModel):
         for attempt in range(max_retries + 1):
             try:
                 return await operation_func()
+            except MaxTurnsExceeded as e:
+                logger.error(f"Max turns exceeded in {operation_name}: {str(e)}")
+                # Extract max_turns from kwargs or use default - this is a best effort approach
+                max_turns = 10  # Default fallback
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+            
             except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
                 error_code, is_retryable = classify_openai_compatible_error(e)
 
@@ -240,11 +253,30 @@ class OpenAICompatibleModel(LLMBaseModel):
         def _generate_operation():
             params = {
                 "model": self.model_name,
-                "temperature": kwargs.get("temperature", 0.7),
-                "max_tokens": kwargs.get("max_tokens", 1000),
-                "top_p": kwargs.get("top_p", 1.0),
-                **{k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens", "top_p"]},
             }
+
+            # Add temperature and top_p only if explicitly provided
+            if "temperature" in kwargs:
+                params["temperature"] = kwargs["temperature"]
+            elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
+                # Add default temperature only for non-reasoning models
+                params["temperature"] = 0.7
+
+            if "top_p" in kwargs:
+                params["top_p"] = kwargs["top_p"]
+            elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
+                # Add default top_p only for non-reasoning models
+                params["top_p"] = 1.0
+
+            # Handle both max_tokens and max_completion_tokens parameters (only if explicitly provided)
+            if "max_tokens" in kwargs:
+                params["max_tokens"] = kwargs["max_tokens"]
+            if "max_completion_tokens" in kwargs:
+                params["max_completion_tokens"] = kwargs["max_completion_tokens"]
+
+            # Filter out handled parameters from remaining kwargs
+            excluded_params = ["temperature", "top_p", "max_tokens", "max_completion_tokens"]
+            params.update({k: v for k, v in kwargs.items() if k not in excluded_params})
 
             # Convert prompt to messages format
             if isinstance(prompt, list):
@@ -482,6 +514,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 async for action in _stream_operation():
                     yield action
                 return  # Successfully completed
+            except MaxTurnsExceeded as e:
+                logger.error(f"Max turns exceeded: {str(e)}")
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+            
             except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
                 error_code, is_retryable = classify_openai_compatible_error(e)
 

@@ -23,7 +23,9 @@ class TestDeepSeekModel:
         """Set up test environment before each test method."""
         load_dotenv()
         config = load_acceptance_config()
-        self.model = DeepSeekModel(config.active_model())
+        # self.model = DeepSeekModel(config.active_model())
+        # self.model = DeepSeekModel(model_config=config["deepseek"])
+        self.model = DeepSeekModel(model_config=config["deepseek-ark"])
 
     def test_initialization_deepseek_r1(self):
         """Test initialization with DeepSeek R1 model."""
@@ -129,7 +131,7 @@ class TestDeepSeekModel:
 
             logger.debug(f"MCP response: {result.get('content', '')}")
         except DatusException as e:
-            if e.error_code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+            if e.code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
                 pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
             else:
                 raise

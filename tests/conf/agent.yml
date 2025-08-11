@@ -14,6 +14,12 @@ agent:
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-reasoner
       enable_thinking: true
+    deepseek-ark:
+      type: deepseek
+      vendor: ark
+      base_url: https://ark.cn-beijing.volces.com/api/v3
+      api_key: ${DEEPSEEK_ARK_API_KEY}
+      model: deepseek-v3-250324
     qwen:
       type: qwen
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1

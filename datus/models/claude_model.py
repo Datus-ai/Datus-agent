@@ -10,6 +10,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import anthropic
 import httpx
 from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, SQLiteSession, Usage
+from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_anthropic, wrap_openai
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
@@ -528,6 +529,10 @@ class ClaudeModel(LLMBaseModel):
                     # If we reach here, streaming completed successfully
                     break
 
+            except MaxTurnsExceeded as e:
+                logger.error(f"Max turns exceeded: {str(e)}")
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+            
             except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
                 error_code, is_retryable = classify_api_error(e)
 
