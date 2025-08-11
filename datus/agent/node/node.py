@@ -225,7 +225,6 @@ class Node(ABC):
         Yields:
             ActionHistory: Progress updates during node execution
         """
-        pass
 
     def run(self):
         """Execute the node based on its type and update status."""

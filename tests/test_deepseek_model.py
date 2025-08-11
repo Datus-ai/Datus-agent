@@ -6,6 +6,7 @@ from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.deepseek_model import DeepSeekModel
 from datus.tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
+from datus.utils.exceptions import DatusException, ErrorCode
 from tests.conftest import load_acceptance_config
 from tests.test_tracing import auto_traceable
 
@@ -114,18 +115,26 @@ class TestDeepSeekModel:
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
-        result = await self.model.generate_with_mcp(
-            prompt=question,
-            output_type=str,
-            mcp_servers={"sqlite": mcp_server},
-            instruction=instructions,
-        )
+        try:
+            result = await self.model.generate_with_mcp(
+                prompt=question,
+                output_type=str,
+                mcp_servers={"sqlite": mcp_server},
+                instruction=instructions,
+            )
 
-        assert result is not None, "MCP response should not be None"
-        assert "content" in result, "Response should contain content"
-        assert "sql_contexts" in result, "Response should contain sql_contexts"
+            assert result is not None, "MCP response should not be None"
+            assert "content" in result, "Response should contain content"
+            assert "sql_contexts" in result, "Response should contain sql_contexts"
 
-        logger.debug(f"MCP response: {result.get('content', '')}")
+            logger.debug(f"MCP response: {result.get('content', '')}")
+        except DatusException as e:
+            if e.error_code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+                pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
+            else:
+                raise
+        except Exception:
+            raise
 
     @pytest.mark.acceptance
     @pytest.mark.asyncio

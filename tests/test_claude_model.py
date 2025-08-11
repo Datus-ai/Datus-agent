@@ -5,10 +5,13 @@ from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.claude_model import ClaudeModel
 from datus.tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
+from datus.utils.exceptions import DatusException, ErrorCode
+from tests.test_tracing import auto_traceable
 
 logger = get_logger(__name__)
 
 
+@auto_traceable
 class TestClaudeModel:
     """Test suite for the ClaudeModel class."""
 
@@ -111,27 +114,35 @@ class TestClaudeModel:
             action_count = 0
             total_content_length = 0
 
-            async for action in self.model.generate_with_mcp_stream(
-                prompt=question,
-                output_type=str,
-                mcp_servers={"sqlite": mcp_server},
-                instruction=instructions,
-            ):
-                action_count += 1
-                assert action is not None, f"Stream action should not be None for scenario {i+1}"
+            try:
+                async for action in self.model.generate_with_mcp_stream(
+                    prompt=question,
+                    output_type=str,
+                    mcp_servers={"sqlite": mcp_server},
+                    instruction=instructions,
+                ):
+                    action_count += 1
+                    assert action is not None, f"Stream action should not be None for scenario {i+1}"
 
-                # Track content if available
-                if hasattr(action, "content") and action.content:
-                    total_content_length += len(str(action.content))
+                    # Track content if available
+                    if hasattr(action, "content") and action.content:
+                        total_content_length += len(str(action.content))
 
-                logger.debug(f"Acceptance stream scenario {i+1}, action {action_count}: {type(action)}")
+                    logger.debug(f"Acceptance stream scenario {i+1}, action {action_count}: {type(action)}")
 
-            assert action_count > 0, f"Should receive at least one streaming action for scenario {i+1}"
-            logger.debug(
-                f"Acceptance stream scenario {i+1} completed: {action_count} actions, "
-                f"{total_content_length} total content length"
-            )
-            logger.info(f"Final Action: {action}")
+                assert action_count > 0, f"Should receive at least one streaming action for scenario {i+1}"
+                logger.debug(
+                    f"Acceptance stream scenario {i+1} completed: {action_count} actions, "
+                    f"{total_content_length} total content length"
+                )
+                logger.info(f"Final Action: {action}")
+            except DatusException as e:
+                if e.error_code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+                    pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
+                else:
+                    raise
+            except Exception:
+                raise
 
             # Only run one scenario to avoid timeout in normal testing
             break

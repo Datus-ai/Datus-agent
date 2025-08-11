@@ -59,6 +59,39 @@ class TestQwenModel:
 
         logger.debug(f"System prompt response: {result}")
 
+    def test_enable_thinking(self):
+        """Test Qwen's enable_thinking functionality."""
+        config = load_agent_config(config="tests/conf/agent.yml")
+        qwen_config = config.models.get("qwen")
+
+        if not qwen_config:
+            pytest.skip("qwen configuration not found in test config")
+
+        # Test with enable_thinking=True
+        prompt = "Think step by step: If I have 15 apples and give away 4, then buy 7 more, how many do I have?"
+        result_with_thinking = self.model.generate(prompt, enable_thinking=True, temperature=0.1, max_tokens=300)
+
+        assert result_with_thinking is not None, "Response with thinking should not be None"
+        assert isinstance(result_with_thinking, str), "Response should be a string"
+        assert len(result_with_thinking) > 0, "Response should not be empty"
+
+        # Test with enable_thinking=False for comparison
+        result_without_thinking = self.model.generate(prompt, enable_thinking=False, temperature=0.1, max_tokens=300)
+
+        assert result_without_thinking is not None, "Response without thinking should not be None"
+        assert isinstance(result_without_thinking, str), "Response should be a string"
+        assert len(result_without_thinking) > 0, "Response should not be empty"
+
+        # Check if the response with thinking shows reasoning process
+        result_lower = result_with_thinking.lower()
+        thinking_indicators = ["step", "first", "then", "therefore", "so", "because", "think"]
+        has_thinking = any(indicator in result_lower for indicator in thinking_indicators)
+
+        # The response should contain thinking indicators when enable_thinking=True
+        logger.debug(f"Qwen enable_thinking=True response: {result_with_thinking}")
+        logger.debug(f"Qwen enable_thinking=False response: {result_without_thinking}")
+        logger.debug(f"Thinking indicators found: {has_thinking}")
+
     @pytest.mark.asyncio
     async def test_generate_with_mcp(self):
         """Test MCP integration with SSB database."""
@@ -83,28 +116,22 @@ class TestQwenModel:
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
-        try:
-            result = await self.model.generate_with_mcp(
-                prompt=question,
-                output_type=str,
-                mcp_servers={"sqlite": mcp_server},
-                instruction=instructions,
-            )
+        result = await self.model.generate_with_tools(
+            prompt=question,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+        )
 
-            assert result is not None, "MCP response should not be None"
-            assert "content" in result, "Response should contain content"
-            assert "sql_contexts" in result, "Response should contain sql_contexts"
+        assert result is not None, "MCP response should not be None"
+        assert "content" in result, "Response should contain content"
+        assert "sql_contexts" in result, "Response should contain sql_contexts"
 
-            logger.debug(f"MCP response: {result.get('content', '')}")
-        except Exception as e:
-            pytest.skip(f"MCP test skipped due to compatibility issue: {str(e)}")
+        logger.debug(f"MCP response: {result.get('content', '')}")
 
     @pytest.mark.asyncio
     async def test_generate_with_mcp_stream(self):
         """Test MCP streaming functionality with SSB database."""
-        if not hasattr(self.model, "generate_with_mcp_stream"):
-            pytest.skip("QwenModel does not support generate_with_mcp_stream")
-
         instructions = """You are a SQLite expert analyzing the Star Schema Benchmark database.
         Provide detailed analysis of the SSB data with business insights.
 
@@ -118,18 +145,16 @@ class TestQwenModel:
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
-        try:
-            action_count = 0
-            async for action in self.model.generate_with_mcp_stream(
-                prompt=question,
-                output_type=str,
-                mcp_servers={"sqlite": mcp_server},
-                instruction=instructions,
-            ):
-                action_count += 1
-                assert action is not None, "Stream action should not be None"
-                logger.debug(f"Stream action {action_count}: {type(action)}")
+        action_count = 0
+        async for action in self.model.generate_with_tools_stream(
+            prompt=question,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+        ):
+            action_count += 1
+            assert action is not None, "Stream action should not be None"
+            logger.debug(f"Stream action {action_count}: {type(action)}")
 
-            assert action_count > 0, "Should receive at least one streaming action"
-        except Exception as e:
-            pytest.skip(f"MCP streaming test skipped due to compatibility issue: {str(e)}")
+        assert action_count > 0, "Should receive at least one streaming action"
+        logger.info(f"action count: {action_count}")

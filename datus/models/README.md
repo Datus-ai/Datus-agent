@@ -70,15 +70,14 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 
 ## Key Interface Methods
 ### `generate(prompt, enable_thinking=False, **kwargs) -> str`
-
 ### `generate_with_json_output(prompt, **kwargs) -> Dict`
-### `generate_with_tools(prompt, mcp_servers=None, tools=None, **kwargs) -> Dict`
-async for action in model.generate_with_tools_stream(
-    prompt="Analyze customer data and create report",
-    mcp_servers=mcp_servers,
-    instruction="You are a data analyst",
-    action_history_manager=history_manager
-):## How to use this module
+### async `generate_with_tools(prompt, mcp_servers=None, tools=None, **kwargs) -> Dict`
+
+### async `generate_with_tools_stream(promptr, tools, mcp_servers, instruction, output_type, 
+        max_turns, action_history_manager, **kwargs) -> AsyncGenerator[ActionHistory, None]:
+)
+
+## How to use this module
 
 ### Basic Model Usage
 

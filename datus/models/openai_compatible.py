@@ -240,30 +240,11 @@ class OpenAICompatibleModel(LLMBaseModel):
         def _generate_operation():
             params = {
                 "model": self.model_name,
+                "temperature": kwargs.get("temperature", 0.7),
+                "max_tokens": kwargs.get("max_tokens", 1000),
+                "top_p": kwargs.get("top_p", 1.0),
+                **{k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens", "top_p"]},
             }
-
-            # Add temperature and top_p only if explicitly provided
-            if "temperature" in kwargs:
-                params["temperature"] = kwargs["temperature"]
-            elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
-                # Add default temperature only for non-reasoning models
-                params["temperature"] = 0.7
-
-            if "top_p" in kwargs:
-                params["top_p"] = kwargs["top_p"]
-            elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
-                # Add default top_p only for non-reasoning models
-                params["top_p"] = 1.0
-
-            # Handle both max_tokens and max_completion_tokens parameters (only if explicitly provided)
-            if "max_tokens" in kwargs:
-                params["max_tokens"] = kwargs["max_tokens"]
-            if "max_completion_tokens" in kwargs:
-                params["max_completion_tokens"] = kwargs["max_completion_tokens"]
-
-            # Filter out handled parameters from remaining kwargs
-            excluded_params = ["temperature", "top_p", "max_tokens", "max_completion_tokens"]
-            params.update({k: v for k, v in kwargs.items() if k not in excluded_params})
 
             # Convert prompt to messages format
             if isinstance(prompt, list):
@@ -334,9 +315,9 @@ class OpenAICompatibleModel(LLMBaseModel):
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         **kwargs,
-    ) -> Dict:
+    ) -> AsyncGenerator[ActionHistory, None]:
         """
-        Generate response with unified tool support (replaces generate_with_mcp).
+        Generate response with unified tool support and ActionHistory streaming (replaces generate_with_mcp).
 
         Args:
             prompt: Input prompt
@@ -349,13 +330,17 @@ class OpenAICompatibleModel(LLMBaseModel):
             action_history_manager: Action history manager for tracking
             **kwargs: Additional parameters
 
-        Returns:
-            Dict with content and sql_contexts
+        Yields:
+            ActionHistory objects for streaming updates
         """
-        # Use the internal method that returns a Dict
-        return await self._generate_with_tools_internal(
-            prompt, mcp_servers, tools, instruction, output_type, max_turns, session, **kwargs
-        )
+        if action_history_manager is None:
+            action_history_manager = ActionHistoryManager()
+
+        # Use the streaming version for consistency
+        async for action in self._generate_with_tools_stream_internal(
+            prompt, mcp_servers, tools, instruction, output_type, max_turns, session, action_history_manager, **kwargs
+        ):
+            yield action
 
     async def generate_with_tools_stream(
         self,
@@ -402,7 +387,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         instruction: str,
         output_type: type,
         max_turns: int,
-        session: Optional[SQLiteSession] = None,
+        session: Optional[SQLiteSession],
         **kwargs,
     ) -> Dict:
         """Internal method for tool execution with error handling."""
@@ -426,22 +411,14 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
-                agent_kwargs = {
-                    "name": kwargs.pop("agent_name", "default_agent"),
-                    "instructions": instruction,
-                    "output_type": output_type,
-                    "model": async_model,
-                }
-
-                # Only add mcp_servers if we have connected servers
-                if connected_servers:
-                    agent_kwargs["mcp_servers"] = list(connected_servers.values())
-
-                # Only add tools if we have them
-                if tools:
-                    agent_kwargs["tools"] = list(tools.values())
-
-                agent = Agent(**agent_kwargs)
+                agent = Agent(
+                    name=kwargs.pop("agent_name", "Tools_Agent"),
+                    instructions=instruction,
+                    mcp_servers=list(connected_servers.values()) if connected_servers else None,
+                    tools=list(tools.values()) if tools else None,
+                    output_type=output_type,
+                    model=async_model,
+                )
                 result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
                 return {"content": result.final_output, "sql_contexts": extract_sql_contexts(result)}
 
@@ -479,49 +456,53 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
-                agent_kwargs = {
-                    "name": kwargs.pop("agent_name", "Tools_Agent"),
-                    "instructions": instruction,
-                    "output_type": output_type,
-                    "model": async_model,
-                }
-
-                # Only add mcp_servers if we have connected servers
-                if connected_servers:
-                    agent_kwargs["mcp_servers"] = list(connected_servers.values())
-
-                # Only add tools if we have them
-                if tools:
-                    agent_kwargs["tools"] = list(tools.values())
-
-                agent = Agent(**agent_kwargs)
+                agent = Agent(
+                    name=kwargs.pop("agent_name", "Tools_Agent"),
+                    instructions=instruction,
+                    mcp_servers=list(connected_servers.values()) if connected_servers else None,
+                    tools=list(tools.values()) if tools else None,
+                    output_type=output_type,
+                    model=async_model,
+                )
 
                 result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
 
                 while not result.is_complete:
                     async for event in result.stream_events():
-                        if not hasattr(event, "type") or event.type != "run_item_stream_event":
-                            continue
-
-                        if not (hasattr(event, "item") and hasattr(event.item, "type")):
-                            continue
-
-                        action = None
-                        item_type = event.item.type
-
-                        if item_type == "tool_call_item":
-                            action = self._process_tool_call_start(event, action_history_manager)
-                        elif item_type == "tool_call_output_item":
-                            action = self._process_tool_call_complete(event, action_history_manager)
-                        elif item_type == "message_output_item":
-                            action = self._process_message_output(event, action_history_manager)
-
+                        action = self._process_stream_event(event, action_history_manager)
                         if action:
                             yield action
 
-        # Execute the streaming operation directly without retry logic
-        async for action in _stream_operation():
-            yield action
+        # Use manual retry logic for streaming operations
+        max_retries = 3
+        base_delay = 1.0
+
+        for attempt in range(max_retries + 1):
+            try:
+                async for action in _stream_operation():
+                    yield action
+                return  # Successfully completed
+            except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
+                error_code, is_retryable = classify_openai_compatible_error(e)
+
+                if is_retryable and attempt < max_retries:
+                    delay = base_delay * (2**attempt)  # Exponential backoff
+                    logger.warning(
+                        f"API error in tool streaming (attempt {attempt + 1}/{max_retries + 1}): "
+                        f"{error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    # Max retries reached or non-retryable error
+                    logger.error(
+                        f"API error in tool streaming after {attempt + 1} attempts: "
+                        f"{error_code.code} - {error_code.desc}"
+                    )
+                    raise DatusException(error_code)
+            except Exception as e:
+                logger.error(f"Error in tool streaming: {str(e)}")
+                raise
 
     def _process_stream_event(self, event, action_history_manager: ActionHistoryManager) -> Optional[ActionHistory]:
         """Process streaming events and route to appropriate handlers."""
@@ -711,15 +692,22 @@ class OpenAICompatibleModel(LLMBaseModel):
         logger.warn(
             "generate_with_mcp is deprecated. Use generate_with_tools instead.", DeprecationWarning, stacklevel=2
         )
-        return await self._generate_with_tools_internal(
+        final_action = None
+        async for action in self.generate_with_tools(
             prompt,
-            mcp_servers,
-            None,  # no regular tools for backward compatibility
-            instruction,
-            output_type,
-            max_turns,
-            **kwargs,  # session will be passed here if provided, otherwise defaults to None
-        )
+            mcp_servers=mcp_servers,
+            instruction=instruction,
+            output_type=output_type,
+            max_turns=max_turns,
+            **kwargs,
+        ):
+            final_action = action
+        
+        # Return the final action's output in the expected format
+        if final_action and final_action.output:
+            return final_action.output
+        else:
+            return {"content": "", "sql_contexts": []}
 
     async def generate_with_mcp_stream(
         self,

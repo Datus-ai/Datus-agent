@@ -32,12 +32,19 @@ agent:
       base_url: https://api.moonshot.cn/v1
       api_key: ${KIMI_API_KEY}
       model: kimi-k2-0711-preview
-    openai-o4-mini:
+    openai-4o-mini:
       type: openai
       vendor: openai
       base_url: https://api.openai.com/v1
       api_key: ${OPENAI_API_KEY}
-      model: gpt-o4-mini
+      model: gpt-4o-mini
+    gemini-2.5:
+      type: gemini
+      vendor: google
+      base_url: https://generativelanguage.googleapis.com/v1beta
+      api_key: ${GEMINI_API_KEY}
+      model: gemini-2.5-flash-lite
+      enable_thinking: true
 
   nodes:
     schema_linking:
