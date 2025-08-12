@@ -829,5 +829,11 @@ def load_bird_dev_tasks(benchmark_path: str) -> List[Dict[str, Any]]:
             code=ErrorCode.COMMON_FILE_NOT_FOUND,
             message_args={"file_name": file_path, "config_name": "Bird-dev benchmark"},
         )
-    with open(file_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error in file '{file_path}': {str(e)}")
+        raise DatusException(
+            ErrorCode.COMMON_JSON_PARSE_ERROR, message_args={"file_path": file_path, "error_detail": str(e)}
+        )

@@ -1,5 +1,4 @@
 import asyncio
-import json
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from langsmith import traceable
@@ -13,7 +12,8 @@ from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
 from datus.utils.constants import DBType
-from datus.utils.json_utils import llm_result2json
+from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.json_utils import llm_result2json, llm_result2sql
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -50,7 +50,7 @@ async def reasoning_sql_with_mcp_stream(
         )
 
     # Setup MCP servers
-    db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+    db_mcp_server = MCPServer.get_db_mcp_server(db_config)
     mcp_servers = {input_data.sql_task.database_name: db_mcp_server}
 
     # If no action history manager provided, create one to track the final result
@@ -157,7 +157,7 @@ def reasoning_sql_with_mcp(
             db_path = str(Path(db_path).expanduser())
         mcp_server = MCPServer.create_sqlite_mcp_server(db_path=db_path)
     else:
-        mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+        mcp_server = MCPServer.get_db_mcp_server(db_config)
 
     instruction = prompt_manager.get_raw_template("reasoning_system", input_data.prompt_version)
     # update to python 3.12 to enable structured output
@@ -193,27 +193,51 @@ def reasoning_sql_with_mcp(
             )
         )
 
-        try:
-            logger.debug(f"exec_result: {exec_result['content']}")
-            content_dict = llm_result2json(exec_result["content"])
+        logger.debug(f"exec_result: {exec_result['content']}")
+
+        # Try JSON parsing first
+        content_dict = llm_result2json(exec_result["content"])
+        if content_dict:
+            # Successfully parsed JSON with meaningful SQL content
             logger.info(f"Successfully parsed JSON content: {content_dict}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse exec_result.content: {e}, exec_result_strip: {exec_result['content']}")
-            content_dict = {}
-        # content_dict = exec_result
-        # Extract required pieces from the parsed dict
-        reasoning_result = ReasoningResult(
-            success=True,
-            sql_query=content_dict.get("sql", ""),
-            sql_return="",  # Remove the result from the return to avoid large data return
-            sql_contexts=exec_result["sql_contexts"],
+            reasoning_result = ReasoningResult(
+                success=True,
+                sql_query=content_dict.get("sql", ""),
+                sql_return="",  # Remove the result from the return to avoid large data return
+                sql_contexts=exec_result["sql_contexts"],
+            )
+            logger.info(
+                f"Created ReasoningResult: success={reasoning_result.success}, sql_query={reasoning_result.sql_query}"
+            )
+            return reasoning_result
+
+        # JSON parsing failed, try SQL extraction.
+        # Some LLM can't follow the instruction well, try some failback
+        extracted_sql = llm_result2sql(exec_result["content"])
+        if extracted_sql:
+            # Successfully extracted SQL from code blocks
+            logger.info(f"Extract json format failed, but find a sql {extracted_sql} from response")
+            return ReasoningResult(
+                success=True,
+                sql_query=extracted_sql,
+                sql_return="",
+                sql_contexts=exec_result["sql_contexts"],
+            )
+
+        # Both JSON and SQL extraction failed, raise exception
+        response_content = exec_result["content"]
+        response_preview = response_content[:20] if response_content else ""
+        response_length = len(response_content) if response_content else 0
+        logger.error(f"Extract json format/sql failed. len:{response_length}, resp:{response_preview}... ")
+        raise DatusException(
+            ErrorCode.MODEL_ILLEGAL_FORMAT_RESPONSE,
+            message_args={"response_preview": response_preview, "response_length": response_length},
         )
-        logger.info(
-            f"Created ReasoningResult: success={reasoning_result.success}, sql_query={reasoning_result.sql_query}"
-        )
-        return reasoning_result
+
+    except DatusException:
+        raise
     except Exception as e:
-        # TODO : deal with excced the max round
+        # TODO : deal with exceed the max round
         error_msg = str(e)
         logger.error(f"Reasoning SQL with MCP failed: {e}")
 
@@ -223,4 +247,8 @@ def reasoning_sql_with_mcp(
             raise
 
         # Return failed result for other errors
-        return ReasoningResult(success=False, error=str(e), sql_query="")
+        logger.error(f"Reasoning SQL failed: {e}")
+        raise DatusException(
+            ErrorCode.NODE_EXECUTION_FAILED,
+            message=f"Reasoning SQL failed: {e}",
+        )

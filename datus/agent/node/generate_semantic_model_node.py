@@ -221,7 +221,7 @@ class GenerateSemanticModelNode(Node):
                 tables_with_ddl = connector.get_tables_with_ddl(
                     catalog_name=catalog_name,
                     database_name=database_name,
-                    table_name=table_name,
+                    tables=[table_name],
                     schema_name=schema_name,
                 )
 

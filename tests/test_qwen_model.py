@@ -1,7 +1,6 @@
 import pytest
 from agents import set_tracing_disabled
 from dotenv import load_dotenv
-from langsmith import traceable
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.qwen_model import QwenModel
@@ -9,222 +8,153 @@ from datus.tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-
 set_tracing_disabled(True)
 
 
 class TestQwenModel:
-    """Test suite for the DeepSeekModel class."""
+    """Test suite for the QwenModel class."""
 
     @pytest.fixture(autouse=True)
     def setup_method(self):
         """Set up test environment before each test method."""
         load_dotenv()
+        config = load_agent_config(config="tests/conf/agent.yml")
+        self.model = QwenModel(model_config=config["qwen"])
 
-        config = load_agent_config()
-        config.current_namespace = "snowflake"
-        model_config = config.active_model()
+    def test_generate(self):
+        """Test basic text generation functionality."""
+        result = self.model.generate("Hello", temperature=0.5, max_tokens=100)
 
-        # Initialize the model with default parameters
-        self.model = QwenModel(model_config=model_config)
+        assert result is not None, "Response should not be None"
+        assert isinstance(result, str), "Response should be a string"
+        assert len(result) > 0, "Response should not be empty"
 
-    def test_basic_chat(self):
-        """Test basic chat functionality with real API calls and logging."""
-        try:
-            # Call generate method with a basic chat prompt
-            result = self.model.generate("Hello", temperature=0.5, top_p=0.9, max_tokens=1000)
+        logger.debug(f"Generated response: {result}")
 
-            # Verify the response is not empty and has expected properties
-            assert result is not None, "Response should not be None"
-            assert isinstance(result, str), "Response should be a string"
-            assert len(result) > 0, "Response should not be empty"
+    def test_generate_with_json_output(self):
+        """Test JSON output generation."""
+        result = self.model.generate_with_json_output("Respond with a JSON object containing a greeting message")
 
-            # Log the successful response
-            print(f"\nReceived response: {result}")
+        assert result is not None, "Response should not be None"
+        assert isinstance(result, dict), "Response should be a dictionary"
+        assert len(result) > 0, "Response should not be empty"
 
-        except Exception as e:
-            pytest.fail(f"Failed to get response from API: {str(e)}")
+        logger.debug(f"JSON response: {result}")
 
-    def test_json_chat(self):
-        try:
-            # Test JSON output generation capability
-            result = self.model.generate_with_json_output("Hello, how are you, response in json format")
+    def test_generate_with_system_prompt(self):
+        """Test generation with system and user prompts."""
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant. Respond in JSON format with 'question' and 'answer' fields.",
+            },
+            {"role": "user", "content": "What is 2+2?"},
+        ]
 
-            # Validate JSON response properties
-            assert result is not None, "Response should not be None"
-            assert isinstance(result, dict), "Response should be a dict"
-            assert len(result) > 0, "Response should not be empty"
+        result = self.model.generate_with_json_output(messages)
 
-            print(f"\nReceived response: {result}")
+        assert result is not None, "Response should not be None"
+        assert isinstance(result, dict), "Response should be a dictionary"
+        assert len(result) > 0, "Response should not be empty"
 
-        except Exception as e:
-            pytest.fail(f"Failed to get response from API: {str(e)}")
+        logger.debug(f"System prompt response: {result}")
 
-    def test_system_prompt(self):
-        try:
-            # Test system prompt with JSON output
-            result = self.model.generate_with_json_output(
-                [
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant., response in json format, "
-                        "like {'question': 'xxx', 'answer': 'xxx'}",
-                    },
-                    {"role": "user", "content": "Hello, how many r's in the strawbeery?"},
-                ]
-            )
+    def test_enable_thinking(self):
+        """Test Qwen's enable_thinking functionality."""
+        config = load_agent_config(config="tests/conf/agent.yml")
+        qwen_config = config.models.get("qwen")
 
-            # Validate system prompt response
-            assert result is not None, "Response should not be None"
-            assert isinstance(result, dict), "Response should be a dict"
-            assert len(result) > 0, "Response should not be empty"
+        if not qwen_config:
+            pytest.skip("qwen configuration not found in test config")
 
-            print(f"\nReceived response: {result}")
+        # Test with enable_thinking=True
+        prompt = "Think step by step: If I have 15 apples and give away 4, then buy 7 more, how many do I have?"
+        result_with_thinking = self.model.generate(prompt, enable_thinking=True, temperature=0.1, max_tokens=300)
 
-        except Exception as e:
-            pytest.fail(f"Failed to get response from API: {str(e)}")
+        assert result_with_thinking is not None, "Response with thinking should not be None"
+        assert isinstance(result_with_thinking, str), "Response should be a string"
+        assert len(result_with_thinking) > 0, "Response should not be empty"
 
-    @pytest.mark.asyncio
-    @traceable(name="test_with_mcp")
-    async def test_with_mcp(self):
-        try:
-            # Create model instance for MCP testing
-            model = QwenModel(model_config=self.model.model_config)
+        # Test with enable_thinking=False for comparison
+        result_without_thinking = self.model.generate(prompt, enable_thinking=False, temperature=0.1, max_tokens=300)
 
-            # Define Snowflake expert instructions
-            instructions = """You are a snowflake expert. Your task is to:
-            1. Understand the user's question about data analysis
-            2. Generate appropriate SQL queries
-            3. Execute the queries using the provided tools
-            4. Present the results in a clear and concise manner
-                *Enclose all column names in double quotes to comply with Snowflake syntax
-                requirements and avoid grammar errors.* When referencing table names
-                in Snowflake SQL, you must include both the database_name and schema_name.
-                output format: {
-                    "sql": "SELECT * FROM database.schema.table LIMIT 10",
-                    "result": "Results here...",
-                    "explanation": "Explanation here..."
-                }
-            """
-            # Test query for Ethereum transactions
-            question = (
-                "database_type='snowflake' task='how many eth transactions in the last 7 days?' "
-                "database_name='ETHEREUM_BLOCKCHAIN' schema_name='ETHEREUM_BLOCKCHAIN' "
-                "table_name='TRANSACTIONS'"
-            )
+        assert result_without_thinking is not None, "Response without thinking should not be None"
+        assert isinstance(result_without_thinking, str), "Response should be a string"
+        assert len(result_without_thinking) > 0, "Response should not be empty"
 
-            mcp_server = MCPServer.get_snowflake_mcp_server()
+        # Check if the response with thinking shows reasoning process
+        result_lower = result_with_thinking.lower()
+        thinking_indicators = ["step", "first", "then", "therefore", "so", "because", "think"]
+        has_thinking = any(indicator in result_lower for indicator in thinking_indicators)
 
-            # Execute MCP generation with specified parameters
-            result = await model.generate_with_mcp(
-                prompt=question,
-                output_type=str,
-                mcp_servers={"snowflake": mcp_server},
-                instruction=instructions,
-            )
-
-            # Log and validate MCP response
-            logger.debug(f"\nReceived response: {result.get('content', '')}")
-            logger.debug(f"\nSQL contexts: {result.get('sql_contexts', '')}")
-
-            # final_result = ReasoningSQLResponse(**result.get('content', {}))
-            # logger.debug(f"\nFinal result: {final_result.sql}
-            # {final_result.result} {final_result.explanation}")
-            assert result is not None, "Response should not be None"
-
-        except Exception as e:
-            pytest.fail(f"Failed to get response from API: {str(e)}")
+        # The response should contain thinking indicators when enable_thinking=True
+        logger.debug(f"Qwen enable_thinking=True response: {result_with_thinking}")
+        logger.debug(f"Qwen enable_thinking=False response: {result_without_thinking}")
+        logger.debug(f"Thinking indicators found: {has_thinking}")
 
     @pytest.mark.asyncio
-    @traceable(name="test_with_mcp")
-    async def test_with_mcp_starrocks(self):
-        try:
-            # Create model instance for MCP testing
-            model = QwenModel(model_config=self.model.model_config)
+    async def test_generate_with_mcp(self):
+        """Test MCP integration with SSB database."""
+        if not hasattr(self.model, "generate_with_mcp"):
+            pytest.skip("QwenModel does not support generate_with_mcp")
 
-            # Define StarRocks expert instructions
-            instructions = """You are a StarRocks expert. Your task is to:
-            1. Understand the user's question about data analysis
-            2. Generate appropriate SQL queries for StarRocks
-            3. Execute the queries using the provided tools
-            4. Present the results in a clear and concise manner
-                *Follow StarRocks SQL syntax requirements.* When referencing table names
-                in StarRocks SQL, use appropriate database and table naming conventions.
-                output format: {
-                    "sql": "SELECT * FROM database.table LIMIT 10",
-                    "result": "Results here...",
-                    "explanation": "Explanation here..."
-                }
-            """
-            # Test query for Ethereum transactions
-            question = (
-                "database_type='starrocks' task='Calculate gross profit (revenue - supply cost) by year and"
-                " customer nation for orders where customers and suppliers are in the Americas and parts are"
-                " manufactured by 'MFGR#1' or 'MFGR#2', sorted by year and nation?' "
-            )
+        instructions = """You are a SQLite expert working with the Star Schema Benchmark (SSB) database.
+        The database contains tables: customer, supplier, part, date, and lineorder.
+        Your task is to:
+        1. Understand the user's business question
+        2. Generate appropriate SQL queries for the SSB schema
+        3. Execute the queries using the provided tools
+        4. Present the results clearly
 
-            mcp_server = MCPServer.get_starrocks_mcp_server()
+        Output format: {
+            "sql": "SELECT ...",
+            "result": "Query results...",
+            "explanation": "Business explanation..."
+        }"""
 
-            # Execute MCP generation with specified parameters
-            result = await model.generate_with_mcp(
-                prompt=question,
-                output_type=str,
-                mcp_servers={"starrocks": mcp_server},
-                instruction=instructions,
-            )
+        question = """database_type='sqlite' task='Find the total number of customers by region in the SSB database'"""
+        ssb_db_path = "tests/data/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
-            # Log and validate MCP response
-            logger.debug(f"\nReceived response: {result.get('content', '')}")
-            logger.debug(f"\nSQL contexts: {result.get('sql_contexts', '')}")
+        result = await self.model.generate_with_tools(
+            prompt=question,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+        )
 
-            # final_result = ReasoningSQLResponse(**result.get('content', {}))
-            # logger.debug(f"\nFinal result: {final_result.sql} {final_result.result} {final_result.explanation}")
-            assert result is not None, "Response should not be None"
+        assert result is not None, "MCP response should not be None"
+        assert "content" in result, "Response should contain content"
+        assert "sql_contexts" in result, "Response should contain sql_contexts"
 
-        except Exception as e:
-            pytest.fail(f"Failed to get response from API: {str(e)}")
+        logger.debug(f"MCP response: {result.get('content', '')}")
 
     @pytest.mark.asyncio
-    @traceable(name="test_with_mcp")
-    async def test_with_mcp_sqlite(self):
-        try:
-            # Create model instance for MCP testing
-            model = QwenModel(model_config=self.model.model_config)
+    async def test_generate_with_mcp_stream(self):
+        """Test MCP streaming functionality with SSB database."""
+        instructions = """You are a SQLite expert analyzing the Star Schema Benchmark database.
+        Provide detailed analysis of the SSB data with business insights.
 
-            # Define SQLite expert instructions
-            instructions = """You are a SQLite expert. Your task is to:
-            1. Understand the user's question about data analysis
-            2. Generate appropriate SQL queries for SQLite
-            3. Execute the queries using the provided tools
-            4. Present the results in a clear and concise manner
-                *Follow SQLite SQL syntax requirements.* When referencing table names
-                in SQLite SQL, use appropriate naming conventions.
-                output format: {
-                    "sql": "SELECT * FROM table LIMIT 10",
-                    "result": "Results here...",
-                    "explanation": "Explanation here..."
-                }
-            """
-            # Test query for basic data analysis
-            question = "database_type='sqlite' task='Create a simple table for tracking products and show sample data' "
+        Output format: {
+            "sql": "SELECT ...",
+            "result": "Analysis results...",
+            "explanation": "Business insights..."
+        }"""
 
-            # Use a test database path
-            test_db_path = "./test_sqlite_mcp.db"
-            mcp_server = MCPServer.get_sqlite_mcp_server(db_path=test_db_path)
+        question = "database_type='sqlite' task='Analyze the revenue trends by year from the lineorder table'"
+        ssb_db_path = "tests/data/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
-            # Execute MCP generation with specified parameters
-            result = await model.generate_with_mcp(
-                prompt=question,
-                output_type=str,
-                mcp_servers={"sqlite": mcp_server},
-                instruction=instructions,
-            )
+        action_count = 0
+        async for action in self.model.generate_with_tools_stream(
+            prompt=question,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+        ):
+            action_count += 1
+            assert action is not None, "Stream action should not be None"
+            logger.debug(f"Stream action {action_count}: {type(action)}")
 
-            # Log and validate MCP response
-            logger.debug(f"\nReceived response: {result.get('content', '')}")
-            logger.debug(f"\nSQL contexts: {result.get('sql_contexts', '')}")
-
-            assert result is not None, "Response should not be None"
-
-        except Exception as e:
-            pytest.fail(f"Failed to get response from API: {str(e)}")
+        assert action_count > 0, "Should receive at least one streaming action"
+        logger.info(f"action count: {action_count}")

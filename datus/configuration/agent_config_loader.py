@@ -90,5 +90,8 @@ def load_agent_config(**kwargs) -> AgentConfig:
 
     agent_config = AgentConfig(nodes=nodes, **agent_raw)
     if kwargs:
-        agent_config.override_by_args(**kwargs)
+        # Filter out the 'config' parameter as it's only used for loading, not for overriding
+        override_kwargs = {k: v for k, v in kwargs.items() if k != "config"}
+        if override_kwargs:
+            agent_config.override_by_args(**override_kwargs)
     return agent_config

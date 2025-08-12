@@ -39,7 +39,6 @@ class DBType(str, Enum):
     @classmethod
     def support_schema(cls, db_type: str) -> bool:
         return db_type in [
-            DBType.STARROCKS,
             DBType.SNOWFLAKE,
             DBType.BIGQUERY,
             DBType.MSSQL,

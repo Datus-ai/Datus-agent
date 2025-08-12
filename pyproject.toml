@@ -37,8 +37,8 @@ dependencies = [
     "aiohttp>=3.11.16",
     "xlsxwriter>=3.2.2",
     "tiktoken>=0.9.0",
-    "openai-agents>=0.1.0",
-    "pydantic>=2.11.7",
+    "openai-agents==0.2.1",
+    "pydantic>=2.11.7,<3.0",
     "Markdown==3.8",
     "lancedb==0.18.0",
     # This library is required by lancedb
@@ -50,7 +50,7 @@ dependencies = [
     "pyarrow<19.0.0",
     "rich==14.0.0",
     "prompt_toolkit>=3.0.51",
-    "textual==3.2.0",
+    "textual==5.1.1",
     "anthropic==0.51.0",
     "duckdb-engine>=0.17.0",
     "snowflake-sqlalchemy>=1.7.3",
@@ -68,6 +68,7 @@ dependencies = [
     "json-repair>=0.47.6",
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
+    "google-generativeai>=0.8.0"
 ]
 
 
@@ -87,6 +88,10 @@ datus-init = "datus.cli.init:main"
 requires = ["setuptools>=80.9.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[[tool.uv.index]]
+url = "http://mirrors.aliyun.com/pypi/simple"
+default = true
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["datus*", "mcp*"]
@@ -98,11 +103,8 @@ exclude = ["tests*", "benchmark*", "docs*"]
 "datus.prompts" = ["*.txt", "*.md", "*.j2"]
 "datus.prompts.prompt_templates" = ["*.j2"]
 
-[[tool.uv.index]]
-url = "http://mirrors.aliyun.com/pypi/simple"
-default = true
 [tool.uv.pip]
-index-url = "https://pypi.org/simple"
+index-url = "http://mirrors.aliyun.com/pypi/simple"
 
 # uv tool run black
 [tool.black]
@@ -134,4 +136,6 @@ dev = [
     "pip>=25.1.1",
     "build>=1.2.0",
     "twine>=6.1.0",
+    "flake8>=7.3.0",
+    "isort>=6.0.1",
 ]

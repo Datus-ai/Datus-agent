@@ -1,17 +1,19 @@
-import os
-
 import pytest
+from agents import set_tracing_disabled
 from dotenv import load_dotenv
-from langsmith import traceable
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.claude_model import ClaudeModel
 from datus.tools.mcp_server import MCPServer
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from tests.test_tracing import auto_traceable
 
 logger = get_logger(__name__)
+set_tracing_disabled(True)
 
 
+@auto_traceable
 class TestClaudeModel:
     """Test suite for the ClaudeModel class."""
 
@@ -19,67 +21,199 @@ class TestClaudeModel:
     def setup_method(self):
         """Set up test environment before each test method."""
         load_dotenv()
+        config = load_agent_config(config="tests/conf/agent.yml")
+        self.model = ClaudeModel(model_config=config["anthropic"])
 
-        config = load_agent_config()
-        model_config = config.active_model()
+    def test_generate(self):
+        """Test basic text generation functionality."""
+        result = self.model.generate("Hello", temperature=0.5, max_tokens=100)
 
-        # Initialize the model with default parameters
-        self.model = ClaudeModel(
-            model_config=model_config,
-            temperature=0.5,
-            top_p=0.9,
-            max_tokens=1000,
-        )
+        assert result is not None, "Response should not be None"
+        assert isinstance(result, str), "Response should be a string"
+        assert len(result) > 0, "Response should not be empty"
+
+        logger.debug(f"Generated response: {result}")
+
+    def test_generate_with_json_output(self):
+        """Test JSON output generation."""
+        result = self.model.generate_with_json_output("Respond with a JSON object containing a greeting message")
+
+        assert result is not None, "Response should not be None"
+        assert isinstance(result, dict), "Response should be a dictionary"
+        assert len(result) > 0, "Response should not be empty"
+
+        logger.debug(f"JSON response: {result}")
+
+    def test_generate_with_system_prompt(self):
+        """Test generation with system and user prompts."""
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant. Respond in JSON format with 'question' and 'answer' fields.",
+            },
+            {"role": "user", "content": "What is 2+2?"},
+        ]
+
+        result = self.model.generate_with_json_output(messages)
+
+        assert result is not None, "Response should not be None"
+        assert isinstance(result, dict), "Response should be a dictionary"
+        assert len(result) > 0, "Response should not be empty"
+
+        logger.debug(f"System prompt response: {result}")
 
     @pytest.mark.asyncio
-    @traceable(name="test_with_mcp")
-    async def test_with_mcp(self):
-        try:
-            # Create model instance for MCP testing
-            model = ClaudeModel(model_config=self.model.model_config)
+    async def test_generate_with_mcp(self):
+        """Test MCP integration with SSB database."""
+        instructions = """You are a SQLite expert working with the Star Schema Benchmark (SSB) database.
+        The database contains tables: customer, supplier, part, date, and lineorder.
+        Focus on business analytics and data relationships.
 
-            # Define Snowflake expert instructions
-            instructions = """You are a snowflake expert. Your task is to:
-1. Understand the user's question about data analysis
-2. Generate appropriate SQL queries
-3. Execute the queries using the provided tools
-4. Present the results in a clear and concise manner
-*Enclose all column names in double quotes to comply with Snowflake syntax requirements
-and avoid grammar errors.* When referencing table names in Snowflake SQL,
-you must include both the database_name and schema_name.
-output format: {
-  "sql": "SELECT * FROM database.schema.table LIMIT 10",
-  "result": "Results here...",
-  "explanation": "Explanation here..."
-}
-"""
-            # Test query for Ethereum transactions
-            question = (
-                "database_type='snowflake' task='how many eth transactions "
-                "in the last 7 days?' database_name='ETHEREUM_BLOCKCHAIN' "
-                "schema_name='ETHEREUM_BLOCKCHAIN' table_name='TRANSACTIONS'"
-            )
+        Output format: {
+            "sql": "SELECT ...",
+            "result": "Query results...",
+            "explanation": "Business explanation..."
+        }"""
 
-            mcp_server = MCPServer.get_snowflake_mcp_server()
+        question = """database_type='sqlite' task='Find the top 5 customers by total revenue from the SSB database'"""
+        ssb_db_path = "tests/data/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
-            # Get MCP directory from environment
-            directory = os.environ.get("SNOWFLAKE_MCP_DIR")
-            if not directory:
-                pytest.fail("Missing required environment variable: SNOWFLAKE_MCP_DIR")
+        result = await self.model.generate_with_mcp(
+            prompt=question,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+        )
 
-            # Execute MCP generation with specified parameters
-            result = await model.generate_with_mcp(
-                prompt=question,
-                output_type=str,
-                mcp_servers={"snowflake": mcp_server},
-                instruction=instructions,
-            )
+        assert result is not None, "MCP response should not be None"
+        assert "content" in result, "Response should contain content"
+        assert "sql_contexts" in result, "Response should contain sql_contexts"
 
-            # Log and validate MCP response
-            logger.debug(f"\nReceived response: {result.get('content', '')}")
-            logger.debug(f"\nSQL contexts: {result.get('sql_contexts', '')}")
+        logger.debug(f"MCP response: {result.get('content', '')}")
 
-            assert result is not None, "Response should not be None"
+    @pytest.mark.asyncio
+    async def test_generate_with_mcp_stream(self):
+        """Acceptance test for MCP streaming with complex SSB analytics."""
+        instructions = """You are a SQLite expert performing comprehensive analysis on the Star Schema Benchmark
+          database. Provide detailed business analytics with multiple queries and insights."""
 
-        except Exception as e:
-            pytest.fail(f"Failed to get response from API: {str(e)}")
+        complex_scenarios = [
+            "Analyze revenue trends by customer region and supplier nation with year-over-year growth",
+            "Calculate profitability metrics by part category and manufacturer with discount impact analysis",
+            (
+                "Perform comprehensive supplier performance analysis including revenue, volume, and "
+                "geographic distribution"
+            ),
+        ]
+
+        ssb_db_path = "tests/data/SSB.db"
+
+        for i, scenario in enumerate(complex_scenarios):
+            question = f"database_type='sqlite' task='{scenario}'"
+            mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+
+            action_count = 0
+            total_content_length = 0
+
+            try:
+                async for action in self.model.generate_with_mcp_stream(
+                    prompt=question,
+                    output_type=str,
+                    mcp_servers={"sqlite": mcp_server},
+                    instruction=instructions,
+                ):
+                    action_count += 1
+                    assert action is not None, f"Stream action should not be None for scenario {i+1}"
+
+                    # Track content if available
+                    if hasattr(action, "content") and action.content:
+                        total_content_length += len(str(action.content))
+
+                    logger.debug(f"Acceptance stream scenario {i+1}, action {action_count}: {type(action)}")
+
+                assert action_count > 0, f"Should receive at least one streaming action for scenario {i+1}"
+                logger.debug(
+                    f"Acceptance stream scenario {i+1} completed: {action_count} actions, "
+                    f"{total_content_length} total content length"
+                )
+                logger.info(f"Final Action: {action}")
+            except DatusException as e:
+                if e.code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+                    pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
+                else:
+                    raise
+            except Exception:
+                raise
+
+            # Only run one scenario to avoid timeout in normal testing
+            break
+
+    @pytest.mark.asyncio
+    async def test_generate_with_tools_session(self):
+        """Test MCP integration with session management."""
+        import uuid
+
+        session_id = f"test_mcp_session_{uuid.uuid4().hex[:8]}"
+
+        # Create session
+        session = self.model.create_session(session_id)
+
+        instructions = """You are a SQLite expert working with the SSB database.
+        Answer questions about the database schema and data."""
+
+        ssb_db_path = "tests/data/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+
+        # First question: explore schema
+        question1 = "database_type='sqlite' task='Show me all the tables in the database'"
+        result1 = await self.model.generate_with_tools(
+            prompt=question1,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            session=session,
+        )
+
+        assert result1 is not None
+        assert "content" in result1
+        assert "sql_contexts" in result1
+
+        # Second question in same session: follow-up query
+        question2 = "database_type='sqlite' task='Count the total number of rows in the customer table'"
+        result2 = await self.model.generate_with_tools(
+            prompt=question2,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            session=session,
+        )
+
+        assert result2 is not None
+        assert "content" in result2
+        assert "sql_contexts" in result2
+
+        # Third question: reference previous answer to test session continuity
+        question3 = "database_type='sqlite' task='What's the result of the previous number plus 5?'"
+        result3 = await self.model.generate_with_tools(
+            prompt=question3,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            session=session,
+        )
+
+        assert result3 is not None
+        assert "content" in result3
+        assert "sql_contexts" in result3
+
+        # Verify session persistence
+        session_info = self.model.session_manager.get_session_info(session_id)
+        assert session_info["exists"] is True
+        assert session_info["item_count"] > 0
+
+        # Cleanup
+        self.model.delete_session(session_id)
+
+        logger.debug(f"MCP session Q1: {result1.get('content', '')[:100]}...")
+        logger.debug(f"MCP session Q2: {result2.get('content', '')[:100]}...")

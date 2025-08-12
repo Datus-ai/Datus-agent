@@ -73,9 +73,9 @@ agent:
 
   benchmark:
     bird_dev:
-      path: benchmark/bird/dev_20240627
+      benchmark_path: benchmark/bird/dev_20240627
     spider2:
-      path: benchmark/spider2/spider2-snow
+      benchmark_path: benchmark/spider2/spider2-snow
 
   namespace: # namespace is a set of database connections
     local_duckdb:

@@ -23,8 +23,8 @@ class ErrorCode(Enum):
     COMMON_ENV = ("100005", "The environment variable {env_var} is not set")
     COMMON_CONFIG_ERROR = ("100006", "Configuration error: {config_error}")
     COMMON_MISSING_DEPENDENCY = ("100007", "Missing node dependency")
-    # Validation errors
     COMMON_VALIDATION_FAILED = ("100008", "Data validation failed")
+    COMMON_JSON_PARSE_ERROR = ("100009", "JSON parsing error in file '{file_path}': {error_detail}")
 
     # Node execution errors
     NODE_EXECUTION_FAILED = ("200001", "Node execution failed")
@@ -45,8 +45,14 @@ class ErrorCode(Enum):
     MODEL_OVERLOADED = ("300017", "API temporarily overloaded - please try again later (HTTP 529)")
     MODEL_CONNECTION_ERROR = ("300018", "Connection error - check your network connection")
     MODEL_EMBEDDING_ERROR = ("300019", "Embedding Model error")
-
-    # Tool errors - General
+    MODEL_QUOTA_EXCEEDED = ("300020", "Usage quota exceeded - please check your billing plan")
+    MODEL_TIMEOUT_ERROR = ("300021", "Request timeout - the API took too long to respond")
+    MODEL_MAX_TURNS_EXCEEDED = ("300022", "Maximum turns ({max_turns}) exceeded - agent execution stopped")
+    MODEL_ILLEGAL_FORMAT_RESPONSE = (
+        "300023",
+        "Model returned response in illegal format. Response: '{response_preview}' (length: {response_length})",
+    )
+    # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
 
@@ -91,11 +97,11 @@ class ErrorCode(Enum):
         "Failed to execute query on database. SQL: {sql}, Error details: {error_message}",
     )
     DB_EXECUTION_TIMEOUT = (
-        "430003",
+        "500007",
         "Query execution timed out on database. SQL: {sql}, Error details: {error_message}",
     )
     DB_QUERY_METADATA_FAILED = (
-        "500007",
+        "500008",
         "Failed to retrieve metadata for query. SQL: {sql}, Error details: {error_message}",
     )
 

@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from rich.table import Table
 from rich.tree import Tree
 
-from datus.storage.schema_metadata.store import rag_by_configuration
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
 
@@ -25,7 +24,6 @@ class ContextCommands:
         """Initialize with a reference to the CLI instance."""
         self.cli = cli
         self.console = cli.console
-        self.rag_metadata = rag_by_configuration(cli.agent_config)
 
     def cmd_catalogs(self, args: str):
         """Display database catalogs using Textual tree interface."""
@@ -36,23 +34,16 @@ class ContextCommands:
                 self.console.print("[bold red]Error:[/] No database connection or configuration.")
                 return
 
-            # Get storage path from config
-
-            if not self.rag_metadata:
-                self.console.print("[bold red]Error:[/] Storage path not configured.")
-                return
-            from datus.cli.context_screen import show_catalogs_screen
+            from datus.cli.screen import show_catalogs_screen
 
             # Push the catalogs screen
             show_catalogs_screen(
                 title="Database Catalogs",
                 data={
                     "db_type": self.cli.agent_config.db_type,
-                    "schemas": self.rag_metadata.schema_store.search_all(
-                        catalog_name=self.cli.current_catalog,
-                        database_name=self.cli.current_db_name,
-                        schema_name=self.cli.current_schema,
-                    ),
+                    "catalog_name": self.cli.current_catalog,
+                    "database_name": self.cli.current_db_name,
+                    "db_connector": self.cli.db_connector,
                 },
                 inject_callback=self.cli.catalogs_callback,
             )
@@ -99,7 +90,7 @@ class ContextCommands:
         context_type = args.strip().lower()
 
         try:
-            from datus.cli.context_screen import show_workflow_context_screen
+            from datus.cli.screen import show_workflow_context_screen
 
             # Get all context data from the workflow
             context_data = {
@@ -178,8 +169,8 @@ class ContextCommands:
                 # Add columns
                 table.add_column("Table Name")
                 # Add rows
-                for row in result.sql_return.to_pylist():
-                    table.add_row(*[str(cell) for cell in row.values()])
+                for row in result:
+                    table.add_row(row)
                 self.console.print(table)
             else:
                 self.console.print("Empty set.")

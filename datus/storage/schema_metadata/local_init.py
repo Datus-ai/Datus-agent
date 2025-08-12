@@ -410,6 +410,7 @@ def store_tables(
     for table in tables:
         if not table.get("database_name"):
             table["database_name"] = database_name
+        if not table.get("identifier"):
             table["identifier"] = connector.identifier(
                 catalog_name=table["catalog_name"],
                 database_name=table["database_name"],

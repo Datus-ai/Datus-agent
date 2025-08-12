@@ -16,7 +16,7 @@ from .mcp_config import (
     STDIOServerConfig,
 )
 from .mcp_manager import MCPManager
-from .mcp_tool import MCPTool
+from .mcp_tool import MCPTool, parse_command_string
 
 __all__ = [
     "AnyMCPServerConfig",
@@ -27,4 +27,5 @@ __all__ = [
     "MCPTool",
     "SSEServerConfig",
     "STDIOServerConfig",
+    "parse_command_string",
 ]

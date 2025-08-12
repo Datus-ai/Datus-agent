@@ -123,7 +123,7 @@ class DatusCLI:
             "@tables": self.context_commands.cmd_tables,
             "@metrics": self.context_commands.cmd_metrics,
             "@context": self.context_commands.cmd_context,
-            "@context_screen": self.context_commands.cmd_context_screen,
+            "@screen": self.context_commands.cmd_context_screen,
             ".help": self._cmd_help,
             ".exit": self._cmd_exit,
             ".quit": self._cmd_exit,
@@ -136,6 +136,7 @@ class DatusCLI:
             ".table_schema": self._cmd_table_schema,
             ".show": self._cmd_show,
             ".namespace": self._cmd_switch_namespace,
+            ".mcp": self._cmd_mcp,
         }
 
         # Last executed SQL and result
@@ -280,9 +281,17 @@ class DatusCLI:
         table = Table(show_header=True, header_style="bold green")
         table.add_column("Namespace")
         for namespace in self.agent_config.namespaces.keys():
-            table.add_row(namespace)
+            if self.agent_config.current_namespace == namespace:
+                table.add_row(f"[bold green]{namespace}[/]")
+            else:
+                table.add_row(namespace)
         self.console.print(table)
         return
+
+    def _cmd_mcp(self, args):
+        from datus.cli.mcp_commands import MCPCommands
+
+        MCPCommands(self).cmd_mcp(args)
 
     def _smart_display_table(
         self,
@@ -349,6 +358,10 @@ class DatusCLI:
             self._cmd_list_namespaces()
         else:
             self.agent_config.current_namespace = args.strip()
+            name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_namespace)
+            self.current_catalog = self.db_connector.catalog_name
+            self.current_db_name = self.db_connector.database_name if not name else name
+            self.current_schema = self.db_connector.schema_name
             self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_namespace}[/]")
 
     def _cmd_switch_database(self, args: str):
@@ -356,11 +369,11 @@ class DatusCLI:
         if not new_db:
             self.console.print("[bold red]Error:[/] Database name is required")
             return
-        self.current_db_name = new_db
         if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
             self.db_connector = self.db_manager.get_conn(self.agent_config.current_namespace, self.current_db_name)
         self.db_connector.switch_context(database_name=new_db)
         self.console.print(f"[bold green]Database switched to: {self.current_db_name}[/]")
+        self.current_db_name = new_db
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """
@@ -741,7 +754,7 @@ class DatusCLI:
             ("@tables table_name", "Display table details"),
             ("@metrics", "Display metrics"),
             ("@context [type]", "Display the current context in the terminal"),
-            ("@context_screen [type]", "Display the current context in an interactive screen"),
+            ("@screen [type]", "Display the current context in an interactive screen"),
         ]
         for cmd, desc in context_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
@@ -871,6 +884,8 @@ class DatusCLI:
         self.db_connector.switch_context(
             catalog_name=self.current_catalog, database_name=self.current_db_name, schema_name=schema_name
         )
+        self.console.print(f"[bold green]Schema switched to: {self.current_db_name}[/]")
+        self.current_schema = schema_name
 
     def _cmd_table_schema(self, args: str):
         """Show schema information for tables."""
@@ -881,8 +896,12 @@ class DatusCLI:
         try:
             if args.strip():
                 table_name = args.strip()
-                # sql = f"PRAGMA table_info('{table_name}')"
-                result = self.db_connector.get_schema(table_name=table_name)
+                result = self.db_connector.get_schema(
+                    catalog_name=self.current_db_name,
+                    database_name=self.current_db_name,
+                    schema_name=self.current_schema,
+                    table_name=table_name,
+                )
                 self.last_result = result
 
                 # Display schema for the specific table
@@ -894,7 +913,7 @@ class DatusCLI:
                 schema_table.add_column("Column Position")
                 schema_table.add_column("Name")
                 schema_table.add_column("Type")
-                schema_table.add_column("NotNull")
+                schema_table.add_column("Nullable")
                 schema_table.add_column("Default")
                 schema_table.add_column("PK")
 
@@ -903,8 +922,8 @@ class DatusCLI:
                         str(row.get("cid", "")),
                         str(row.get("name", "")),
                         str(row.get("type", "")),
-                        str(row.get("notnull", "")),
-                        str(row.get("dflt_value", "")) if row.get("dflt_value") is not None else "",
+                        str(row.get("nullable", "")),
+                        str(row.get("default_value", "")) if row.get("default_value") is not None else "",
                         str(row.get("pk", "")),
                     )
 
@@ -983,12 +1002,11 @@ Type '.help' for a list of commands or '.exit' to quit.
 
             self.console.print(db_info)
             self.console.print("Type SQL statements or use ! @ . commands to interact.")
-        # else:
-        #    self.console.print("[yellow]Warning: No database connection initialized.[/]")
+        else:
+            self.console.print("[yellow]Warning: No database connection initialized.[/]")
 
     def _init_connection(self):
         """Initialize database connection."""
-        self.current_db_name
         current_namespace = self.agent_config.current_namespace
         if not self.current_db_name:
             self.current_db_name, self.db_connector = self.db_manager.first_conn_with_name(current_namespace)

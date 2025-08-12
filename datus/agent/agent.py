@@ -4,10 +4,10 @@ import json
 import os
 import shutil
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import AsyncGenerator, Optional, Set
 
-from black.trans import defaultdict
 from langsmith import traceable
 
 from datus.agent.evaluate import evaluate_result, setup_node_input
@@ -16,10 +16,6 @@ from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
-from datus.models.claude_model import ClaudeModel
-from datus.models.deepseek_model import DeepSeekModel
-from datus.models.openai_model import OpenAIModel
-from datus.models.qwen_model import QwenModel
 
 # Import model implementations
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -39,17 +35,10 @@ from datus.utils.benchmark_utils import (
     generate_gold_standard_results,
     load_bird_dev_tasks,
 )
-from datus.utils.constants import DBType, LLMProvider
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-
-MODEL_TYPE_MAP = {
-    LLMProvider.DEEPSEEK: DeepSeekModel,
-    LLMProvider.QWEN: QwenModel,
-    LLMProvider.OPENAI: OpenAIModel,
-    LLMProvider.CLAUDE: ClaudeModel,
-}
 
 
 class Agent:
@@ -536,13 +525,12 @@ class Agent:
         try:
             from datus.tools.mcp_server import MCPServer
 
-            db_configs = self.db_manager.current_db_configs(self.global_config.current_namespace)
-            db_type = self.global_config.db_type
+            db_config = self.global_config.current_db_config()
 
-            logger.info(f"Checking MCP server for database type: {db_type}")
+            logger.info(f"Checking MCP server for database type: {db_config.type}")
 
             # Use the encapsulated method to check connectivity
-            return MCPServer.check_connectivity(db_type, db_configs)
+            return MCPServer.check_connectivity(db_config)
 
         except Exception as e:
             logger.error(f"MCP server check failed: {str(e)}")
@@ -833,7 +821,7 @@ class Agent:
             )
             task_size += 1
         if task_size == 0:
-            logger.warn("There are no benchmarks that need to be run.")
+            logger.warning("There are no benchmarks that need to be run.")
             return {}
         logger.info(f"Loaded {task_size} tasks from Bird benchmark")
         logger.info("Phase 1: Generating gold standard results...")
@@ -915,7 +903,6 @@ class Agent:
         logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
         logger.info("Phase 1: Generating gold standard results...")
 
-        # current_db_config = self.global_config.current_db_config()
         generate_gold_standard_results(
             tasks, benchmark_path, self.db_manager.get_conn(self.global_config.current_namespace), target_task_ids
         )

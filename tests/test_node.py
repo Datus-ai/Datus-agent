@@ -407,7 +407,7 @@ class TestNode:
         # save_to_yaml(reflection_input, "ReflectionInput.yaml")
 
     @pytest.mark.acceptance
-    def test_reasoning_node(self, reasoning_input, agent_config):
+    def test_reasoning_node_snowflake(self, reasoning_input, agent_config):
         """Test reasoning node with real DeepSeek model and Snowflake database"""
         try:
             agent_config.current_namespace = "snowflake"
@@ -452,6 +452,58 @@ class TestNode:
 
         except Exception as e:
             logger.error(f"Reasoning node test failed: {str(e)}")
+            raise
+
+    def test_reasoning_node(self, agent_config):
+        """Test reasoning node with SSB SQLite database using revenue calculation task"""
+        try:
+            agent_config.current_namespace = "ssb_sqlite"
+
+            # Create simple ReasoningInput with revenue calculation task
+            input_data = ReasoningInput(
+                contexts=[],
+                data_details=[],
+                table_schemas=[],
+                metrics=[],
+                sql_task=SqlTask(
+                    id="revenue_test",
+                    task=(
+                        "Total revenue for January 1994 where discount was between 4 and 6 and "
+                        "quantity sold was between 26 and 35"
+                    ),
+                    database_type="sqlite",
+                    database_name="SSB",
+                    output_dir="output/test",
+                ),
+                database_type="sqlite",
+                external_knowledge="",
+                prompt_version="1.0",
+            )
+
+            # Create node instance for testing
+            node = Node.new_instance(
+                node_id="reasoning_test",
+                description="Reasoning SQL Test",
+                node_type=NodeType.TYPE_REASONING,
+                input_data=input_data,
+                agent_config=agent_config,
+            )
+
+            # Verify initial node configuration
+            assert node.type == NodeType.TYPE_REASONING
+            assert isinstance(node.input, ReasoningInput)
+
+            # Execute node
+            result = node.run()
+            logger.debug(f"Reasoning node result: {result.to_str()}")
+
+            # Simple assertions - just check it works and produces SQL
+            assert isinstance(result, ReasoningResult), "Result type mismatch"
+            assert result.success is True, f"Node execution failed: {result}"
+            assert node.status == "completed", f"Node execution failed with status: {node.status}"
+
+        except Exception as e:
+            logger.error(f"Simple reasoning node test failed: {str(e)}")
             raise
 
     @pytest.mark.acceptance
