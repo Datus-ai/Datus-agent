@@ -2,6 +2,7 @@
 MCP-related commands for the Datus CLI.
 This module provides commands to list and manage MCP configurations.
 """
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -50,10 +51,20 @@ class MCPCommands:
             return
         servers = mcp_servers.result["servers"]
         try:
+            # Try to create event loop for interactive mode if needed
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    raise RuntimeError("Event loop is closed")
+            except RuntimeError:
+                # No event loop exists, create one
+                asyncio.set_event_loop(asyncio.new_event_loop())
+
             screen = MCPServerApp(servers, self.mcp_tool)
             screen.run()
         except Exception as e:
             self.console.print(f"[yellow]Interactive mode error: {e}[/yellow]")
+            self.console.print("[dim]Falling back to table display mode...[/dim]")
             self._display_servers_table(servers)
 
     def _display_servers_table(self, servers: List[Dict[str, Any]]):
@@ -65,16 +76,17 @@ class MCPCommands:
         table.add_column("Command", style="green")
         table.add_column("Args", style="yellow")
 
-        for name, config in servers:
-            server_type = config.get("type", "unknown")
+        for server in servers:
+            name = server.get("name", "unknown")
+            server_type = server.get("type", "unknown")
             status = "[green]Available[/green]" if server_type == "builtin" else "[yellow]User[/yellow]"
 
             table.add_row(
                 name,
                 status,
                 server_type,
-                config.get("command", ""),
-                " ".join(config.get("args", [])),
+                server.get("command", ""),
+                " ".join(server.get("args", [])),
             )
 
         self.console.print(table)
