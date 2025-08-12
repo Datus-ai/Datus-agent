@@ -1,4 +1,5 @@
 __all__ = [
+    "AgenticNode",
     "SchemaLinkingNode",
     "GenerateSQLNode",
     "ExecuteSQLNode",
@@ -20,6 +21,7 @@ __all__ = [
 
 from datus.agent.node.node import Node
 
+from .agentic_node import AgenticNode
 from .begin_node import BeginNode
 from .compare_node import CompareNode
 from .doc_search_node import DocSearchNode

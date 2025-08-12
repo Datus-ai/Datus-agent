@@ -8,6 +8,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.agentic_node_models import AgenticInput, AgenticResult
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
@@ -50,6 +51,7 @@ class Node(ABC):
         agent_config: Optional[AgentConfig] = None,
     ):
         from datus.agent.node import (
+            AgenticNode,
             BeginNode,
             CompareNode,
             DocSearchNode,
@@ -100,6 +102,8 @@ class Node(ABC):
             return SelectionNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_COMPARE:
             return CompareNode(node_id, description, node_type, input_data, agent_config)
+        elif node_type == NodeType.TYPE_AGENTIC_CHAT:
+            return AgenticNode(node_id, description, node_type, input_data, agent_config)
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 
@@ -331,6 +335,8 @@ class Node(ABC):
                     input_data = GenerateMetricsInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
                     input_data = GenerateSemanticModelInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_AGENTIC_CHAT:
+                    input_data = AgenticInput(**input_data)
             except Exception as e:
                 logger.warning(f"Failed to convert input data for {node_dict['type']}: {e}")
                 input_data = None
@@ -365,6 +371,8 @@ class Node(ABC):
                     result_data = GenerateMetricsResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
                     result_data = GenerateSemanticModelResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_AGENTIC_CHAT:
+                    result_data = AgenticResult(**result_data)
                 elif "success" in result_data:
                     result_data = BaseResult(**result_data)
             except Exception as e:

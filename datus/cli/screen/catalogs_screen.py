@@ -659,7 +659,6 @@ class CatalogsScreen(ContextScreen):
     def on_tree_node_collapsed(self, event: TextualTree.NodeCollapsed) -> None:
         """Handle tree node collapse - minimal cleanup for performance."""
         # Skip aggressive cleanup to maintain performance
-        pass
 
     def _load_databases_lazy(self, tree: TextualTree) -> None:
         """Lazy load databases for MySQL, PostgreSQL, DuckDB, etc."""

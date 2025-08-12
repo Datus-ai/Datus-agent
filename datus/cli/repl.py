@@ -3,8 +3,10 @@ Datus-CLI REPL (Read-Eval-Print Loop) implementation.
 This module provides the main interactive shell for the CLI.
 """
 
+import asyncio
 import sys
 import threading
+import uuid
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -22,11 +24,15 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
+from datus.agent.node import AgenticNode
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
+from datus.cli.cli_context import CliContext
 from datus.cli.context_commands import ContextCommands
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.models.base import LLMBaseModel
+from datus.configuration.node_type import NodeType
+from datus.schemas.action_history import ActionHistoryManager
+from datus.schemas.agentic_node_models import AgenticInput
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.constants import DBType
@@ -91,6 +97,10 @@ class DatusCLI:
 
         self.agent_config = load_agent_config(**vars(self.args))
 
+        # Initialize CLI context manager for agentic chat
+        self.cli_context = CliContext()
+        self.current_chat_session_id = None
+
         # Initialize agent commands handler
         self.agent_commands = AgentCommands(self)
 
@@ -125,6 +135,7 @@ class DatusCLI:
             "@context": self.context_commands.cmd_context,
             "@screen": self.context_commands.cmd_context_screen,
             ".help": self._cmd_help,
+            ".clear": self._cmd_clear_chat,
             ".exit": self._cmd_exit,
             ".quit": self._cmd_exit,
             # temporary commands for sqlite, remove after mcp server is ready
@@ -500,30 +511,122 @@ class DatusCLI:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 
     def _execute_chat_command(self, message: str):
-        """Execute a chat command (/ prefix)."""
+        """Execute a chat command (/ prefix) using AgenticNode."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
 
-        if not self._check_agent_available():
+        # Check if agent config is available (no need for full agent initialization)
+        if not self.agent_config:
+            self.console.print("[bold red]Error:[/] Agent configuration not available.")
             return
 
         try:
-            # Add context to message
-            context = f"sql_task: {self.agent.workflow.task.to_dict()}"
-            if self.last_sql:
-                context += f"\nLast SQL: {self.last_sql} \nLast SQL Result: {self.last_result}"
+            # Ensure we have a chat session
+            if not self.current_chat_session_id:
+                self.current_chat_session_id = self.cli_context.create_session()
+                self.console.print(f"[dim]Started new chat session: {self.current_chat_session_id}[/]")
 
-            prompt = f"{context}\n\nUser: {message}"
-
-            # Create model using the same approach as the agent
-            llm_model = LLMBaseModel.create_model(model_name="default", agent_config=self.agent.global_config)
-            result = llm_model.generate(prompt)
-            self.console.print(result)
+            # Run the agentic chat with streaming
+            asyncio.run(self._run_agentic_chat_stream(message))
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] Failed to generate response: {str(e)}")
+
+    async def _run_agentic_chat_stream(self, message: str):
+        """Run agentic chat with streaming output."""
+        try:
+            # Create AgenticNode input
+            agentic_input = AgenticInput(
+                message=message,
+                session_id=self.current_chat_session_id,
+                database_name=self.current_db_name,
+                context_compression=True,
+                max_context_length=8000,
+            )
+
+            # Create AgenticNode instance
+            agentic_node = AgenticNode(
+                node_id=f"chat_{uuid.uuid4().hex[:8]}",
+                description="Interactive CLI chat",
+                node_type=NodeType.TYPE_AGENTIC_CHAT,
+                input_data=agentic_input,
+                agent_config=self.agent_config,
+            )
+
+            # Create action history manager for streaming
+            action_history_manager = ActionHistoryManager()
+
+            # Initialize the node
+            agentic_node._initialize()
+
+            # Display thinking indicator
+            with self.console.status("[bold green]Thinking...[/]", spinner="dots"):
+                # Stream the execution
+                response_text = ""
+                sql_query = None
+
+                async for action in agentic_node.execute_stream(action_history_manager):
+                    # Handle different action types for display
+                    if action.action_type == "read_query" and action.output:
+                        # SQL execution result
+                        result = action.output.get("result", "")
+                        if result:
+                            self.console.print(
+                                f"[dim]SQL executed: {action.input.get('sql', 'Unknown query')[:50]}...[/]"
+                            )
+                    elif action.action_type == "message" and action.role.value == "assistant":
+                        # Final response
+                        if action.output and "raw_output" in action.output:
+                            raw_output = action.output["raw_output"]
+                            try:
+                                # Try to parse JSON response
+                                import json
+
+                                if raw_output.strip().startswith("{"):
+                                    parsed = json.loads(raw_output)
+                                    response_text = parsed.get("response", raw_output)
+                                    sql_query = parsed.get("sql")
+                                else:
+                                    response_text = raw_output
+                            except Exception:
+                                response_text = raw_output
+
+            # Display the final response
+            if response_text:
+                self.console.print(f"[bold blue]Assistant:[/] {response_text}")
+
+                # Display SQL if generated
+                if sql_query:
+                    self.console.print("\n[bold green]Generated SQL:[/]")
+                    self.console.print(Syntax(sql_query, "sql", theme="default"))
+
+                    # Optionally add to SQL context for workflow integration
+                    if self.agent and hasattr(self.agent, "workflow") and self.agent.workflow:
+                        sql_context = SQLContext(
+                            sql_query=sql_query,
+                            explanation=f"Generated via chat: {response_text[:100]}...",
+                            sql_return="",
+                            sql_error="",
+                            row_count=0,
+                        )
+                        self.agent.workflow.context.sql_contexts.append(sql_context)
+
+                # Add to CLI context for session management
+                self.cli_context.add_conversation_turn(
+                    session_id=self.current_chat_session_id,
+                    user_message=message,
+                    assistant_response=response_text,
+                    sql_query=sql_query,
+                )
+            else:
+                self.console.print("[yellow]No response generated.[/]")
+
+        except Exception as e:
+            logger.error(f"Agentic chat streaming error: {str(e)}")
+            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            raise
 
     def _execute_internal_command(self, cmd: str, args: str):
         """Execute an internal command (. prefix)."""
@@ -762,7 +865,7 @@ class DatusCLI:
 
         lines.append("[bold]Chat Commands (/ prefix):[/]")
         chat_cmds = [
-            ("/<message>", "Chat with the AI assistant"),
+            ("/<message>", "Chat with the AI assistant (multi-turn with tool access)"),
         ]
         for cmd, desc in chat_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
@@ -771,6 +874,7 @@ class DatusCLI:
         lines.append("[bold]Internal Commands (. prefix):[/]")
         internal_cmds = [
             (".help", "Display this help message"),
+            (".clear", "Clear current chat session and start new one"),
             (".exit, .quit", "Exit the CLI"),
             (".databases", "List all databases"),
             (".database database_name", "Switch current database"),
@@ -782,6 +886,20 @@ class DatusCLI:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
         help_text = "\n".join(lines)
         self.console.print(help_text)
+
+    def _cmd_clear_chat(self, args: str):
+        """Clear the current chat session."""
+        if self.current_chat_session_id:
+            success = self.cli_context.clear_session(self.current_chat_session_id)
+            if success:
+                self.console.print(f"[bold green]Cleared chat session: {self.current_chat_session_id}[/]")
+                # Create a new session for continued conversation
+                self.current_chat_session_id = self.cli_context.create_session()
+                self.console.print(f"[dim]Started new chat session: {self.current_chat_session_id}[/]")
+            else:
+                self.console.print("[bold red]Error:[/] Failed to clear chat session")
+        else:
+            self.console.print("[yellow]No active chat session to clear[/]")
 
     def _cmd_exit(self, args: str):
         """Exit the CLI."""
