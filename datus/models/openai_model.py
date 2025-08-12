@@ -116,4 +116,7 @@ class OpenAIModel(OpenAICompatibleModel):
             if removed_params:
                 logger.debug(f"Removed unsupported parameters for reasoning model {self.model_name}: {removed_params}")
 
+        if self.model_name.startswith("gpt-5"):
+            kwargs["temperature"] = 1
+
         return super().generate(prompt, enable_thinking, **kwargs)
