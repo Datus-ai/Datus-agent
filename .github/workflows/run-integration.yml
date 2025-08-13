@@ -27,7 +27,29 @@ jobs:
         run: |
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
           cp /home/datus_ci/ci_template/ci.env .env
-          source .env
+          
+      - name: Load environment variables
+        run: |
+          echo "Loading environment variables from .env file..."
+          # Export all variables from .env to GITHUB_ENV so they persist across steps
+          while IFS= read -r line || [ -n "$line" ]; do
+            # Skip empty lines and comments
+            if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
+              # Remove any surrounding whitespace and export to GITHUB_ENV
+              var_name=$(echo "$line" | cut -d'=' -f1)
+              echo "Loading variable: $var_name"
+              echo "$line" >> $GITHUB_ENV
+            fi
+          done < .env
+          echo "Environment variables loaded successfully"
+          
+      - name: Verify FEISHU_WEBHOOK_URL
+        run: |
+          if [ -n "$FEISHU_WEBHOOK_URL" ]; then
+            echo "✅ FEISHU_WEBHOOK_URL is set (length: ${#FEISHU_WEBHOOK_URL} characters)"
+          else
+            echo "❌ FEISHU_WEBHOOK_URL is not set or empty"
+          fi
 
       - name: Run integration tests
         id: integration_tests
@@ -100,6 +122,14 @@ jobs:
             const https = require('https');
             
             const feishuWebhookUrl = process.env.FEISHU_WEBHOOK_URL;
+            
+            // Safe debugging of the environment variable
+            if (feishuWebhookUrl) {
+              console.log('✅ FEISHU_WEBHOOK_URL is set in JS environment.');
+            } else {
+              console.error('❌ FEISHU_WEBHOOK_URL is not set in JS environment.');
+            }
+            
             if (!feishuWebhookUrl) {
               console.error('FEISHU_WEBHOOK_URL environment variable is not set');
               return;

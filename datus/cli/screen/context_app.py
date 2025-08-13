@@ -1,8 +1,7 @@
 from enum import Enum
 from typing import Dict
 
-from textual.app import App
-
+from .base_app import BaseApp
 from .catalogs_screen import CatalogsScreen
 from .context_screen import CatalogScreen, MetricsScreen, TableScreen, WorkloadContextScreen
 
@@ -17,7 +16,7 @@ class ScreenType(str, Enum):
     CATALOGS = "catalogs"
 
 
-class ContextApp(App):
+class ContextApp(BaseApp):
     """App for displaying context screens."""
 
     def __init__(self, screen_type: ScreenType, title: str, data: Dict, inject_callback=None):

@@ -147,10 +147,19 @@ def _process_workflow_config(
 def _create_single_node(
     node_type: str, node_id: str, sql_task: SqlTask, agent_config: Optional[AgentConfig] = None
 ) -> Node:
-    description = NodeType.get_description(node_type)
+    # normalize aliases from config
+    normalized_type = node_type
+    if node_type in {"reason_sql", "reasoning_sql", "reason"}:
+        normalized_type = NodeType.TYPE_REASONING
+    elif node_type in {"reflection", "reflect"}:
+        normalized_type = NodeType.TYPE_REFLECT
+    elif node_type == "execute":
+        normalized_type = NodeType.TYPE_EXECUTE_SQL
+
+    description = NodeType.get_description(normalized_type)
 
     input_data = None
-    if node_type == NodeType.TYPE_SCHEMA_LINKING:
+    if normalized_type == NodeType.TYPE_SCHEMA_LINKING:
         input_data = SchemaLinkingInput.from_sql_task(
             sql_task=sql_task,
             matching_rate=agent_config.schema_linking_rate if agent_config else "fast",
@@ -159,7 +168,7 @@ def _create_single_node(
     node = Node.new_instance(
         node_id=node_id,
         description=description,
-        node_type=node_type,
+        node_type=normalized_type,
         input_data=input_data,
         agent_config=agent_config,
     )
@@ -201,6 +210,10 @@ def generate_workflow(
                 raise ValueError(f"Invalid plan type '{plan_type}'. Available builtin workflows: {available_builtin}")
 
         selected_workflow = workflows[plan_type]
+
+    # support { steps: [...] } structure for custom workflows
+    if isinstance(selected_workflow, dict) and "steps" in selected_workflow:
+        selected_workflow = selected_workflow["steps"]
 
     workflow = Workflow(
         name=f"SQL Query Workflow ({plan_type})",

@@ -143,7 +143,21 @@ def reasoning_sql_with_mcp(
         raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
 
     # logger.info(f"@@@@db_config: {db_config}, input_data: {input_data.sql_task.database_name}")
-    mcp_server = MCPServer.get_db_mcp_server(db_config)
+    # Create a dedicated MCP server instance for this call to avoid races with parallel subworkflows
+    if db_config.type == DBType.SQLITE:
+        # Resolve db path like MCPServer.get_db_mcp_server does
+        from pathlib import Path
+
+        db_path = "./sqlite_mcp_server.db"
+        if db_config and db_config.uri:
+            if db_config.uri.startswith("sqlite///") or db_config.uri.startswith("sqlite:///"):
+                db_path = db_config.uri.replace("sqlite:///", "")
+            else:
+                db_path = db_config.uri
+            db_path = str(Path(db_path).expanduser())
+        mcp_server = MCPServer.create_sqlite_mcp_server(db_path=db_path)
+    else:
+        mcp_server = MCPServer.get_db_mcp_server(db_config)
 
     instruction = prompt_manager.get_raw_template("reasoning_system", input_data.prompt_version)
     # update to python 3.12 to enable structured output
@@ -179,25 +193,30 @@ def reasoning_sql_with_mcp(
             )
         )
 
-        logger.info(f"exec_result: {exec_result['content']}")
+        logger.debug(f"exec_result: {exec_result['content']}")
 
         # Try JSON parsing first
         content_dict = llm_result2json(exec_result["content"])
         if content_dict:
             # Successfully parsed JSON with meaningful SQL content
-            return ReasoningResult(
+            logger.info(f"Successfully parsed JSON content: {content_dict}")
+            reasoning_result = ReasoningResult(
                 success=True,
                 sql_query=content_dict.get("sql", ""),
-                sql_return="",
+                sql_return="",  # Remove the result from the return to avoid large data return
                 sql_contexts=exec_result["sql_contexts"],
             )
+            logger.info(
+                f"Created ReasoningResult: success={reasoning_result.success}, sql_query={reasoning_result.sql_query}"
+            )
+            return reasoning_result
 
         # JSON parsing failed, try SQL extraction.
         # Some LLM can't follow the instruction well, try some failback
         extracted_sql = llm_result2sql(exec_result["content"])
         if extracted_sql:
             # Successfully extracted SQL from code blocks
-            logger.info(f"Extract json format failed, but find a sql {extracted_sql} from resonpse")
+            logger.info(f"Extract json format failed, but find a sql {extracted_sql} from response")
             return ReasoningResult(
                 success=True,
                 sql_query=extracted_sql,
@@ -214,9 +233,20 @@ def reasoning_sql_with_mcp(
             ErrorCode.MODEL_ILLEGAL_FORMAT_RESPONSE,
             message_args={"response_preview": response_preview, "response_length": response_length},
         )
+
     except DatusException:
         raise
     except Exception as e:
+        # TODO : deal with exceed the max round
+        error_msg = str(e)
+        logger.error(f"Reasoning SQL with MCP failed: {e}")
+
+        # Re-raise permission/tool-calling errors so fallback can handle them
+        if any(indicator in error_msg.lower() for indicator in ["403", "forbidden", "not allowed", "permission"]):
+            logger.info("Re-raising permission error for fallback handling")
+            raise
+
+        # Return failed result for other errors
         logger.error(f"Reasoning SQL failed: {e}")
         raise DatusException(
             ErrorCode.NODE_EXECUTION_FAILED,

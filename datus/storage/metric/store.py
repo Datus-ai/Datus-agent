@@ -201,33 +201,25 @@ class SemanticMetricsRAG:
         logger.info(f"start to search metrics, metric_where: {metric_where}, query_text: {query_text}")
         metric_search_results = self.metric_storage.search(query_text, top_n=top_n, where=metric_where)
 
-        # get the intersection result in (semantic_results & metric_results)
+        # get the intersection result from semantic_results & metric_results
         metric_result = []
         if semantic_search_results and metric_search_results:
             try:
-                semantics_name_set = {result["semantic_model_name"] for result in semantic_search_results}
-                logger.info("get the semantics_name_set are: {semantics_name_set}")
-                # for semantics_name in semantics_name_set:
-                for result in metric_search_results:
-                    if result["semantic_model_name"] in semantics_name_set:
-                        metric_result.append(
-                            {
-                                "domain": result["domain"],
-                                "layer1": result["layer1"],
-                                "layer2": result["layer2"],
-                                "semantic_model_name": result["semantic_model_name"],
-                                "metric_name": result["metric_name"],
-                                "metric_value": result["metric_value"],
-                                "metric_type": result["metric_type"],
-                                "metric_sql_query": result["metric_sql_query"],
-                                "created_at": result["created_at"],
-                            }
-                        )
+                semantic_names_set = set(
+                    [result["semantic_model_name"] for result in semantic_search_results.to_pylist()]
+                )
+                for result in metric_search_results.to_pylist():
+                    if result["semantic_model_name"] in semantic_names_set:
+                        filtered_result = {
+                            k: v
+                            for k, v in result.items()
+                            if k in ["metric_name", "metric_value", "metric_type", "metric_sql_query"]
+                        }
+                        metric_result.append(filtered_result)
             except Exception as e:
-                # the main purpose is to catch the key:semantic_model_name not in the search_results
-                logger.warning(f"Failed to get the intersection set, exception: {str(e)}")
+                logger.warning(f"Failed to get the intersection result, exception: {str(e)}")
 
-        logger.info(f"Success to get the metric_result size: {len(metric_result)}, query_text: {query_text}")
+        logger.info(f"Got the metrics result, size: {len(metric_result)}, query_text: {query_text}")
         return metric_result
 
 

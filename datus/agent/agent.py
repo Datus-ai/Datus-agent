@@ -14,6 +14,7 @@ from datus.agent.evaluate import evaluate_result, setup_node_input
 from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
+from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
 
 # Import model implementations
@@ -227,12 +228,31 @@ class Agent:
             logger.info(f"Executing task: {current_node.description}")
             current_node.run()
             if current_node.status == "failed":
-                logger.warning(f"Node failed: {current_node.description}")
-                break
+                if current_node.type == NodeType.TYPE_PARALLEL:
+                    try:
+                        has_any_success = False
+                        if current_node.result and hasattr(current_node.result, "child_results"):
+                            for v in current_node.result.child_results.values():
+                                ok = v.get("success", False) if isinstance(v, dict) else getattr(v, "success", False)
+                                if ok:
+                                    has_any_success = True
+                                    break
+                        if has_any_success:
+                            logger.warning("Parallel node partial failure, continue to selection")
+                        else:
+                            logger.warning(f"Parallel node all failed: {current_node.description}")
+                            break
+                    except Exception:
+                        logger.warning(f"Node failed: {current_node.description}")
+                        break
+                else:
+                    logger.warning(f"Node failed: {current_node.description}")
+                    break
             # evaluate the task result, update the context and setup the next node input if needed
             evaluation = evaluate_result(current_node, self.workflow)
-            logger.debug(f"Evaluation result: {evaluation}")
+            logger.debug(f"Evaluation result for {current_node.type}: {evaluation}")
             if not evaluation["success"]:
+                logger.error(f"Setting {current_node.type} status to failed due to evaluation failure")
                 current_node.status = "failed"
                 break
 

@@ -25,6 +25,31 @@ class GeminiModel(OpenAICompatibleModel):
             raise ValueError("Gemini API key must be provided or set as GEMINI_API_KEY environment variable")
         return api_key
 
+    def generate(self, prompt: str, **kwargs) -> str:
+        try:
+            generation_config = genai.types.GenerationConfig(
+                temperature=kwargs.get("temperature", 0.7),
+                max_output_tokens=kwargs.get("max_tokens", 10000),
+                top_p=kwargs.get("top_p", 1.0),
+                top_k=kwargs.get("top_k", 40),
+            )
+
+            response = self.gemini_model.generate_content(
+                prompt,
+                generation_config=generation_config,
+                safety_settings=kwargs.get("safety_settings", None),
+            )
+
+            if response.candidates:
+                return response.candidates[0].content.parts[0].text
+            else:
+                logger.warning("No candidates returned from Gemini model")
+                return ""
+
+        except Exception as e:
+            logger.error(f"Error generating content with Gemini: {str(e)}")
+            raise
+
     def _get_base_url(self) -> str:
         """Get Gemini base URL for OpenAI compatibility."""
         return "https://generativelanguage.googleapis.com/v1beta/openai"

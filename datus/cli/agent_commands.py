@@ -55,7 +55,7 @@ class AgentCommands:
             import threading
             import time
 
-            from datus.cli.workflow_screen import show_workflow_screen
+            from datus.cli.screen import show_workflow_screen
 
             # create a new sql task
             sql_task = task or self._gen_sql_task(args)
@@ -97,7 +97,7 @@ class AgentCommands:
 
             # Store the new workflow
             self.workflow = self.agent.workflow
-            show_workflow_screen(self.workflow, run_new_loop=True)
+            show_workflow_screen(self.workflow, run_new_loop=False)
 
             # If agent is still running, leave it and
 

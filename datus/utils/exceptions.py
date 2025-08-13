@@ -163,10 +163,11 @@ def setup_exception_handler(console_logger=None, prefix_wrap_func=None):
             # Do not catch these exceptions, let the program exit or respond to the interrupt
             sys.__excepthook__(type, value, traceback)
             return
+
         # Print exception
         format_ex = "\n".join(traceback.format_exception(type, value, tb))
         log_prefix = (
-            "Execution failed" if type == DatusException or issubclass(type, DatusException) else "Unexcepted failed"
+            "Execution failed" if type == DatusException or issubclass(type, DatusException) else "Unexpected failed"
         )
         log_manager = get_log_manager()
         if log_manager.debug:

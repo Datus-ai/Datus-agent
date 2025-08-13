@@ -303,6 +303,36 @@ class MCPServer:
         return cls._sqlite_mcp_server
 
     @classmethod
+    def create_sqlite_mcp_server(cls, db_path: str = "./sqlite_mcp_server.db"):
+        """Create a new SQLite MCP server instance without using the shared singleton.
+
+        This is useful for parallel subworkflows to avoid shared lifecycle and cleanup races.
+        """
+        directory = os.environ.get("SQLITE_MCP_DIR", "mcp/mcp-sqlite-server")
+        if not directory:
+            try:
+                directory = find_mcp_directory("mcp-sqlite-server")
+            except FileNotFoundError as e:
+                logger.error(f"Could not find SQLite MCP directory: {e}")
+                return None
+
+        logger.info(f"Using SQLite database: {db_path}")
+
+        mcp_server_params = MCPServerStdioParams(
+            command="uv",
+            args=[
+                "--directory",
+                directory,
+                "run",
+                "mcp-server-sqlite",
+                "--db-path",
+                db_path,
+            ],
+            env={},
+        )
+        return SilentMCPServerStdio(params=mcp_server_params)
+
+    @classmethod
     def get_duckdb_mcp_server(cls, db_path: str = ":memory:"):
         if cls._duckdb_mcp_server is None:
             with cls._lock:
@@ -365,8 +395,6 @@ class MCPServer:
                     elif db_config.type == DBType.STARROCKS:
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_DIALECT"] = DBType.MYSQL
-                        env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
-                        env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_HOST"] = db_config.host
                         env_settings["MF_DWH_PORT"] = str(db_config.port)
                         env_settings["MF_DWH_USER"] = db_config.username

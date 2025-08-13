@@ -66,6 +66,7 @@ class Node(ABC):
             SchemaLinkingNode,
             SearchMetricsNode,
             SelectionNode,
+            SubworkflowNode,
         )
 
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
@@ -98,6 +99,8 @@ class Node(ABC):
             return ParallelNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_SELECTION:
             return SelectionNode(node_id, description, node_type, input_data, agent_config)
+        elif node_type == NodeType.TYPE_SUBWORKFLOW:
+            return SubworkflowNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_COMPARE:
             return CompareNode(node_id, description, node_type, input_data, agent_config)
         else:
@@ -190,7 +193,9 @@ class Node(ABC):
         Args:
             result: The result of the node execution
         """
-        self.status = "completed" if result.success else "failed"
+        final_status = "completed" if result.success else "failed"
+        logger.debug(f"Node.complete: type={self.type}, result.success={result.success}, final_status={final_status}")
+        self.status = final_status
         self.result = result
         self.end_time = time.time()
 
@@ -236,7 +241,13 @@ class Node(ABC):
                 self.execute()
 
                 # REFLECT type always completes successfully, others check result
+                logger.debug(
+                    f"Node.run checking result: type={self.type}, result_type={type(self.result)}, "
+                    f"result_is_not_None={self.result is not None}, "
+                    f"result_success={getattr(self.result, 'success', 'N/A')}"
+                )
                 if self.type == NodeType.TYPE_REFLECT or (self.result is not None and self.result.success):
+                    logger.info(f"Node.run calling complete for {self.type}")
                     self.complete(self.result)
                 else:
                     logger.error(f"{self.type} node execution failed: {self.result}")

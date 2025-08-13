@@ -9,6 +9,14 @@ from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_compatible import OpenAICompatibleModel
 from datus.utils.loggings import get_logger
 
+# Import typing fix for Python 3.12+ compatibility
+try:
+    from datus.utils.typing_fix import patch_agents_typing_issue
+
+    patch_agents_typing_issue()
+except ImportError:
+    pass
+
 logger = get_logger(__name__)
 MAX_INPUT_DEEPSEEK = 52000  # 57344 - buffer of ~5000 tokens
 

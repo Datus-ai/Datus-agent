@@ -54,7 +54,7 @@ class MCPCommands:
             screen = MCPServerApp(servers, self.mcp_tool)
             screen.run()
         except Exception as e:
-            self.console.print(f"[yellow]Interactive mode error: {e}[/yellow]")
+            self.console.print(f"[yellow]Interactive mode error: {str(e)}[/yellow]")
             self.console.print("[dim]Falling back to table display mode...[/dim]")
             self._display_servers_table(servers)
 

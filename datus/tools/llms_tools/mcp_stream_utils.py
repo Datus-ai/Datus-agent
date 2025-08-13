@@ -6,6 +6,8 @@ from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.tools.mcp_server import MCPServer
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -45,6 +47,24 @@ async def base_mcp_stream(
         instruction = prompt_manager.get_raw_template(instruction_template, input_data.prompt_version)
         max_turns = tool_config.get("max_turns", 10)
         prompt = prompt_generator(input_data, db_config)
+
+        # Ensure each stream uses its own SQLite MCP server instance to avoid premature shutdown
+        if db_config.type == DBType.SQLITE:
+            # Replace singleton server with a dedicated instance if possible
+            db_path = None
+            if db_config and db_config.uri:
+                from pathlib import Path
+
+                if db_config.uri.startswith("sqlite///") or db_config.uri.startswith("sqlite:///"):
+                    db_path = db_config.uri.replace("sqlite:///", "")
+                else:
+                    db_path = db_config.uri
+                db_path = str(Path(db_path).expanduser())
+            # Identify key and rebuild mapping
+            keys = list(mcp_servers.keys())
+            if keys:
+                key0 = keys[0]
+                mcp_servers = {key0: MCPServer.create_sqlite_mcp_server(db_path=db_path or "./sqlite_mcp_server.db")}
 
         logger.info(f"Starting MCP stream with {len(mcp_servers)} servers, max_turns={max_turns}")
         logger.debug(f"MCP servers: {list(mcp_servers.keys())}")

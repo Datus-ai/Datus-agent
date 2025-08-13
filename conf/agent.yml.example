@@ -177,3 +177,29 @@ agent:
       - selection
       - execute_sql
       - output
+
+  # Sub-workflow exmaple
+  workflow:
+    plan: bird_para
+
+    bird_para:
+      - schema_linking
+      - parallel:
+        - subworkflow1
+        - subworkflow2
+        - subworkflow3
+      - selection
+      - execute_sql
+      - output
+
+    subworkflow1:
+      - search_metrics
+      - generate_sql
+
+    subworkflow2:
+      - search_metrics
+      - reasoning
+
+    subworkflow3:
+      - reasoning
+      - reflect
