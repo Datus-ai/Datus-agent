@@ -25,6 +25,7 @@ class ErrorCode(Enum):
     COMMON_MISSING_DEPENDENCY = ("100007", "Missing node dependency")
     COMMON_VALIDATION_FAILED = ("100008", "Data validation failed")
     COMMON_JSON_PARSE_ERROR = ("100009", "JSON parsing error in file '{file_path}': {error_detail}")
+    COMMON_TEMPLATE_NOT_FOUND = ("100010", "Template not found: '{template_name}' with version '{version}'")
 
     # Node execution errors
     NODE_EXECUTION_FAILED = ("200001", "Node execution failed")

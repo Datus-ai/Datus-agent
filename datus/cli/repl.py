@@ -22,11 +22,13 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
+from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
 from datus.cli.context_commands import ContextCommands
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.constants import DBType
@@ -143,6 +145,9 @@ class DatusCLI:
         self.last_sql = None
         self.last_result = None
         self.chat_history = []
+
+        # Action history manager for tracking all CLI operations
+        self.actions = ActionHistoryManager()
 
         self.current_db_name = getattr(args, "database", "")
         self.current_catalog = getattr(args, "catalog", "")
@@ -423,9 +428,29 @@ class DatusCLI:
     def _execute_sql(self, sql: str, system: bool = False):
         """Execute a SQL query and display results."""
         logger.debug(f"Executing SQL query: '{sql}'")
+        
+        # Create action for SQL execution
+        sql_action = ActionHistory.create_action(
+            role=ActionRole.USER,
+            action_type="sql_execution",
+            messages=f"Executing SQL: {sql[:100]}..." if len(sql) > 100 else f"Executing SQL: {sql}",
+            input_data={"sql": sql, "system": system},
+            status=ActionStatus.PROCESSING,
+        )
+        self.actions.add_action(sql_action)
+        
         try:
             if not self.db_connector:
-                self.console.print("[bold red]Error:[/] No database connection. Please initialize a connection first.")
+                error_msg = "No database connection. Please initialize a connection first."
+                self.console.print(f"[bold red]Error:[/] {error_msg}")
+                
+                # Update action with error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg},
+                    messages=f"SQL execution failed: {error_msg}",
+                )
                 return
 
             # Execute the query
@@ -434,24 +459,48 @@ class DatusCLI:
             start_time = time.time()
             result = self.db_connector.execute_arrow(sql)
             end_time = time.time()
+            exec_time = end_time - start_time
+            
             if not result:
-                self.console.print("[bold red]Error:[/] No result from the query.")
+                error_msg = "No result from the query."
+                self.console.print(f"[bold red]Error:[/] {error_msg}")
+                
+                # Update action with error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg},
+                    messages=f"SQL execution failed: {error_msg}",
+                )
+                return
 
             # Save for later reference
             self.last_sql = sql
             self.last_result = result
 
-            # Display results
+            # Display results and update action
             if result and result.success and hasattr(result.sql_return, "column_names"):
                 # Convert Arrow data to list of dictionaries for smart display
                 rows = result.sql_return.to_pylist()
                 self._smart_display_table(data=rows, columns=result.sql_return.column_names)
 
                 row_count = result.sql_return.num_rows
-                exec_time = end_time - start_time
                 self.console.print(f"[dim]Returned {row_count} rows in {exec_time:.2f} seconds[/]")
+                
+                # Update action with success
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.SUCCESS,
+                    output={
+                        "row_count": row_count,
+                        "execution_time": exec_time,
+                        "columns": result.sql_return.column_names,
+                        "success": True,
+                    },
+                    messages=f"SQL executed successfully: {row_count} rows in {exec_time:.2f}s",
+                )
 
-                if not system and self.agent.workflow:  # Add to sql context if not system command
+                if not system and self.agent and self.agent.workflow:  # Add to sql context if not system command
                     new_record = SQLContext(
                         sql_query=sql,
                         sql_return=str(result.sql_return),
@@ -459,9 +508,20 @@ class DatusCLI:
                         explanation=f"Manual sql: Returned {row_count} rows in {exec_time:.2f} seconds",
                     )
                     self.agent.workflow.context.sql_contexts.append(new_record)
+                    
             elif result and not result.success:
-                self.console.print(f"[bold red]SQL Error:[/] {result.error}")
-                if not system and self.agent.workflow:  # Add to sql context if not system command
+                error_msg = result.error or "Unknown SQL error"
+                self.console.print(f"[bold red]SQL Error:[/] {error_msg}")
+                
+                # Update action with SQL error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg, "sql_error": True},
+                    messages=f"SQL error: {error_msg}",
+                )
+                
+                if not system and self.agent and self.agent.workflow:  # Add to sql context if not system command
                     new_record = SQLContext(
                         sql_query=sql,
                         sql_return=str(result.error) if result.error else "Unknown error",
@@ -469,17 +529,41 @@ class DatusCLI:
                         explanation="Manual sql",
                     )
                     self.agent.workflow.context.sql_contexts.append(new_record)
+                    
             elif result and isinstance(result.sql_return, str):
-                self.console.print(
-                    f"[bold red]Error:[/] Query execution failed - received string instead of Arrow data: "
-                    f"{result.error or 'Unknown error'}"
+                error_msg = f"Query execution failed - received string instead of Arrow data: {result.error or 'Unknown error'}"
+                self.console.print(f"[bold red]Error:[/] {error_msg}")
+                
+                # Update action with error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg, "result_type_error": True},
+                    messages=f"Result format error: {error_msg}",
                 )
             else:
-                self.console.print("[bold red]Error:[/] No valid result from the query.")
+                error_msg = "No valid result from the query."
+                self.console.print(f"[bold red]Error:[/] {error_msg}")
+                
+                # Update action with error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg},
+                    messages=f"No valid result: {error_msg}",
+                )
 
         except Exception as e:
             logger.error(f"SQL execution error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
+            
+            # Update action with exception
+            self.actions.update_action_by_id(
+                sql_action.action_id,
+                status=ActionStatus.FAILED,
+                output={"error": str(e), "exception": True},
+                messages=f"SQL execution exception: {str(e)}",
+            )
 
     def _execute_tool_command(self, cmd: str, args: str):
         """Execute a tool command (! prefix)."""
@@ -500,30 +584,104 @@ class DatusCLI:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 
     def _execute_chat_command(self, message: str):
-        """Execute a chat command (/ prefix)."""
+        """Execute a chat command (/ prefix) using ChatAgenticNode."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
 
-        if not self._check_agent_available():
-            return
-
         try:
-            # Add context to message
-            context = f"sql_task: {self.agent.workflow.task.to_dict()}"
-            if self.last_sql:
-                context += f"\nLast SQL: {self.last_sql} \nLast SQL Result: {self.last_result}"
+            # Import here to avoid circular imports
+            from datus.agent.node.chat_agentic_node import ChatAgenticNode
+            from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
-            prompt = f"{context}\n\nUser: {message}"
+            # Create chat input with current database context
+            chat_input = ChatNodeInput(
+                user_message=message,
+                catalog=self.current_catalog if self.current_catalog else None,
+                database=self.current_db_name if self.current_db_name else None,
+                db_schema=self.current_schema if self.current_schema else None,
+            )
 
-            # Create model using the same approach as the agent
-            llm_model = LLMBaseModel.create_model(model_name="default", agent_config=self.agent.global_config)
-            result = llm_model.generate(prompt)
-            self.console.print(result)
+            # Initialize ChatAgenticNode
+            chat_node = ChatAgenticNode(
+                namespace=self.agent_config.current_namespace,
+                agent_config=self.agent_config,
+                model_name="default",
+            )
+
+            # Display streaming execution
+            self.console.print("[bold green]Processing chat request...[/]")
+            
+            # Initialize action history display
+            action_display = ActionHistoryDisplay(self.console)
+            actions = []
+
+            # Run streaming execution with real-time display
+            import asyncio
+            
+            # Create a live display like the !reason command
+            with action_display.display_streaming_actions(actions):
+                # Run the async streaming method
+                async def run_chat_stream():
+                    async for action in chat_node.execute_stream(chat_input, self.actions):
+                        actions.append(action)
+                        # Add delay to make the streaming visible
+                        await asyncio.sleep(0.5)
+
+                # Execute the streaming chat
+                asyncio.run(run_chat_stream())
+
+            # Display final response from the last successful action
+            if actions:
+                final_action = actions[-1]
+                if (final_action.output and 
+                    isinstance(final_action.output, dict) and 
+                    final_action.status == ActionStatus.SUCCESS):
+                    
+                    # Check for response in the output
+                    response = final_action.output.get("response")
+                    if response:
+                        self.console.print(f"\n[bold blue]Assistant:[/] {response}")
+                        
+                    # Show SQL if present
+                    sql = final_action.output.get("sql")
+                    if sql:
+                        self.console.print(f"\n[bold cyan]Generated SQL:[/]\n```sql\n{sql}\n```")
+                        
+                # Also check other successful actions for content
+                for action in reversed(actions):
+                    if (action.status == ActionStatus.SUCCESS and 
+                        action.output and 
+                        isinstance(action.output, dict)):
+                        
+                        content = action.output.get("content")
+                        if content and not final_action.output.get("response"):
+                            self.console.print(f"\n[bold blue]Assistant:[/] {content}")
+                            break
+
+            # Add all actions from chat to our main action history
+            self.actions.actions.extend(actions)
+            
+            # Update chat history for potential context in future interactions
+            self.chat_history.append({
+                "user": message,
+                "response": actions[-1].output.get("response", "") if actions and actions[-1].output else "",
+                "actions": len(actions),
+            })
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] Failed to generate response: {str(e)}")
+            self.console.print(f"[bold red]Error:[/] Failed to process chat request: {str(e)}")
+            
+            # Add error action to history
+            error_action = ActionHistory.create_action(
+                role=ActionRole.USER,
+                action_type="chat_error",
+                messages=f"Chat command failed: {str(e)}",
+                input_data={"message": message},
+                status=ActionStatus.FAILED,
+            )
+            self.actions.add_action(error_action)
 
     def _execute_internal_command(self, cmd: str, args: str):
         """Execute an internal command (. prefix)."""
