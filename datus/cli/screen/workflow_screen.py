@@ -7,7 +7,6 @@ import asyncio
 import os
 import time
 
-from textual.app import App
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
@@ -16,6 +15,7 @@ from textual.widgets import DataTable, Footer, Header, Label, Static
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.cli.screen.base_app import BaseApp
 from datus.schemas.node_models import BaseInput, BaseResult
 from datus.utils.loggings import get_logger
 
@@ -509,7 +509,7 @@ class WorkflowScreen(Screen):
                 f.write(traceback.format_exc())
 
 
-class WorkflowApp(App):
+class WorkflowApp(BaseApp):
     """Textual app for workflow screen."""
 
     # Add the CSS to the app
