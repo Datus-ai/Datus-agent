@@ -395,8 +395,6 @@ class MCPServer:
                     elif db_config.type == DBType.STARROCKS:
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_DIALECT"] = DBType.MYSQL
-                        env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
-                        env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_HOST"] = db_config.host
                         env_settings["MF_DWH_PORT"] = str(db_config.port)
                         env_settings["MF_DWH_USER"] = db_config.username
