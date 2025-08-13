@@ -235,7 +235,6 @@ class MCPServerListScreen(Screen):
     def action_cursor_down(self) -> None:
         """Move cursor down."""
         list_view = self.query_one("#server-list", ListView)
-        raise RuntimeError("test 123")
         if list_view.index is None or len(list_view.children) == 0:
             return
         if list_view.index == len(list_view.children) - 1:

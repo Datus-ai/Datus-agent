@@ -29,6 +29,7 @@ class SilentMCPServerStdio(MCPServerStdio):
             params.env.update(
                 {
                     "UV_QUIET": "1",  # Quiet uv tool output
+                    "UV_NO_PROGRESS": "1",
                     "RUST_LOG": "error",  # Reduce Rust logging
                 }
             )
@@ -37,9 +38,10 @@ class SilentMCPServerStdio(MCPServerStdio):
             if hasattr(params, "args") and any("server-filesystem" in str(arg) for arg in (params.args or [])):
                 params.env.update(
                     {
-                        "NODE_OPTIONS": "--no-warnings --quiet",
+                        "NODE_OPTIONS": "--no-warnings --quiet --no-progress",
                         "NPM_CONFIG_LOGLEVEL": "silent",
                         "SUPPRESS_NO_CONFIG_WARNING": "1",
+                        "YARN_SILENT": "true",  # Silence yarn logs if used
                     }
                 )
 

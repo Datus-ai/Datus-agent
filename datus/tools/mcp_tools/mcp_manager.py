@@ -14,12 +14,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agents import Agent, RunContextWrapper, Usage
-from agents.mcp import MCPServerStdio, MCPServerStdioParams
+from agents.mcp import MCPServerStdioParams
 from agents.mcp.server import MCPServerSse, MCPServerSseParams, MCPServerStreamableHttp, MCPServerStreamableHttpParams
 
+from datus.tools.mcp_server import SilentMCPServerStdio
+from datus.tools.mcp_tools.mcp_config import (
+    AnyMCPServerConfig,
+    MCPConfig,
+    MCPServerType,
+    STDIOServerConfig,
+    expand_config_env_vars,
+)
 from datus.utils.loggings import get_logger
-
-from .mcp_config import AnyMCPServerConfig, MCPConfig, MCPServerType, STDIOServerConfig, expand_config_env_vars
 
 logger = get_logger(__name__)
 
@@ -328,7 +334,7 @@ class MCPManager:
             env=env_vars,
         )
 
-        server_instance = MCPServerStdio(params=server_params, client_session_timeout_seconds=60)
+        server_instance = SilentMCPServerStdio(params=server_params, client_session_timeout_seconds=60)
         details = {
             "command": expanded_config.get("command"),
             "args": expanded_config.get("args", []),
