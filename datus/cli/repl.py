@@ -777,6 +777,15 @@ class DatusCLI:
             (".tables", "List all tables"),
             (".schemas table_name", "Show schema information"),
             (".namespace namespace", "Switch current namespace"),
+            (".mcp", "Manage MCP (Model Configuration Protocol) servers"),
+            ("     .mcp list", "List all MCP servers"),
+            (
+                "     .mcp add --transport [stdio/sse/http] <name> <command> [args1 args2 ...]",
+                "Add a new MCP server configuration",
+            ),
+            ("     .mcp remove <name>", "Remove an MCP server configuration"),
+            ("     .mcp check <name>", "Check connectivity to an MCP server"),
+            ("     .mcp call <server.tool> [params]", "Call a tool on an MCP server"),
         ]
         for cmd, desc in internal_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")

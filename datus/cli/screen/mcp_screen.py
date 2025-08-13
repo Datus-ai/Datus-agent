@@ -3,15 +3,16 @@ Enhanced MCP (Model Context Protocol) server management screen for Datus CLI.
 Provides elegant interactive interface for browsing and selecting MCP servers and tools.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from textual import events
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Grid, Horizontal, ScrollableContainer
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
+from datus.cli.screen.base_app import BaseApp
 from datus.tools.mcp_tools import MCPServerType, MCPTool
 from datus.utils.loggings import get_logger
 
@@ -155,7 +156,7 @@ class MCPServerListScreen(Screen):
 
         yield Footer()
 
-    def on_key(self, event: events.Key) -> None:
+    async def on_key(self, event: events.Key) -> None:
         if event.key == "enter":
             self.action_select_server()
             event.stop()
@@ -164,11 +165,11 @@ class MCPServerListScreen(Screen):
         elif event.key == "up":
             self.action_cursor_up()
         else:
-            super()._on_key(event)
+            await super()._on_key(event)
 
     def on_mouse_up(self, event: events.MouseDown) -> None:
         server_list = self.query_one("#server-list", ListView)
-        self._switch_list_cursor(server_list, self.pre_index, server_list.index)
+        _switch_list_cursor(server_list, self.pre_index, server_list.index)
         self.pre_index = None
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
@@ -177,70 +178,53 @@ class MCPServerListScreen(Screen):
         server_list = self.query_one("#server-list", ListView)
         self.pre_index = server_list.index
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Called when the screen is mounted."""
-        #
-        # server_list.index = 0
-        # server_list.focus()
+        # Start workers for each server independently
+        server_list = self.query_one("#server-list", ListView)
+        for i, server in enumerate(self.servers):
+            if i < len(server_list.children):
+                list_item = server_list.children[i]
+                status_label = list_item.server_status_label
+                # Run a thread worker for each server check (since check_connectivity is blocking)
+                self.run_worker(
+                    lambda s=server, lbl=status_label, idx=i: self._check_single_server_sync(s, lbl),
+                    thread=True,
+                    group="connectivity_checks",
+                )
 
-        # Schedule async task to check server connectivity
-        self.app.call_later(self._check_servers_connectivity)
-
-    async def _check_servers_connectivity(self) -> None:
-        """Asynchronously check connectivity for all servers in parallel and update UI."""
+    async def on_unmount(self) -> None:
+        """Called when the screen is unmounted."""
         try:
-            server_list = self.query_one("#server-list", ListView)
-
-            # Create async tasks for parallel connectivity checking
-            import asyncio
-
-            async def check_single_server(server, index):
-                """Check connectivity for a single server and update its status."""
-                server_name = server.get("name", "Unknown")
-
-                # Get the corresponding list item
-                if index < len(server_list.children):
-                    list_item = server_list.children[index]
-                    status_label = list_item.server_status_label
-
-                    try:
-                        # Run connectivity check in thread pool to prevent blocking
-                        result = await asyncio.get_event_loop().run_in_executor(
-                            None, self.mcp_tool.check_connectivity, server_name
-                        )
-                        logger.info(f"$$$check {server_name} result: {result}")
-
-                        if result.success and result.result.get("connectivity", False):
-                            # Server is reachable
-                            status_symbol = "✔"
-                            status_text = "connected"
-                            status_class = "status-connected"
-                        else:
-                            # Server is not reachable
-                            status_symbol = "✘"
-                            status_text = "failed"
-                            status_class = "status-failed"
-
-                    except Exception as e:
-                        # Handle exception during connectivity check
-                        logger.error(f"Check mcp server failed {e}")
-                        status_symbol = "✘"
-                        status_text = "failed"
-                        status_class = "status-failed"
-
-                    # Update the status label on the main thread
-                    self.app.call_later(
-                        lambda: self._update_server_status(status_label, status_symbol, status_text, status_class)
-                    )
-
-            # Create and run all connectivity checks in parallel
-            tasks = [check_single_server(server, i) for i, server in enumerate(self.servers)]
-
-            # Wait for all tasks to complete (but they update UI as they finish)
-            await asyncio.gather(*tasks, return_exceptions=True)
-
+            self.workers.cancel_all()
         except Exception as e:
-            logger.error(f"Error checking server connectivity: {e}")
+            logger.warning(f"Failed to cancel workers on unmount: {str(e)}")
+
+    def _check_single_server_sync(self, server: Dict[str, Any], status_label: Label) -> None:
+        """Synchronous check for a single server (runs in thread)."""
+        server_name = server.get("name", "Unknown")
+        try:
+            result = self.mcp_tool.check_connectivity(server_name)
+            if result.success and result.result.get("connectivity", False):
+                status_symbol = "✔"
+                status_text = "connected"
+                status_class = "status-connected"
+            else:
+                status_symbol = "✘"
+                status_text = "failed"
+                status_class = "status-failed"
+        except Exception as e:
+            logger.error(f"Check mcp server failed {e}")
+            status_symbol = "✘"
+            status_text = "failed"
+            status_class = "status-failed"
+        # Update UI from thread safely
+        try:
+            self.app.call_from_thread(
+                self._update_server_status, status_label, status_symbol, status_text, status_class
+            )
+        except Exception as e:
+            logger.warning(f"Update UI failed: {str(e)}")
 
     def _update_server_status(self, status_label, status_symbol, status_text, status_class):
         """Update server status label with new connectivity status."""
@@ -251,31 +235,21 @@ class MCPServerListScreen(Screen):
     def action_cursor_down(self) -> None:
         """Move cursor down."""
         list_view = self.query_one("#server-list", ListView)
+        raise RuntimeError("test 123")
+        if list_view.index is None or len(list_view.children) == 0:
+            return
         if list_view.index == len(list_view.children) - 1:
             return
-        self._switch_list_cursor(list_view, list_view.index, list_view.index + 1)
-
-    def _switch_list_cursor(self, list_view: ListView, pre_index: int, new_index: int):
-        if pre_index == new_index:
-            return
-        previous_item = list_view.children[pre_index]
-        previous_label = previous_item.query_one(Label)
-        content = previous_label.renderable
-        if content.startswith("> "):
-            previous_label.update("  " + content[2:])
-
-        current_item = list_view.children[new_index]
-        current_label = current_item.query_one(Label)
-        content = current_label.renderable
-        if content.startswith("  "):
-            current_label.update("> " + content[2:])
+        _switch_list_cursor(list_view, list_view.index, list_view.index + 1)
 
     def action_cursor_up(self) -> None:
         """Move cursor up."""
         list_view = self.query_one("#server-list", ListView)
+        if list_view.index is None or len(list_view.children) == 0:
+            return
         if list_view.index == 0:
             return
-        self._switch_list_cursor(list_view, list_view.index, list_view.index - 1)
+        _switch_list_cursor(list_view, list_view.index, list_view.index - 1)
 
     def action_select_server(self) -> None:
         """Select the current server and show detailed view."""
@@ -416,99 +390,60 @@ class MCPServerDetailScreen(Screen):
 
         yield Footer()
 
-    def on_key(self, event: events.Key) -> None:
+    async def on_key(self, event: events.Key) -> None:
         if event.key == "enter":
             if not self.connected:
                 return
             self.action_view_tools()
             event.stop()
+        else:
+            await super()._on_key(event)
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Called when the screen is mounted."""
-        """Asynchronously fetch tool list and update UI when complete"""
-        self.query_one("#view-tools-option", ListView).has_focus = True
-        # info_grid = self.query_one("#server-info-display", Grid)
-        #
-        # # Add server type row
-        # info_grid.mount(Label("Type:", classes="label"))
-        # info_grid.mount(Label(f"[cyan]{self.server_type}[/cyan]"))
-        #
-        # # Type-specific configuration
-        # if self.server_type == "stdio":
-        #     command = self.server_data.get("command", "")
-        #     args = self.server_data.get("args", [])
-        #     env = self.server_data.get("env", {})
-        #
-        #     info_grid.mount(Label("Command:", classes="label"))
-        #     info_grid.mount(Label(f"[green]{command}[/green]"))
-        #     if args:
-        #         args_str = " ".join(args)
-        #         info_grid.mount(Label("Args:", classes="label"))
-        #         info_grid.mount(Label(f"[yellow]{args_str}[/yellow]"))
-        #     if env:
-        #         env_str = ", ".join([f"{k}={v}" for k, v in env.items()])
-        #         info_grid.mount(Label("Env:", classes="label"))
-        #         info_grid.mount(Label(f"[magenta]{env_str}[/magenta]"))
-        #
-        # elif self.server_type in ["sse", "http"]:
-        #     url = self.server_data.get("url", "")
-        #     headers = self.server_data.get("headers", {})
-        #     timeout = self.server_data.get("timeout")
-        #
-        #     info_grid.mount(Label("URL:", classes="label"))
-        #     info_grid.mount(Label(f"[blue]{url}[/blue]"))
-        #     if headers:
-        #         headers_str = ", ".join([f"{k}: {v}" for k, v in headers.items()])
-        #         info_grid.mount(Label("Headers:", classes="label"))
-        #         info_grid.mount(Label(f"[magenta]{headers_str}[/magenta]"))
-        #     if timeout:
-        #         info_grid.mount(Label("Timeout:", classes="label"))
-        #         info_grid.mount(Label(f"[yellow]{timeout}s[/yellow]"))
-        #
-        # # Capabilities row
-        # info_grid.mount(Label("Capabilities:", classes="label"))
-        # info_grid.mount(Label("tools"))
-        #
-        # # Tools row with loading status
-        # info_grid.mount(Label("Tools:", classes="label"))
-        # info_grid.mount(Label("[dim]Loading...[/dim]", id="tools-value"))
+        view_tools = self.query_one("#view-tools-option", ListView)
+        view_tools.disabled = True
+        view_tools.has_focus = True
+        self.run_worker(self._fetch_tools_sync, thread=True)
 
-        # Schedule async task to fetch tools
-        self.app.call_later(self._fetch_tools_async)
-
-    async def _fetch_tools_async(self) -> None:
-        tools_value = self.query_one("#tools-value", Label)
+    async def on_unmount(self) -> None:
         try:
-            # Asynchronously fetch tool list
-            tools = self.mcp_tool.list_tools(self.server_name)
-            logger.info(f"Tools: {tools}")
-
-            # Update tools list
-            self.tools = [] if not tools.success else tools.result["tools"]
-
-            # Update tools row with count or error message
-            tools_count = len(self.tools)
-            if tools.success:
-                tools_value.update(f"[green]{tools_count}[/green] tools available")
-                view_tools = self.query_one("#view-tools-option", ListView)
-                view_tools.disabled = False
-                self.connected = True
-
-            else:
-                self.connected = False
-                tools_value.update("[red]Failed to load tools[/red]")
-                logger.error(f"Failed to load tools for server {self.server_name}: {tools.message}")
-
+            self.workers.cancel_all()
         except Exception as e:
-            # Handle exception case
+            logger.warning(f"Failed to cancel workers on unmount: {str(e)}")
+
+    def _fetch_tools_sync(self) -> None:
+        """Synchronous fetch for tools (runs in thread)."""
+        try:
+            tools_result = self.mcp_tool.list_tools(self.server_name)
+            logger.info(f"Tools: {tools_result}")
+            self.app.call_from_thread(self._update_tools_ui, tools_result)
+        except Exception as e:
             logger.error(f"Error loading tools for server {self.server_name}: {str(e)}")
+            self.app.call_from_thread(self._update_tools_ui, None, str(e))
 
-            tools_value.update(f"[red]Error loading tools ({str(e)})[/red]")
+    def _update_tools_ui(self, tools_result=None, error=None) -> None:
+        """Update UI in main thread with fetched tools."""
+        tools_value = self.query_one("#tools-value", Label)
+        view_tools = self.query_one("#view-tools-option", ListView)
 
+        if error:
+            tools_value.update(f"[red]Error loading tools ({error})[/red]")
             self.tools = []
+            self.connected = False
+            return
 
-    # def on_button_pressed(self, _event: Button.Pressed) -> None:
-    #     self.action_view_tools()
+        if tools_result.success:
+            self.tools = tools_result.result["tools"]
+            tools_count = len(self.tools)
+            tools_value.update(f"[green]{tools_count}[/green] tools available")
+            view_tools.disabled = False
+            self.connected = True
+        else:
+            self.connected = False
+            tools_value.update("[red]Failed to load tools[/red]")
+            logger.error(f"Failed to load tools for server {self.server_name}: {tools_result.message}")
+            self.tools = []
 
     def action_view_tools(self) -> None:
         """View the tools provided by this server."""
@@ -564,6 +499,7 @@ class MCPToolsScreen(Screen):
     .tool-description {
         color: $text-muted;
         margin-top: 0;
+        margin-left: 2;
     }
 
     .tool-item:hover {
@@ -572,6 +508,21 @@ class MCPToolsScreen(Screen):
 
     .tool-item:focus {
         background: $accent;
+    }
+
+    #tool-params {
+        width: 100%;
+        height: auto;
+        margin-top: 1;
+    }
+
+    .param-label {
+        color: $text-muted;
+        text-style: bold;
+    }
+
+    .param-value {
+        color: $text;
     }
     """
 
@@ -607,26 +558,187 @@ class MCPToolsScreen(Screen):
 
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Called when the screen is mounted."""
         tools_list = self.query_one("#tools-list", ListView)
         for i, tool in enumerate(self.tools):
             tool_name = tool.get("name", f"tool_{i+1}")
-            # tool_description = tool.get("description", "No description available")
+            tool_description = tool.get("description", "No description available")
 
             # Create tool item with name and description
-            tool_label = Label(f"{i+1}. {tool_name}", classes="tool-name tool-description")
-            list_item = ListItem(tool_label)
+            tool_label = Label(f"{i+1}. {tool_name}", classes="tool-name")
+            description_label = Label(f"{tool_description}", classes="tool-description")
+
+            # Create horizontal layout for tool item
+            item_container = Horizontal(tool_label, description_label, classes="tool-item")
+            list_item = ListItem(item_container)
+
+            # Store tool data in new format
+            list_item.tool_data = tool
             tools_list.append(list_item)
         tools_list.index = 0
-        tools_list.focus()
+        tools_list.has_focus = True
+
+    async def on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            self.action_view_tool_details()
+            event.stop()
+        else:
+            super()._on_key(event)
+
+    def action_cursor_up(self) -> None:
+        """Move cursor up."""
+        list_view = self.query_one("#tools-list", ListView)
+        if list_view.index == 0:
+            return
+        # _switch_list_cursor(list_view, list_view.index, list_view.index - 1)
+
+    def action_view_tool_details(self) -> None:
+        """View the details of the current tool."""
+        list_view = self.query_one("#tools-list", ListView)
+        if list_view.index is not None and 0 <= list_view.index < len(list_view.children):
+            selected_item = list_view.children[list_view.index]
+            tool_data = getattr(selected_item, "tool_data", {})
+            self.app.push_screen(MCPToolDetailScreen(self.server_data, tool_data))
 
     def action_back(self) -> None:
         """Go back to the server detail screen."""
         self.app.pop_screen()
 
 
-class MCPServerApp(App):
+def _switch_list_cursor(list_view: ListView, pre_index: Optional[int] = None, new_index: Optional[int] = None):
+    if pre_index == new_index:
+        return
+    if pre_index is not None:
+        previous_item = list_view.children[pre_index]
+        previous_label = previous_item.query_one(Label)
+        content = previous_label.renderable
+        if content.startswith("> "):
+            previous_label.update("  " + content[2:])
+
+    if new_index is not None and 0 <= new_index < len(list_view.children):
+        current_item = list_view.children[new_index]
+        current_label = current_item.query_one(Label)
+        content = current_label.renderable
+        if content.startswith("  "):
+            current_label.update("> " + content[2:])
+
+
+class MCPToolDetailScreen(Screen):
+    """Screen for displaying detailed information about an MCP tool."""
+
+    CSS = """
+    #detail-container {
+        align: left middle;
+        height: 100%;
+        background: $surface;
+    }
+
+    #detail-panel {
+        width: 80%;
+        max-width: 140;
+        height: auto;
+        background: $surface;
+        border: round $primary;
+        padding: 1;
+    }
+
+    .tool-header {
+        text-align: center;
+        text-style: bold;
+        color: $text;
+        margin-bottom: 1;
+    }
+
+    #tool-info-display {
+        width: 100%;
+        height: auto;
+        layout: grid;
+        grid-size: 2;
+        grid-columns: 15 1fr;
+    }
+
+    Label.label {
+        text-style: bold;
+        color: $text-muted;
+    }
+
+    #tool-params {
+        width: 100%;
+        height: auto;
+        margin-top: 1;
+    }
+
+    .param-label {
+        color: $text-muted;
+        text-style: bold;
+    }
+
+    .param-value {
+        color: $text;
+    }
+    """
+    BINDINGS = [
+        Binding("escape", "back", "Back"),
+        Binding("backspace", "back", "Back"),
+        Binding("q", "back", "Back"),
+    ]
+
+    def __init__(self, server_data: Dict[str, Any], tool_data: Dict[str, Any]):
+        """
+        Initialize the MCP tool detail screen.
+
+        Args:
+            server_data: MCP server configuration data in new format
+            tool_data: Tool configuration data
+        """
+        super().__init__()
+        self.server_data = server_data
+        self.tool_data = tool_data
+        self.tool_name = tool_data.get("name", "Unknown Tool")
+        self.title = f"{self.tool_name} - Tool Details"
+
+    def compose(self) -> ComposeResult:
+        """Compose the layout of the screen."""
+        yield Header(show_clock=True, name=f"{self.tool_name} - Tool Details")
+
+        with Container(id="detail-container"):
+            with Container(id="detail-panel"):
+                # Tool information
+                with ScrollableContainer(classes="tool-info"):
+                    # Render the info using Grid with Labels
+                    with Grid(id="tool-info-display"):
+                        yield Label("Name:", classes="label")
+                        yield Label(f"[cyan]{self.tool_name}[/cyan]")
+
+                        yield Label("Description:", classes="label")
+                        yield Label(f"{self.tool_data.get('description', 'No description available')}")
+
+                        input_schema = self.tool_data.get("inputSchema", {})
+                        properties = input_schema.get("properties", {})
+                        required = input_schema.get("required", [])
+
+                        if properties:
+                            yield Label("Parameters:", classes="label")
+                            with Container(id="tool-params"):
+                                for param_name, param_info in properties.items():
+                                    param_type = param_info.get("type", "unknown")
+                                    param_description = param_info.get("description", "No description available")
+                                    is_required = param_name in required
+
+                                    yield Label(f"{param_name} (Required: {is_required})", classes="param-label")
+                                    yield Label(
+                                        f"Type: {param_type}\nDescription: {param_description}", classes="param-value"
+                                    )
+
+        yield Footer()
+
+    def action_back(self) -> None:
+        """Go back to the tools list screen."""
+        self.app.pop_screen()
+
+
+class MCPServerApp(BaseApp):
     """Main application for MCP server management."""
 
     def __init__(self, servers: List[Dict[str, Any]], mcp_tool: MCPTool):
@@ -645,3 +757,6 @@ class MCPServerApp(App):
     def on_mount(self):
         """Push the server list screen on mount."""
         self.push_screen(MCPServerListScreen(self.mcp_tool, {"servers": self.servers}))
+
+    def _on_exit_app(self) -> None:
+        super()._on_exit_app()

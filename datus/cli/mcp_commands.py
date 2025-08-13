@@ -53,7 +53,7 @@ class MCPCommands:
             screen = MCPServerApp(servers, self.mcp_tool)
             screen.run()
         except Exception as e:
-            self.console.print(f"[yellow]Interactive mode error: {e}[/yellow]")
+            self.console.print(f"[yellow]Interactive mode error: {str(e)}[/yellow]")
             self._display_servers_table(servers)
 
     def _display_servers_table(self, servers: List[Dict[str, Any]]):
