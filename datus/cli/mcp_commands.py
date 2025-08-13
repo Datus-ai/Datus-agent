@@ -2,7 +2,7 @@
 MCP-related commands for the Datus CLI.
 This module provides commands to list and manage MCP configurations.
 """
-import asyncio
+
 import json
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -51,15 +51,6 @@ class MCPCommands:
             return
         servers = mcp_servers.result["servers"]
         try:
-            # Try to create event loop for interactive mode if needed
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    raise RuntimeError("Event loop is closed")
-            except RuntimeError:
-                # No event loop exists, create one
-                asyncio.set_event_loop(asyncio.new_event_loop())
-
             screen = MCPServerApp(servers, self.mcp_tool)
             screen.run()
         except Exception as e:
