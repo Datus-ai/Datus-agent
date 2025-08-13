@@ -2,7 +2,6 @@
 MCP-related commands for the Datus CLI.
 This module provides commands to list and manage MCP configurations.
 """
-
 import json
 from typing import TYPE_CHECKING, Any, Dict, List
 
