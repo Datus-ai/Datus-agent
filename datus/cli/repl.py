@@ -129,6 +129,8 @@ class DatusCLI:
             ".help": self._cmd_help,
             ".exit": self._cmd_exit,
             ".quit": self._cmd_exit,
+            ".clear": self._cmd_clear_chat,
+            ".chat_info": self._cmd_chat_info,
             # temporary commands for sqlite, remove after mcp server is ready
             ".databases": self._cmd_databases,
             ".database": self._cmd_switch_database,
@@ -148,6 +150,9 @@ class DatusCLI:
 
         # Action history manager for tracking all CLI operations
         self.actions = ActionHistoryManager()
+        
+        # Persistent chat node for session continuity
+        self.chat_node = None
 
         self.current_db_name = getattr(args, "database", "")
         self.current_catalog = getattr(args, "catalog", "")
@@ -602,29 +607,35 @@ class DatusCLI:
                 db_schema=self.current_schema if self.current_schema else None,
             )
 
-            # Initialize ChatAgenticNode
-            chat_node = ChatAgenticNode(
-                namespace=self.agent_config.current_namespace,
-                agent_config=self.agent_config,
-                model_name="default",
-            )
+            # Get or create persistent ChatAgenticNode
+            if self.chat_node is None:
+                self.console.print("[dim]Creating new chat session...[/]")
+                self.chat_node = ChatAgenticNode(
+                    namespace=self.agent_config.current_namespace,
+                    agent_config=self.agent_config,
+                )
+            else:
+                # Show session info for existing session
+                session_info = self.chat_node.get_session_info()
+                if session_info["session_id"]:
+                    self.console.print(f"[dim]Using existing session: {session_info['session_id']} (tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]")
 
             # Display streaming execution
             self.console.print("[bold green]Processing chat request...[/]")
             
-            # Initialize action history display
+            # Initialize action history display for incremental actions only
             action_display = ActionHistoryDisplay(self.console)
-            actions = []
+            incremental_actions = []
 
             # Run streaming execution with real-time display
             import asyncio
             
-            # Create a live display like the !reason command
-            with action_display.display_streaming_actions(actions):
+            # Create a live display like the !reason command (shows only new actions)
+            with action_display.display_streaming_actions(incremental_actions):
                 # Run the async streaming method
                 async def run_chat_stream():
-                    async for action in chat_node.execute_stream(chat_input, self.actions):
-                        actions.append(action)
+                    async for action in self.chat_node.execute_stream(chat_input, self.actions):
+                        incremental_actions.append(action)
                         # Add delay to make the streaming visible
                         await asyncio.sleep(0.5)
 
@@ -632,8 +643,8 @@ class DatusCLI:
                 asyncio.run(run_chat_stream())
 
             # Display final response from the last successful action
-            if actions:
-                final_action = actions[-1]
+            if incremental_actions:
+                final_action = incremental_actions[-1]
                 if (final_action.output and 
                     isinstance(final_action.output, dict) and 
                     final_action.status == ActionStatus.SUCCESS):
@@ -649,7 +660,7 @@ class DatusCLI:
                         self.console.print(f"\n[bold cyan]Generated SQL:[/]\n```sql\n{sql}\n```")
                         
                 # Also check other successful actions for content
-                for action in reversed(actions):
+                for action in reversed(incremental_actions):
                     if (action.status == ActionStatus.SUCCESS and 
                         action.output and 
                         isinstance(action.output, dict)):
@@ -660,13 +671,13 @@ class DatusCLI:
                             break
 
             # Add all actions from chat to our main action history
-            self.actions.actions.extend(actions)
+            self.actions.actions.extend(incremental_actions)
             
             # Update chat history for potential context in future interactions
             self.chat_history.append({
                 "user": message,
-                "response": actions[-1].output.get("response", "") if actions and actions[-1].output else "",
-                "actions": len(actions),
+                "response": incremental_actions[-1].output.get("response", "") if incremental_actions and incremental_actions[-1].output else "",
+                "actions": len(incremental_actions),
             })
 
         except Exception as e:
@@ -930,6 +941,8 @@ class DatusCLI:
         internal_cmds = [
             (".help", "Display this help message"),
             (".exit, .quit", "Exit the CLI"),
+            (".clear", "Clear console and chat session"),
+            (".chat_info", "Show current chat session information"),
             (".databases", "List all databases"),
             (".database database_name", "Switch current database"),
             (".tables", "List all tables"),
@@ -959,6 +972,34 @@ class DatusCLI:
             except Exception as e:
                 logger.warning(f"Database connection closed failed, reason:{e}")
         sys.exit(0)
+
+    def _cmd_clear_chat(self, args: str):
+        """Clear the console screen and chat session."""
+        # Clear the console screen using Rich
+        self.console.clear()
+        
+        # Clear the chat session
+        if self.chat_node:
+            self.chat_node.delete_session()
+            self.console.print("[green]Console and chat session cleared.[/]")
+        else:
+            self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
+        self.chat_node = None
+
+    def _cmd_chat_info(self, args: str):
+        """Display information about the current chat session."""
+        if self.chat_node:
+            session_info = self.chat_node.get_session_info()
+            if session_info["session_id"]:
+                self.console.print(f"[bold green]Chat Session Info:[/]")
+                self.console.print(f"  Session ID: {session_info['session_id']}")
+                self.console.print(f"  Active: {session_info['active']}")
+                self.console.print(f"  Token Count: {session_info['token_count']}")
+                self.console.print(f"  Action Count: {session_info['action_count']}")
+            else:
+                self.console.print("[yellow]Chat node exists but no active session.[/]")
+        else:
+            self.console.print("[yellow]No active chat session.[/]")
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:

@@ -34,7 +34,6 @@ class ChatAgenticNode(AgenticNode):
         self,
         namespace: Optional[str] = None,
         agent_config: Optional[AgentConfig] = None,
-        model_name: str = "default",
         max_turns: int = 10,
     ):
         """
@@ -43,7 +42,6 @@ class ChatAgenticNode(AgenticNode):
         Args:
             namespace: Database namespace for MCP server selection
             agent_config: Agent configuration
-            model_name: Name of the model to use
             max_turns: Maximum conversation turns per interaction
         """
         self.namespace = namespace
@@ -56,7 +54,6 @@ class ChatAgenticNode(AgenticNode):
             tools=[],  # Empty tools list initially
             mcp_servers=mcp_servers,
             agent_config=agent_config,
-            model_name=model_name,
         )
 
     def _setup_mcp_servers(
