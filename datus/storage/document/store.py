@@ -63,6 +63,8 @@ class DocumentStore(BaseEmbeddingStore):
         Raises:
             Exception: If document storage fails
         """
+        # Ensure table is ready before storing
+        self._ensure_table_ready()
         try:
             # Add new document record
             self.table.add(
@@ -92,6 +94,8 @@ class DocumentStore(BaseEmbeddingStore):
         Returns:
             List of similar documents with their metadata
         """
+        # Ensure table is ready before searching
+        self._ensure_table_ready()
         try:
             results = (
                 self.table.search(query_embedding)

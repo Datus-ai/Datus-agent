@@ -46,6 +46,9 @@ class SemanticModelStorage(BaseEmbeddingStore):
         self.reranker = None
 
     def create_indices(self):
+        # Ensure table is ready before creating indices
+        self._ensure_table_ready()
+
         self.table.create_scalar_index("id", replace=True)
         self.table.create_scalar_index("catalog_name", replace=True)
         self.table.create_scalar_index("database_name", replace=True)
@@ -57,22 +60,24 @@ class SemanticModelStorage(BaseEmbeddingStore):
 
     def search_all(self, database_name: str = "") -> List[Dict[str, Any]]:
         """Search all schemas for a given database name."""
-        search_result = (
-            self.table.search()
-            .where("" if not database_name else f"database_name='{database_name}'")
-            .limit(100000)
-            .to_list()
+
+        search_result = self._search_all(
+            where="" if not database_name else f"database_name='{database_name}'",
+            select_fields=["id", "catalog_database_schema", "semantic_model_name"],
         )
         return [
             {
-                "id": result["id"],
-                "catalog_database_schema": result["catalog_database_schema"],
-                "semantic_model_name": result["semantic_model_name"],
+                "id": search_result["id"][i],
+                "catalog_database_schema": search_result["catalog_database_schema"][i],
+                "semantic_model_name": search_result["semantic_model_name"][i],
             }
-            for result in search_result
+            for i in range(search_result.num_rows)
         ]
 
     def filter_by_id(self, id: str) -> List[Dict[str, Any]]:
+        # Ensure table is ready before direct table access
+        self._ensure_table_ready()
+
         search_result = self.table.search().where(f"id = '{id}'").limit(100).to_list()
         return search_result
 
@@ -104,6 +109,9 @@ class MetricStorage(BaseEmbeddingStore):
         self.reranker = None
 
     def create_indices(self):
+        # Ensure table is ready before creating indices
+        self._ensure_table_ready()
+
         self.table.create_scalar_index("id", replace=True)
         self.table.create_scalar_index("semantic_model_name", replace=True)
         self.table.create_scalar_index("domain_layer1_layer2", replace=True)
@@ -111,19 +119,20 @@ class MetricStorage(BaseEmbeddingStore):
 
     def search_all(self, semantic_model_name: str) -> List[Dict[str, Any]]:
         """Search all schemas for a given database name."""
-        search_result = (
-            self.table.search()
-            .where("" if not semantic_model_name else f"semantic_model_name='{semantic_model_name}'")
-            .limit(100000)
-            .to_list()
+        # Ensure table is ready before direct table access
+        self._ensure_table_ready()
+
+        search_result = self._search_all(
+            where="" if not semantic_model_name else f"semantic_model_name='{semantic_model_name}'",
+            select_fields=["id", "semantic_model_name", "metric_name"],
         )
         return [
             {
-                "id": result["id"],
-                "semantic_model_name": result["semantic_model_name"],
-                "metric_name": result["metric_name"],
+                "id": search_result["id"][i],
+                "semantic_model_name": search_result["semantic_model_name"][i],
+                "metric_name": search_result["metric_name"][i],
             }
-            for result in search_result
+            for i in range(search_result.num_rows)
         ]
 
 
@@ -161,10 +170,10 @@ class SemanticMetricsRAG:
         self.metric_storage.create_indices()
 
     def get_semantic_model_size(self):
-        return self.semantic_model_storage.table.count_rows()
+        return self.semantic_model_storage.table_size()
 
     def get_metrics_size(self):
-        return self.metric_storage.table.count_rows()
+        return self.metric_storage.table_size()
 
     def search_hybrid_metrics(
         self, input_param: SearchMetricsInput, top_n: int = 5, use_rerank: bool = True

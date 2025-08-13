@@ -97,6 +97,9 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         )
 
     def create_indices(self):
+        # Ensure table is ready before creating indices
+        self._ensure_table_ready()
+
         # create scalar index
         try:
             self.table.create_scalar_index("database_name", replace=True)
@@ -114,13 +117,16 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "full"
     ) -> pa.Table:
         """Search all schemas for a given database name."""
+        # Ensure table is ready before searching
+        self._ensure_table_ready()
+
         where = _build_where_clause(
             catalog_name=catalog_name,
             database_name=database_name,
             schema_name=schema_name,
             table_type=table_type,
         )
-        return self.table.search().where(where).limit(self.table.count_rows(where if where else None)).to_arrow()
+        return self._search_all(where=where)
 
 
 class SchemaStorage(BaseMetadataStorage):
@@ -152,8 +158,7 @@ class SchemaStorage(BaseMetadataStorage):
         return ""
 
     def search_all_schemas(self, database_name: str = "", catalog_name: str = "") -> Set[str]:
-        search_result = self.search(
-            query_txt="",
+        search_result = self._search_all(
             where=_build_where_clause(database_name=database_name, catalog_name=catalog_name),
             select_fields=["schema_name"],
         )
@@ -237,10 +242,10 @@ class SchemaWithValueRAG:
         self.value_store.create_indices()
 
     def get_schema_size(self):
-        return self.schema_store.table.count_rows()
+        return self.schema_store.table_size()
 
     def get_value_size(self):
-        return self.value_store.table.count_rows()
+        return self.value_store.table_size()
 
     def search_similar(
         self,
@@ -306,6 +311,10 @@ class SchemaWithValueRAG:
         """
         Search schemas and values for given table names.
         """
+        # Ensure tables are ready before direct table access
+        self.schema_store._ensure_table_ready()
+        self.value_store._ensure_table_ready()
+
         # Parse table names and build where clause
         conditions = []
         for full_table in tables:
@@ -338,6 +347,10 @@ class SchemaWithValueRAG:
         table_name: str = "",
         table_type: TABLE_TYPE = "table",
     ):
+        # Ensure tables are ready before deletion
+        self.schema_store._ensure_table_ready()
+        self.value_store._ensure_table_ready()
+
         where = _build_where_clause(
             catalog_name=catalog_name,
             database_name=database_name,

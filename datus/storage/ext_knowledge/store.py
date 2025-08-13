@@ -42,6 +42,9 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
 
     def create_indices(self):
         """Create scalar and FTS indices for better search performance."""
+        # Ensure table is ready before creating indices
+        self._ensure_table_ready()
+
         try:
             self.table.create_scalar_index("domain", replace=True)
             self.table.create_scalar_index("layer1", replace=True)
@@ -135,6 +138,9 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
         Returns:
             List of all matching knowledge entries
         """
+        # Ensure table is ready before direct table access
+        self._ensure_table_ready()
+
         where_conditions = []
         if domain:
             where_conditions.append(f"domain='{domain}'")
@@ -145,30 +151,35 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
 
         where_clause = " AND ".join(where_conditions) if where_conditions else ""
 
-        if not where_clause:
-            search_result = self.table.to_pandas().to_dict(orient="records")
-        else:
-            search_result = self.table.search().where(where_clause).limit(100000).to_list()
+        search_result = self._search_all(
+            where=where_clause, select_fields=["domain", "layer1", "layer2", "terminology", "explanation", "created_at"]
+        )
 
         return [
             {
-                "domain": result["domain"],
-                "layer1": result["layer1"],
-                "layer2": result["layer2"],
-                "terminology": result["terminology"],
-                "explanation": result["explanation"],
-                "created_at": result["created_at"],
+                "domain": search_result["domain"][i],
+                "layer1": search_result["layer1"][i],
+                "layer2": search_result["layer2"][i],
+                "terminology": search_result["terminology"][i],
+                "explanation": search_result["explanation"][i],
+                "created_at": search_result["created_at"][i],
             }
-            for result in search_result
+            for i in range(search_result.num_rows)
         ]
 
     def get_domains(self) -> List[str]:
         """Get all unique domains."""
+        # Ensure table is ready before direct table access
+        self._ensure_table_ready()
+
         search_result = self.table.search().select(["domain"]).limit(100000).to_list()
         return list(set(result["domain"] for result in search_result))
 
     def get_layers_by_domain(self, domain: str) -> List[Dict[str, str]]:
         """Get all layer1/layer2 combinations for a domain."""
+        # Ensure table is ready before direct table access
+        self._ensure_table_ready()
+
         search_result = (
             self.table.search().where(f"domain='{domain}'").select(["layer1", "layer2"]).limit(100000).to_list()
         )
