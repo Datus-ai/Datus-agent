@@ -63,20 +63,20 @@ class AgenticNode(ABC):
         self.session_id: Optional[str] = None
         self._session: Optional[SQLiteSession] = None
 
-        # Initialize the model using agent config (copied from Node._initialize)
+        # Initialize the model using agent config
         if agent_config:
             model_name = None
-            nodes_config = agent_config.nodes if hasattr(agent_config, 'nodes') else {}
-            
+            nodes_config = agent_config.nodes if hasattr(agent_config, "nodes") else {}
+
             # Get node name for config lookup
             node_name = self.get_node_name()
-            
+
             # Check for node-specific model configuration
             if node_name in nodes_config:
                 node_config = nodes_config[node_name]
-                if hasattr(node_config, 'model'):
+                if hasattr(node_config, "model"):
                     model_name = node_config.model
-            
+
             # Create model with node-specific or default model
             self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config)
         else:
@@ -87,14 +87,14 @@ class AgenticNode(ABC):
 
     def get_node_name(self) -> str:
         """
-        Get the template name for this agentic node.
+        Get the template name for this agentic node. Overwrite this method if you need a special name
 
         Default implementation extracts from class name:
         - ChatAgenticNode -> "chat"
         - GenerateAgenticNode -> "generate"
 
         Returns:
-            Template name that will be used to construct the full template filename
+            Node name that will be used to construct the full template filename and use in agent.yml
         """
         class_name = self.__class__.__name__
         # Remove "AgenticNode" suffix and convert to lowercase
@@ -151,7 +151,7 @@ class AgenticNode(ABC):
 
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
-        return f"agentic_session_{str(uuid.uuid4())[:8]}"
+        return f"{self.get_node_name()}_session_{str(uuid.uuid4())[:8]}"
 
     def _get_or_create_session(self) -> SQLiteSession:
         """Get or create the session for this node."""
@@ -178,9 +178,8 @@ class AgenticNode(ABC):
 
         try:
             # Get session items and count tokens
-            # This is a simplified implementation - in practice, you'd need to
-            # count tokens from all messages in the session
-            return 0  # Placeholder - implement based on session content
+            # ToDo: implement later
+            return 0
         except Exception as e:
             logger.warning(f"Failed to count session tokens: {e}")
             return 0
