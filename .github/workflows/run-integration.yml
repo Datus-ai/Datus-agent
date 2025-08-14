@@ -42,7 +42,7 @@ jobs:
             fi
           done < .env
           echo "Environment variables loaded successfully"
-          
+
       - name: Verify FEISHU_WEBHOOK_URL
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_NOTIFY_CI_URL }}
@@ -176,3 +176,5 @@ jobs:
             
             req.write(data);
             req.end();
+            console.log('Feishu notification end.');
+            process.exit(0);
