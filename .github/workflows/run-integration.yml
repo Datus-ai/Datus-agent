@@ -45,7 +45,7 @@ jobs:
           
       - name: Verify FEISHU_WEBHOOK_URL
         env:
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_URL }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_NOTIFY_CI_URL }}
         run: |
           if [ -n "$FEISHU_WEBHOOK_URL" ]; then
             echo "✅ FEISHU_WEBHOOK_URL is set (length: ${#FEISHU_WEBHOOK_URL} characters)"
@@ -73,7 +73,7 @@ jobs:
         if: always()
         uses: actions/github-script@v7
         env:
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_URL }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_NOTIFY_CI_URL }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
