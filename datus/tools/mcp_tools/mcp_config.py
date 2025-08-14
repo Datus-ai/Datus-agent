@@ -21,6 +21,43 @@ class MCPServerType(str, Enum):
     HTTP = "http"  # HTTP communication protocol
 
 
+class ToolFilterConfig(BaseModel):
+    """Configuration for tool filtering on MCP servers."""
+
+    allowed_tool_names: Optional[List[str]] = Field(
+        None, description="List of allowed tool names (whitelist). If specified, only these tools are allowed."
+    )
+    blocked_tool_names: Optional[List[str]] = Field(
+        None, description="List of blocked tool names (blacklist). These tools are excluded."
+    )
+    enabled: bool = Field(default=True, description="Whether tool filtering is enabled")
+
+    def is_tool_allowed(self, tool_name: str) -> bool:
+        """
+        Check if a tool is allowed based on filter configuration.
+
+        Args:
+            tool_name: Name of the tool to check
+
+        Returns:
+            True if tool is allowed, False otherwise
+        """
+        if not self.enabled:
+            return True
+
+        # First apply allowlist (if configured)
+        if self.allowed_tool_names is not None:
+            if tool_name not in self.allowed_tool_names:
+                return False
+
+        # Then apply blocklist to remaining tools
+        if self.blocked_tool_names is not None:
+            if tool_name in self.blocked_tool_names:
+                return False
+
+        return True
+
+
 # Type alias for any MCP server config subclass
 AnyMCPServerConfig = Union["STDIOServerConfig", "SSEServerConfig", "HTTPServerConfig"]
 
@@ -93,6 +130,7 @@ class MCPServerConfig(BaseModel):
 
     name: str = Field(..., description="Server name/identifier")
     type: MCPServerType = Field(..., description="Server communication type")
+    tool_filter: Optional[ToolFilterConfig] = Field(None, description="Tool filtering configuration")
 
     class Config:
         use_enum_values = True
@@ -139,6 +177,15 @@ class MCPServerConfig(BaseModel):
             else:
                 expanded_config[key] = value
 
+        # Parse tool filter configuration if present
+        tool_filter = None
+        if "tool_filter" in expanded_config:
+            filter_config = expanded_config["tool_filter"]
+            if isinstance(filter_config, dict):
+                tool_filter = ToolFilterConfig(**filter_config)
+            elif isinstance(filter_config, ToolFilterConfig):
+                tool_filter = filter_config
+
         # Create appropriate subclass based on server type
         if server_type == MCPServerType.STDIO:
             return STDIOServerConfig(
@@ -146,6 +193,7 @@ class MCPServerConfig(BaseModel):
                 command=expanded_config.get("command"),
                 args=expanded_config.get("args"),
                 env=expanded_config.get("env"),
+                tool_filter=tool_filter,
             )
         elif server_type == MCPServerType.SSE:
             return SSEServerConfig(
@@ -153,6 +201,7 @@ class MCPServerConfig(BaseModel):
                 url=expanded_config.get("url"),
                 headers=expanded_config.get("headers"),
                 timeout=expanded_config.get("timeout"),
+                tool_filter=tool_filter,
             )
         elif server_type == MCPServerType.HTTP:
             return HTTPServerConfig(
@@ -160,6 +209,7 @@ class MCPServerConfig(BaseModel):
                 url=expanded_config.get("url"),
                 headers=expanded_config.get("headers"),
                 timeout=expanded_config.get("timeout"),
+                tool_filter=tool_filter,
             )
         else:
             raise ValueError(f"Unknown server type: {server_type}")
@@ -300,6 +350,12 @@ class MCPConfig(BaseModel):
 
         for name, server in self.servers.items():
             server_config = {"type": server.type}
+
+            # Add tool filter configuration if present
+            if server.tool_filter:
+                filter_dict = server.tool_filter.model_dump(exclude_none=True)
+                if filter_dict:  # Only add if not empty
+                    server_config["tool_filter"] = filter_dict
 
             if server.type == MCPServerType.STDIO:
                 if server.command:

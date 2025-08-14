@@ -11,7 +11,8 @@ import shlex
 from typing import Any, Dict, List, Optional, Tuple
 
 from datus.tools.base import BaseTool, BaseToolExecResult, ToolAction
-from datus.tools.mcp_tools.mcp_manager import MCPManager
+from datus.tools.mcp_tools.mcp_config import ToolFilterConfig
+from datus.tools.mcp_tools.mcp_manager import MCPManager, create_static_tool_filter
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -40,7 +41,7 @@ class MCPTool(BaseTool):
     def add_server(
         self,
         name: str,
-        server_type: str,
+        type: str,
         **config_params,
     ) -> BaseToolExecResult:
         """
@@ -48,7 +49,7 @@ class MCPTool(BaseTool):
 
         Args:
             name: Server name/identifier
-            server_type: Server type (stdio, sse, http)
+            type: Server type (stdio, sse, http)
             **config_params: Server type specific config parameters
 
         Returns:
@@ -56,7 +57,7 @@ class MCPTool(BaseTool):
         """
         try:
             # Prepare config data for server creation
-            config_data = {"type": server_type, **config_params}
+            config_data = {"type": type, **config_params}
 
             # Create server config using the factory method
             from .mcp_config import MCPServerConfig
@@ -183,33 +184,54 @@ class MCPTool(BaseTool):
             return BaseToolExecResult(success=False, message=f"Error checking connectivity: {e}")
 
     @ToolAction(description="List tools available on an MCP server")
-    def list_tools(self, server_name: str) -> BaseToolExecResult:
+    def list_tools(self, server_name: str, apply_filter: bool = True) -> BaseToolExecResult:
         """
         List tools available on an MCP server.
 
         Args:
             server_name: Name of the MCP server
+            apply_filter: Whether to apply tool filtering (default: True)
 
         Returns:
             BaseToolExecResult with list of available tools
         """
         try:
-            success, message, tools_list = self.manager.list_tools(server_name)
+            success, message, tools_list = self.manager.list_tools(server_name, apply_filter=apply_filter)
 
             if success:
                 return BaseToolExecResult(
                     success=True,
                     message=message,
-                    result={"server_name": server_name, "tools_count": len(tools_list), "tools": tools_list},
+                    result={
+                        "server_name": server_name,
+                        "tools_count": len(tools_list),
+                        "tools": tools_list,
+                        "filtered": apply_filter,
+                    },
                 )
             else:
                 return BaseToolExecResult(
-                    success=False, message=message, result={"server_name": server_name, "tools_count": 0, "tools": []}
+                    success=False,
+                    message=message,
+                    result={"server_name": server_name, "tools_count": 0, "tools": [], "filtered": apply_filter},
                 )
 
         except Exception as e:
             logger.error(f"Error in list_tools: {e}")
             return BaseToolExecResult(success=False, message=f"Error listing tools: {e}")
+
+    @ToolAction(description="List filtered tools available on an MCP server")
+    def list_filtered_tools(self, server_name: str) -> BaseToolExecResult:
+        """
+        List tools available on an MCP server with filtering applied.
+
+        Args:
+            server_name: Name of the MCP server
+
+        Returns:
+            BaseToolExecResult with list of filtered tools
+        """
+        return self.list_tools(server_name, apply_filter=True)
 
     @ToolAction(description="Call a tool on an MCP server")
     def call_tool(
@@ -258,6 +280,106 @@ class MCPTool(BaseTool):
         except Exception as e:
             logger.error(f"Error in call_tool: {e}")
             return BaseToolExecResult(success=False, message=f"Error calling tool: {e}")
+
+    @ToolAction(description="Set tool filter configuration for an MCP server")
+    def set_tool_filter(
+        self,
+        server_name: str,
+        allowed_tools: Optional[List[str]] = None,
+        blocked_tools: Optional[List[str]] = None,
+        enabled: bool = True,
+    ) -> BaseToolExecResult:
+        """
+        Set tool filter configuration for an MCP server.
+
+        Args:
+            server_name: Name of the MCP server
+            allowed_tools: List of allowed tool names (whitelist)
+            blocked_tools: List of blocked tool names (blacklist)
+            enabled: Whether filtering is enabled
+
+        Returns:
+            BaseToolExecResult with operation result
+        """
+        try:
+            tool_filter = create_static_tool_filter(
+                allowed_tool_names=allowed_tools,
+                blocked_tool_names=blocked_tools,
+                enabled=enabled,
+            )
+
+            success, message = self.manager.set_tool_filter(server_name, tool_filter)
+
+            result_data = {}
+            if success:
+                result_data = {
+                    "server_name": server_name,
+                    "filter_config": tool_filter.model_dump(),
+                }
+
+            return BaseToolExecResult(success=success, message=message, result=result_data if success else None)
+
+        except Exception as e:
+            logger.error(f"Error in set_tool_filter: {e}")
+            return BaseToolExecResult(success=False, message=f"Error setting tool filter: {e}")
+
+    @ToolAction(description="Get tool filter configuration for an MCP server")
+    def get_tool_filter(self, server_name: str) -> BaseToolExecResult:
+        """
+        Get tool filter configuration for an MCP server.
+
+        Args:
+            server_name: Name of the MCP server
+
+        Returns:
+            BaseToolExecResult with filter configuration
+        """
+        try:
+            success, message, tool_filter = self.manager.get_tool_filter(server_name)
+
+            result_data = {"server_name": server_name}
+            if success:
+                if tool_filter:
+                    result_data["filter_config"] = tool_filter.model_dump()
+                    result_data["has_filter"] = True
+                else:
+                    result_data["filter_config"] = None
+                    result_data["has_filter"] = False
+
+            return BaseToolExecResult(success=success, message=message, result=result_data if success else None)
+
+        except Exception as e:
+            logger.error(f"Error in get_tool_filter: {e}")
+            return BaseToolExecResult(success=False, message=f"Error getting tool filter: {e}")
+
+    @ToolAction(description="Remove tool filter configuration from an MCP server")
+    def remove_tool_filter(self, server_name: str) -> BaseToolExecResult:
+        """
+        Remove tool filter configuration from an MCP server.
+
+        Args:
+            server_name: Name of the MCP server
+
+        Returns:
+            BaseToolExecResult with operation result
+        """
+        try:
+            # Create empty filter to disable filtering
+            empty_filter = ToolFilterConfig(enabled=False)
+            success, message = self.manager.set_tool_filter(server_name, empty_filter)
+
+            result_data = {}
+            if success:
+                result_data = {
+                    "server_name": server_name,
+                    "filter_removed": True,
+                }
+
+            return BaseToolExecResult(success=success, message=message, result=result_data if success else None)
+
+        except Exception as e:
+            logger.error(f"Error in remove_tool_filter: {e}")
+            return BaseToolExecResult(success=False, message=f"Error removing tool filter: {e}")
 
     def cleanup(self) -> None:
         """Clean up the MCP tool and manager."""

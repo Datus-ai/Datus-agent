@@ -23,11 +23,35 @@ from datus.tools.mcp_tools.mcp_config import (
     MCPConfig,
     MCPServerType,
     STDIOServerConfig,
+    ToolFilterConfig,
     expand_config_env_vars,
 )
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def create_static_tool_filter(
+    allowed_tool_names: Optional[List[str]] = None,
+    blocked_tool_names: Optional[List[str]] = None,
+    enabled: bool = True,
+) -> ToolFilterConfig:
+    """
+    Create a static tool filter configuration.
+
+    Args:
+        allowed_tool_names: List of allowed tool names (whitelist)
+        blocked_tool_names: List of blocked tool names (blacklist)
+        enabled: Whether filtering is enabled
+
+    Returns:
+        ToolFilterConfig instance
+    """
+    return ToolFilterConfig(
+        allowed_tool_names=allowed_tool_names,
+        blocked_tool_names=blocked_tool_names,
+        enabled=enabled,
+    )
 
 
 def _validate_server_exists(manager, server_name: str) -> Tuple[bool, str, Optional[AnyMCPServerConfig]]:
@@ -248,7 +272,7 @@ class MCPManager:
             error_msg = tools_data.get("error", "Connectivity test failed")
             return False, f"Server '{name}' connectivity test failed: {error_msg}", connectivity_details
 
-    def list_tools(self, server_name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
+    def list_tools(self, server_name: str, apply_filter: bool = True) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """List tools available on the specified MCP server."""
         try:
             valid, error_msg, config = _validate_server_exists(self, server_name)
@@ -266,6 +290,16 @@ class MCPManager:
 
             if success:
                 tools_list = tools_data.get("tools", [])
+
+                # Apply tool filtering if enabled and requested
+                if apply_filter and config.tool_filter:
+                    filtered_tools = []
+                    for tool in tools_list:
+                        tool_name = tool.get("name", "")
+                        if config.tool_filter.is_tool_allowed(tool_name):
+                            filtered_tools.append(tool)
+                    tools_list = filtered_tools
+
                 return True, f"Found {len(tools_list)} tools on server '{server_name}'", tools_list
             else:
                 error_msg = tools_data.get("error", "Failed to list tools")
@@ -275,6 +309,10 @@ class MCPManager:
             logger.error(f"Error listing tools for server {server_name}: {e}")
             return False, f"Error listing tools: {e}", []
 
+    def list_filtered_tools(self, server_name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        """List tools available on the specified MCP server with filtering applied."""
+        return self.list_tools(server_name, apply_filter=True)
+
     def call_tool(
         self, server_name: str, tool_name: str, arguments: Dict[str, Any]
     ) -> Tuple[bool, str, Dict[str, Any]]:
@@ -283,6 +321,10 @@ class MCPManager:
             valid, error_msg, config = _validate_server_exists(self, server_name)
             if not valid:
                 return False, error_msg, {}
+
+            # Check if tool is allowed by filter
+            if config.tool_filter and not config.tool_filter.is_tool_allowed(tool_name):
+                return False, f"Tool '{tool_name}' is blocked by server filter configuration", {}
 
             # Create server instance
             server_instance, details = self._create_server_instance(config)
@@ -304,6 +346,40 @@ class MCPManager:
         except Exception as e:
             logger.error(f"Error calling tool {tool_name} on server {server_name}: {e}")
             return False, f"Error calling tool: {e}", {}
+
+    def set_tool_filter(self, server_name: str, tool_filter: ToolFilterConfig) -> Tuple[bool, str]:
+        """Set tool filter configuration for a server."""
+        try:
+            with self._lock:
+                config = self.get_server_config(server_name)
+                if not config:
+                    return False, f"Server '{server_name}' not found"
+
+                # Update the tool filter
+                config.tool_filter = tool_filter
+
+                if self.save_config():
+                    logger.info(f"Updated tool filter for server: {server_name}")
+                    return True, f"Successfully updated tool filter for server '{server_name}'"
+                else:
+                    return False, "Failed to save config"
+
+        except Exception as e:
+            logger.error(f"Error setting tool filter for server {server_name}: {e}")
+            return False, f"Error setting tool filter: {e}"
+
+    def get_tool_filter(self, server_name: str) -> Tuple[bool, str, Optional[ToolFilterConfig]]:
+        """Get tool filter configuration for a server."""
+        try:
+            config = self.get_server_config(server_name)
+            if not config:
+                return False, f"Server '{server_name}' not found", None
+
+            return True, f"Retrieved tool filter for server '{server_name}'", config.tool_filter
+
+        except Exception as e:
+            logger.error(f"Error getting tool filter for server {server_name}: {e}")
+            return False, f"Error getting tool filter: {e}", None
 
     def _create_server_instance(self, config: AnyMCPServerConfig) -> Tuple[Any, Dict[str, Any]]:
         """Create MCP server instance based on config type."""

@@ -86,7 +86,7 @@ class MCPCommands:
         try:
             transport_type, server_name, config_params = parse_command_string(args)
             # Call the add_server method
-            result = self.mcp_tool.add_server(name=server_name, server_type=transport_type, **config_params)
+            result = self.mcp_tool.add_server(name=server_name, type=transport_type, **config_params)
 
             if result.success:
                 self.console.print(f"[bold green]Successfully added MCP server: {server_name}[/]")

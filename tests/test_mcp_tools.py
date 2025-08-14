@@ -1,6 +1,8 @@
 import pytest
 
 from datus.tools.mcp_tools import MCPTool
+from datus.tools.mcp_tools.mcp_config import ToolFilterConfig
+from datus.tools.mcp_tools.mcp_manager import create_static_tool_filter
 from datus.tools.mcp_tools.mcp_tool import parse_command_string
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -51,3 +53,79 @@ def test_parse_cmd():
             " --env DEBUG=1 --env a=b --timeout 5 --invalid-param"
         )
     assert exc_info.value.code == ErrorCode.COMMON_FIELD_INVALID
+
+
+def test_tool_filtering():
+    """Test tool filtering functionality."""
+    # Test creating static tool filters
+    allowlist_filter = create_static_tool_filter(allowed_tool_names=["read_file", "write_file", "list_directory"])
+    assert allowlist_filter.allowed_tool_names == ["read_file", "write_file", "list_directory"]
+    assert allowlist_filter.blocked_tool_names is None
+    assert allowlist_filter.enabled is True
+
+    blocklist_filter = create_static_tool_filter(blocked_tool_names=["delete_file", "execute_command"])
+    assert blocklist_filter.allowed_tool_names is None
+    assert blocklist_filter.blocked_tool_names == ["delete_file", "execute_command"]
+    assert blocklist_filter.enabled is True
+
+    # Test filter logic
+    assert allowlist_filter.is_tool_allowed("read_file") is True
+    assert allowlist_filter.is_tool_allowed("delete_file") is False
+    assert allowlist_filter.is_tool_allowed("write_file") is True
+
+    assert blocklist_filter.is_tool_allowed("read_file") is True
+    assert blocklist_filter.is_tool_allowed("delete_file") is False
+    assert blocklist_filter.is_tool_allowed("execute_command") is False
+
+    # Test disabled filter
+    disabled_filter = create_static_tool_filter(blocked_tool_names=["everything"], enabled=False)
+    assert disabled_filter.is_tool_allowed("everything") is True  # Should be allowed when disabled
+
+    # Test filter configuration model
+    filter_config = ToolFilterConfig(allowed_tool_names=["tool1", "tool2"], blocked_tool_names=["tool3"], enabled=True)
+
+    # Serialize and deserialize
+    filter_dict = filter_config.model_dump()
+    restored_filter = ToolFilterConfig(**filter_dict)
+
+    assert restored_filter.allowed_tool_names == ["tool1", "tool2"]
+    assert restored_filter.blocked_tool_names == ["tool3"]
+    assert restored_filter.enabled is True
+
+    # Test filtering logic on restored filter
+    assert restored_filter.is_tool_allowed("tool1") is True
+    assert restored_filter.is_tool_allowed("tool3") is False  # blocked takes precedence
+    assert restored_filter.is_tool_allowed("tool4") is False  # not in allowlist
+
+
+def test_mcp_tool_filter_methods():
+    """Test MCPTool filter management methods."""
+    tool = MCPTool()
+
+    # Test filter methods on non-existent server (should fail gracefully)
+    result = tool.get_tool_filter("non_existent_server")
+    assert result.success is False
+    assert "not found" in result.message.lower()
+
+    result = tool.set_tool_filter("non_existent_server", ["tool1"], None, True)
+    assert result.success is False
+    assert "not found" in result.message.lower()
+
+    result = tool.remove_tool_filter("non_existent_server")
+    assert result.success is False
+    assert "not found" in result.message.lower()
+
+    # Test list_tools with filtering parameter
+    servers = tool.list_servers()
+    if servers.success and servers.result["servers"]:
+        server_name = servers.result["servers"][0]["name"]
+
+        # Test listing tools with filtering enabled
+        result_filtered = tool.list_tools(server_name, apply_filter=True)
+        assert "filtered" in result_filtered.result
+        assert result_filtered.result["filtered"] is True
+
+        # Test listing tools with filtering disabled
+        result_unfiltered = tool.list_tools(server_name, apply_filter=False)
+        assert "filtered" in result_unfiltered.result
+        assert result_unfiltered.result["filtered"] is False
