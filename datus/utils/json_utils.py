@@ -274,6 +274,8 @@ def strip_json_str(llm_str: str) -> str:
         cleaned_string = cleaned_string[len("```json") : -len("```")].strip()
     elif cleaned_string.startswith("```") and cleaned_string.endswith("```"):
         cleaned_string = cleaned_string[len("```") : -len("```")].strip()
+    # elif cleaned_string.startswith("json\n") and cleaned_string.endswith("\n"):
+    #    cleaned_string = cleaned_string[len("json\n") : -len("\n")].strip()
 
     return cleaned_string
 

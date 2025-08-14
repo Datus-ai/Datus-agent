@@ -14,54 +14,44 @@ logger = get_logger(__name__)
 
 
 class SilentMCPServerStdio(MCPServerStdio):
-    """Enhanced MCP server wrapper that redirects stdout and stderr to suppress all output
-    WARNING: This redirects both stdout and stderr, which may break MCP protocol communication.
-    Use with caution and test thoroughly.
-    """
+    """MCP server wrapper that redirects stderr to suppress startup messages."""
 
     def __init__(self, params: MCPServerStdioParams, **kwargs):
-        # Set environment variables to reduce output
-        if hasattr(params, "env"):
-            if params.env is None:
-                params.env = {}
+        # Redirect stderr using shell redirection to suppress startup messages
+        
+        # Handle both object attributes and dictionary keys
+        has_command = hasattr(params, "command") or (isinstance(params, dict) and "command" in params)
+        has_args = hasattr(params, "args") or (isinstance(params, dict) and "args" in params)
+        
+        if has_command and has_args:
+            # Get command and args regardless of whether it's object or dict
+            if hasattr(params, "command"):
+                original_command = params.command
+                original_args = params.args or []
+            else:
+                original_command = params["command"]
+                original_args = params["args"] or []
 
-            # Basic environment variables for all MCP servers
-            params.env.update(
-                {
-                    "UV_QUIET": "1",  # Quiet uv tool output
-                    "UV_NO_PROGRESS": "1",
-                    "RUST_LOG": "error",  # Reduce Rust logging
-                }
-            )
-
-            # Additional variables for filesystem MCP server
-            if hasattr(params, "args") and any("server-filesystem" in str(arg) for arg in (params.args or [])):
-                params.env.update(
-                    {
-                        "NODE_OPTIONS": "--no-warnings --quiet --no-progress",
-                        "NPM_CONFIG_LOGLEVEL": "silent",
-                        "SUPPRESS_NO_CONFIG_WARNING": "1",
-                        "YARN_SILENT": "true",  # Silence yarn logs if used
-                    }
-                )
-
-        # Redirect both stdout and stderr using shell redirection
-        if hasattr(params, "command") and hasattr(params, "args"):
-            original_command = params.command
-            original_args = params.args or []
-
-            # Create shell command to redirect both stdout and stderr
+            # Create shell command to redirect stderr
             import sys
 
             if sys.platform == "win32":
-                # Windows: redirect both stdout and stderr to nul
-                params.command = "cmd"
-                params.args = ["/c", f'"{original_command}" {" ".join(original_args)} >nul 2>&1']
+                # Windows: redirect stderr to nul
+                redirect_cmd = "cmd"
+                redirect_args = ["/c", f'"{original_command}" {" ".join(original_args)} 2>nul']
             else:
-                # Unix/Linux/macOS: redirect both stdout and stderr to /dev/null
+                # Unix/Linux/macOS: redirect stderr to /dev/null
                 args_str = " ".join(f'"{arg}"' for arg in original_args)
-                params.command = "sh"
-                params.args = ["-c", f'"{original_command}" {args_str} >/dev/null 2>&1']
+                redirect_cmd = "sh"
+                redirect_args = ["-c", f'"{original_command}" {args_str} 2>/dev/null']
+                
+            # Set the redirected command back to params
+            if hasattr(params, "command"):
+                params.command = redirect_cmd
+                params.args = redirect_args
+            else:
+                params["command"] = redirect_cmd
+                params["args"] = redirect_args
 
         super().__init__(params, **kwargs)
 
@@ -453,7 +443,7 @@ class MCPServer:
                             "MCP_SERVER_QUIET": "1",  # Custom flag for MCP servers
                         },
                     )
-                    cls._filesystem_mcp_server = MCPServerStdio(
+                    cls._filesystem_mcp_server = SilentMCPServerStdio(
                         params=mcp_server_params, client_session_timeout_seconds=30
                     )
         return cls._filesystem_mcp_server
