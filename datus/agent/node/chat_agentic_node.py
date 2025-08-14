@@ -302,6 +302,7 @@ class ChatAgenticNode(AgenticNode):
         try:
             import json
             import ast
+            from datus.utils.json_utils import strip_json_str
 
             content = output.get("content", "")
             logger.info(f"extract_sql_and_output_from_final_resp: {content}")
@@ -311,7 +312,9 @@ class ChatAgenticNode(AgenticNode):
                 try:
                     parsed_dict = ast.literal_eval(content)
                     if isinstance(parsed_dict, dict) and "raw_output" in parsed_dict:
-                        json_content = json.loads(parsed_dict["raw_output"])
+                        # Use strip_json_str to clean raw_output before parsing JSON
+                        cleaned_raw_output = strip_json_str(parsed_dict["raw_output"])
+                        json_content = json.loads(cleaned_raw_output)
                         sql = json_content.get("sql")
                         output_text = json_content.get("output")
 

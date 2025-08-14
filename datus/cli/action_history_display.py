@@ -348,38 +348,25 @@ class ActionHistoryDisplay:
 
         return "✓ Completed"
 
-    def display_streaming_actions(self, actions: List[ActionHistory]) -> Live:
-        """Create a live display for streaming actions with simplified list format"""
+    def display_streaming_actions(self, actions: List[ActionHistory]) -> "StreamingActionContext":
+        """Create a live display for streaming actions with sliding window and output capture"""
+        
+        # Initialize sliding window if needed
+        if self._max_actions is None:
+            self._max_actions = self._calculate_max_actions()
+        
+        if self._action_window is None:
+            self._action_window = deque(maxlen=self._max_actions)
+        else:
+            # Update maxlen if terminal size changed
+            current_max = self._calculate_max_actions()
+            if current_max != self._max_actions:
+                # Create new deque with updated size, preserving recent actions
+                new_window = deque(self._action_window, maxlen=current_max)
+                self._action_window = new_window
+                self._max_actions = current_max
 
-        # Create a class to hold the updatable content
-        class StreamingContent:
-            def __init__(self, actions_list, display_instance):
-                self.actions = actions_list
-                self.display = display_instance
-
-            def __rich_console__(self, console, options):
-                # Always create the same panel structure to avoid duplicate headers
-                if not self.actions:
-                    content = "[dim]Waiting for actions...[/dim]"
-                else:
-                    # Create simple list of actions with colored dots
-                    lines = []
-                    for action in self.actions:
-                        # Get appropriate dot based on role and status
-                        dot = self.display._get_action_dot(action)
-                        # Format the action line
-                        action_line = self.display._format_streaming_action(action, dot)
-                        lines.append(action_line)
-                    content = "\n".join(lines)
-
-                # Always yield the same panel structure
-                yield Panel(content, title="[bold cyan]Action Stream[/bold cyan]", border_style="cyan")
-
-        # Create the content object that will update dynamically
-        content = StreamingContent(actions, self)
-
-        # Create Live display with the updatable content
-        return Live(content, refresh_per_second=4)
+        return StreamingActionContext(actions, self)
 
     def display_final_action_history(self, actions: List[ActionHistory]) -> None:
         """Display the final action history with complete SQL queries and reasoning results"""
@@ -438,6 +425,65 @@ class ActionHistoryDisplay:
             return data
         else:
             return str(data)
+
+
+class StreamingActionContext:
+    """Context manager for streaming actions display with output capture"""
+    
+    def __init__(self, actions_list: List[ActionHistory], display_instance: ActionHistoryDisplay):
+        self.actions = actions_list
+        self.display = display_instance
+        self.live = None
+        
+    def __enter__(self):
+        # Create the content renderer
+        class StreamingContent:
+            def __init__(self, actions_list, display_instance):
+                self.actions = actions_list
+                self.display = display_instance
+
+            def __rich_console__(self, console, options):  # pylint: disable=unused-argument
+                # Update sliding window with current actions
+                self.display._action_window.clear()
+                for action in self.actions:
+                    self.display._action_window.append(action)
+                
+                # Always create the same panel structure to avoid duplicate headers
+                if not self.display._action_window:
+                    content = "[dim]Waiting for actions...[/dim]"
+                else:
+                    # Create simple list of actions with colored dots from sliding window
+                    lines = []
+                    for action in self.display._action_window:
+                        # Get appropriate dot based on role and status
+                        dot = self.display._get_action_dot(action)
+                        # Format the action line
+                        action_line = self.display._format_streaming_action(action, dot)
+                        lines.append(action_line)
+                    
+                    content = "\n".join(lines)
+                    
+                    # Add indicator if we're showing partial results
+                    if len(self.actions) > len(self.display._action_window):
+                        truncated_count = len(self.actions) - len(self.display._action_window)
+                        content = f"[dim]({truncated_count} older actions hidden)[/dim]\n{content}"
+
+                # Always yield the same panel structure
+                yield Panel(content, title="[bold cyan]Action Stream[/bold cyan]", border_style="cyan")
+
+        # Create the content object that will update dynamically
+        content = StreamingContent(self.actions, self.display)
+        
+        # Create Live display
+        self.live = Live(content, refresh_per_second=4)
+        
+        # Start the live display
+        self.live.start()
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):  # pylint: disable=unused-argument
+        if self.live:
+            self.live.stop()
 
 
 def create_action_display(console: Optional[Console] = None) -> ActionHistoryDisplay:
