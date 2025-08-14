@@ -22,7 +22,7 @@ logger = get_logger(__name__)
 class ChatAgenticNode(AgenticNode):
     """
     Chat-focused agentic node with database and filesystem tool support.
-    
+
     This node provides flexible chat capabilities with:
     - Namespace-based database MCP server selection
     - Default filesystem MCP server
@@ -34,7 +34,7 @@ class ChatAgenticNode(AgenticNode):
         self,
         namespace: Optional[str] = None,
         agent_config: Optional[AgentConfig] = None,
-        max_turns: int = 10,
+        max_turns: int = 30,
     ):
         """
         Initialize the ChatAgenticNode.
@@ -46,10 +46,10 @@ class ChatAgenticNode(AgenticNode):
         """
         self.namespace = namespace
         self.max_turns = max_turns
-        
+
         # Initialize MCP servers based on namespace
         mcp_servers = self._setup_mcp_servers(namespace, agent_config)
-        
+
         super().__init__(
             tools=[],  # Empty tools list initially
             mcp_servers=mcp_servers,
@@ -57,33 +57,36 @@ class ChatAgenticNode(AgenticNode):
         )
 
     def _setup_mcp_servers(
-        self, 
-        namespace: Optional[str], 
-        agent_config: Optional[AgentConfig]
+        self, namespace: Optional[str], agent_config: Optional[AgentConfig]
     ) -> Dict[str, MCPServerStdio]:
         """
         Set up MCP servers based on namespace and configuration.
-        
+
         Args:
             namespace: Database namespace for server selection
             agent_config: Agent configuration containing namespace definitions
-            
+
         Returns:
             Dictionary of MCP servers
         """
         mcp_servers = {}
-        
+
         try:
             # Add filesystem MCP server as default
-            filesystem_server = MCPServer.get_filesystem_mcp_server()
+            import os
+
+            sqls_path = os.path.join(os.getcwd(), "sqls")
+            filesystem_server = MCPServer.get_filesystem_mcp_server(path=sqls_path)
             if filesystem_server:
                 mcp_servers["filesystem"] = filesystem_server
-                logger.debug("Added filesystem MCP server")
-            
+                logger.debug(f"Added filesystem MCP server with path: {sqls_path}")
+            else:
+                logger.warning(f"Failed to create filesystem MCP server for path: {sqls_path}")
+
             # Add database MCP server based on namespace
             if namespace and agent_config and namespace in agent_config.namespaces:
                 namespace_config = agent_config.namespaces[namespace]
-                
+
                 # Get the first database config from the namespace
                 if isinstance(namespace_config, dict):
                     for db_name, db_config in namespace_config.items():
@@ -104,17 +107,14 @@ class ChatAgenticNode(AgenticNode):
                             logger.debug(f"Added database MCP server for namespace {namespace}")
                     except Exception as e:
                         logger.warning(f"Failed to initialize database MCP server for namespace {namespace}: {e}")
-            
+
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
-        
+
         return mcp_servers
 
-
     async def execute_stream(
-        self, 
-        user_input: ChatNodeInput,
-        action_history_manager: Optional[ActionHistoryManager] = None
+        self, user_input: ChatNodeInput, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute the chat interaction with streaming support.
@@ -143,10 +143,10 @@ class ChatAgenticNode(AgenticNode):
         try:
             # Get or create session
             session = self._get_or_create_session()
-            
+
             # Get system instruction from template
             system_instruction = self.system_prompt
-            
+
             # Add database context to user message if provided
             enhanced_message = user_input.user_message
             if user_input.catalog or user_input.database or user_input.db_schema:
@@ -157,7 +157,7 @@ class ChatAgenticNode(AgenticNode):
                     context_parts.append(f"database: {user_input.database}")
                 if user_input.db_schema:
                     context_parts.append(f"schema: {user_input.db_schema}")
-                
+
                 enhanced_message = f"Context: {', '.join(context_parts)}\n\nUser question: {user_input.user_message}"
 
             # Check for auto-compact
@@ -190,31 +190,34 @@ class ChatAgenticNode(AgenticNode):
                 action_history_manager=action_history_manager,
             ):
                 yield stream_action
-                
-                # Extract final response from the last successful action
+
+                # Collect response content from successful actions
                 if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
                     if isinstance(stream_action.output, dict):
                         last_successful_output = stream_action.output
                         # Look for content in various possible fields
                         response_content = (
-                            stream_action.output.get("content", "") or
-                            stream_action.output.get("response", "") or
-                            response_content
+                            stream_action.output.get("content", "")
+                            or stream_action.output.get("response", "")
+                            or response_content
                         )
-                        # Try to extract SQL from response or tool calls
-                        sql_content = self._extract_sql_from_response(stream_action.output)
 
             # If we still don't have response_content, check the last successful output
             if not response_content and last_successful_output:
                 logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
                 # Try different fields that might contain the response
                 response_content = (
-                    last_successful_output.get("content", "") or
-                    last_successful_output.get("text", "") or
-                    last_successful_output.get("response", "") or
-                    str(last_successful_output)  # Fallback to string representation
+                    last_successful_output.get("content", "")
+                    or last_successful_output.get("text", "")
+                    or last_successful_output.get("response", "")
+                    or str(last_successful_output)  # Fallback to string representation
                 )
-                
+
+            # Extract SQL and output from the final response_content
+            sql_content, extracted_output = self._extract_sql_and_output_from_response({"content": response_content})
+            if extracted_output:
+                response_content = extracted_output
+
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 
             # Count tokens (simplified - would need actual implementation)
@@ -234,7 +237,11 @@ class ChatAgenticNode(AgenticNode):
                 assistant_action.action_id,
                 status=ActionStatus.SUCCESS,
                 output=result.model_dump(),
-                messages=f"Generated response: {response_content[:100]}..." if len(response_content) > 100 else response_content,
+                messages=(
+                    f"Generated response: {response_content[:100]}..."
+                    if len(response_content) > 100
+                    else response_content
+                ),
             )
 
             # Add to internal actions list
@@ -254,7 +261,7 @@ class ChatAgenticNode(AgenticNode):
 
         except Exception as e:
             logger.error(f"Chat execution error: {e}")
-            
+
             # Create error result
             error_result = ChatNodeResult(
                 success=False,
@@ -282,45 +289,55 @@ class ChatAgenticNode(AgenticNode):
             action_history_manager.add_action(error_action)
             yield error_action
 
-    def _extract_sql_from_response(self, output: dict) -> Optional[str]:
+    def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """
-        Extract SQL content from model response or tool calls.
-        
+        Extract SQL content and formatted output from model response.
+
         Args:
             output: Output dictionary from model generation
-            
+
+        Returns:
+            Tuple of (sql_string, output_string) - both can be None if not found
+        """
+        try:
+            import json
+            import ast
+
+            content = output.get("content", "")
+            logger.info(f"extract_sql_and_output_from_final_resp: {content}")
+
+            # Handle string representation of dictionary with raw_output
+            if isinstance(content, str) and content.strip().startswith("{'"):
+                try:
+                    parsed_dict = ast.literal_eval(content)
+                    if isinstance(parsed_dict, dict) and "raw_output" in parsed_dict:
+                        json_content = json.loads(parsed_dict["raw_output"])
+                        sql = json_content.get("sql")
+                        output_text = json_content.get("output")
+
+                        # Unescape output content
+                        if output_text:
+                            output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+
+                        return sql, output_text
+                except (ValueError, SyntaxError, json.JSONDecodeError) as e:
+                    logger.debug(f"Failed to parse content: {e}")
+
+            return None, None
+
+        except Exception as e:
+            logger.warning(f"Failed to extract SQL and output from response: {e}")
+            return None, None
+
+    def _extract_sql_from_response(self, output: dict) -> Optional[str]:
+        """
+        Extract SQL content from model response (backward compatibility).
+
+        Args:
+            output: Output dictionary from model generation
+
         Returns:
             SQL string if found, None otherwise
         """
-        try:
-            # Check if there's direct SQL in the content
-            content = output.get("content", "")
-            
-            # Simple SQL detection (looking for common SQL keywords)
-            sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "WITH"]
-            if any(keyword in content.upper() for keyword in sql_keywords):
-                # Extract SQL from code blocks or try to identify SQL statements
-                import re
-                sql_pattern = r'```sql\s*(.*?)\s*```'
-                sql_matches = re.findall(sql_pattern, content, re.DOTALL | re.IGNORECASE)
-                if sql_matches:
-                    return sql_matches[0].strip()
-                
-                # If no code block, look for statements that start with SQL keywords
-                lines = content.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if any(line.upper().startswith(keyword) for keyword in sql_keywords):
-                        return line
-            
-            # Check tool calls for SQL content
-            if "sql_contexts" in output:
-                sql_contexts = output["sql_contexts"]
-                if sql_contexts and len(sql_contexts) > 0:
-                    return sql_contexts[-1].get("sql_query")
-            
-            return None
-            
-        except Exception as e:
-            logger.warning(f"Failed to extract SQL from response: {e}")
-            return None
+        sql_content, _ = self._extract_sql_and_output_from_response(output)
+        return sql_content

@@ -18,6 +18,7 @@ from prompt_toolkit.styles import Style
 from pygments.lexers.sql import SqlLexer
 from rich.box import SIMPLE_HEAD
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
@@ -27,7 +28,6 @@ from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
 from datus.cli.context_commands import ContextCommands
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools.db_manager import db_manager_instance
@@ -150,7 +150,7 @@ class DatusCLI:
 
         # Action history manager for tracking all CLI operations
         self.actions = ActionHistoryManager()
-        
+
         # Persistent chat node for session continuity
         self.chat_node = None
 
@@ -433,7 +433,7 @@ class DatusCLI:
     def _execute_sql(self, sql: str, system: bool = False):
         """Execute a SQL query and display results."""
         logger.debug(f"Executing SQL query: '{sql}'")
-        
+
         # Create action for SQL execution
         sql_action = ActionHistory.create_action(
             role=ActionRole.USER,
@@ -443,12 +443,12 @@ class DatusCLI:
             status=ActionStatus.PROCESSING,
         )
         self.actions.add_action(sql_action)
-        
+
         try:
             if not self.db_connector:
                 error_msg = "No database connection. Please initialize a connection first."
                 self.console.print(f"[bold red]Error:[/] {error_msg}")
-                
+
                 # Update action with error
                 self.actions.update_action_by_id(
                     sql_action.action_id,
@@ -465,11 +465,11 @@ class DatusCLI:
             result = self.db_connector.execute_arrow(sql)
             end_time = time.time()
             exec_time = end_time - start_time
-            
+
             if not result:
                 error_msg = "No result from the query."
                 self.console.print(f"[bold red]Error:[/] {error_msg}")
-                
+
                 # Update action with error
                 self.actions.update_action_by_id(
                     sql_action.action_id,
@@ -491,7 +491,7 @@ class DatusCLI:
 
                 row_count = result.sql_return.num_rows
                 self.console.print(f"[dim]Returned {row_count} rows in {exec_time:.2f} seconds[/]")
-                
+
                 # Update action with success
                 self.actions.update_action_by_id(
                     sql_action.action_id,
@@ -513,11 +513,11 @@ class DatusCLI:
                         explanation=f"Manual sql: Returned {row_count} rows in {exec_time:.2f} seconds",
                     )
                     self.agent.workflow.context.sql_contexts.append(new_record)
-                    
+
             elif result and not result.success:
                 error_msg = result.error or "Unknown SQL error"
                 self.console.print(f"[bold red]SQL Error:[/] {error_msg}")
-                
+
                 # Update action with SQL error
                 self.actions.update_action_by_id(
                     sql_action.action_id,
@@ -525,7 +525,7 @@ class DatusCLI:
                     output={"error": error_msg, "sql_error": True},
                     messages=f"SQL error: {error_msg}",
                 )
-                
+
                 if not system and self.agent and self.agent.workflow:  # Add to sql context if not system command
                     new_record = SQLContext(
                         sql_query=sql,
@@ -534,11 +534,13 @@ class DatusCLI:
                         explanation="Manual sql",
                     )
                     self.agent.workflow.context.sql_contexts.append(new_record)
-                    
+
             elif result and isinstance(result.sql_return, str):
-                error_msg = f"Query execution failed - received string instead of Arrow data: {result.error or 'Unknown error'}"
+                error_msg = (
+                    f"Query execution failed - received string instead of Arrow data: {result.error or 'Unknown error'}"
+                )
                 self.console.print(f"[bold red]Error:[/] {error_msg}")
-                
+
                 # Update action with error
                 self.actions.update_action_by_id(
                     sql_action.action_id,
@@ -549,7 +551,7 @@ class DatusCLI:
             else:
                 error_msg = "No valid result from the query."
                 self.console.print(f"[bold red]Error:[/] {error_msg}")
-                
+
                 # Update action with error
                 self.actions.update_action_by_id(
                     sql_action.action_id,
@@ -561,7 +563,7 @@ class DatusCLI:
         except Exception as e:
             logger.error(f"SQL execution error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
-            
+
             # Update action with exception
             self.actions.update_action_by_id(
                 sql_action.action_id,
@@ -618,18 +620,22 @@ class DatusCLI:
                 # Show session info for existing session
                 session_info = self.chat_node.get_session_info()
                 if session_info["session_id"]:
-                    self.console.print(f"[dim]Using existing session: {session_info['session_id']} (tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]")
+                    session_display = (
+                        f"[dim]Using existing session: {session_info['session_id']} "
+                        f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+                    )
+                    self.console.print(session_display)
 
             # Display streaming execution
             self.console.print("[bold green]Processing chat request...[/]")
-            
+
             # Initialize action history display for incremental actions only
             action_display = ActionHistoryDisplay(self.console)
             incremental_actions = []
 
             # Run streaming execution with real-time display
             import asyncio
-            
+
             # Create a live display like the !reason command (shows only new actions)
             with action_display.display_streaming_actions(incremental_actions):
                 # Run the async streaming method
@@ -645,45 +651,64 @@ class DatusCLI:
             # Display final response from the last successful action
             if incremental_actions:
                 final_action = incremental_actions[-1]
-                if (final_action.output and 
-                    isinstance(final_action.output, dict) and 
-                    final_action.status == ActionStatus.SUCCESS):
+                
+                if (
+                    final_action.output
+                    and isinstance(final_action.output, dict)
+                    and final_action.status == ActionStatus.SUCCESS
+                ):
+                    # Parse response to extract clean SQL and output
+                    sql = None
+                    clean_output = None
                     
-                    # Check for response in the output
-                    response = final_action.output.get("response")
-                    if response:
-                        self.console.print(f"\n[bold blue]Assistant:[/] {response}")
-                        
-                    # Show SQL if present
+                    # First check if SQL and response are directly available
                     sql = final_action.output.get("sql")
+                    response = final_action.output.get("response")
+                    
+                    # If response contains debug format, extract from it
+                    if isinstance(response, dict) and "raw_output" in response:
+                        extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response["raw_output"])
+                        sql = sql or extracted_sql  # Use extracted if not already available
+                        clean_output = extracted_output
+                    elif isinstance(response, str):
+                        clean_output = response
+
+                    # If we still don't have clean output, check other actions for content
+                    if not clean_output:
+                        for action in reversed(incremental_actions):
+                            if action.status == ActionStatus.SUCCESS and action.output and isinstance(action.output, dict):
+                                content = action.output.get("content")
+                                if content:
+                                    extracted_sql, extracted_output = self._extract_sql_and_output_from_content(content)
+                                    sql = sql or extracted_sql
+                                    clean_output = extracted_output or content
+                                    break
+
+                    # Display using simple, focused methods
                     if sql:
-                        self.console.print(f"\n[bold cyan]Generated SQL:[/]\n```sql\n{sql}\n```")
-                        
-                # Also check other successful actions for content
-                for action in reversed(incremental_actions):
-                    if (action.status == ActionStatus.SUCCESS and 
-                        action.output and 
-                        isinstance(action.output, dict)):
-                        
-                        content = action.output.get("content")
-                        if content and not final_action.output.get("response"):
-                            self.console.print(f"\n[bold blue]Assistant:[/] {content}")
-                            break
+                        self._display_sql_with_copy(sql)
+                    
+                    if clean_output:
+                        self._display_markdown_response(clean_output)
 
             # Add all actions from chat to our main action history
             self.actions.actions.extend(incremental_actions)
-            
+
             # Update chat history for potential context in future interactions
-            self.chat_history.append({
-                "user": message,
-                "response": incremental_actions[-1].output.get("response", "") if incremental_actions and incremental_actions[-1].output else "",
-                "actions": len(incremental_actions),
-            })
+            self.chat_history.append(
+                {
+                    "user": message,
+                    "response": incremental_actions[-1].output.get("response", "")
+                    if incremental_actions and incremental_actions[-1].output
+                    else "",
+                    "actions": len(incremental_actions),
+                }
+            )
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] Failed to process chat request: {str(e)}")
-            
+
             # Add error action to history
             error_action = ActionHistory.create_action(
                 role=ActionRole.USER,
@@ -977,7 +1002,7 @@ class DatusCLI:
         """Clear the console screen and chat session."""
         # Clear the console screen using Rich
         self.console.clear()
-        
+
         # Clear the chat session
         if self.chat_node:
             self.chat_node.delete_session()
@@ -991,7 +1016,7 @@ class DatusCLI:
         if self.chat_node:
             session_info = self.chat_node.get_session_info()
             if session_info["session_id"]:
-                self.console.print(f"[bold green]Chat Session Info:[/]")
+                self.console.print("[bold green]Chat Session Info:[/]")
                 self.console.print(f"  Session ID: {session_info['session_id']}")
                 self.console.print(f"  Active: {session_info['active']}")
                 self.console.print(f"  Token Count: {session_info['token_count']}")
@@ -1232,3 +1257,137 @@ Type '.help' for a list of commands or '.exit' to quit.
         except Exception as e:
             self.console.print(f"[bold red]Connection Error:[/] {str(e)}")
             raise
+
+    def _display_sql_with_copy(self, sql: str):
+        """
+        Display SQL in a formatted panel with automatic clipboard copy functionality.
+
+        Args:
+            sql: SQL query string to display and copy
+        """
+        try:
+            # Store SQL for reference
+            self.last_sql = sql
+
+            # Try to copy to clipboard
+            copied_indicator = ""
+            try:
+                # Try pyperclip first
+                try:
+                    import pyperclip
+
+                    pyperclip.copy(sql)
+                    copied_indicator = " (copied)"
+                except ImportError:
+                    # Fallback to system clipboard commands
+                    import platform
+                    import subprocess
+
+                    system = platform.system()
+                    if system == "Darwin":  # macOS
+                        subprocess.run("pbcopy", input=sql.encode(), check=True)
+                        copied_indicator = " (copied)"
+                    elif system == "Linux":
+                        # Try xclip or xsel
+                        try:
+                            subprocess.run(["xclip", "-selection", "clipboard"], input=sql.encode(), check=True)
+                            copied_indicator = " (copied)"
+                        except FileNotFoundError:
+                            try:
+                                subprocess.run(["xsel", "--clipboard", "--input"], input=sql.encode(), check=True)
+                                copied_indicator = " (copied)"
+                            except FileNotFoundError:
+                                pass  # No clipboard tool available
+                    elif system == "Windows":
+                        subprocess.run("clip", input=sql.encode(), shell=True, check=True)
+                        copied_indicator = " (copied)"
+            except Exception as e:
+                logger.debug(f"Failed to copy SQL to clipboard: {e}")
+                # If clipboard fails, don't show the indicator
+
+            # Display SQL in a beautiful syntax-highlighted panel
+            sql_syntax = Syntax(sql, "sql", theme="default", line_numbers=False)
+            sql_panel = Panel(
+                sql_syntax,
+                title=f"Generated SQL{copied_indicator}",
+                title_align="left",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+
+            self.console.print()  # Add spacing
+            self.console.print(sql_panel)
+
+        except Exception as e:
+            logger.error(f"Error displaying SQL: {e}")
+            # Fallback to simple display
+            self.console.print(f"\n[bold cyan]Generated SQL:[/]\n```sql\n{sql}\n```")
+
+    def _display_markdown_response(self, response: str):
+        """
+        Display clean response content as formatted markdown.
+
+        Args:
+            response: Clean response text to display as markdown
+        """
+        try:
+            # Display as markdown with proper formatting
+            markdown_content = Markdown(response)
+            self.console.print()  # Add spacing
+            self.console.print(markdown_content)
+
+        except Exception as e:
+            logger.error(f"Error displaying markdown: {e}")
+            # Fallback to plain text display
+            self.console.print(f"\n[bold blue]Assistant:[/] {response}")
+
+    def _extract_sql_and_output_from_content(self, content: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Extract SQL and output from content string that might contain JSON or debug format.
+        
+        Args:
+            content: Content string to parse
+            
+        Returns:
+            Tuple of (sql_string, output_string) - both can be None if not found
+        """
+        try:
+            import json
+            import re
+            
+            # Try to extract JSON from various patterns
+            
+            # Pattern 1: json\n{...} format
+            json_match = re.search(r'json\s*\n\s*({.*?})\s*$', content, re.DOTALL)
+            if json_match:
+                try:
+                    json_content = json.loads(json_match.group(1))
+                    sql = json_content.get("sql")
+                    output = json_content.get("output")
+                    if output:
+                        output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                    return sql, output
+                except json.JSONDecodeError:
+                    pass
+            
+            # Pattern 2: Direct JSON in content
+            try:
+                json_content = json.loads(content)
+                sql = json_content.get("sql")
+                output = json_content.get("output")
+                if output:
+                    output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                return sql, output
+            except json.JSONDecodeError:
+                pass
+            
+            # Pattern 3: Look for SQL code blocks
+            sql_pattern = r"```sql\s*(.*?)\s*```"
+            sql_matches = re.findall(sql_pattern, content, re.DOTALL | re.IGNORECASE)
+            sql = sql_matches[0].strip() if sql_matches else None
+            
+            return sql, None
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract SQL and output from content: {e}")
+            return None, None

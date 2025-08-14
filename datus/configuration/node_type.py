@@ -2,6 +2,7 @@ from typing import Optional, get_type_hints
 
 from pydantic import BaseModel, create_model
 
+from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.doc_search_node_models import DocSearchInput
 from datus.schemas.fix_node_models import FixInput
@@ -13,7 +14,6 @@ from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
 from datus.schemas.subworkflow_node_models import SubworkflowInput
-from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
 
 class NodeType:

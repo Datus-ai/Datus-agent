@@ -1,3 +1,8 @@
+import os
+import sys
+from collections import deque
+from contextlib import contextmanager
+from io import StringIO
 from typing import List, Optional
 
 from rich.console import Console
@@ -43,6 +48,55 @@ class ActionHistoryDisplay:
             ActionRole.USER: "🟢",  # Green for user
             ActionRole.WORKFLOW: "🟡",  # Yellow for workflow
         }
+        
+        # Sliding window for managing content overflow
+        self._action_window = None
+        self._max_actions = None
+
+    def _get_terminal_height(self) -> int:
+        """Get terminal height, fallback to reasonable default"""
+        try:
+            return os.get_terminal_size().lines
+        except (OSError, ValueError):
+            return 24  # Fallback to standard terminal height
+
+    def _calculate_max_actions(self) -> int:
+        """Calculate maximum number of actions that can fit in terminal"""
+        terminal_height = self._get_terminal_height()
+        # Reserve space for: panel borders (4 lines), title (1 line), some padding
+        # Each action typically takes 1-3 lines depending on content
+        available_height = max(terminal_height - 8, 5)  # Minimum of 5 actions
+        # Assume average of 2 lines per action for conservative estimate
+        return max(available_height // 2, 5)
+
+    @contextmanager
+    def _capture_external_output(self):
+        """Context manager to capture stdout/stderr during Live display to prevent interference"""
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        
+        # Create string buffers to capture output
+        stdout_buffer = StringIO()
+        stderr_buffer = StringIO()
+        
+        try:
+            # Redirect stdout/stderr to buffers
+            sys.stdout = stdout_buffer
+            sys.stderr = stderr_buffer
+            yield stdout_buffer, stderr_buffer
+        finally:
+            # Restore original stdout/stderr
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            
+            # Optionally display captured output after Live session
+            captured_stdout = stdout_buffer.getvalue()
+            captured_stderr = stderr_buffer.getvalue()
+            
+            if captured_stdout.strip():
+                logger.debug(f"Captured stdout during Live display: {captured_stdout}")
+            if captured_stderr.strip():
+                logger.debug(f"Captured stderr during Live display: {captured_stderr}")
 
     def format_action_summary(self, action: ActionHistory) -> str:
         """Format a single action as a summary line"""

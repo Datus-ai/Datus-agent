@@ -49,11 +49,11 @@ def patch_agents_typing_issue():
 
         return True
 
-    except ImportError as e:
-        print(f"Warning: Could not apply agents typing patch: {e}")
+    except ImportError:
+        # print(f"Warning: Could not apply agents typing patch: {e}")
         return False
-    except Exception as e:
-        print(f"Error applying agents typing patch: {e}")
+    except Exception:
+        # print(f"Error applying agents typing patch: {e}")
         return False
 
 

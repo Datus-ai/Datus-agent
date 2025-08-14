@@ -69,7 +69,9 @@ def load_agent_config(**kwargs) -> AgentConfig:
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES) | set(NodeType.AGENTIC_TYPES) | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES)
+                        | set(NodeType.AGENTIC_TYPES)
+                        | {NodeType.TYPE_REFLECT},
                         "your_value": nodes_raw,
                     },
                 )
@@ -81,7 +83,9 @@ def load_agent_config(**kwargs) -> AgentConfig:
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES) | set(NodeType.AGENTIC_TYPES) | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES)
+                        | set(NodeType.AGENTIC_TYPES)
+                        | {NodeType.TYPE_REFLECT},
                         "your_value": node_type,
                     },
                 )

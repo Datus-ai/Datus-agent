@@ -419,11 +419,23 @@ class MCPServer:
         return cls._metricflow_mcp_server
 
     @classmethod
-    def get_filesystem_mcp_server(cls):
+    def get_filesystem_mcp_server(cls, path=None):
         if cls._filesystem_mcp_server is None:
             with cls._lock:
                 if cls._filesystem_mcp_server is None:
-                    filesystem_mcp_directory = os.environ.get("FILESYSTEM_MCP_DIRECTORY", "/tmp")
+                    filesystem_mcp_directory = path or os.environ.get("FILESYSTEM_MCP_DIRECTORY", "/tmp")
+
+                    # Convert to absolute path
+                    if not os.path.isabs(filesystem_mcp_directory):
+                        filesystem_mcp_directory = os.path.abspath(filesystem_mcp_directory)
+
+                    # Check if directory exists
+                    if not os.path.exists(filesystem_mcp_directory):
+                        logger.error(f"Filesystem MCP directory does not exist: {filesystem_mcp_directory}")
+                        return None
+
+                    logger.info(f"Creating filesystem MCP server for directory: {filesystem_mcp_directory}")
+
                     mcp_server_params = MCPServerStdioParams(
                         command="npx",
                         args=[
@@ -435,9 +447,13 @@ class MCPServer:
                         env={
                             "NODE_OPTIONS": "--no-warnings",
                             "NPM_CONFIG_LOGLEVEL": "silent",
+                            "NPM_CONFIG_PROGRESS": "false",
+                            "NPX_SILENT": "true",
+                            "SUPPRESS_NO_CONFIG_WARNING": "1",
+                            "MCP_SERVER_QUIET": "1",  # Custom flag for MCP servers
                         },
                     )
-                    cls._filesystem_mcp_server = SilentMCPServerStdio(
+                    cls._filesystem_mcp_server = MCPServerStdio(
                         params=mcp_server_params, client_session_timeout_seconds=30
                     )
         return cls._filesystem_mcp_server
