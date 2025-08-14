@@ -102,7 +102,12 @@ exclude = ["tests*", "benchmark*", "docs*"]
 "datus" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt"]
 "datus.prompts" = ["*.txt", "*.md", "*.j2"]
 "datus.prompts.prompt_templates" = ["*.j2"]
-"mcp*" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt", "*.pyc", "*.j2", "LICENSE", "pyproject.toml", "mcp-metricflow-server"]
+
+[tool.setuptools.package-dir]
+"mcp.mcp-metricflow-server" = "mcp/mcp-metricflow-server"
+
+[tool.setuptools.data-files]
+"mcp/mcp-metricflow-server" = ["mcp/mcp-metricflow-server/LICENSE", "mcp/mcp-metricflow-server/pyproject.toml", "mcp/mcp-metricflow-server/mcp-metricflow-server"]
 
 [tool.uv.pip]
 index-url = "http://mirrors.aliyun.com/pypi/simple"
