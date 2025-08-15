@@ -2,7 +2,7 @@ name: Run Integration Tests
 
 on:
   schedule:
-    - cron: '0 1 * * *' # 1:00 a.m. UTC
+    - cron: '0 18 * * *' # 17:00  UTC
   workflow_dispatch: # Allow manual trigger
 
 jobs:
