@@ -133,23 +133,3 @@ def test_successful_workflow():
         # Clean up
         shutil.rmtree(temp_dir)
         print(f"Cleaned up temporary directory: {temp_dir}")
-
-
-if __name__ == "__main__":
-    print("Testing Embedding Model Lazy Loading and Error Handling")
-    print("=" * 60)
-
-    try:
-        test_lazy_loading()
-        test_silent_initialization()
-        test_storage_error_handling()
-        test_successful_workflow()
-
-        print("\n" + "=" * 60)
-        print("All tests completed!")
-
-    except Exception as e:
-        print(f"Test suite failed with error: {e}")
-        import traceback
-
-        traceback.print_exc()
