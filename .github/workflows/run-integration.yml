@@ -168,6 +168,7 @@ jobs:
             
             const req = https.request(options, (res) => {
               console.log('Feishu notification sent:', res.statusCode);
+              process.exit(0);
             });
             
             req.on('error', (error) => {
@@ -176,5 +177,3 @@ jobs:
             
             req.write(data);
             req.end();
-            console.log('Feishu notification end.');
-            process.exit(0);
