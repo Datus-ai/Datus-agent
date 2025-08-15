@@ -489,25 +489,26 @@ class Agent:
     def check_db(self):
         """Validate database connectivity."""
         logger.info("Checking database connectivity")
-
-        try:
-            namespace = self.global_config.current_namespace
-            if namespace in self.global_config.namespaces:
-                connections = self.db_manager.get_connections(namespace)
-                if isinstance(connections, dict):
-                    for conn in connections.values():
+        namespace = self.global_config.current_namespace
+        if namespace in self.global_config.namespaces:
+            connections = self.db_manager.get_connections(namespace)
+            if not connections:
+                logger.warning(f"No connections found for {namespace}")
+                return {"status": "error", "message": f"No connections found for {namespace}"}
+            if isinstance(connections, dict):
+                for name, conn in connections.items():
+                    try:
                         conn.test_connection()
-                else:
-                    connections.test_connection()
-
-                logger.info(f"Database connection test successful {namespace}")
-                return {"status": "success", "message": "Database connection test successful"}
+                        logger.info(f"Database connection test successful for {name}")
+                    except Exception as e:
+                        logger.error(f"Database connection test failed for {name}: {str(e)}", exc_info=False)
             else:
-                logger.error(f"Database connection test failed: {namespace} not found in namespaces")
-                return {"status": "error", "message": f"{namespace} not found in namespaces"}
-        except Exception as e:
-            logger.error(f"Database connection test failed: {str(e)}")
-            return {"status": "error", "message": str(e)}
+                connections.test_connection()
+                logger.info(f"Database connection test successful {namespace}")
+            return {"status": "success", "message": "Database connection test successful"}
+        else:
+            logger.error(f"Database connection test failed: {namespace} not found in namespaces")
+            return {"status": "error", "message": f"{namespace} not found in namespaces"}
 
     def check_mcp(self):
         """Check MCP server connectivity for the current namespace."""
