@@ -141,6 +141,9 @@ class DatusException(Exception):
         self.message = self.build_msg(message, message_args)
         super().__init__(self.message, *args)
 
+    def __str__(self):
+        return self.message
+
     def build_msg(self, message: Optional[str] = None, message_args: Optional[dict[str, Any]] = None) -> str:
         if message:
             final_message = message
