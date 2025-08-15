@@ -309,22 +309,58 @@ class ChatAgenticNode(AgenticNode):
 
             # Handle string representation of dictionary with raw_output
             if isinstance(content, str) and content.strip().startswith("{'"):
+                parsed_dict = None
+                
+                # Try ast.literal_eval first (most reliable for proper Python dict strings)
                 try:
                     parsed_dict = ast.literal_eval(content)
-                    if isinstance(parsed_dict, dict) and "raw_output" in parsed_dict:
+                except (ValueError, SyntaxError) as e:
+                    logger.debug(f"ast.literal_eval failed: {e}, trying alternative parsing")
+                    
+                    # Alternative approach: manually extract raw_output using regex
+                    # This handles cases where the dict contains values that can't be parsed by ast.literal_eval
+                    import re
+                    # More robust pattern that handles the actual structure in the content
+                    # Look for 'raw_output': ' and then capture everything until the final '} pattern
+                    raw_output_pattern = r"'raw_output':\s*'(.+?)'(?:\s*})?$"
+                    match = re.search(raw_output_pattern, content, re.DOTALL)
+                    
+                    if match:
+                        raw_output_value = match.group(1)
+                        # Unescape the extracted value
+                        raw_output_value = raw_output_value.replace("\\'", "'").replace("\\\\", "\\")
+                        parsed_dict = {"raw_output": raw_output_value}
+                        logger.debug("Extracted raw_output using regex pattern")
+                    else:
+                        logger.debug("Could not extract raw_output using regex")
+                
+                if isinstance(parsed_dict, dict) and "raw_output" in parsed_dict:
+                    try:
                         # Use strip_json_str to clean raw_output before parsing JSON
                         cleaned_raw_output = strip_json_str(parsed_dict["raw_output"])
-                        json_content = json.loads(cleaned_raw_output)
-                        sql = json_content.get("sql")
-                        output_text = json_content.get("output")
+                        
+                        # Try with json_repair for better handling of malformed JSON
+                        import json_repair
+                        try:
+                            json_content = json_repair.loads(cleaned_raw_output)
+                        except Exception:
+                            # Last resort: try regular json.loads
+                            json_content = json.loads(cleaned_raw_output)
+                        
+                        # Ensure json_content is a dict before calling get()
+                        if isinstance(json_content, dict):
+                            sql = json_content.get("sql")
+                            output_text = json_content.get("output")
+                        else:
+                            return None, None
 
                         # Unescape output content
                         if output_text:
                             output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
 
                         return sql, output_text
-                except (ValueError, SyntaxError, json.JSONDecodeError) as e:
-                    logger.debug(f"Failed to parse content: {e}")
+                    except (ValueError, SyntaxError, json.JSONDecodeError) as e:
+                        logger.debug(f"Failed to parse raw_output JSON: {e}")
 
             return None, None
 

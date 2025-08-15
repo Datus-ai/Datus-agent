@@ -1238,6 +1238,68 @@ Type '.help' for a list of commands or '.exit' to quit.
         else:
             self.console.print("[yellow]Warning: No database connection initialized.[/]")
 
+    def _prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
+        """
+        Unified input method using prompt_toolkit to avoid conflicts with rich.Prompt.ask().
+        
+        Args:
+            message: The prompt message to display
+            default: Default value if user presses Enter without input
+            choices: List of valid choices (validates input)
+            multiline: Whether to allow multiline input
+            
+        Returns:
+            User input string or default value
+        """
+        try:
+            from prompt_toolkit.formatted_text import HTML
+            from prompt_toolkit.validation import Validator, ValidationError
+            from prompt_toolkit import prompt
+            
+            # Format the prompt message
+            if default:
+                prompt_text = f"{message} ({default}): "
+            else:
+                prompt_text = f"{message}: "
+            
+            # Create validator for choices if provided
+            validator = None
+            if choices:
+                class ChoiceValidator(Validator):
+                    def validate(self, document):
+                        text = document.text.strip()
+                        if text and text not in choices:
+                            raise ValidationError(message=f"Please choose from: {', '.join(choices)}")
+                validator = ChoiceValidator()
+                
+                # Add choices to prompt text
+                prompt_text = f"{message} ({'/'.join(choices)}): "
+                if default:
+                    prompt_text = f"{message} ({'/'.join(choices)}) ({default}): "
+            
+            # Use the existing session for consistency but create a temporary one for this input
+            from prompt_toolkit.history import InMemoryHistory
+            
+            result = prompt(
+                HTML(f"<ansigreen><b>{prompt_text}</b></ansigreen>"),
+                default=default,
+                validator=validator,
+                multiline=multiline,
+                history=InMemoryHistory(),  # Separate history for sub-prompts
+                style=self.session.style,  # Use same style as main session
+            )
+            
+            return result.strip()
+            
+        except (KeyboardInterrupt, EOFError):
+            # Handle Ctrl+C or Ctrl+D gracefully
+            self.console.print("\n[yellow]Input cancelled[/]")
+            return default
+        except Exception as e:
+            logger.error(f"Input prompt error: {e}")
+            self.console.print(f"[bold red]Input error:[/] {str(e)}")
+            return default
+
     def _init_connection(self):
         """Initialize database connection."""
         current_namespace = self.agent_config.current_namespace

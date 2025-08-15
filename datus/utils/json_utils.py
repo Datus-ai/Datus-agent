@@ -264,19 +264,88 @@ def json_list2markdown_table(json_list: List[Dict[str, Any]]) -> str | None:
 
 
 def strip_json_str(llm_str: str) -> str:
+    """
+    Clean and extract JSON string from LLM output with robust handling.
+    
+    Handles:
+    - Markdown code blocks (```json, ```)
+    - Truncated JSON strings 
+    - JSON with embedded newlines
+    - Malformed JSON that can be repaired
+    
+    Args:
+        llm_str: Raw string from LLM
+        
+    Returns:
+        str: Cleaned JSON string ready for parsing
+    """
     if llm_str is None:
         return ""
     cleaned_string = llm_str.strip()
     if not cleaned_string:
         return ""
 
+    # Handle markdown code blocks
     if cleaned_string.startswith("```json") and cleaned_string.endswith("```"):
         cleaned_string = cleaned_string[len("```json") : -len("```")].strip()
     elif cleaned_string.startswith("```") and cleaned_string.endswith("```"):
         cleaned_string = cleaned_string[len("```") : -len("```")].strip()
-    # elif cleaned_string.startswith("json\n") and cleaned_string.endswith("\n"):
-    #    cleaned_string = cleaned_string[len("json\n") : -len("\n")].strip()
-
+    
+    # Try to extract JSON object/array if not already clean
+    if not (cleaned_string.startswith('{') or cleaned_string.startswith('[')):
+        # Look for JSON object
+        start_obj = cleaned_string.find('{')
+        if start_obj != -1:
+            # Find matching closing brace
+            end_obj = find_matching_bracket(cleaned_string, start_obj, '{', '}')
+            if end_obj != -1:
+                cleaned_string = cleaned_string[start_obj:end_obj + 1]
+            else:
+                # Truncated JSON object - try to find reasonable end
+                cleaned_string = cleaned_string[start_obj:]
+        else:
+            # Look for JSON array  
+            start_arr = cleaned_string.find('[')
+            if start_arr != -1:
+                end_arr = find_matching_bracket(cleaned_string, start_arr, '[', ']')
+                if end_arr != -1:
+                    cleaned_string = cleaned_string[start_arr:end_arr + 1]
+                else:
+                    # Truncated JSON array
+                    cleaned_string = cleaned_string[start_arr:]
+    
+    # Handle truncated JSON strings - if it ends abruptly, try to complete it
+    if cleaned_string.startswith('{') and not cleaned_string.endswith('}'):
+        # Count open braces vs closed braces
+        open_braces = cleaned_string.count('{')
+        close_braces = cleaned_string.count('}')
+        missing_braces = open_braces - close_braces
+        
+        # Add missing closing braces if reasonable (not too many)
+        if 0 < missing_braces <= 5:
+            cleaned_string += '}' * missing_braces
+            
+    elif cleaned_string.startswith('[') and not cleaned_string.endswith(']'):
+        # Count open brackets vs closed brackets
+        open_brackets = cleaned_string.count('[')
+        close_brackets = cleaned_string.count(']')
+        missing_brackets = open_brackets - close_brackets
+        
+        # Add missing closing brackets if reasonable
+        if 0 < missing_brackets <= 5:
+            cleaned_string += ']' * missing_brackets
+    
+    # Handle incomplete string values - if we have an unclosed quote at the end
+    if cleaned_string.count('"') % 2 == 1:
+        # Find the last unclosed quote and check if it looks like an incomplete string
+        last_quote = cleaned_string.rfind('"')
+        if last_quote != -1:
+            # Check if this quote starts a string value (not a key)
+            before_quote = cleaned_string[:last_quote].rstrip()
+            if before_quote.endswith(':') or before_quote.endswith(','):
+                # This looks like an incomplete string value, close it
+                cleaned_string += '"'
+    
     return cleaned_string
 
 
