@@ -40,11 +40,13 @@ async def generate_metrics_with_mcp_stream(
 
     # Setup MCP servers
     db_mcp_server = MCPServer.get_db_mcp_server(db_config)
-    # metricflow_mcp_server = MCPServer.get_metricflow_mcp_server()
+    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
+        database_name=input_data.sql_task.database_name, db_config=db_config
+    )
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
     mcp_servers = {
         "db_mcp_server": db_mcp_server,
-        # "metricflow_mcp_server": metricflow_mcp_server,
+        "metricflow_mcp_server": metricflow_mcp_server,
         "filesystem_mcp_server": filesystem_mcp_server,
     }
 

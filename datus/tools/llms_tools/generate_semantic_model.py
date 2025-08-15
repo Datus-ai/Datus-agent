@@ -40,7 +40,13 @@ async def generate_semantic_model_with_mcp_stream(
 
     # Setup MCP servers
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
-    mcp_servers = {"filesystem_mcp_server": filesystem_mcp_server}
+    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
+        database_name=input_data.sql_task.database_name, db_config=db_config
+    )
+    mcp_servers = {
+        "filesystem_mcp_server": filesystem_mcp_server,
+        "metricflow_mcp_server": metricflow_mcp_server,
+    }
 
     async for action in base_mcp_stream(
         model=model,
@@ -68,6 +74,9 @@ def generate_semantic_model_with_mcp(
         raise ValueError("Input must be a GenerateSemanticModelInput instance")
 
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
+    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
+        database_name=input_data.sql_task.database_name, db_config=db_config
+    )
 
     instruction = prompt_manager.get_raw_template("generate_semantic_model_system", input_data.prompt_version)
     max_turns = tool_config.get("max_turns", 20)
@@ -84,6 +93,7 @@ def generate_semantic_model_with_mcp(
                 prompt=prompt,
                 mcp_servers={
                     "filesystem_mcp_server": filesystem_mcp_server,
+                    "metricflow_mcp_server": metricflow_mcp_server,
                 },
                 instruction=instruction,
                 output_type=str,
