@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 async def _safe_connect_server(server_name: str, server, max_retries: int = 3):
     """Context-managed safe MCP server connection"""
     provider = None
-    
+
     for attempt in range(max_retries):
         try:
             logger.debug(f"Attempting to connect to MCP server {server_name} (attempt {attempt + 1}/{max_retries})")
@@ -43,7 +43,7 @@ async def _safe_connect_server(server_name: str, server, max_retries: int = 3):
             logger.error(f"Failed to connect MCP server {server_name} (attempt {attempt + 1}): {str(e)}")
             if attempt == max_retries - 1:
                 raise
-            
+
             try:
                 await asyncio.sleep(1.0)
             except asyncio.CancelledError:

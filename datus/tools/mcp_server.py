@@ -18,11 +18,11 @@ class SilentMCPServerStdio(MCPServerStdio):
 
     def __init__(self, params: MCPServerStdioParams, **kwargs):
         # Redirect stderr using shell redirection to suppress startup messages
-        
+
         # Handle both object attributes and dictionary keys
         has_command = hasattr(params, "command") or (isinstance(params, dict) and "command" in params)
         has_args = hasattr(params, "args") or (isinstance(params, dict) and "args" in params)
-        
+
         if has_command and has_args:
             # Get command and args regardless of whether it's object or dict
             if hasattr(params, "command"):
@@ -44,7 +44,7 @@ class SilentMCPServerStdio(MCPServerStdio):
                 args_str = " ".join(f'"{arg}"' for arg in original_args)
                 redirect_cmd = "sh"
                 redirect_args = ["-c", f'"{original_command}" {args_str} 2>/dev/null']
-                
+
             # Set the redirected command back to params
             if hasattr(params, "command"):
                 params.command = redirect_cmd

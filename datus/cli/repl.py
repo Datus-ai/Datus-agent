@@ -651,7 +651,7 @@ class DatusCLI:
             # Display final response from the last successful action
             if incremental_actions:
                 final_action = incremental_actions[-1]
-                
+
                 if (
                     final_action.output
                     and isinstance(final_action.output, dict)
@@ -660,14 +660,16 @@ class DatusCLI:
                     # Parse response to extract clean SQL and output
                     sql = None
                     clean_output = None
-                    
+
                     # First check if SQL and response are directly available
                     sql = final_action.output.get("sql")
                     response = final_action.output.get("response")
-                    
+
                     # If response contains debug format, extract from it
                     if isinstance(response, dict) and "raw_output" in response:
-                        extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response["raw_output"])
+                        extracted_sql, extracted_output = self._extract_sql_and_output_from_content(
+                            response["raw_output"]
+                        )
                         sql = sql or extracted_sql  # Use extracted if not already available
                         clean_output = extracted_output
                     elif isinstance(response, str):
@@ -676,7 +678,11 @@ class DatusCLI:
                     # If we still don't have clean output, check other actions for content
                     if not clean_output:
                         for action in reversed(incremental_actions):
-                            if action.status == ActionStatus.SUCCESS and action.output and isinstance(action.output, dict):
+                            if (
+                                action.status == ActionStatus.SUCCESS
+                                and action.output
+                                and isinstance(action.output, dict)
+                            ):
                                 content = action.output.get("content")
                                 if content:
                                     extracted_sql, extracted_output = self._extract_sql_and_output_from_content(content)
@@ -687,7 +693,7 @@ class DatusCLI:
                     # Display using simple, focused methods
                     if sql:
                         self._display_sql_with_copy(sql)
-                    
+
                     if clean_output:
                         self._display_markdown_response(clean_output)
 
@@ -1241,45 +1247,47 @@ Type '.help' for a list of commands or '.exit' to quit.
     def _prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
         """
         Unified input method using prompt_toolkit to avoid conflicts with rich.Prompt.ask().
-        
+
         Args:
             message: The prompt message to display
             default: Default value if user presses Enter without input
             choices: List of valid choices (validates input)
             multiline: Whether to allow multiline input
-            
+
         Returns:
             User input string or default value
         """
         try:
-            from prompt_toolkit.formatted_text import HTML
-            from prompt_toolkit.validation import Validator, ValidationError
             from prompt_toolkit import prompt
-            
+            from prompt_toolkit.formatted_text import HTML
+            from prompt_toolkit.validation import ValidationError, Validator
+
             # Format the prompt message
             if default:
                 prompt_text = f"{message} ({default}): "
             else:
                 prompt_text = f"{message}: "
-            
+
             # Create validator for choices if provided
             validator = None
             if choices:
+
                 class ChoiceValidator(Validator):
                     def validate(self, document):
                         text = document.text.strip()
                         if text and text not in choices:
                             raise ValidationError(message=f"Please choose from: {', '.join(choices)}")
+
                 validator = ChoiceValidator()
-                
+
                 # Add choices to prompt text
                 prompt_text = f"{message} ({'/'.join(choices)}): "
                 if default:
                     prompt_text = f"{message} ({'/'.join(choices)}) ({default}): "
-            
+
             # Use the existing session for consistency but create a temporary one for this input
             from prompt_toolkit.history import InMemoryHistory
-            
+
             result = prompt(
                 HTML(f"<ansigreen><b>{prompt_text}</b></ansigreen>"),
                 default=default,
@@ -1288,9 +1296,9 @@ Type '.help' for a list of commands or '.exit' to quit.
                 history=InMemoryHistory(),  # Separate history for sub-prompts
                 style=self.session.style,  # Use same style as main session
             )
-            
+
             return result.strip()
-            
+
         except (KeyboardInterrupt, EOFError):
             # Handle Ctrl+C or Ctrl+D gracefully
             self.console.print("\n[yellow]Input cancelled[/]")
@@ -1406,21 +1414,20 @@ Type '.help' for a list of commands or '.exit' to quit.
     def _extract_sql_and_output_from_content(self, content: str) -> tuple[Optional[str], Optional[str]]:
         """
         Extract SQL and output from content string that might contain JSON or debug format.
-        
+
         Args:
             content: Content string to parse
-            
+
         Returns:
             Tuple of (sql_string, output_string) - both can be None if not found
         """
         try:
             import json
             import re
-            
+
             # Try to extract JSON from various patterns
-            
             # Pattern 1: json\n{...} format
-            json_match = re.search(r'json\s*\n\s*({.*?})\s*$', content, re.DOTALL)
+            json_match = re.search(r"json\s*\n\s*({.*?})\s*$", content, re.DOTALL)
             if json_match:
                 try:
                     json_content = json.loads(json_match.group(1))
@@ -1431,7 +1438,7 @@ Type '.help' for a list of commands or '.exit' to quit.
                     return sql, output
                 except json.JSONDecodeError:
                     pass
-            
+
             # Pattern 2: Direct JSON in content
             try:
                 json_content = json.loads(content)
@@ -1442,14 +1449,14 @@ Type '.help' for a list of commands or '.exit' to quit.
                 return sql, output
             except json.JSONDecodeError:
                 pass
-            
+
             # Pattern 3: Look for SQL code blocks
             sql_pattern = r"```sql\s*(.*?)\s*```"
             sql_matches = re.findall(sql_pattern, content, re.DOTALL | re.IGNORECASE)
             sql = sql_matches[0].strip() if sql_matches else None
-            
+
             return sql, None
-            
+
         except Exception as e:
             logger.warning(f"Failed to extract SQL and output from content: {e}")
             return None, None

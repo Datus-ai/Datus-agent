@@ -6,7 +6,7 @@ This module provides a class to handle all agent-related commands.
 import asyncio
 import uuid
 
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm
 
 from datus.agent.evaluate import setup_node_input, update_context_from_node
 from datus.agent.node import Node
@@ -159,8 +159,8 @@ class AgentCommands:
                 output_dir = "output"
                 external_knowledge = ""
             else:  # If no input, use a prompt to get the task info
-                task_id = Prompt.ask("[bold]Enter task ID[/]", default=task_id)
-                task_description = Prompt.ask("[bold]Enter task description[/]", default="")
+                task_id = self.cli._prompt_input("Enter task ID", default=task_id)
+                task_description = self.cli._prompt_input("Enter task description", default="")
                 if not task_description.strip():
                     self.console.print("[bold red]Error:[/] Task description is required")
                     return
@@ -170,12 +170,12 @@ class AgentCommands:
                     or self.current_database
                     or (self.cli.args.db_path if hasattr(self.cli.args, "db_path") else "")
                 )
-                database_name = Prompt.ask("[bold]Enter database name[/]", default=default_db)
+                database_name = self.cli._prompt_input("Enter database name", default=default_db)
                 # Output directory - optional input
                 output_dir = "output"
-                # output_dir = Prompt.ask("[bold]Enter output directory[/]", default="output")
+                # output_dir = self.cli._prompt_input("Enter output directory", default="output")
                 # External knowledge - optional input
-                external_knowledge = Prompt.ask("[bold]Enter external knowledge (optional)[/]", default="")
+                external_knowledge = self.cli._prompt_input("Enter external knowledge (optional)", default="")
 
             # Create the SQL task
             sql_task = SqlTask(
@@ -243,15 +243,15 @@ class AgentCommands:
 
     def _modify_input(self, input: BaseInput):
         if isinstance(input, SchemaLinkingInput):
-            top_n = Prompt.ask("[bold]Enter number of tables to link[/]", default="5")
+            top_n = self.cli._prompt_input("Enter number of tables to link", default="5")
             input.top_n = int(top_n.strip())
-            matching_rate = Prompt.ask(
-                "[bold]Enter matching method[/]",
+            matching_rate = self.cli._prompt_input(
+                "Enter matching method",
                 choices=["fast", "medium", "slow", "from_llm"],
                 default="fast",
             )
             input.matching_rate = matching_rate.strip()
-            database_name = Prompt.ask("[bold]Enter database name[/]", default=input.database_name)
+            database_name = self.cli._prompt_input("Enter database name", default=input.database_name)
             input.database_name = database_name.strip()
         elif isinstance(input, GenerateSQLInput):
             pass
@@ -266,8 +266,8 @@ class AgentCommands:
                     self.console.print(f"\n[bold]Context {i + 1}:[/]")
                     self.console.print(sql_context.to_dict())
 
-                sql_context_id = Prompt.ask(
-                    "[bold]Enter SQL context ID[/]", default=len(self.workflow.context.sql_contexts)
+                sql_context_id = self.cli._prompt_input(
+                    "Enter SQL context ID", default=str(len(self.workflow.context.sql_contexts))
                 )
                 try:
                     context_id = int(sql_context_id.strip())
@@ -283,56 +283,58 @@ class AgentCommands:
                 self.console.print("[bold red]Error:[/] No SQL context available")
         elif isinstance(input, GenerateMetricsInput):
             # Allow user to modify SQL query and prompt version
-            sql_query = Prompt.ask("[bold]Enter SQL query to generate metrics from[/]", default=input.sql_query)
+            sql_query = self.cli._prompt_input("Enter SQL query to generate metrics from", default=input.sql_query)
             input.sql_query = sql_query.strip()
-            prompt_version = Prompt.ask("[bold]Enter prompt version[/]", default=input.prompt_version)
+            prompt_version = self.cli._prompt_input("Enter prompt version", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()
         elif isinstance(input, GenerateSemanticModelInput):
             # Allow user to modify SQL query with multi-line support
             if input.sql_query:
                 # Show current SQL query
                 self.console.print(f"[bold]Current SQL query:[/]\n{input.sql_query}")
-                use_current = Prompt.ask("[bold]Use current SQL query?[/]", choices=["y", "n"], default="y")
+                use_current = self.cli._prompt_input("Use current SQL query?", choices=["y", "n"], default="y")
                 if use_current == "y":
                     pass  # Keep current query
                 else:
-                    sql_query = Prompt.ask("[bold]Enter new SQL query[/]", default=input.sql_query)
+                    sql_query = self.cli._prompt_input("Enter new SQL query", default=input.sql_query, multiline=True)
                     input.sql_query = sql_query.strip()
             else:
-                sql_query = Prompt.ask(
-                    "[bold]Enter SQL query to generate semantic model from[/]", default=input.sql_query
+                sql_query = self.cli._prompt_input(
+                    "Enter SQL query to generate semantic model from", default=input.sql_query, multiline=True
                 )
                 input.sql_query = sql_query.strip()
 
             # Interactive prompts for semantic model metadata
             self.console.print("[bold blue]Semantic Model Metadata:[/]")
-            catalog_name = Prompt.ask("[bold]Enter catalog name[/]", default=input.semantic_model_meta.catalog_name)
+            catalog_name = self.cli._prompt_input("Enter catalog name", default=input.semantic_model_meta.catalog_name)
             input.semantic_model_meta.catalog_name = catalog_name.strip()
 
-            database_name = Prompt.ask("[bold]Enter database name[/]", default=input.semantic_model_meta.database_name)
+            database_name = self.cli._prompt_input(
+                "Enter database name", default=input.semantic_model_meta.database_name
+            )
             input.semantic_model_meta.database_name = database_name.strip()
 
-            schema_name = Prompt.ask("[bold]Enter schema name[/]", default=input.semantic_model_meta.schema_name)
+            schema_name = self.cli._prompt_input("Enter schema name", default=input.semantic_model_meta.schema_name)
             input.semantic_model_meta.schema_name = schema_name.strip()
 
-            table_name = Prompt.ask("[bold]Enter table name[/]", default=input.semantic_model_meta.table_name)
+            table_name = self.cli._prompt_input("Enter table name", default=input.semantic_model_meta.table_name)
             input.semantic_model_meta.table_name = table_name.strip()
 
-            layer1 = Prompt.ask("[bold]Enter layer1 (business layer)[/]", default=input.semantic_model_meta.layer1)
+            layer1 = self.cli._prompt_input("Enter layer1 (business layer)", default=input.semantic_model_meta.layer1)
             input.semantic_model_meta.layer1 = layer1.strip()
 
-            layer2 = Prompt.ask("[bold]Enter layer2 (sub-layer)[/]", default=input.semantic_model_meta.layer2)
+            layer2 = self.cli._prompt_input("Enter layer2 (sub-layer)", default=input.semantic_model_meta.layer2)
             input.semantic_model_meta.layer2 = layer2.strip()
 
-            domain = Prompt.ask("[bold]Enter domain[/]", default=input.semantic_model_meta.domain)
+            domain = self.cli._prompt_input("Enter domain", default=input.semantic_model_meta.domain)
             input.semantic_model_meta.domain = domain.strip()
 
-            prompt_version = Prompt.ask("[bold]Enter prompt version[/]", default=input.prompt_version)
+            prompt_version = self.cli._prompt_input("Enter prompt version", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()
         elif isinstance(input, CompareInput):
             # Allow user to modify expectation
             if not input.expectation:
-                expectation = Prompt.ask("[bold]Enter expectation (SQL query or expected data)[/]", default="")
+                expectation = self.cli._prompt_input("Enter expectation (SQL query or expected data)", default="")
                 input.expectation = expectation.strip()
 
     def cmd_gen(self, args: str):
@@ -508,8 +510,8 @@ class AgentCommands:
             # 3. Human confirmation
             if need_confirm:
                 while True:
-                    choice = Prompt.ask(
-                        "[bold yellow]Do you want to execute this node? yes/no/edit[/]",
+                    choice = self.cli._prompt_input(
+                        "Do you want to execute this node? yes/no/edit",
                         choices=["y", "n", "e"],
                         default="y",
                     )
@@ -640,7 +642,7 @@ class AgentCommands:
             for i, table_schema in enumerate(self.workflow.context.table_schemas):
                 self.console.print(f"{i + 1}. {table_schema.to_dict()}")
 
-            tables = Prompt.ask("[bold]Enter table names you want to update the context for[/]", default="")
+            tables = self.cli._prompt_input("Enter table names you want to update the context for", default="")
             if not tables.strip():
                 self.console.print("[bold red]Error:[/] Table names are required")
                 return
@@ -667,7 +669,7 @@ class AgentCommands:
             self.cmd_dastart()
 
         # Get expectation from user
-        expectation = Prompt.ask("[bold blue]Enter expectation[/] (SQL query or expected data format)", default="")
+        expectation = self.cli._prompt_input("Enter expectation (SQL query or expected data format)", default="")
 
         if not expectation.strip():
             self.console.print("[bold red]Error:[/] Expectation cannot be empty")
@@ -683,7 +685,7 @@ class AgentCommands:
             self.cmd_dastart()
 
         # Get expectation from user
-        expectation = Prompt.ask("[bold blue]Enter expectation[/] (SQL query or expected data format)", default="")
+        expectation = self.cli._prompt_input("Enter expectation (SQL query or expected data format)", default="")
 
         if not expectation.strip():
             self.console.print("[bold red]Error:[/] Expectation cannot be empty")
@@ -760,7 +762,7 @@ class AgentCommands:
                     # Execute the streaming
                     asyncio.run(run_stream())
 
-                show_details = Prompt.ask("\n[bold blue]Show Full Action History? (y/N):[/]").strip().lower()
+                show_details = self.cli._prompt_input("Show Full Action History? (y/N)", default="n").strip().lower()
                 if show_details == "y":
                     self.console.print("\n[bold blue]Full Action History:[/]")
                     action_display.display_final_action_history(actions)

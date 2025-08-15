@@ -48,7 +48,7 @@ class ActionHistoryDisplay:
             ActionRole.USER: "🟢",  # Green for user
             ActionRole.WORKFLOW: "🟡",  # Yellow for workflow
         }
-        
+
         # Sliding window for managing content overflow
         self._action_window = None
         self._max_actions = None
@@ -74,11 +74,11 @@ class ActionHistoryDisplay:
         """Context manager to capture stdout/stderr during Live display to prevent interference"""
         original_stdout = sys.stdout
         original_stderr = sys.stderr
-        
+
         # Create string buffers to capture output
         stdout_buffer = StringIO()
         stderr_buffer = StringIO()
-        
+
         try:
             # Redirect stdout/stderr to buffers
             sys.stdout = stdout_buffer
@@ -88,11 +88,11 @@ class ActionHistoryDisplay:
             # Restore original stdout/stderr
             sys.stdout = original_stdout
             sys.stderr = original_stderr
-            
+
             # Optionally display captured output after Live session
             captured_stdout = stdout_buffer.getvalue()
             captured_stderr = stderr_buffer.getvalue()
-            
+
             if captured_stdout.strip():
                 logger.debug(f"Captured stdout during Live display: {captured_stdout}")
             if captured_stderr.strip():
@@ -350,11 +350,11 @@ class ActionHistoryDisplay:
 
     def display_streaming_actions(self, actions: List[ActionHistory]) -> "StreamingActionContext":
         """Create a live display for streaming actions with sliding window and output capture"""
-        
+
         # Initialize sliding window if needed
         if self._max_actions is None:
             self._max_actions = self._calculate_max_actions()
-        
+
         if self._action_window is None:
             self._action_window = deque(maxlen=self._max_actions)
         else:
@@ -429,12 +429,12 @@ class ActionHistoryDisplay:
 
 class StreamingActionContext:
     """Context manager for streaming actions display with output capture"""
-    
+
     def __init__(self, actions_list: List[ActionHistory], display_instance: ActionHistoryDisplay):
         self.actions = actions_list
         self.display = display_instance
         self.live = None
-        
+
     def __enter__(self):
         # Create the content renderer
         class StreamingContent:
@@ -447,7 +447,7 @@ class StreamingActionContext:
                 self.display._action_window.clear()
                 for action in self.actions:
                     self.display._action_window.append(action)
-                
+
                 # Always create the same panel structure to avoid duplicate headers
                 if not self.display._action_window:
                     content = "[dim]Waiting for actions...[/dim]"
@@ -460,9 +460,9 @@ class StreamingActionContext:
                         # Format the action line
                         action_line = self.display._format_streaming_action(action, dot)
                         lines.append(action_line)
-                    
+
                     content = "\n".join(lines)
-                    
+
                     # Add indicator if we're showing partial results
                     if len(self.actions) > len(self.display._action_window):
                         truncated_count = len(self.actions) - len(self.display._action_window)
@@ -473,14 +473,14 @@ class StreamingActionContext:
 
         # Create the content object that will update dynamically
         content = StreamingContent(self.actions, self.display)
-        
+
         # Create Live display
         self.live = Live(content, refresh_per_second=4)
-        
+
         # Start the live display
         self.live.start()
         return self
-        
+
     def __exit__(self, exc_type, exc_val, exc_tb):  # pylint: disable=unused-argument
         if self.live:
             self.live.stop()
