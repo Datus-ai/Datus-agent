@@ -8,8 +8,9 @@ from datus.utils.sql_utils import metadata_identifier
 
 
 class BaseSqlConnector(ABC):
-    def __init__(self, dialect: str, batch_size: int = 1024):
+    def __init__(self, dialect: str, batch_size: int = 1024, timeout_seconds: int = 30):
         self.batch_size = batch_size
+        self.timeout_seconds = timeout_seconds
         self.connection: Any = None
         self.dialect = dialect
         self.catalog_name = ""
@@ -72,6 +73,9 @@ class BaseSqlConnector(ABC):
 
     def execute_arrow_iterator(self, query: str, max_rows: int = 100) -> Iterator[ArrowTable]:
         raise NotImplementedError
+
+    def get_catalogs(self) -> List[str]:
+        return []
 
     def get_databases(self, catalog_name: str = "") -> List[str]:
         return []

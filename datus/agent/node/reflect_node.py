@@ -1,9 +1,10 @@
-from typing import Dict
+from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.reflect import evaluate_with_model
 from datus.agent.workflow import Workflow
 from datus.configuration.node_type import NodeType
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import STRATEGY_LIST, ReflectionInput, ReflectionResult, SQLContext, StrategyType
 from datus.utils.env import get_env_int
 from datus.utils.loggings import get_logger
@@ -52,6 +53,13 @@ class ReflectNode(Node):
 
     def execute(self):
         self.result = self._execute_reflect()
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute reflection with streaming support."""
+        async for action in self._reflect_stream(action_history_manager):
+            yield action
 
     def _execute_reflect(self) -> ReflectionResult:
         if not self.model:
@@ -159,3 +167,49 @@ class ReflectNode(Node):
         except Exception as e:
             logger.error(f"Error during {strategy} workflow modification: {e}")
             return {"success": False, "message": f"{strategy} workflow modification failed: {str(e)}"}
+
+    async def _reflect_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute reflection with streaming support and action history tracking."""
+        if not self.model:
+            logger.error("Model not available for reflection")
+            return
+
+        try:
+            # Reflection analysis action
+            reflection_action = ActionHistory(
+                action_id="reflection_analysis",
+                role=ActionRole.WORKFLOW,
+                messages="Analyzing SQL execution results and determining next steps",
+                action_type="reflection_analysis",
+                input={
+                    "sql_contexts_count": len(self.input.sql_context) if hasattr(self.input, "sql_context") else 0,
+                    "task_description": getattr(self.input.task_description, "task", "")
+                    if hasattr(self.input, "task_description")
+                    else "",
+                },
+                status=ActionStatus.PROCESSING,
+            )
+            yield reflection_action
+
+            # Execute reflection analysis
+            result = self._execute_reflect()
+
+            reflection_action.status = ActionStatus.SUCCESS if result.success else ActionStatus.FAILED
+            reflection_action.output = {
+                "success": result.success,
+                "strategy": result.strategy,
+                "has_details": bool(result.details),
+                "error": result.error if hasattr(result, "error") and result.error else None,
+            }
+
+            # Store result for later use
+            self.result = result
+
+            # Yield the updated action with final status
+            yield reflection_action
+
+        except Exception as e:
+            logger.error(f"Reflection streaming error: {str(e)}")
+            raise

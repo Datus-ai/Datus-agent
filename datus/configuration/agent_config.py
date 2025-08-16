@@ -10,6 +10,7 @@ from datus.storage.storage_cfg import check_storage_config, save_storage_config
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.path_utils import get_files_from_glob_pattern
 
 
 @dataclass
@@ -59,6 +60,7 @@ class ModelConfig:
     api_key: str
     model: str
     save_llm_trace: bool = False
+    enable_thinking: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -140,18 +142,36 @@ class AgentConfig:
         self.workflow_plan = workflow_config.get("plan", "reflection")
         self.custom_workflows = {k: v for k, v in workflow_config.items() if k != "plan"}
         self.namespaces: Dict[str, Dict[str, DbConfig]] = {}
-        for namespace, db_config in kwargs.get("namespace", {}).items():
+        self._init_namespace_config(kwargs.get("namespace", {}))
+
+        self.metric_meta = {k: MetricMeta.filter_kwargs(MetricMeta, v) for k, v in kwargs.get("metrics", {}).items()}
+
+    @property
+    def current_namespace(self) -> str:
+        return self._current_namespace
+
+    @current_namespace.setter
+    def current_namespace(self, value: str):
+        if not value:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message_args={"field_name": "namespace"},
+            )
+        if value not in self.namespaces:
+            raise DatusException(
+                code=ErrorCode.COMMON_UNSUPPORTED,
+                message_args={"field_name": "namespace", "your_value": value},
+            )
+        self._current_namespace = value
+        self.db_type = list(self.namespaces[self._current_namespace].values())[0].type
+
+    def _init_namespace_config(self, namespace_config: Dict[str, Any]):
+        for namespace, db_config in namespace_config.items():
             db_type = db_config.get("type", "")
             self.namespaces[namespace] = {}
             if db_type == DBType.SQLITE or db_type == DBType.DUCKDB:
                 if "path_pattern" in db_config:
-                    self.namespaces[namespace][namespace] = DbConfig(
-                        path_pattern=db_config["path_pattern"],
-                        type=db_type,
-                        uri=db_config.get("uri", ""),
-                        database=db_config.get("name", db_config["path_pattern"]),
-                        schema=db_config.get("schema", ""),
-                    )
+                    self._parse_glob_pattern(namespace, db_config["path_pattern"], db_type)
                 elif "dbs" in db_config:
                     for item in db_config.get("dbs", []):
                         self.namespaces[namespace][item["name"]] = DbConfig(
@@ -171,39 +191,49 @@ class AgentConfig:
                 name = db_config.get("name", namespace)
                 self.namespaces[namespace][name] = DbConfig.filter_kwargs(DbConfig, db_config)
 
-        self.metric_meta = {k: MetricMeta.filter_kwargs(MetricMeta, v) for k, v in kwargs.get("metrics", {}).items()}
-        logger.info(f"metric_meta: {self.metric_meta}")
-
-    @property
-    def current_namespace(self) -> str:
-        return self._current_namespace
-
-    @current_namespace.setter
-    def current_namespace(self, value: str):
-        if not value:
-            raise DatusException(
-                code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message_args={"field_name": "namespace"},
+    def _parse_glob_pattern(self, namespace: str, path_pattern: str, db_type: str):
+        any_db_path = False
+        for db_path in get_files_from_glob_pattern(path_pattern, db_type):
+            uri = db_path["uri"]
+            database_name = db_path["name"]
+            file_path = uri[len(f"{db_type}:///") :]
+            if not os.path.exists(file_path):
+                continue
+            any_db_path = True
+            child_config = DbConfig(
+                type=db_type,
+                uri=uri,
+                database=database_name,
+                schema="",
             )
-        if value not in self.namespaces:
+            self.namespaces[namespace][database_name] = child_config
+
+        if not any_db_path:
             raise DatusException(
-                code=ErrorCode.COMMON_UNSUPPORTED,
-                message_args={"field_name": "namespace", "your_value": value},
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    f"No available database files found under namespace {namespace}," f" path_pattern: `{path_pattern}`"
+                ),
             )
-        self._current_namespace = value
-        self.db_type = self.current_db_config().type
 
     def current_db_config(self, db_name: str = "") -> DbConfig:
         configs = self.namespaces[self._current_namespace]
         if len(configs) == 1:
             return list(configs.values())[0]
         else:
+            if not db_name:
+                return list(configs.values())[0]
             if db_name not in configs:
                 raise DatusException(
                     code=ErrorCode.COMMON_UNSUPPORTED,
                     message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
                 )
             return configs[db_name]
+
+    def current_db_configs(
+        self,
+    ) -> Dict[str, DbConfig]:
+        return self.namespaces[self._current_namespace]
 
     def current_metric_meta(self, metric_meta_name: str = "") -> MetricMeta:
         if not metric_meta_name:
@@ -393,6 +423,7 @@ def load_model_config(data: dict) -> ModelConfig:
         api_key=resolve_env(data["api_key"]),
         model=resolve_env(data["model"]),
         save_llm_trace=data.get("save_llm_trace", False),
+        enable_thinking=data.get("enable_thinking", False),
     )
 
 

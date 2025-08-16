@@ -15,7 +15,7 @@ def agent_config(namespace: str = "starrocks") -> AgentConfig:
 @pytest.fixture
 def connector(agent_config: AgentConfig) -> StarRocksConnector:
     db_manager = db_manager_instance(agent_config.namespaces)
-    connector = db_manager.get_conn(agent_config.current_namespace, agent_config.db_type)
+    connector = db_manager.get_conn(agent_config.current_namespace)
     assert isinstance(connector, StarRocksConnector)
     return connector
 
@@ -78,3 +78,9 @@ def test_exceptions(connector: StarRocksConnector):
 def test_get_databases(connector: StarRocksConnector):
     databases = connector.get_databases()
     assert len(databases) > 0
+
+
+def test_get_catalogs(connector: StarRocksConnector):
+    catalogs = connector.get_catalogs()
+    assert len(catalogs) > 0
+    assert "default_catalog" in catalogs

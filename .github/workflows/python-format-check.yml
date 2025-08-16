@@ -23,22 +23,25 @@ jobs:
       - name: Set up python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install formatters and linters
         run: |
-          pip install black==23.9.1
-          pip install flake8==6.1.0
-          pip install isort==5.12.0
+          pip install black==23.12.1
+          pip install flake8>=7.3.0
+          pip install isort>=6.0.1
 
       - name: Check formatting with Black
         run: |
-          black --line-length=120 --extend-exclude="/(mcp)/" --check .
+          black --line-length=120 --extend-exclude="/(mcp)/" --check datus/
+          black --line-length=120 --extend-exclude="/(mcp)/" --check tests/
 
       - name: Lint with flake8
         run: |
           flake8 --max-line-length=120 --extend-ignore=E203,W503 datus/
+          flake8 --max-line-length=120 --extend-ignore=E203,W503 tests/
 
       - name: Check imports with isort
         run: |
-          isort --check --profile=black --line-length=120 --extend-skip=mcp .
+          isort --check --diff  --profile=black --line-length=120 datus/
+          isort --check --diff  --profile=black --line-length=120 tests/

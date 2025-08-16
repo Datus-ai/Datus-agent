@@ -18,14 +18,17 @@ from prompt_toolkit.styles import Style
 from pygments.lexers.sql import SqlLexer
 from rich.box import SIMPLE_HEAD
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
+from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
 from datus.cli.context_commands import ContextCommands
-from datus.models.base import LLMBaseModel
+from datus.configuration.agent_config_loader import load_agent_config
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.constants import DBType
@@ -56,6 +59,7 @@ class DatusCLI:
         self.console_column_width = 16
         self.selected_catalog_path = ""
         self.selected_catalog_data = {}
+
         setup_exception_handler(
             console_logger=self.console.print, prefix_wrap_func=lambda x: f"[bold red]{x}[/bold red]"
         )
@@ -86,6 +90,8 @@ class DatusCLI:
                 }
             ),
         )
+
+        self.agent_config = load_agent_config(**vars(self.args))
 
         # Initialize agent commands handler
         self.agent_commands = AgentCommands(self)
@@ -119,10 +125,12 @@ class DatusCLI:
             "@tables": self.context_commands.cmd_tables,
             "@metrics": self.context_commands.cmd_metrics,
             "@context": self.context_commands.cmd_context,
-            "@context_screen": self.context_commands.cmd_context_screen,
+            "@screen": self.context_commands.cmd_context_screen,
             ".help": self._cmd_help,
             ".exit": self._cmd_exit,
             ".quit": self._cmd_exit,
+            ".clear": self._cmd_clear_chat,
+            ".chat_info": self._cmd_chat_info,
             # temporary commands for sqlite, remove after mcp server is ready
             ".databases": self._cmd_databases,
             ".database": self._cmd_switch_database,
@@ -132,12 +140,19 @@ class DatusCLI:
             ".table_schema": self._cmd_table_schema,
             ".show": self._cmd_show,
             ".namespace": self._cmd_switch_namespace,
+            ".mcp": self._cmd_mcp,
         }
 
         # Last executed SQL and result
         self.last_sql = None
         self.last_result = None
         self.chat_history = []
+
+        # Action history manager for tracking all CLI operations
+        self.actions = ActionHistoryManager()
+
+        # Persistent chat node for session continuity
+        self.chat_node = None
 
         self.current_db_name = getattr(args, "database", "")
         self.current_catalog = getattr(args, "catalog", "")
@@ -276,9 +291,17 @@ class DatusCLI:
         table = Table(show_header=True, header_style="bold green")
         table.add_column("Namespace")
         for namespace in self.agent_config.namespaces.keys():
-            table.add_row(namespace)
+            if self.agent_config.current_namespace == namespace:
+                table.add_row(f"[bold green]{namespace}[/]")
+            else:
+                table.add_row(namespace)
         self.console.print(table)
         return
+
+    def _cmd_mcp(self, args):
+        from datus.cli.mcp_commands import MCPCommands
+
+        MCPCommands(self).cmd_mcp(args)
 
     def _smart_display_table(
         self,
@@ -345,6 +368,10 @@ class DatusCLI:
             self._cmd_list_namespaces()
         else:
             self.agent_config.current_namespace = args.strip()
+            name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_namespace)
+            self.current_catalog = self.db_connector.catalog_name
+            self.current_db_name = self.db_connector.database_name if not name else name
+            self.current_schema = self.db_connector.schema_name
             self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_namespace}[/]")
 
     def _cmd_switch_database(self, args: str):
@@ -352,13 +379,11 @@ class DatusCLI:
         if not new_db:
             self.console.print("[bold red]Error:[/] Database name is required")
             return
-        self.current_db_name = new_db
         if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
-            self.db_connector = self.db_manager.get_conn(
-                self.agent_config.current_namespace, self.agent_config.db_type, self.current_db_name
-            )
+            self.db_connector = self.db_manager.get_conn(self.agent_config.current_namespace, self.current_db_name)
         self.db_connector.switch_context(database_name=new_db)
         self.console.print(f"[bold green]Database switched to: {self.current_db_name}[/]")
+        self.current_db_name = new_db
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """
@@ -408,9 +433,29 @@ class DatusCLI:
     def _execute_sql(self, sql: str, system: bool = False):
         """Execute a SQL query and display results."""
         logger.debug(f"Executing SQL query: '{sql}'")
+
+        # Create action for SQL execution
+        sql_action = ActionHistory.create_action(
+            role=ActionRole.USER,
+            action_type="sql_execution",
+            messages=f"Executing SQL: {sql[:100]}..." if len(sql) > 100 else f"Executing SQL: {sql}",
+            input_data={"sql": sql, "system": system},
+            status=ActionStatus.PROCESSING,
+        )
+        self.actions.add_action(sql_action)
+
         try:
             if not self.db_connector:
-                self.console.print("[bold red]Error:[/] No database connection. Please initialize a connection first.")
+                error_msg = "No database connection. Please initialize a connection first."
+                self.console.print(f"[bold red]Error:[/] {error_msg}")
+
+                # Update action with error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg},
+                    messages=f"SQL execution failed: {error_msg}",
+                )
                 return
 
             # Execute the query
@@ -419,24 +464,48 @@ class DatusCLI:
             start_time = time.time()
             result = self.db_connector.execute_arrow(sql)
             end_time = time.time()
+            exec_time = end_time - start_time
+
             if not result:
-                self.console.print("[bold red]Error:[/] No result from the query.")
+                error_msg = "No result from the query."
+                self.console.print(f"[bold red]Error:[/] {error_msg}")
+
+                # Update action with error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg},
+                    messages=f"SQL execution failed: {error_msg}",
+                )
+                return
 
             # Save for later reference
             self.last_sql = sql
             self.last_result = result
 
-            # Display results
+            # Display results and update action
             if result and result.success and hasattr(result.sql_return, "column_names"):
                 # Convert Arrow data to list of dictionaries for smart display
                 rows = result.sql_return.to_pylist()
                 self._smart_display_table(data=rows, columns=result.sql_return.column_names)
 
                 row_count = result.sql_return.num_rows
-                exec_time = end_time - start_time
                 self.console.print(f"[dim]Returned {row_count} rows in {exec_time:.2f} seconds[/]")
 
-                if not system and self.agent.workflow:  # Add to sql context if not system command
+                # Update action with success
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.SUCCESS,
+                    output={
+                        "row_count": row_count,
+                        "execution_time": exec_time,
+                        "columns": result.sql_return.column_names,
+                        "success": True,
+                    },
+                    messages=f"SQL executed successfully: {row_count} rows in {exec_time:.2f}s",
+                )
+
+                if not system and self.agent and self.agent.workflow:  # Add to sql context if not system command
                     new_record = SQLContext(
                         sql_query=sql,
                         sql_return=str(result.sql_return),
@@ -444,9 +513,20 @@ class DatusCLI:
                         explanation=f"Manual sql: Returned {row_count} rows in {exec_time:.2f} seconds",
                     )
                     self.agent.workflow.context.sql_contexts.append(new_record)
+
             elif result and not result.success:
-                self.console.print(f"[bold red]SQL Error:[/] {result.error}")
-                if not system and self.agent.workflow:  # Add to sql context if not system command
+                error_msg = result.error or "Unknown SQL error"
+                self.console.print(f"[bold red]SQL Error:[/] {error_msg}")
+
+                # Update action with SQL error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg, "sql_error": True},
+                    messages=f"SQL error: {error_msg}",
+                )
+
+                if not system and self.agent and self.agent.workflow:  # Add to sql context if not system command
                     new_record = SQLContext(
                         sql_query=sql,
                         sql_return=str(result.error) if result.error else "Unknown error",
@@ -454,17 +534,43 @@ class DatusCLI:
                         explanation="Manual sql",
                     )
                     self.agent.workflow.context.sql_contexts.append(new_record)
+
             elif result and isinstance(result.sql_return, str):
-                self.console.print(
-                    f"[bold red]Error:[/] Query execution failed - received string instead of Arrow data: "
-                    f"{result.error or 'Unknown error'}"
+                error_msg = (
+                    f"Query execution failed - received string instead of Arrow data: {result.error or 'Unknown error'}"
+                )
+                self.console.print(f"[bold red]Error:[/] {error_msg}")
+
+                # Update action with error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg, "result_type_error": True},
+                    messages=f"Result format error: {error_msg}",
                 )
             else:
-                self.console.print("[bold red]Error:[/] No valid result from the query.")
+                error_msg = "No valid result from the query."
+                self.console.print(f"[bold red]Error:[/] {error_msg}")
+
+                # Update action with error
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": error_msg},
+                    messages=f"No valid result: {error_msg}",
+                )
 
         except Exception as e:
             logger.error(f"SQL execution error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+            # Update action with exception
+            self.actions.update_action_by_id(
+                sql_action.action_id,
+                status=ActionStatus.FAILED,
+                output={"error": str(e), "exception": True},
+                messages=f"SQL execution exception: {str(e)}",
+            )
 
     def _execute_tool_command(self, cmd: str, args: str):
         """Execute a tool command (! prefix)."""
@@ -485,30 +591,139 @@ class DatusCLI:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 
     def _execute_chat_command(self, message: str):
-        """Execute a chat command (/ prefix)."""
+        """Execute a chat command (/ prefix) using ChatAgenticNode."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
 
-        if not self._check_agent_available():
-            return
-
         try:
-            # Add context to message
-            context = f"sql_task: {self.agent.workflow.task.to_dict()}"
-            if self.last_sql:
-                context += f"\nLast SQL: {self.last_sql} \nLast SQL Result: {self.last_result}"
+            # Import here to avoid circular imports
+            from datus.agent.node.chat_agentic_node import ChatAgenticNode
+            from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
-            prompt = f"{context}\n\nUser: {message}"
+            # Create chat input with current database context
+            chat_input = ChatNodeInput(
+                user_message=message,
+                catalog=self.current_catalog if self.current_catalog else None,
+                database=self.current_db_name if self.current_db_name else None,
+                db_schema=self.current_schema if self.current_schema else None,
+            )
 
-            # Create model using the same approach as the agent
-            llm_model = LLMBaseModel.create_model(model_name="default", agent_config=self.agent.global_config)
-            result = llm_model.generate(prompt)
-            self.console.print(result)
+            # Get or create persistent ChatAgenticNode
+            if self.chat_node is None:
+                self.console.print("[dim]Creating new chat session...[/]")
+                self.chat_node = ChatAgenticNode(
+                    namespace=self.agent_config.current_namespace,
+                    agent_config=self.agent_config,
+                )
+            else:
+                # Show session info for existing session
+                session_info = self.chat_node.get_session_info()
+                if session_info["session_id"]:
+                    session_display = (
+                        f"[dim]Using existing session: {session_info['session_id']} "
+                        f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+                    )
+                    self.console.print(session_display)
+
+            # Display streaming execution
+            self.console.print("[bold green]Processing chat request...[/]")
+
+            # Initialize action history display for incremental actions only
+            action_display = ActionHistoryDisplay(self.console)
+            incremental_actions = []
+
+            # Run streaming execution with real-time display
+            import asyncio
+
+            # Create a live display like the !reason command (shows only new actions)
+            with action_display.display_streaming_actions(incremental_actions):
+                # Run the async streaming method
+                async def run_chat_stream():
+                    async for action in self.chat_node.execute_stream(chat_input, self.actions):
+                        incremental_actions.append(action)
+                        # Add delay to make the streaming visible
+                        await asyncio.sleep(0.5)
+
+                # Execute the streaming chat
+                asyncio.run(run_chat_stream())
+
+            # Display final response from the last successful action
+            if incremental_actions:
+                final_action = incremental_actions[-1]
+
+                if (
+                    final_action.output
+                    and isinstance(final_action.output, dict)
+                    and final_action.status == ActionStatus.SUCCESS
+                ):
+                    # Parse response to extract clean SQL and output
+                    sql = None
+                    clean_output = None
+
+                    # First check if SQL and response are directly available
+                    sql = final_action.output.get("sql")
+                    response = final_action.output.get("response")
+
+                    # If response contains debug format, extract from it
+                    if isinstance(response, dict) and "raw_output" in response:
+                        extracted_sql, extracted_output = self._extract_sql_and_output_from_content(
+                            response["raw_output"]
+                        )
+                        sql = sql or extracted_sql  # Use extracted if not already available
+                        clean_output = extracted_output
+                    elif isinstance(response, str):
+                        clean_output = response
+
+                    # If we still don't have clean output, check other actions for content
+                    if not clean_output:
+                        for action in reversed(incremental_actions):
+                            if (
+                                action.status == ActionStatus.SUCCESS
+                                and action.output
+                                and isinstance(action.output, dict)
+                            ):
+                                content = action.output.get("content")
+                                if content:
+                                    extracted_sql, extracted_output = self._extract_sql_and_output_from_content(content)
+                                    sql = sql or extracted_sql
+                                    clean_output = extracted_output or content
+                                    break
+
+                    # Display using simple, focused methods
+                    if sql:
+                        self._display_sql_with_copy(sql)
+
+                    if clean_output:
+                        self._display_markdown_response(clean_output)
+
+            # Add all actions from chat to our main action history
+            self.actions.actions.extend(incremental_actions)
+
+            # Update chat history for potential context in future interactions
+            self.chat_history.append(
+                {
+                    "user": message,
+                    "response": incremental_actions[-1].output.get("response", "")
+                    if incremental_actions and incremental_actions[-1].output
+                    else "",
+                    "actions": len(incremental_actions),
+                }
+            )
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] Failed to generate response: {str(e)}")
+            self.console.print(f"[bold red]Error:[/] Failed to process chat request: {str(e)}")
+
+            # Add error action to history
+            error_action = ActionHistory.create_action(
+                role=ActionRole.USER,
+                action_type="chat_error",
+                messages=f"Chat command failed: {str(e)}",
+                input_data={"message": message},
+                status=ActionStatus.FAILED,
+            )
+            self.actions.add_action(error_action)
 
     def _execute_internal_command(self, cmd: str, args: str):
         """Execute an internal command (. prefix)."""
@@ -739,7 +954,7 @@ class DatusCLI:
             ("@tables table_name", "Display table details"),
             ("@metrics", "Display metrics"),
             ("@context [type]", "Display the current context in the terminal"),
-            ("@context_screen [type]", "Display the current context in an interactive screen"),
+            ("@screen [type]", "Display the current context in an interactive screen"),
         ]
         for cmd, desc in context_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
@@ -757,11 +972,22 @@ class DatusCLI:
         internal_cmds = [
             (".help", "Display this help message"),
             (".exit, .quit", "Exit the CLI"),
+            (".clear", "Clear console and chat session"),
+            (".chat_info", "Show current chat session information"),
             (".databases", "List all databases"),
             (".database database_name", "Switch current database"),
             (".tables", "List all tables"),
             (".schemas table_name", "Show schema information"),
             (".namespace namespace", "Switch current namespace"),
+            (".mcp", "Manage MCP (Model Configuration Protocol) servers"),
+            ("     .mcp list", "List all MCP servers"),
+            (
+                "     .mcp add --transport [stdio/sse/http] <name> <command> [args1 args2 ...]",
+                "Add a new MCP server configuration",
+            ),
+            ("     .mcp remove <name>", "Remove an MCP server configuration"),
+            ("     .mcp check <name>", "Check connectivity to an MCP server"),
+            ("     .mcp call <server.tool> [params]", "Call a tool on an MCP server"),
         ]
         for cmd, desc in internal_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
@@ -777,6 +1003,34 @@ class DatusCLI:
             except Exception as e:
                 logger.warning(f"Database connection closed failed, reason:{e}")
         sys.exit(0)
+
+    def _cmd_clear_chat(self, args: str):
+        """Clear the console screen and chat session."""
+        # Clear the console screen using Rich
+        self.console.clear()
+
+        # Clear the chat session
+        if self.chat_node:
+            self.chat_node.delete_session()
+            self.console.print("[green]Console and chat session cleared.[/]")
+        else:
+            self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
+        self.chat_node = None
+
+    def _cmd_chat_info(self, args: str):
+        """Display information about the current chat session."""
+        if self.chat_node:
+            session_info = self.chat_node.get_session_info()
+            if session_info["session_id"]:
+                self.console.print("[bold green]Chat Session Info:[/]")
+                self.console.print(f"  Session ID: {session_info['session_id']}")
+                self.console.print(f"  Active: {session_info['active']}")
+                self.console.print(f"  Token Count: {session_info['token_count']}")
+                self.console.print(f"  Action Count: {session_info['action_count']}")
+            else:
+                self.console.print("[yellow]Chat node exists but no active session.[/]")
+        else:
+            self.console.print("[yellow]No active chat session.[/]")
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:
@@ -869,6 +1123,8 @@ class DatusCLI:
         self.db_connector.switch_context(
             catalog_name=self.current_catalog, database_name=self.current_db_name, schema_name=schema_name
         )
+        self.console.print(f"[bold green]Schema switched to: {self.current_db_name}[/]")
+        self.current_schema = schema_name
 
     def _cmd_table_schema(self, args: str):
         """Show schema information for tables."""
@@ -879,8 +1135,12 @@ class DatusCLI:
         try:
             if args.strip():
                 table_name = args.strip()
-                # sql = f"PRAGMA table_info('{table_name}')"
-                result = self.db_connector.get_schema(table_name=table_name)
+                result = self.db_connector.get_schema(
+                    catalog_name=self.current_db_name,
+                    database_name=self.current_db_name,
+                    schema_name=self.current_schema,
+                    table_name=table_name,
+                )
                 self.last_result = result
 
                 # Display schema for the specific table
@@ -892,7 +1152,7 @@ class DatusCLI:
                 schema_table.add_column("Column Position")
                 schema_table.add_column("Name")
                 schema_table.add_column("Type")
-                schema_table.add_column("NotNull")
+                schema_table.add_column("Nullable")
                 schema_table.add_column("Default")
                 schema_table.add_column("PK")
 
@@ -901,8 +1161,8 @@ class DatusCLI:
                         str(row.get("cid", "")),
                         str(row.get("name", "")),
                         str(row.get("type", "")),
-                        str(row.get("notnull", "")),
-                        str(row.get("dflt_value", "")) if row.get("dflt_value") is not None else "",
+                        str(row.get("nullable", "")),
+                        str(row.get("default_value", "")) if row.get("default_value") is not None else "",
                         str(row.get("pk", "")),
                     )
 
@@ -981,19 +1241,80 @@ Type '.help' for a list of commands or '.exit' to quit.
 
             self.console.print(db_info)
             self.console.print("Type SQL statements or use ! @ . commands to interact.")
-        # else:
-        #    self.console.print("[yellow]Warning: No database connection initialized.[/]")
+        else:
+            self.console.print("[yellow]Warning: No database connection initialized.[/]")
+
+    def _prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
+        """
+        Unified input method using prompt_toolkit to avoid conflicts with rich.Prompt.ask().
+
+        Args:
+            message: The prompt message to display
+            default: Default value if user presses Enter without input
+            choices: List of valid choices (validates input)
+            multiline: Whether to allow multiline input
+
+        Returns:
+            User input string or default value
+        """
+        try:
+            from prompt_toolkit import prompt
+            from prompt_toolkit.formatted_text import HTML
+            from prompt_toolkit.validation import ValidationError, Validator
+
+            # Format the prompt message
+            if default:
+                prompt_text = f"{message} ({default}): "
+            else:
+                prompt_text = f"{message}: "
+
+            # Create validator for choices if provided
+            validator = None
+            if choices:
+
+                class ChoiceValidator(Validator):
+                    def validate(self, document):
+                        text = document.text.strip()
+                        if text and text not in choices:
+                            raise ValidationError(message=f"Please choose from: {', '.join(choices)}")
+
+                validator = ChoiceValidator()
+
+                # Add choices to prompt text
+                prompt_text = f"{message} ({'/'.join(choices)}): "
+                if default:
+                    prompt_text = f"{message} ({'/'.join(choices)}) ({default}): "
+
+            # Use the existing session for consistency but create a temporary one for this input
+            from prompt_toolkit.history import InMemoryHistory
+
+            result = prompt(
+                HTML(f"<ansigreen><b>{prompt_text}</b></ansigreen>"),
+                default=default,
+                validator=validator,
+                multiline=multiline,
+                history=InMemoryHistory(),  # Separate history for sub-prompts
+                style=self.session.style,  # Use same style as main session
+            )
+
+            return result.strip()
+
+        except (KeyboardInterrupt, EOFError):
+            # Handle Ctrl+C or Ctrl+D gracefully
+            self.console.print("\n[yellow]Input cancelled[/]")
+            return default
+        except Exception as e:
+            logger.error(f"Input prompt error: {e}")
+            self.console.print(f"[bold red]Input error:[/] {str(e)}")
+            return default
 
     def _init_connection(self):
         """Initialize database connection."""
-        self.current_db_name
         current_namespace = self.agent_config.current_namespace
         if not self.current_db_name:
             self.current_db_name, self.db_connector = self.db_manager.first_conn_with_name(current_namespace)
         else:
-            self.db_connector = self.db_manager.get_conn(
-                current_namespace, self.agent_config.db_type, self.current_db_name
-            )
+            self.db_connector = self.db_manager.get_conn(current_namespace, self.current_db_name)
         if not self.db_connector:
             self.console.print("[bold red]Error:[/] No database connection.")
             return
@@ -1006,3 +1327,136 @@ Type '.help' for a list of commands or '.exit' to quit.
         except Exception as e:
             self.console.print(f"[bold red]Connection Error:[/] {str(e)}")
             raise
+
+    def _display_sql_with_copy(self, sql: str):
+        """
+        Display SQL in a formatted panel with automatic clipboard copy functionality.
+
+        Args:
+            sql: SQL query string to display and copy
+        """
+        try:
+            # Store SQL for reference
+            self.last_sql = sql
+
+            # Try to copy to clipboard
+            copied_indicator = ""
+            try:
+                # Try pyperclip first
+                try:
+                    import pyperclip
+
+                    pyperclip.copy(sql)
+                    copied_indicator = " (copied)"
+                except ImportError:
+                    # Fallback to system clipboard commands
+                    import platform
+                    import subprocess
+
+                    system = platform.system()
+                    if system == "Darwin":  # macOS
+                        subprocess.run("pbcopy", input=sql.encode(), check=True)
+                        copied_indicator = " (copied)"
+                    elif system == "Linux":
+                        # Try xclip or xsel
+                        try:
+                            subprocess.run(["xclip", "-selection", "clipboard"], input=sql.encode(), check=True)
+                            copied_indicator = " (copied)"
+                        except FileNotFoundError:
+                            try:
+                                subprocess.run(["xsel", "--clipboard", "--input"], input=sql.encode(), check=True)
+                                copied_indicator = " (copied)"
+                            except FileNotFoundError:
+                                pass  # No clipboard tool available
+                    elif system == "Windows":
+                        subprocess.run("clip", input=sql.encode(), shell=True, check=True)
+                        copied_indicator = " (copied)"
+            except Exception as e:
+                logger.debug(f"Failed to copy SQL to clipboard: {e}")
+                # If clipboard fails, don't show the indicator
+
+            # Display SQL in a beautiful syntax-highlighted panel
+            sql_syntax = Syntax(sql, "sql", theme="default", line_numbers=False)
+            sql_panel = Panel(
+                sql_syntax,
+                title=f"Generated SQL{copied_indicator}",
+                title_align="left",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+
+            self.console.print()  # Add spacing
+            self.console.print(sql_panel)
+
+        except Exception as e:
+            logger.error(f"Error displaying SQL: {e}")
+            # Fallback to simple display
+            self.console.print(f"\n[bold cyan]Generated SQL:[/]\n```sql\n{sql}\n```")
+
+    def _display_markdown_response(self, response: str):
+        """
+        Display clean response content as formatted markdown.
+
+        Args:
+            response: Clean response text to display as markdown
+        """
+        try:
+            # Display as markdown with proper formatting
+            markdown_content = Markdown(response)
+            self.console.print()  # Add spacing
+            self.console.print(markdown_content)
+
+        except Exception as e:
+            logger.error(f"Error displaying markdown: {e}")
+            # Fallback to plain text display
+            self.console.print(f"\n[bold blue]Assistant:[/] {response}")
+
+    def _extract_sql_and_output_from_content(self, content: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Extract SQL and output from content string that might contain JSON or debug format.
+
+        Args:
+            content: Content string to parse
+
+        Returns:
+            Tuple of (sql_string, output_string) - both can be None if not found
+        """
+        try:
+            import json
+            import re
+
+            # Try to extract JSON from various patterns
+            # Pattern 1: json\n{...} format
+            json_match = re.search(r"json\s*\n\s*({.*?})\s*$", content, re.DOTALL)
+            if json_match:
+                try:
+                    json_content = json.loads(json_match.group(1))
+                    sql = json_content.get("sql")
+                    output = json_content.get("output")
+                    if output:
+                        output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                    return sql, output
+                except json.JSONDecodeError:
+                    pass
+
+            # Pattern 2: Direct JSON in content
+            try:
+                json_content = json.loads(content)
+                sql = json_content.get("sql")
+                output = json_content.get("output")
+                if output:
+                    output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                return sql, output
+            except json.JSONDecodeError:
+                pass
+
+            # Pattern 3: Look for SQL code blocks
+            sql_pattern = r"```sql\s*(.*?)\s*```"
+            sql_matches = re.findall(sql_pattern, content, re.DOTALL | re.IGNORECASE)
+            sql = sql_matches[0].strip() if sql_matches else None
+
+            return sql, None
+
+        except Exception as e:
+            logger.warning(f"Failed to extract SQL and output from content: {e}")
+            return None, None

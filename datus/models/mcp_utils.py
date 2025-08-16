@@ -10,6 +10,8 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def _safe_connect_server(server_name: str, server, max_retries: int = 3):
     """Context-managed safe MCP server connection"""
+    provider = None
+
     for attempt in range(max_retries):
         try:
             logger.debug(f"Attempting to connect to MCP server {server_name} (attempt {attempt + 1}/{max_retries})")
@@ -18,18 +20,36 @@ async def _safe_connect_server(server_name: str, server, max_retries: int = 3):
             # async context here ensures lifecycle is tracked
             async with provider:
                 logger.debug(f"MCP server {server_name} connected successfully")
-                yield provider
+                try:
+                    yield provider
+                except GeneratorExit:
+                    # Handle proper cleanup on generator exit
+                    logger.debug(f"MCP server {server_name} generator being closed")
+                    raise
                 return  # only yield once; exit after use
 
         except asyncio.TimeoutError:
             logger.error(f"Timeout connecting to MCP server {server_name} (attempt {attempt + 1})")
             if attempt == max_retries - 1:
                 raise
+        except asyncio.CancelledError:
+            # Handle cancellation during connection attempts
+            logger.debug(f"MCP server {server_name} connection cancelled")
+            raise
+        except GeneratorExit:
+            # Re-raise GeneratorExit to ensure proper cleanup
+            raise
         except Exception as e:
             logger.error(f"Failed to connect MCP server {server_name} (attempt {attempt + 1}): {str(e)}")
             if attempt == max_retries - 1:
                 raise
-            await asyncio.sleep(1.0)
+
+            try:
+                await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                # Handle cancellation during retry sleep
+                logger.debug(f"MCP server {server_name} retry cancelled")
+                raise
 
 
 @asynccontextmanager

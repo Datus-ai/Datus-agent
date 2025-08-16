@@ -9,14 +9,14 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import anthropic
 import httpx
-from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, Usage
+from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, SQLiteSession, Usage
+from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_anthropic, wrap_openai
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from pydantic import AnyUrl
 
 from datus.models.base import LLMBaseModel
-from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
@@ -25,6 +25,28 @@ from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+# Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue
+try:
+    from agents.models.chatcmpl_stream_handler import ResponseTextDeltaEvent
+    from pydantic import Field
+
+    # Get the original fields and make logprobs optional
+    original_fields = ResponseTextDeltaEvent.model_fields.copy()
+    if "logprobs" in original_fields:
+        # Create a new field annotation that allows None
+        original_fields["logprobs"] = Field(default=None)
+
+        # Rebuild the model with optional logprobs
+        ResponseTextDeltaEvent.__annotations__["logprobs"] = Optional[Any]
+        ResponseTextDeltaEvent.model_fields["logprobs"] = Field(default=None)
+        ResponseTextDeltaEvent.model_rebuild()
+
+        logger.debug("Successfully patched ResponseTextDeltaEvent to make logprobs optional")
+except ImportError:
+    logger.warning("Could not import ResponseTextDeltaEvent - patch not applied")
+except Exception as e:
+    logger.warning(f"Could not patch ResponseTextDeltaEvent: {e}")
 
 
 def classify_api_error(error: Exception) -> tuple[ErrorCode, bool]:
@@ -139,6 +161,8 @@ class ClaudeModel(LLMBaseModel):
                 )
             )
 
+        # Session manager is initialized lazily in the base class via property
+
     def generate(self, prompt: Any, **kwargs) -> str:
         """Generate a response from the Claude model.
 
@@ -213,9 +237,59 @@ class ClaudeModel(LLMBaseModel):
                 pass
             return {}
 
-    def generate_with_tools(self, prompt: str, tools: List[Any], **kwargs) -> Dict:
-        # flow control and context cache here
-        pass
+    async def generate_with_tools(
+        self,
+        prompt: str,
+        mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
+        tools: Optional[List[Any]] = None,
+        instruction: str = "",
+        output_type: type = str,
+        max_turns: int = 10,
+        session: Optional[SQLiteSession] = None,
+        **kwargs,
+    ) -> Dict:
+        """Generate response with unified tool support."""
+        # For now, primarily support MCP servers as that's what the existing code uses
+        if not mcp_servers:
+            # Fallback to basic generation if no tools
+            response = self.generate(f"{instruction}\n\n{prompt}", **kwargs)
+            return {"content": response, "sql_contexts": []}
+
+        # If session is provided, use the session-aware implementation
+        if session:
+            return await self._generate_with_mcp_session(
+                prompt, mcp_servers, instruction, output_type, max_turns, session, **kwargs
+            )
+
+        # Use existing generate_with_mcp implementation for non-session calls
+        return await self.generate_with_mcp(prompt, mcp_servers, instruction, output_type, max_turns, **kwargs)
+
+    async def generate_with_tools_stream(
+        self,
+        prompt: str,
+        mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
+        tools: Optional[List[Any]] = None,
+        instruction: str = "",
+        output_type: type = str,
+        max_turns: int = 10,
+        session: Optional[SQLiteSession] = None,
+        action_history_manager: Optional[ActionHistoryManager] = None,
+        **kwargs,
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Generate response with streaming and tool support."""
+        if action_history_manager is None:
+            action_history_manager = ActionHistoryManager()
+
+        # For now, primarily support MCP servers
+        if not mcp_servers:
+            # Basic streaming not implemented for Claude without tools
+            return
+
+        # Use existing generate_with_mcp_stream implementation
+        async for action in self.generate_with_mcp_stream(
+            prompt, mcp_servers, instruction, output_type, max_turns, action_history_manager, **kwargs
+        ):
+            yield action
 
     async def generate_with_mcp(
         self,
@@ -250,198 +324,150 @@ class ClaudeModel(LLMBaseModel):
 
         json._default_encoder = CustomJSONEncoder()
 
-        client = "anthropic"
-        # TODO use config to switch client
-        if client == "openai":
-            # Create async OpenAI client
-            logger.debug(f"Creating async OpenAI client with base_url: " f"{self.api_base}, model: {self.model_name}")
-            async_client = wrap_openai(
-                AsyncOpenAI(
-                    api_key=self.api_key,
-                    base_url=self.api_base,
-                )
-            )
+        # Create async Anthropic client
+        logger.debug(f"Creating async Anthropic client with base_url: " f"{self.api_base}, model: {self.model_name}")
+        try:
+            all_tools = []
 
-            model_params = {"model": self.model_name}
-            async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+            # Use context manager to manage multiple MCP servers
+            async with multiple_mcp_servers(mcp_servers) as connected_servers:
+                # Get all tools
+                for server_name, connected_server in connected_servers.items():
+                    try:
+                        # Create minimal agent and run context for the new interface
+                        agent = Agent(name="mcp-tools-agent")
+                        run_context = RunContextWrapper(context=None, usage=Usage())
+                        mcp_tools = await connected_server.list_tools(run_context, agent)
+                        all_tools.extend(mcp_tools)
+                        logger.debug(f"Retrieved {len(mcp_tools)} tools from {server_name}")
+                    except Exception as e:
+                        logger.error(f"Error getting tools from {server_name}: {str(e)}")
+                        continue
 
-            logger.debug("Starting run_agent with OpenAI")
-            try:
-                # Use context manager to manage multiple MCP servers
-                async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                    logger.debug("MCP servers started successfully")
+                logger.debug(f"Retrieved {len(all_tools)} tools from MCP servers")
 
-                    agent = Agent(
-                        name=kwargs.pop("agent_name", "MCP_Agent"),
-                        instructions=instruction,
-                        mcp_servers=list(connected_servers.values()),
-                        output_type=output_type,
-                        model=async_model,
-                    )
-                    logger.debug(f"Agent created with name: {agent.name}")
-
-                    logger.debug(f"Running agent with max_turns: {max_turns}")
-                    result = await Runner.run(agent, input=prompt, max_turns=max_turns)
-
-                    logger.debug("Agent execution completed")
-                    # Wrap in object so .content and .sql_contexts are accessible
-                    return {
-                        "content": result.final_output,
-                        "sql_contexts": extract_sql_contexts(result),
+                tools = convert_tools_for_anthropic(all_tools)
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": f"{instruction}\n\n{prompt}"}],
                     }
-            except Exception as e:
-                logger.error(f"Error in run_agent: {str(e)}")
-                raise
+                ]
+                tool_call_cache = {}
+                sql_contexts = []
+                final_content = ""
 
-        elif client == "anthropic":
-            # Create async Anthropic client
-            logger.debug(
-                f"Creating async Anthropic client with base_url: " f"{self.api_base}, model: {self.model_name}"
-            )
-            try:
-                all_tools = []
+                # Execute conversation loop
+                for turn in range(max_turns):
+                    logger.debug(f"Turn {turn + 1}/{max_turns}")
 
-                # Use context manager to manage multiple MCP servers
-                async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                    # Get all tools
-                    for server_name, connected_server in connected_servers.items():
-                        try:
-                            # Create minimal agent and run context for the new interface
-                            agent = Agent(name="mcp-tools-agent")
-                            run_context = RunContextWrapper(context=None, usage=Usage())
-                            mcp_tools = await connected_server.list_tools(run_context, agent)
-                            all_tools.extend(mcp_tools)
-                            logger.debug(f"Retrieved {len(mcp_tools)} tools from {server_name}")
-                        except Exception as e:
-                            logger.error(f"Error getting tools from {server_name}: {str(e)}")
-                            continue
+                    response = self.anthropic_client.messages.create(
+                        model=self.model_name,
+                        system=instruction,
+                        messages=wrap_prompt_cache(messages),
+                        tools=tools,
+                        max_tokens=kwargs.get("max_tokens", 20480),
+                        temperature=kwargs.get("temperature", 0.7),
+                    )
 
-                    logger.debug(f"Retrieved {len(all_tools)} tools from MCP servers")
+                    message = response.content
 
-                    tools = convert_tools_for_anthropic(all_tools)
-                    messages = [
-                        {
-                            "role": "user",
-                            "content": [{"type": "text", "text": f"{instruction}\n\n{prompt}"}],
-                        }
-                    ]
-                    tool_call_cache = {}
-                    sql_contexts = []
-                    final_content = ""
+                    # If no tool calls, conversation is complete
+                    if not any(block.type == "tool_use" for block in message):
+                        # Save final text response
+                        final_content = "\n".join([block.text for block in message if block.type == "text"])
+                        logger.debug(f"No tool calls, conversation completed: {final_content}")
+                        break
 
-                    # Execute conversation loop
-                    for turn in range(max_turns):
-                        logger.debug(f"Turn {turn + 1}/{max_turns}")
+                    for block in message:
+                        if block.type == "tool_use":
+                            logger.debug(f"Executing tool: {block.name} with input: {block.input}")
+                            tool_executed = False
 
-                        response = self.anthropic_client.messages.create(
-                            model=self.model_name,
-                            system=instruction,
-                            messages=wrap_prompt_cache(messages),
-                            tools=tools,
-                            max_tokens=kwargs.get("max_tokens", 20480),
-                            temperature=kwargs.get("temperature", 0.7),
-                        )
+                            for server_name, connected_server in connected_servers.items():
+                                try:
+                                    # Create minimal agent and run context for the new interface
+                                    agent = Agent(name="mcp-claude-agent")
+                                    run_context = RunContextWrapper(context=None, usage=Usage())
+                                    tmp_tools = await connected_server.list_tools(run_context, agent)
+                                    if any(tool.name == block.name for tool in tmp_tools):
+                                        tool_result = await connected_server.call_tool(
+                                            tool_name=block.name,
+                                            arguments=json.loads(json.dumps(block.input)),
+                                        )
+                                        tool_call_cache[block.id] = tool_result
+                                        tool_executed = True
+                                        logger.debug(f"Tool {block.name} executed successfully on {server_name}")
+                                        break
+                                except Exception as e:
+                                    logger.error(f"Error executing tool {block.name} on {server_name}: {str(e)}")
+                                    continue
 
-                        message = response.content
+                            if not tool_executed:
+                                logger.error(f"Tool {block.name} could not be executed on any server")
 
-                        # If no tool calls, conversation is complete
-                        if not any(block.type == "tool_use" for block in message):
-                            # Save final text response
-                            final_content = "\n".join([block.text for block in message if block.type == "text"])
-                            logger.debug(f"No tool calls, conversation completed: {final_content}")
-                            break
+                    for block in message:
+                        content = []
+                        if block.type == "text":
+                            content.append({"type": "text", "content": block.text})
+                        elif block.type == "tool_use":
+                            content.append(
+                                {
+                                    "type": "tool_use",
+                                    "id": block.id,
+                                    "name": block.name,
+                                    "input": block.input,
+                                }
+                            )
+                            messages.append({"role": "assistant", "content": content})
 
-                        for block in message:
-                            if block.type == "tool_use":
-                                logger.debug(f"Executing tool: {block.name} with input: {block.input}")
-                                tool_executed = False
-
-                                for server_name, connected_server in connected_servers.items():
-                                    try:
-                                        # Create minimal agent and run context for the new interface
-                                        agent = Agent(name="mcp-claude-agent")
-                                        run_context = RunContextWrapper(context=None, usage=Usage())
-                                        tmp_tools = await connected_server.list_tools(run_context, agent)
-                                        if any(tool.name == block.name for tool in tmp_tools):
-                                            tool_result = await connected_server.call_tool(
-                                                tool_name=block.name,
-                                                arguments=json.loads(json.dumps(block.input)),
-                                            )
-                                            tool_call_cache[block.id] = tool_result
-                                            tool_executed = True
-                                            logger.debug(f"Tool {block.name} executed successfully on {server_name}")
-                                            break
-                                    except Exception as e:
-                                        logger.error(f"Error executing tool {block.name} on {server_name}: {str(e)}")
-                                        continue
-
-                                if not tool_executed:
-                                    logger.error(f"Tool {block.name} could not be executed on any server")
-
-                        for block in message:
-                            content = []
-                            if block.type == "text":
-                                content.append({"type": "text", "content": block.text})
-                            elif block.type == "tool_use":
-                                content.append(
+                            if block.id in tool_call_cache:
+                                sql_result = tool_call_cache[block.id].content[0].text
+                                # Use "Error" to determine whether the execution was successful,
+                                # because there's no way to judge it within MCP.
+                                if "Error" not in sql_result and block.name == "read_query":
+                                    sql_context = SQLContext(
+                                        sql_query=block.input["query"],
+                                        sql_return=sql_result,
+                                        row_count=None,
+                                    )
+                                    sql_contexts.append(sql_context)
+                                messages.append(
                                     {
-                                        "type": "tool_use",
-                                        "id": block.id,
-                                        "name": block.name,
-                                        "input": block.input,
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "tool_result",
+                                                "tool_use_id": block.id,
+                                                "content": sql_result,
+                                            }
+                                        ],
                                     }
                                 )
-                                messages.append({"role": "assistant", "content": content})
-
-                                if block.id in tool_call_cache:
-                                    sql_result = tool_call_cache[block.id].content[0].text
-                                    # Use "Error" to determine whether the execution was successful,
-                                    # because there's no way to judge it within MCP.
-                                    if "Error" not in sql_result and block.name == "read_query":
-                                        sql_context = SQLContext(
-                                            sql_query=block.input["query"],
-                                            sql_return=sql_result,
-                                            row_count=None,
-                                        )
-                                        sql_contexts.append(sql_context)
-                                    messages.append(
-                                        {
-                                            "role": "user",
-                                            "content": [
-                                                {
-                                                    "type": "tool_result",
-                                                    "tool_use_id": block.id,
-                                                    "content": sql_result,
-                                                }
-                                            ],
-                                        }
-                                    )
-                                else:
-                                    # If tool execution failed, add error message
-                                    error_message = f"Tool {block.name} execution failed"
-                                    messages.append(
-                                        {
-                                            "role": "user",
-                                            "content": [
-                                                {
-                                                    "type": "tool_result",
-                                                    "tool_use_id": block.id,
-                                                    "content": error_message,
-                                                }
-                                            ],
-                                        }
-                                    )
                             else:
-                                raise ValueError("Unknown block")
+                                # If tool execution failed, add error message
+                                error_message = f"Tool {block.name} execution failed"
+                                messages.append(
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "tool_result",
+                                                "tool_use_id": block.id,
+                                                "content": error_message,
+                                            }
+                                        ],
+                                    }
+                                )
+                        else:
+                            raise ValueError("Unknown block")
 
-                    logger.debug("Agent execution completed")
-                    return {"content": final_content, "sql_contexts": sql_contexts}
+                logger.debug("Agent execution completed")
+                return {"content": final_content, "sql_contexts": sql_contexts}
 
-            except Exception as e:
-                logger.error(f"Error in generate_with_mcp: {str(e)}")
-                raise
-        else:
-            raise ValueError(f"Unsupported client: {client}")
+        except Exception as e:
+            logger.error(f"Error in generate_with_mcp: {str(e)}")
+            raise
 
     async def generate_with_mcp_stream(
         self,
@@ -503,6 +529,10 @@ class ClaudeModel(LLMBaseModel):
                     # If we reach here, streaming completed successfully
                     break
 
+            except MaxTurnsExceeded as e:
+                logger.error(f"Max turns exceeded: {str(e)}")
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+
             except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
                 error_code, is_retryable = classify_api_error(e)
 
@@ -536,9 +566,6 @@ class ClaudeModel(LLMBaseModel):
         # We can use a simple approximation of ~4 characters per token
         return int(len(prompt) / 4 + 0.5)
 
-    def set_context(self, workflow=None, current_node=None):
-        pass
-
     def _setup_async_agent(self, instruction: str, mcp_servers: Dict, output_type: dict, **kwargs):
         """Setup async client and agent."""
         async_client = wrap_openai(AsyncOpenAI(api_key=self.api_key, base_url=self.api_base + "/v1"))
@@ -555,20 +582,85 @@ class ClaudeModel(LLMBaseModel):
         )
         return agent
 
+    async def _generate_with_mcp_session(
+        self,
+        prompt: str,
+        mcp_servers: Dict[str, MCPServerStdio],
+        instruction: str,
+        output_type: type,
+        max_turns: int,
+        session: SQLiteSession,
+        **kwargs,
+    ) -> Dict:
+        """Generate response with MCP servers and session support."""
+
+        # Custom JSON encoder to handle special types
+        class CustomJSONEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, AnyUrl):
+                    return str(obj)
+                if isinstance(obj, (date, datetime)):
+                    return obj.isoformat()
+                return super().default(obj)
+
+        json._default_encoder = CustomJSONEncoder()
+
+        try:
+            # Use context manager to manage multiple MCP servers
+            async with multiple_mcp_servers(mcp_servers) as connected_servers:
+                # Set up agent with session support
+                async_client = wrap_openai(AsyncOpenAI(api_key=self.api_key, base_url=self.api_base + "/v1"))
+                model_params = {"model": self.model_name}
+                async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+
+                # Create agent (session is passed to Runner, not Agent)
+                agent = Agent(
+                    name=kwargs.pop("agent_name", "MCP_Session_Agent"),
+                    instructions=instruction,
+                    mcp_servers=list(connected_servers.values()),
+                    output_type=str,  # Use str for compatibility
+                    model=async_model,
+                )
+
+                # Run the agent with session
+                result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+
+                # Extract content and sql_contexts from result
+                content = ""
+                sql_contexts = []
+
+                if hasattr(result, "content") and result.content:
+                    content = str(result.content)
+                elif hasattr(result, "text") and result.text:
+                    content = str(result.text)
+
+                # For now, return the result in the expected format
+                return {"content": content, "sql_contexts": sql_contexts}
+
+        except Exception as e:
+            logger.error(f"Error in _generate_with_mcp_session: {str(e)}")
+            raise
+
     def _process_tool_call_start(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
         """Process tool_call_item events."""
+        import uuid
 
         raw_item = event.item.raw_item
         call_id = getattr(raw_item, "call_id", None)
         function_name = getattr(raw_item, "name", None)
         arguments = getattr(raw_item, "arguments", None)
 
-        # Check if action with this call_id already exists
-        if call_id and action_history_manager.find_action_by_id(call_id):
+        # Generate unique action_id if call_id is None or empty to prevent duplicates
+        if not call_id:
+            logger.warning("No call_id found in tool_call event; generating a unique action_id.")
+        action_id = call_id if call_id else f"tool_call_{uuid.uuid4().hex[:8]}"
+
+        # Check if action with this action_id already exists
+        if action_history_manager.find_action_by_id(action_id):
             return None
 
         action = ActionHistory(
-            action_id=call_id,
+            action_id=action_id,
             role=ActionRole.TOOL,
             messages="MCP call",
             action_type=function_name or "unknown",

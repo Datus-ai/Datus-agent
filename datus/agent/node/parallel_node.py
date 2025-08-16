@@ -1,9 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List
+from typing import AsyncGenerator, Dict, List, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
 from datus.configuration.node_type import NodeType
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.parallel_node_models import ParallelInput, ParallelResult
 from datus.utils.loggings import get_logger
 
@@ -29,8 +30,24 @@ class ParallelNode(Node):
 
         # Validate that child node types are supported
         for child_node_type in self.input.child_nodes:
-            if child_node_type not in NodeType.ACTION_TYPES:
-                return {"success": False, "message": f"Unsupported child node type: {child_node_type}"}
+            # allow action types directly
+            if child_node_type in NodeType.ACTION_TYPES:
+                continue
+            # allow subworkflow names defined in config
+            if (
+                isinstance(child_node_type, str)
+                and self.agent_config
+                and child_node_type in getattr(self.agent_config, "custom_workflows", {})
+            ):
+                continue
+            # allow explicit subworkflow marker
+            if child_node_type == NodeType.TYPE_SUBWORKFLOW:
+                continue
+            return {
+                "success": False,
+                "message": f"Unsupported child entry: {child_node_type}. "
+                f"Must be an action node type or a subworkflow name.",
+            }
 
         return {"success": True, "message": "Parallel node input setup complete"}
 
@@ -76,8 +93,12 @@ class ParallelNode(Node):
                         child_results[node_id] = {"success": False, "error": str(e)}
                         execution_order.append(node_id)
 
-            # Check if all child nodes completed successfully
+            # Evaluate children success
             all_success = all(
+                result.get("success", False) if isinstance(result, dict) else getattr(result, "success", False)
+                for result in child_results.values()
+            )
+            any_success = any(
                 result.get("success", False) if isinstance(result, dict) else getattr(result, "success", False)
                 for result in child_results.values()
             )
@@ -87,13 +108,16 @@ class ParallelNode(Node):
             )
             logger.info(f"All success determined as: {all_success}")
 
-            result = ParallelResult(success=all_success, child_results=child_results, execution_order=execution_order)
+            # Do not block the workflow if some children failed; continue to selection as long as any child succeeded.
+            result = ParallelResult(success=any_success, child_results=child_results, execution_order=execution_order)
 
-            if not all_success:
-                result.error = "Some child nodes failed during parallel execution"
+            if not any_success:
+                result.error = "All child nodes failed during parallel execution"
                 logger.error(f"Parallel execution marked as failed: {result.error}")
             else:
-                logger.info(f"Parallel execution successful with {len(child_results)} child results")
+                if not all_success:
+                    logger.warning("Parallel execution partial success: some child nodes failed")
+                logger.info(f"Parallel execution completed with {len(child_results)} child results")
 
             self.result = result
             logger.info(f"Final parallel result: success={result.success}, error={result.error}")
@@ -110,31 +134,95 @@ class ParallelNode(Node):
             self.result = result
             return result
 
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """
+        Execute the node with streaming support.
+
+        Args:
+            action_history_manager: Manager for tracking action history
+
+        Yields:
+            ActionHistory: Progress updates during node execution
+        """
+        # Create initial action history
+        action_id = f"{self.id}_stream"
+        if action_history_manager:
+            action_history = action_history_manager.create(
+                action_id=action_id,
+                action_type="parallel_execution",
+                status="running",
+                message=f"Starting parallel execution of {len(self.input.child_nodes) if self.input else 0} child "
+                f"nodes",
+            )
+            yield action_history
+
+        # Execute the main logic (non-streaming)
+        result = self.execute()
+
+        # Generate final action history
+        if action_history_manager:
+            status = "completed" if result.success else "failed"
+            message = (
+                f"Parallel execution completed with {len(result.child_results)} results"
+                if result.success
+                else result.error
+            )
+            action_history = action_history_manager.update(
+                action_id=action_id,
+                status=status,
+                message=message,
+                result={"success": result.success, "child_count": len(result.child_results)},
+            )
+            yield action_history
+
     def _create_child_nodes(self, workflow: Workflow) -> List[Node]:
         """Create child node instances for parallel execution"""
         child_nodes = []
 
         for i, child_node_type in enumerate(self.input.child_nodes):
-            child_node_id = f"{self.id}_child_{i}_{child_node_type}"
-            child_description = f"Parallel child: {NodeType.get_description(child_node_type)}"
+            # Support `child` as the subworkflow name (a string that exists in `custom_workflows`),
+            # in which case the type is `TYPE_SUBWORKFLOW`.
+            is_subworkflow_name = (
+                isinstance(child_node_type, str)
+                and self.agent_config
+                and child_node_type in getattr(self.agent_config, "custom_workflows", {})
+            )
 
-            # Create child node without input data initially
+            node_type_to_use = NodeType.TYPE_SUBWORKFLOW if is_subworkflow_name else child_node_type
+            child_node_id = f"{self.id}_child_{i}_{child_node_type}"
+            child_description = (
+                f"Parallel child subworkflow: {child_node_type}"
+                if is_subworkflow_name
+                else f"Parallel child: {NodeType.get_description(child_node_type)}"
+            )
+
+            input_data = None
+            if is_subworkflow_name:
+                try:
+                    from datus.schemas.subworkflow_node_models import SubworkflowInput
+
+                    input_data = SubworkflowInput(workflow_name=child_node_type, pass_context=True)
+                except Exception as e:
+                    logger.error(f"Create SubworkflowInput failed for {child_node_type}: {e}")
+
             child_node = Node.new_instance(
                 node_id=child_node_id,
                 description=child_description,
-                node_type=child_node_type,
-                input_data=None,  # Will be set up in setup_input
+                node_type=node_type_to_use,
+                input_data=input_data,
                 agent_config=self.agent_config,
             )
 
-            # Set up child node input from workflow context
             child_node.workflow = workflow
-            setup_result = child_node.setup_input(workflow)
-            if not setup_result.get("success", False):
-                logger.warning(
-                    f"Failed to setup input for child node {child_node_id}: "
-                    f"{setup_result.get('message', 'Unknown error')}"
-                )
+            if not is_subworkflow_name:
+                setup_result = child_node.setup_input(workflow)
+                if not setup_result.get("success", False):
+                    logger.warning(
+                        f"Failed to setup input for child node {child_node_id}: "
+                        f"{setup_result.get('message', 'Unknown error')}"
+                    )
 
             child_nodes.append(child_node)
 

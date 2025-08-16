@@ -162,7 +162,7 @@ def extract_code_block_content(text: str) -> str:
     return text[start:end].strip()
 
 
-def llm_result2json(llm_str: str, expected_type: type[Dict | List] = dict) -> Union[Dict[str, Any], List[Any]]:
+def llm_result2json(llm_str: str, expected_type: type[Dict | List] = dict) -> Union[Dict[str, Any], List[Any], None]:
     """
     Convert LLM output string to a JSON object or array.
     Supports the following formats:
@@ -175,12 +175,76 @@ def llm_result2json(llm_str: str, expected_type: type[Dict | List] = dict) -> Un
         expected_type: The expected type of the result (dict or list)
 
     Returns:
-        Union[Dict[str, Any], List[Any]]: JSON object or array
+        Union[Dict[str, Any], List[Any], None]: JSON object/array on success, None on failure
     """
-    cleaned_string = strip_json_str(llm_str)
-    if not cleaned_string:
-        return {} if expected_type == dict else []
-    return json_repair.loads(cleaned_string)
+    try:
+        cleaned_string = strip_json_str(llm_str)
+        if not cleaned_string:
+            return None  # Empty string should be treated as failure
+
+        result = json_repair.loads(cleaned_string)
+
+        # Ensure the result is of the expected type (dict or list)
+        if not isinstance(result, (dict, list)):
+            return None
+
+        # If it's a dict, check if it has meaningful content
+        if isinstance(result, dict):
+            # Check if we have meaningful SQL content
+            sql_content = result.get("sql", "")
+            if not sql_content or not sql_content.strip():
+                return None
+
+        return result
+
+    except (json.JSONDecodeError, ValueError, AttributeError, TypeError):
+        return None
+
+
+def llm_result2sql(llm_str: str) -> Optional[str]:
+    """
+    Extract SQL from LLM output string.
+    Looks for SQL in code blocks like ```sql ... ``` or ```SQL ... ```
+
+    Args:
+        llm_str: String output from LLM
+
+    Returns:
+        Optional[str]: Extracted SQL query if found, None if not found or invalid
+    """
+    try:
+        if not llm_str or not isinstance(llm_str, str):
+            return None
+
+        # Look for SQL code blocks (case insensitive)
+        import re
+
+        # Pattern to match ```sql or ```SQL followed by content and ending ```
+        sql_pattern = r"```(?:sql|SQL)\s*\n?(.*?)\n?```"
+        match = re.search(sql_pattern, llm_str, re.DOTALL | re.IGNORECASE)
+
+        if match:
+            sql_content = match.group(1).strip()
+            return sql_content if sql_content else None
+
+        # Fallback: look for any code block that might contain SQL
+        generic_pattern = r"```\s*\n?(.*?)\n?```"
+        matches = re.findall(generic_pattern, llm_str, re.DOTALL)
+
+        for code_block in matches:
+            code_block = code_block.strip()
+            if not code_block:
+                continue
+
+            # Simple heuristic: if it contains SQL keywords, consider it SQL
+            sql_keywords = ["SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP"]
+            if any(keyword.lower() in code_block.lower() for keyword in sql_keywords):
+                return code_block
+
+        return None
+
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def json_list2markdown_table(json_list: List[Dict[str, Any]]) -> str | None:
@@ -200,14 +264,87 @@ def json_list2markdown_table(json_list: List[Dict[str, Any]]) -> str | None:
 
 
 def strip_json_str(llm_str: str) -> str:
+    """
+    Clean and extract JSON string from LLM output with robust handling.
+
+    Handles:
+    - Markdown code blocks (```json, ```)
+    - Truncated JSON strings
+    - JSON with embedded newlines
+    - Malformed JSON that can be repaired
+
+    Args:
+        llm_str: Raw string from LLM
+
+    Returns:
+        str: Cleaned JSON string ready for parsing
+    """
+    if llm_str is None:
+        return ""
     cleaned_string = llm_str.strip()
     if not cleaned_string:
         return ""
 
+    # Handle markdown code blocks
     if cleaned_string.startswith("```json") and cleaned_string.endswith("```"):
         cleaned_string = cleaned_string[len("```json") : -len("```")].strip()
     elif cleaned_string.startswith("```") and cleaned_string.endswith("```"):
         cleaned_string = cleaned_string[len("```") : -len("```")].strip()
+
+    # Try to extract JSON object/array if not already clean
+    if not (cleaned_string.startswith("{") or cleaned_string.startswith("[")):
+        # Look for JSON object
+        start_obj = cleaned_string.find("{")
+        if start_obj != -1:
+            # Find matching closing brace
+            end_obj = find_matching_bracket(cleaned_string, start_obj, "{", "}")
+            if end_obj != -1:
+                cleaned_string = cleaned_string[start_obj : end_obj + 1]
+            else:
+                # Truncated JSON object - try to find reasonable end
+                cleaned_string = cleaned_string[start_obj:]
+        else:
+            # Look for JSON array
+            start_arr = cleaned_string.find("[")
+            if start_arr != -1:
+                end_arr = find_matching_bracket(cleaned_string, start_arr, "[", "]")
+                if end_arr != -1:
+                    cleaned_string = cleaned_string[start_arr : end_arr + 1]
+                else:
+                    # Truncated JSON array
+                    cleaned_string = cleaned_string[start_arr:]
+
+    # Handle truncated JSON strings - if it ends abruptly, try to complete it
+    if cleaned_string.startswith("{") and not cleaned_string.endswith("}"):
+        # Count open braces vs closed braces
+        open_braces = cleaned_string.count("{")
+        close_braces = cleaned_string.count("}")
+        missing_braces = open_braces - close_braces
+
+        # Add missing closing braces if reasonable (not too many)
+        if 0 < missing_braces <= 5:
+            cleaned_string += "}" * missing_braces
+
+    elif cleaned_string.startswith("[") and not cleaned_string.endswith("]"):
+        # Count open brackets vs closed brackets
+        open_brackets = cleaned_string.count("[")
+        close_brackets = cleaned_string.count("]")
+        missing_brackets = open_brackets - close_brackets
+
+        # Add missing closing brackets if reasonable
+        if 0 < missing_brackets <= 5:
+            cleaned_string += "]" * missing_brackets
+
+    # Handle incomplete string values - if we have an unclosed quote at the end
+    if cleaned_string.count('"') % 2 == 1:
+        # Find the last unclosed quote and check if it looks like an incomplete string
+        last_quote = cleaned_string.rfind('"')
+        if last_quote != -1:
+            # Check if this quote starts a string value (not a key)
+            before_quote = cleaned_string[:last_quote].rstrip()
+            if before_quote.endswith(":") or before_quote.endswith(","):
+                # This looks like an incomplete string value, close it
+                cleaned_string += '"'
 
     return cleaned_string
 

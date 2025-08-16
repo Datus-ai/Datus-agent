@@ -1,7 +1,8 @@
-from typing import Dict, List, Tuple
+from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import GenerateSQLInput, GenerateSQLResult, SQLContext, TableSchema, TableValue
 from datus.tools.lineage_graph_tools import SchemaLineageTool
 from datus.tools.llms_tools import LLMTool
@@ -13,6 +14,13 @@ logger = get_logger(__name__)
 class GenerateSQLNode(Node):
     def execute(self):
         self.result = self._execute_generate_sql()
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute SQL generation with streaming support."""
+        async for action in self._generate_sql_stream(action_history_manager):
+            yield action
 
     def setup_input(self, workflow: Workflow) -> Dict:
         if workflow.context.document_result:
@@ -103,3 +111,88 @@ class GenerateSQLNode(Node):
         except Exception as e:
             logger.warning(f"Failed to get schemas and values for tables {table_names}: {e}")
             return [], []  # Return empty lists if lookup fails
+
+    async def _generate_sql_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Generate SQL with streaming support and action history tracking."""
+        if not self.model:
+            logger.error("Model not available for SQL generation")
+            return
+
+        try:
+            # SQL generation preparation action
+            prep_action = ActionHistory(
+                action_id="sql_generation_prep",
+                role=ActionRole.WORKFLOW,
+                messages="Preparing SQL generation with schema and context information",
+                action_type="sql_preparation",
+                input={
+                    "database_type": self.input.database_type if hasattr(self.input, "database_type") else "",
+                    "table_count": len(self.input.table_schemas)
+                    if hasattr(self.input, "table_schemas") and self.input.table_schemas
+                    else 0,
+                    "has_metrics": bool(hasattr(self.input, "metrics") and self.input.metrics),
+                    "has_external_knowledge": bool(
+                        hasattr(self.input, "external_knowledge") and self.input.external_knowledge
+                    ),
+                },
+                status=ActionStatus.PROCESSING,
+            )
+            yield prep_action
+
+            # Update preparation status
+            try:
+                prep_action.status = ActionStatus.SUCCESS
+                prep_action.output = {
+                    "preparation_complete": True,
+                    "input_validated": True,
+                }
+            except Exception as e:
+                prep_action.status = ActionStatus.FAILED
+                prep_action.output = {"error": str(e)}
+                logger.warning(f"SQL preparation failed: {e}")
+
+            # SQL generation action
+            generation_action = ActionHistory(
+                action_id="sql_generation",
+                role=ActionRole.WORKFLOW,
+                messages="Generating SQL query based on schema and requirements",
+                action_type="sql_generation",
+                input={
+                    "task_description": getattr(self.input.sql_task, "task", "")
+                    if hasattr(self.input, "sql_task")
+                    else "",
+                    "database_type": self.input.database_type if hasattr(self.input, "database_type") else "",
+                },
+                status=ActionStatus.PROCESSING,
+            )
+            yield generation_action
+
+            # Execute SQL generation - reuse existing logic
+            try:
+                result = self._execute_generate_sql()
+
+                generation_action.status = ActionStatus.SUCCESS
+                generation_action.output = {
+                    "success": result.success,
+                    "sql_query": result.sql_query,
+                    "tables_involved": result.tables if result.tables else [],
+                    "has_explanation": bool(result.explanation),
+                }
+
+                # Store result for later use
+                self.result = result
+
+            except Exception as e:
+                generation_action.status = ActionStatus.FAILED
+                generation_action.output = {"error": str(e)}
+                logger.error(f"SQL generation error: {str(e)}")
+                raise
+
+            # Yield the updated generation action with final status
+            yield generation_action
+
+        except Exception as e:
+            logger.error(f"SQL generation streaming error: {str(e)}")
+            raise

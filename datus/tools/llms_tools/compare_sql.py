@@ -106,7 +106,7 @@ async def compare_sql_with_mcp_stream(
         )
 
     # Setup MCP servers
-    db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+    db_mcp_server = MCPServer.get_db_mcp_server(db_config)
     mcp_servers = {input_data.sql_task.database_name: db_mcp_server}
 
     tool_config["max_turns"] = 30

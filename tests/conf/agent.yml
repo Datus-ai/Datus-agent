@@ -3,9 +3,28 @@ agent:
   models:
     deepseek:
       type: deepseek
-      base_url: ${DEEPSEEK_BASE_URL}
+      vendor: deepseek
+      base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
-      model: ${DEEPSEEK_MODEL_NAME}
+      model: deepseek-chat
+    deepseek-r1:
+      type: deepseek
+      vendor: deepseek
+      base_url: https://api.deepseek.com
+      api_key: ${DEEPSEEK_API_KEY}
+      model: deepseek-reasoner
+      enable_thinking: true
+    deepseek-ark:
+      type: deepseek
+      vendor: ark
+      base_url: https://ark.cn-beijing.volces.com/api/v3
+      api_key: ${DEEPSEEK_ARK_API_KEY}
+      model: deepseek-v3-250324
+    qwen:
+      type: qwen
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api_key: ${DASHSCOPE_API_KEY}
+      model: qwen3-coder-plus
     anthropic:
       type: claude
       vendor: anthropic
@@ -13,6 +32,25 @@ agent:
       api_key: ${ANTHROPIC_API_KEY}
       #model: claude-3-7-sonnet-latest
       model: claude-sonnet-4-20250514
+    kimi-k2:
+      type: openai
+      vendor: openai
+      base_url: https://api.moonshot.cn/v1
+      api_key: ${KIMI_API_KEY}
+      model: kimi-k2-0711-preview
+    openai-4o-mini:
+      type: openai
+      vendor: openai
+      base_url: https://api.openai.com/v1
+      api_key: ${OPENAI_API_KEY}
+      model: gpt-4o-mini
+    gemini-2.5:
+      type: gemini
+      vendor: google
+      base_url: https://generativelanguage.googleapis.com/v1beta
+      api_key: ${GEMINI_API_KEY}
+      model: gemini-2.5-flash-lite
+      enable_thinking: true
 
   nodes:
     schema_linking:
@@ -49,11 +87,6 @@ agent:
 
   # local databases configuration
   namespace:
-    snowflake:
-      type: snowflake
-      account: ${SNOWFLAKE_ACCOUNT}
-      username: ${SNOWFLAKE_USERNAME}
-      password: ${SNOWFLAKE_PASSWORD}
     bird_sqlite:
       type: sqlite
       path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
@@ -61,6 +94,15 @@ agent:
       type: duckdb
       name: duck
       uri: tests/data/datus_metricflow_db/duck.db # absolute path: sqlite:////full/path/to/example.db
+    ssb_sqlite:
+      type: sqlite
+      name: SSB
+      uri: tests/data/SSB.db
+    snowflake:
+      type: snowflake
+      account: ${SNOWFLAKE_ACCOUNT}
+      username: ${SNOWFLAKE_USERNAME}
+      password: ${SNOWFLAKE_PASSWORD}
 
     starrocks:
       type: starrocks

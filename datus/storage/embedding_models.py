@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import platform
 from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -14,7 +15,10 @@ if TYPE_CHECKING:
 
 # Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
 try:
-    multiprocessing.set_start_method("fork", force=True)
+    if platform.system() == "Windows":
+        multiprocessing.set_start_method("spawn", force=True)
+    else:
+        multiprocessing.set_start_method("fork", force=True)
 except RuntimeError:
     # set_start_method can only be called once
     pass
@@ -53,6 +57,11 @@ class EmbeddingModel:
         self.openai_config = openai_config
         self.lock = Lock()
 
+        # error handling
+        self.is_model_failed = False
+        self.model_error_message = ""
+        self.model_initialization_attempted = False
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "registry_name": self.registry_name,
@@ -62,15 +71,84 @@ class EmbeddingModel:
 
     @property
     def model(self):
-        # first init
+        """Get the embedding model, with lazy loading and error handling."""
+        # If model initialization failed before, raise exception
+        if self.is_model_failed:
+            # If the stored error is already a formatted DatusException message, use it directly
+            if "error_code=" in self.model_error_message:
+                # Extract just the core error message without the DatusException wrapper
+                import re
+
+                match = re.search(r"error_message=(.+)$", self.model_error_message)
+                if match:
+                    core_message = match.group(1)
+                else:
+                    core_message = self.model_error_message
+                raise DatusException(
+                    ErrorCode.MODEL_EMBEDDING_ERROR,
+                    message=f"Embedding model '{self.model_name}' is not available: {core_message}",
+                )
+            else:
+                raise DatusException(
+                    ErrorCode.MODEL_EMBEDDING_ERROR,
+                    message=f"Embedding model '{self.model_name}' is not available: {self.model_error_message}",
+                )
+
+        # Lazy load the model
         if self._model is None:
             with self.lock:
                 if self._model is None:
-                    logger.info(f"Loading embedding model: {self.model_name} on {self.device}")
-                    # First try to load from local cache
-                    self.init_model()
+                    try:
+                        self.model_initialization_attempted = True
+                        logger.info(f"Loading embedding model: {self.model_name} on {self.device}")
+                        self.init_model()
+                    except Exception as e:
+                        # Save error state, don't immediately raise exception
+                        self.is_model_failed = True
+                        self.model_error_message = str(e)
+                        logger.error(f"Failed to load embedding model '{self.model_name}': {e}")
 
         return self._model
+
+    def is_model_available(self) -> bool:
+        """Check if the model is available without triggering initialization."""
+        return not self.is_model_failed and (self._model is not None or not self.model_initialization_attempted)
+
+    async def init_model_async(self):
+        """Asynchronously initialize the embedding model."""
+        import asyncio
+
+        # Run the synchronous init_model in a thread pool
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.init_model)
+
+    def try_init_model_silent(self) -> bool:
+        """Try to initialize the model without raising exceptions.
+
+        Returns:
+            bool: True if initialization succeeded, False otherwise.
+        """
+        if self._model is not None:
+            return True
+
+        if self.is_model_failed:
+            return False
+
+        with self.lock:
+            if self._model is not None:
+                return True
+
+            try:
+                self.model_initialization_attempted = True
+                logger.info(f"Attempting silent initialization of embedding model: {self.model_name}")
+                self.init_model()
+                return True
+            except Exception as e:
+                # Save error state silently
+                self.is_model_failed = True
+                self.model_error_message = str(e)
+                logger.warning(f"Silent initialization failed for embedding model '{self.model_name}': {e}")
+                return False
 
     def init_model(self):
         """Pre-download the model to local cache. Now we only support sentence-transformers and openai."""
@@ -84,7 +162,7 @@ class EmbeddingModel:
 
         if self.registry_name == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             logger.info(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")
-            from lancedb.embeddings import SentenceTransformerEmbeddings
+            from datus.storage.sentence_transformers import SentenceTransformerEmbeddings
 
             try:
                 # Method `get_registry` has a multi-threading problem

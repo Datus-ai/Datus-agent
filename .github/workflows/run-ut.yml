@@ -28,7 +28,21 @@ jobs:
         run: |
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
           cp /home/datus_ci/ci_template/ci.env .env
-          source .env
+
+      - name: Load environment variables
+        run: |
+          echo "Loading environment variables from .env file..."
+          # Export all variables from .env to GITHUB_ENV so they persist across steps
+          while IFS= read -r line || [ -n "$line" ]; do
+            # Skip empty lines and comments
+            if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
+              # Remove any surrounding whitespace and export to GITHUB_ENV
+              var_name=$(echo "$line" | cut -d'=' -f1)
+              echo "Loading variable: $var_name"
+              echo "$line" >> $GITHUB_ENV
+            fi
+          done < .env
+          echo "Environment variables loaded successfully"
 
       - name: run pytest
         run: |

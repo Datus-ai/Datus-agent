@@ -23,8 +23,9 @@ class ErrorCode(Enum):
     COMMON_ENV = ("100005", "The environment variable {env_var} is not set")
     COMMON_CONFIG_ERROR = ("100006", "Configuration error: {config_error}")
     COMMON_MISSING_DEPENDENCY = ("100007", "Missing node dependency")
-    # Validation errors
     COMMON_VALIDATION_FAILED = ("100008", "Data validation failed")
+    COMMON_JSON_PARSE_ERROR = ("100009", "JSON parsing error in file '{file_path}': {error_detail}")
+    COMMON_TEMPLATE_NOT_FOUND = ("100010", "Template not found: '{template_name}' with version '{version}'")
 
     # Node execution errors
     NODE_EXECUTION_FAILED = ("200001", "Node execution failed")
@@ -45,11 +46,33 @@ class ErrorCode(Enum):
     MODEL_OVERLOADED = ("300017", "API temporarily overloaded - please try again later (HTTP 529)")
     MODEL_CONNECTION_ERROR = ("300018", "Connection error - check your network connection")
     MODEL_EMBEDDING_ERROR = ("300019", "Embedding Model error")
-
-    # Tool errors - General
+    MODEL_QUOTA_EXCEEDED = ("300020", "Usage quota exceeded - please check your billing plan")
+    MODEL_TIMEOUT_ERROR = ("300021", "Request timeout - the API took too long to respond")
+    MODEL_MAX_TURNS_EXCEEDED = ("300022", "Maximum turns ({max_turns}) exceeded - agent execution stopped")
+    MODEL_ILLEGAL_FORMAT_RESPONSE = (
+        "300023",
+        "Model returned response in illegal format. Response: '{response_preview}' (length: {response_length})",
+    )
+    # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
-    TOOL_STORE_FAILED = ("400003", "Store failed")
+
+    # Storage errors - Vector Database Operations
+    STORAGE_FAILED = ("410000", "Vector database operation failed: {error_message}")
+    STORAGE_CONNECTION_FAILED = ("410001", "Failed to connect to vector database at path: {storage_path}")
+    STORAGE_TABLE_OPERATION_FAILED = (
+        "410002",
+        "Vector database table operation failed: {operation} on collection '{table_name}' failed with {error_message}",
+    )
+    STORAGE_SAVE_FAILED = ("410003", "Failed to save data to vector database: {error_message}")
+    STORAGE_SEARCH_FAILED = (
+        "410004",
+        (
+            "Vector database search operation failed: {error_message}. "
+            "Query vector: '{query}', Filter: '{where_clause}', Limit: {top_n}"
+        ),
+    )
+    STORAGE_INDEX_FAILED = ("410005", "Vector database index operation failed: {error_message}")
 
     # Database errors
     DB_FAILED = ("500000", "Database operation failed. Error details: {error_message}")
@@ -75,11 +98,11 @@ class ErrorCode(Enum):
         "Failed to execute query on database. SQL: {sql}, Error details: {error_message}",
     )
     DB_EXECUTION_TIMEOUT = (
-        "430003",
+        "500007",
         "Query execution timed out on database. SQL: {sql}, Error details: {error_message}",
     )
     DB_QUERY_METADATA_FAILED = (
-        "500007",
+        "500008",
         "Failed to retrieve metadata for query. SQL: {sql}, Error details: {error_message}",
     )
 
@@ -119,6 +142,9 @@ class DatusException(Exception):
         self.message = self.build_msg(message, message_args)
         super().__init__(self.message, *args)
 
+    def __str__(self):
+        return self.message
+
     def build_msg(self, message: Optional[str] = None, message_args: Optional[dict[str, Any]] = None) -> str:
         if message:
             final_message = message
@@ -141,10 +167,11 @@ def setup_exception_handler(console_logger=None, prefix_wrap_func=None):
             # Do not catch these exceptions, let the program exit or respond to the interrupt
             sys.__excepthook__(type, value, traceback)
             return
+
         # Print exception
         format_ex = "\n".join(traceback.format_exception(type, value, tb))
         log_prefix = (
-            "Execution failed" if type == DatusException or issubclass(type, DatusException) else "Unexcepted failed"
+            "Execution failed" if type == DatusException or issubclass(type, DatusException) else "Unexpected failed"
         )
         log_manager = get_log_manager()
         if log_manager.debug:
@@ -155,7 +182,12 @@ def setup_exception_handler(console_logger=None, prefix_wrap_func=None):
             if console_logger:
                 # print exception trace to file
                 logger.error(f"{log_prefix}: {format_ex}")
-                console_log(console_logger, log_prefix, value.message, prefix_wrap_func)
+                console_log(
+                    console_logger,
+                    log_prefix,
+                    str(value) if not hasattr(value, "message") else value.message,
+                    prefix_wrap_func,
+                )
             else:
                 # print exception trace to file
                 with log_manager.temporary_output("file"):

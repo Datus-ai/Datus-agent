@@ -13,7 +13,8 @@ def save_storage_config(name: str, rag_path: str, config: Optional[EmbeddingMode
     if config:
         exist_config[name] = config.to_dict()
     else:
-        exist_config.pop(name)
+        if name in exist_config:
+            exist_config.pop(name)
     save_storage_configs(exist_config, rag_path)
 
 
@@ -62,7 +63,7 @@ def _find_config_differences(
         existing_config["registry_name"] = EmbeddingProvider.SENTENCE_TRANSFORMERS
 
     if "registry_name" not in new_config:
-        existing_config["registry_name"] = EmbeddingProvider.SENTENCE_TRANSFORMERS
+        new_config["registry_name"] = EmbeddingProvider.SENTENCE_TRANSFORMERS
 
     for key, value in existing_config.items():
         if key not in new_config:

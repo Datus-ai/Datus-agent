@@ -13,3 +13,6 @@ class HitlNode(Node):
 
     def execute(self):
         pass
+
+    async def execute_stream(self):
+        pass

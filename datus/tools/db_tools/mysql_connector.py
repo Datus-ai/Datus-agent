@@ -1,4 +1,4 @@
-from typing import Dict, List, Literal, Optional, Tuple, override
+from typing import Any, Dict, List, Literal, Optional, Tuple, override
 from urllib.parse import quote_plus
 
 from datus.schemas.base import TABLE_TYPE
@@ -91,6 +91,36 @@ class MySQLConnectorBase(SQLAlchemyConnector):
 
     def default_catalog(self) -> str:
         return ""
+
+    def get_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+    ) -> List[Dict[str, Any]]:
+        if not table_name:
+            return []
+
+        catalog_name = self.reset_catalog_to_default(catalog_name or self.catalog_name)
+        database_name = database_name or self.database_name
+        table_name = self.full_name(catalog_name=catalog_name, database_name=database_name, table_name=table_name)
+        try:
+            # Use DESCRIBE or SHOW COLUMNS to get table schema
+            sql = f"DESCRIBE {table_name}"
+            query_result = self.execute_query(sql)
+            result = []
+            for i in range(len(query_result)):
+                result.append(
+                    {
+                        "cid": i,
+                        "name": query_result["Field"][i],
+                        "type": query_result["Type"][i],
+                        "nullable": query_result["Null"][i] == "YES",
+                        "default_value": query_result["Default"][i],
+                        "pk": query_result["Key"][i] == "PRI",
+                    }
+                )
+            return result
+        except Exception as e:
+            logger.error(f"Error getting schema for table {table_name}: {e}")
+            return []
 
     @override
     def sqlalchemy_schema(

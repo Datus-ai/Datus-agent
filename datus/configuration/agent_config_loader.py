@@ -57,7 +57,8 @@ def load_agent_config(**kwargs) -> AgentConfig:
         )
     with open(yaml_path, "r") as f:
         logger.info(f"Loading agent config from {yaml_path}")
-        config = yaml.safe_load(f)
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
     agent_raw = config["agent"]
     nodes = {}
     if "nodes" in agent_raw:
@@ -68,19 +69,23 @@ def load_agent_config(**kwargs) -> AgentConfig:
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES) | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES)
+                        | set(NodeType.AGENTIC_TYPES)
+                        | {NodeType.TYPE_REFLECT},
                         "your_value": nodes_raw,
                     },
                 )
         for node_type, cfg in nodes_raw.items():
             if node_type == NodeType.TYPE_REFLECT:
                 pass
-            elif node_type not in NodeType.ACTION_TYPES:
+            elif node_type not in NodeType.ACTION_TYPES and node_type not in NodeType.AGENTIC_TYPES:
                 raise DatusException(
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES) | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES)
+                        | set(NodeType.AGENTIC_TYPES)
+                        | {NodeType.TYPE_REFLECT},
                         "your_value": node_type,
                     },
                 )
@@ -89,5 +94,8 @@ def load_agent_config(**kwargs) -> AgentConfig:
 
     agent_config = AgentConfig(nodes=nodes, **agent_raw)
     if kwargs:
-        agent_config.override_by_args(**kwargs)
+        # Filter out the 'config' parameter as it's only used for loading, not for overriding
+        override_kwargs = {k: v for k, v in kwargs.items() if k != "config"}
+        if override_kwargs:
+            agent_config.override_by_args(**override_kwargs)
     return agent_config

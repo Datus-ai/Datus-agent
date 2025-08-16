@@ -2,6 +2,7 @@ from typing import Optional, get_type_hints
 
 from pydantic import BaseModel, create_model
 
+from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.doc_search_node_models import DocSearchInput
 from datus.schemas.fix_node_models import FixInput
@@ -12,6 +13,7 @@ from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
+from datus.schemas.subworkflow_node_models import SubworkflowInput
 
 
 class NodeType:
@@ -22,9 +24,10 @@ class NodeType:
     TYPE_REFLECT = "reflect"
     TYPE_PARALLEL = "parallel"
     TYPE_SELECTION = "selection"
+    TYPE_SUBWORKFLOW = "subworkflow"
 
     # Control node types list
-    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT, TYPE_PARALLEL, TYPE_SELECTION]
+    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT, TYPE_PARALLEL, TYPE_SELECTION, TYPE_SUBWORKFLOW]
 
     # SQL workflow action types
     TYPE_SCHEMA_LINKING = "schema_linking"  # For database schema analysis
@@ -39,6 +42,9 @@ class NodeType:
     TYPE_SEARCH_METRICS = "search_metrics"  # For search metrics
     TYPE_COMPARE = "compare"  # For comparing SQL with expectations
 
+    # Agentic node types
+    TYPE_CHAT = "chat"  # For conversational AI interactions
+
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
         TYPE_GENERATE_SQL,
@@ -52,6 +58,9 @@ class NodeType:
         TYPE_SEARCH_METRICS,
         TYPE_COMPARE,
     ]
+
+    # Agentic node types list
+    AGENTIC_TYPES = [TYPE_CHAT]
 
     NODE_TYPE_DESCRIPTIONS = {
         TYPE_BEGIN: "Beginning of the workflow",
@@ -69,7 +78,9 @@ class NodeType:
         TYPE_SEARCH_METRICS: "Search metrics",
         TYPE_PARALLEL: "Execute child nodes in parallel",
         TYPE_SELECTION: "Select best result from multiple candidates",
+        TYPE_SUBWORKFLOW: "Execute a nested workflow",
         TYPE_COMPARE: "Compare SQL with expectations",
+        TYPE_CHAT: "Conversational AI interactions with tool calling",
     }
 
     @classmethod
@@ -105,8 +116,12 @@ class NodeType:
             input_data_cls = ParallelInput
         elif node_type == NodeType.TYPE_SELECTION:
             input_data_cls = SelectionInput
+        elif node_type == NodeType.TYPE_SUBWORKFLOW:
+            input_data_cls = SubworkflowInput
         elif node_type == NodeType.TYPE_COMPARE:
             input_data_cls = CompareInput
+        elif node_type == NodeType.TYPE_CHAT:
+            input_data_cls = ChatNodeInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 

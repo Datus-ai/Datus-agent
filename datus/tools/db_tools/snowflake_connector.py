@@ -25,8 +25,9 @@ class SnowflakeConnector(BaseSqlConnector):
         warehouse: str,
         database: str = "",
         schema: str = "",
+        timeout_seconds: int = 30,
     ):
-        super().__init__(dialect=DBType.SNOWFLAKE)
+        super().__init__(dialect=DBType.SNOWFLAKE, timeout_seconds=timeout_seconds)
         # FIXME lazy init
         self.connection: SnowflakeConnection = Connect(
             account=account,
@@ -35,6 +36,9 @@ class SnowflakeConnector(BaseSqlConnector):
             warehouse=warehouse,
             database=database if database else None,
             schema=schema if schema else None,
+            login_timeout=timeout_seconds,
+            network_timeout=timeout_seconds,
+            socket_timeout=timeout_seconds,
         )
         self.database_name = database
         self.schema_name = schema
@@ -192,51 +196,97 @@ class SnowflakeConnector(BaseSqlConnector):
 
     def get_schema(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         """
-        Get the schema of the database.
-        1. Get All Databases
-        SELECT DATABASE_NAME
-        FROM INFORMATION_SCHEMA.DATABASES
-        WHERE DATABASE_OWNER IS NOT NULL; -- filter system database
-        2. Get All Schemas
-        SELECT
-        'SELECT GET_DDL(''TABLE'', ''' || TABLE_SCHEMA || '.' || TABLE_NAME || ''') AS DDL;' AS GENERATED_QUERY
-        FROM
-        AUSTIN.INFORMATION_SCHEMA.TABLES
-        WHERE
-        TABLE_TYPE = 'BASE TABLE'; -- Only base table, exclude view
+        Get Table schema information including column name, type, nullability, and primary key information.
+
+        Args:
+            catalog_name: Catalog name (not used in Snowflake)
+            database_name: Database name
+            schema_name: Schema name
+            table_name: Table name to get schema for
+
+        Returns:
+            List of dictionaries containing column information and table information
         """
+        # If no table name specified, return empty list
+        if not table_name:
+            return []
+
         with self.connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT DATABASE_NAME  FROM INFORMATION_SCHEMA.DATABASES  WHERE DATABASE_OWNER IS NOT NULL; "
+            # Build the query to get column information from INFORMATION_SCHEMA
+            catalog_name = catalog_name or self.catalog_name
+            database_name = database_name or self.database_name
+            schema_name = schema_name or self.schema_name
+            full_name = self.full_name(
+                catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
             )
-            databases = cursor.fetchall()
-            schema_list = []
-            for database in databases:
-                cursor.execute(
-                    """ SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
-                'SELECT GET_DDL(''TABLE'', ''' || TABLE_SCHEMA || '.' || TABLE_NAME || ''') AS DDL;' AS GENERATED_QUERY
-                FROM
-                {database_name}.INFORMATION_SCHEMA.TABLES
-                WHERE
-                TABLE_TYPE = 'BASE TABLE';""".format(
-                        database_name=database[0]
-                    )
-                )
-                schemas = cursor.fetchall()
-                for schema in schemas:
-                    cursor.execute("SELECT GET_DDL('TABLE', '{}') AS DDL;".format(schema[0]))
-                    schema_list.append(
-                        {
-                            "database_name": schema[0],
-                            "schema_name": schema[1],
-                            "table_name": schema[2],
-                            "definition": cursor.fetchone()[0],
-                            "table_type": "table",
-                        }
-                    )
-            return schema_list
+
+            # Get primary key information using SHOW PRIMARY KEYS command
+            cursor.execute(f"""SHOW PRIMARY KEYS IN TABLE {full_name}""")
+            pk_results = cursor.fetchall()
+
+            # Extract column names that are primary keys
+            # The column name is in position 4 (0-indexed) according to Snowflake documentation
+            pk_columns = set(row[4] for row in pk_results)
+            columns_table_name = (
+                "INFORMATION_SCHEMA.COLUMNS" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.COLUMNS'
+            )
+            # Get column information
+            columns_query = f"""
+                SELECT
+                    ordinal_position,
+                    column_name,
+                    data_type,
+                    is_nullable,
+                    column_default,
+                    comment
+                FROM {columns_table_name}
+                WHERE table_name = '{table_name}'
+            """
+
+            if schema_name:
+                columns_query += f" AND table_schema = '{schema_name}'"
+
+            columns_query += " ORDER BY ordinal_position"
+
+            cursor.execute(columns_query)
+            columns_results = cursor.fetchall()
+
+            # Process column information
+            schemas: List[Dict[str, Any]] = []
+            columns_list = []
+
+            for row in columns_results:
+                ordinal_position = row[0]
+                column_name = row[1]
+                data_type = row[2]
+                is_nullable = row[3]
+                column_default = row[4]
+                comment = row[5]
+
+                column_info = {
+                    "cid": ordinal_position - 1,  # Convert to 0-based index
+                    "name": column_name,
+                    "type": data_type,
+                    "nullable": is_nullable.upper() == "YES",
+                    "pk": column_name in pk_columns,
+                    "default_value": column_default,
+                    "comment": comment,
+                }
+
+                schemas.append(column_info)
+                columns_list.append({"name": column_name, "type": data_type})
+
+            # Add table information
+            schemas.append(
+                {
+                    "table": table_name,
+                    "columns": columns_list,
+                }
+            )
+
+            return schemas
 
     def execute_query_to_df(
         self,
@@ -263,29 +313,102 @@ class SnowflakeConnector(BaseSqlConnector):
 
     @override
     def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
+        """
+        Get schema names using SHOW SCHEMAS command which is more efficient than INFORMATION_SCHEMA queries.
+
+        Args:
+            catalog_name: Catalog name (not used in Snowflake)
+            database_name: Database name to get schemas from
+
+        Returns:
+            List of schema names
+        """
         database_name = database_name or self.database_name
-        select_table_name = (
-            "INFORMATION_SCHEMA.SCHEMATA" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.SCHEMATA'
-        )
-        sql = f"SELECT SCHEMA_NAME FROM {select_table_name} WHERE SCHEMA_NAME NOT IN ('PUBLIC', 'INFORMATION_SCHEMA')"
+
+        # Use SHOW SCHEMAS which is more efficient than querying INFORMATION_SCHEMA
         if database_name:
-            sql += f" AND CATALOG_NAME='{database_name}'"
-        df = self.execute_query_to_df(sql=sql)
-        return [item for item in df["SCHEMA_NAME"]]
+            sql = f'SHOW SCHEMAS IN DATABASE "{database_name}"'
+        else:
+            sql = "SHOW SCHEMAS"
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql)
+                results = cursor.fetchall()
+
+                # Filter out system schemas
+                schemas = []
+                for row in results:
+                    schema_name = row[1]  # Schema name is in the second column
+                    # Skip system schemas
+                    if schema_name.upper() not in ("PUBLIC", "INFORMATION_SCHEMA"):
+                        schemas.append(schema_name)
+
+                return schemas
+        except Exception as e:
+            logger.warning(f"Failed to get schemas using SHOW SCHEMAS, falling back to INFORMATION_SCHEMA: {e}")
+            # Fallback to original method if SHOW SCHEMAS fails
+            select_table_name = (
+                "INFORMATION_SCHEMA.SCHEMATA" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.SCHEMATA'
+            )
+
+            sql = (
+                f"SELECT SCHEMA_NAME FROM {select_table_name} WHERE SCHEMA_NAME NOT IN ('PUBLIC', 'INFORMATION_SCHEMA')"
+            )
+            if database_name:
+                sql += f" AND CATALOG_NAME='{database_name}'"
+            df = self.execute_query_to_df(sql=sql)
+            return [item for item in df["SCHEMA_NAME"]]
 
     @override
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
+        """
+        Get table names using SHOW TABLES command which is more efficient than INFORMATION_SCHEMA queries.
+
+        Args:
+            catalog_name: Catalog name (not used in Snowflake)
+            database_name: Database name to get tables from
+            schema_name: Schema name to get tables from
+
+        Returns:
+            List of table names
+        """
         database_name = database_name or self.database_name
         schema_name = schema_name or self.schema_name
-        select_table_name = (
-            "INFORMATION_SCHEMA.TABLES" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.TABLES'
-        )
-        sql = f"SELECT TABLE_SCHEMA, TABLE_NAME FROM {select_table_name} WHERE TABLE_TYPE = 'BASE TABLE'"
-        if schema_name:
-            sql += f" AND TABLE_SCHEMA= '{schema_name}'"
 
-        df = self.execute_query_to_df(sql)
-        return [item for item in df["TABLE_NAME"]]
+        # Use SHOW TABLES which is more efficient than querying INFORMATION_SCHEMA
+        if schema_name:
+            if database_name:
+                sql = f'SHOW TABLES IN SCHEMA "{database_name}"."{schema_name}"'
+            else:
+                sql = f'SHOW TABLES IN SCHEMA "{schema_name}"'
+        elif database_name:
+            sql = f'SHOW TABLES IN DATABASE "{database_name}"'
+        else:
+            sql = "SHOW TABLES"
+
+        logger.info(f"Getting tables with command: {sql}")
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql)
+                results = cursor.fetchall()
+
+                # Extract table names from the result
+                # Table name is in the second column (index 1) in SHOW TABLES result
+                return [row[1] for row in results]
+        except Exception as e:
+            logger.warning(f"Failed to get tables using SHOW TABLES, falling back to INFORMATION_SCHEMA: {e}")
+            # Fallback to original method if SHOW TABLES fails
+            select_table_name = (
+                "INFORMATION_SCHEMA.TABLES" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.TABLES'
+            )
+            sql = f"SELECT TABLE_SCHEMA, TABLE_NAME FROM {select_table_name} WHERE TABLE_TYPE = 'BASE TABLE'"
+            if schema_name:
+                sql += f" AND TABLE_SCHEMA= '{schema_name}'"
+
+            df = self.execute_query_to_df(sql)
+            return [item for item in df["TABLE_NAME"]]
 
     def get_type(self) -> str:
         return DBType.SNOWFLAKE
@@ -345,3 +468,13 @@ class SnowflakeConnector(BaseSqlConnector):
             result = self.do_execute_arrow(input_params)
             results.append(result)
         return results
+
+    @override
+    def full_name(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+    ) -> str:
+        if schema_name:
+            full_name = f'"{schema_name}"."{table_name}"'
+        else:
+            full_name = f'"{table_name}"'
+        return full_name if not database_name else f'"{database_name}".{full_name}'

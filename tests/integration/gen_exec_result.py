@@ -3,12 +3,14 @@ import glob
 import json
 import os
 import re
-import sqlite3
 import sys
 
-import duckdb
 import pandas as pd
-import yaml
+import pyarrow as pa
+from utils import fix_path
+
+from datus.configuration.agent_config_loader import load_agent_config
+from datus.tools.db_tools.db_manager import db_manager_instance
 
 
 def resolve_env(value: str) -> str:
@@ -23,16 +25,6 @@ def resolve_env(value: str) -> str:
         return os.getenv(env_var, f"<MISSING:{env_var}>")
 
     return re.sub(pattern, replace_env, value)
-
-
-def load_config(config_path):
-    """Load configuration file"""
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    return config
 
 
 def get_benchmark_path(config, benchmark):
@@ -116,74 +108,28 @@ def find_sqlite_database(path_pattern, db_id):
     raise FileNotFoundError(f"Database file {db_id}.sqlite not found in path: {path_pattern}")
 
 
-def execute_sql_query(db_path, sql_query):
-    """Execute SQL query and return results"""
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-
-        cursor.execute(sql_query)
-
-        column_names = [description[0] for description in cursor.description] if cursor.description else []
-        results = cursor.fetchall()
-
-        conn.close()
-
-        return {"success": True, "columns": column_names, "results": results, "error": None}
-
-    except Exception as e:
-        return {"success": False, "columns": [], "results": [], "error": str(e)}
-
-
-def execute_duckdb_query(namespace_config, sql_query):
-    """Execute DuckDB query and return results"""
-    try:
-        db_path = namespace_config.get("uri", "")
-        if not db_path:
-            raise Exception("DuckDB URI not found in namespace config")
-
-        # Connect to DuckDB directly
-        conn = duckdb.connect(db_path)
-
-        # Execute query and get results as DataFrame
-        result_df = conn.execute(sql_query).df()
-
-        # Close connection
-        conn.close()
-
-        # Convert DataFrame to the expected format
-        if result_df is not None and not result_df.empty:
-            column_names = result_df.columns.tolist()
-            results = result_df.values.tolist()
-            return {"success": True, "columns": column_names, "results": results, "error": None}
-        else:
-            return {"success": True, "columns": [], "results": [], "error": None}
-
-    except Exception as e:
-        return {"success": False, "columns": [], "results": [], "error": str(e)}
-
-
 def save_results_to_csv(results, output_path):
     """Save results to CSV file using pandas DataFrame"""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    if results["success"] and results["results"]:
+    if results.success and results.sql_return:
         # Create DataFrame from results
-        if results["columns"] and results["results"]:
-            df = pd.DataFrame(results["results"], columns=results["columns"])
-        elif results["results"]:
-            # If no column names, create generic column names
-            num_cols = len(results["results"][0]) if results["results"] else 0
-            df = pd.DataFrame(results["results"], columns=[f"col_{i}" for i in range(num_cols)])
+        if isinstance(results.sql_return, pd.DataFrame):
+            df: pd.DataFrame = results.sql_return
+        elif isinstance(results.sql_return, pa.Table):
+            df: pd.DataFrame = results.sql_return.to_pandas()
+        elif isinstance(results.sql_return, list):
+            df: pd.DataFrame = pd.DataFrame(data=results.sql_return)
         else:
             # Empty results but successful
+            print("Unsupported types:", results.sql_return)
             df = pd.DataFrame()
 
         # Save DataFrame to CSV
         df.to_csv(output_path, index=False, encoding="utf-8")
     else:
         # Handle error cases
-        if results["error"]:
+        if results.error:
             error_df = pd.DataFrame([["error", results["error"]]], columns=["status", "message"])
         else:
             # there are columns but no data, pandas dataframe will ignore header when comparing,
@@ -205,13 +151,13 @@ def main():
     args = parser.parse_args()
 
     try:
-        config_path = os.path.join(args.workdir, args.config)
-        config = load_config(config_path)
+        config_path = fix_path(args.workdir, args.config)
 
-        benchmark_path = get_benchmark_path(config, args.benchmark)
-        full_benchmark_path = os.path.join(args.workdir, benchmark_path)
+        config = load_agent_config(config=config_path, namespace=args.namespace, benchmark=args.benchmark)
 
-        namespace_config = get_namespace_config(config, args.namespace)
+        benchmark_path = config.benchmark_path(args.benchmark)
+
+        full_benchmark_path = fix_path(args.workdir, benchmark_path)
 
         if args.type == "bird":
             # Try dev.json first, then fallback to dev.sql
@@ -231,7 +177,7 @@ def main():
 
         gold_dir = os.path.join(full_benchmark_path, "gold", "exec_result")
         os.makedirs(gold_dir, exist_ok=True)
-
+        db_manager = db_manager_instance(config.namespaces)
         if args.task_id is not None:
             # Process single task
             task_id = args.task_id
@@ -246,27 +192,21 @@ def main():
                 return
 
             print(f"Processing task {task_id}: database={task_data['db_id']}")
-
-            if namespace_config.get("type") == "sqlite":
-                path_pattern = namespace_config.get("path_pattern", "")
-                full_path_pattern = os.path.join(args.workdir, path_pattern)
-                db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])
+            try:
+                sql_connector = db_manager.get_conn(args.namespace, task_data["db_id"])
                 print(f"Executing SQL: {task_data['sql'][:100]}...")
-                results = execute_sql_query(db_path, task_data["sql"])
-            elif namespace_config.get("type") == "duckdb":
-                print(f"Executing SQL: {task_data['sql'][:100]}...")
-                results = execute_duckdb_query(namespace_config, task_data["sql"])
-            else:
-                raise Exception(f"Unsupported database type: {namespace_config.get('type')}")
+                results = sql_connector.execute_arrow(task_data["sql"])
 
-            output_path = os.path.join(gold_dir, f"{task_id}.csv")
-            save_results_to_csv(results, output_path)
+                if results.success:
+                    output_path = os.path.join(gold_dir, f"{task_id}.csv")
+                    print(f"Task {task_id} completed, results saved to: {output_path}")
+                    print(f"Returned {results.row_count} rows")
+                    save_results_to_csv(results, output_path)
 
-            if results["success"]:
-                print(f"Task {task_id} completed, results saved to: {output_path}")
-                print(f"Returned {len(results['results'])} rows")
-            else:
-                print(f"Task {task_id} failed: {results['error']}")
+                else:
+                    print(f"Task {task_id} failed: {results['error']}")
+            except Exception as e:
+                print(f"Task {task_id} processing failed: {e}")
         else:
             # Process all tasks
             print(f"Processing all {len(sql_data)} tasks...")
@@ -274,23 +214,15 @@ def main():
             for task_data in sql_data:
                 task_id = task_data["question_id"]
                 print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
-
                 try:
-                    if namespace_config.get("type") == "sqlite":
-                        path_pattern = namespace_config.get("path_pattern", "")
-                        full_path_pattern = os.path.join(args.workdir, path_pattern)
-                        db_path = find_sqlite_database(full_path_pattern, task_data["db_id"])
-                        results = execute_sql_query(db_path, task_data["sql"])
-                    elif namespace_config.get("type") == "duckdb":
-                        results = execute_duckdb_query(namespace_config, task_data["sql"])
-                    else:
-                        raise Exception(f"Unsupported database type: {namespace_config.get('type')}")
-
+                    sql_connector = db_manager.get_conn(args.namespace, task_data["db_id"])
+                    results = sql_connector.execute_arrow(task_data["sql"])
                     output_path = os.path.join(gold_dir, f"{task_id}.csv")
-                    save_results_to_csv(results, output_path)
 
                     if results["success"]:
                         print(f"Task {task_id} completed, returned {len(results['results'])} rows")
+                        save_results_to_csv(results, output_path)
+
                     else:
                         print(f"Task {task_id} failed: {results['error']}")
 

@@ -18,10 +18,10 @@ logger = get_logger(__name__)
 
 
 @contextmanager
-def get_db_connector(db_manager, current_namespace, db_type, database_name):
+def get_db_connector(db_manager, current_namespace, database_name):
     connector = None
     try:
-        connector = db_manager.get_conn(current_namespace, db_type, database_name)
+        connector = db_manager.get_conn(current_namespace, database_name)
         yield connector
     finally:
         if connector:
@@ -39,6 +39,13 @@ class GenerateSemanticModelNode(Node):
 
     def execute(self):
         self.result = self._generate_semantic_model()
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Execute semantic model generation with streaming support."""
+        async for action in self._generate_semantic_model_stream(action_history_manager):
+            yield action
 
     def validate_input(self):
         if not isinstance(self.input, GenerateSemanticModelInput):
@@ -124,7 +131,7 @@ class GenerateSemanticModelNode(Node):
                 logger.warning(f"Failed to check existing semantic model: {str(e)}, continuing with generation")
 
             logger.info(f"Generating semantic model for {table_name} in {catalog_name}.{database_name}.{schema_name}")
-            with get_db_connector(db_manager, current_namespace, db_type, database_name) as connector:
+            with get_db_connector(db_manager, current_namespace, database_name) as connector:
                 # Get tables with DDL
                 tables_with_ddl = connector.get_tables_with_ddl(
                     tables=[table_name],
@@ -209,13 +216,12 @@ class GenerateSemanticModelNode(Node):
             database_name = table_parts["database_name"] or self.input.sql_task.database_name
             schema_name = table_parts["schema_name"] or self.input.sql_task.schema_name
             table_name = table_parts["table_name"]
-            db_type = self.agent_config.db_type
 
-            with get_db_connector(db_manager, current_namespace, db_type, database_name) as connector:
+            with get_db_connector(db_manager, current_namespace, database_name) as connector:
                 tables_with_ddl = connector.get_tables_with_ddl(
                     catalog_name=catalog_name,
                     database_name=database_name,
-                    table_name=table_name,
+                    tables=[table_name],
                     schema_name=schema_name,
                 )
 

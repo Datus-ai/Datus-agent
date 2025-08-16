@@ -53,7 +53,10 @@ class StorageBase:
                 )
                 self.db.create_table("success_story", schema=schema)
         except Exception as e:
-            raise Exception(f"Failed to create success_story table: {str(e)}")
+            raise DatusException(
+                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                message_args={"operation": "create_table", "table_name": "success_story", "error_message": str(e)},
+            ) from e
 
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
@@ -90,7 +93,55 @@ class BaseEmbeddingStore(StorageBase):
         self.vector_source_name = vector_source_name
         self.vector_column_name = vector_column_name
         self.on_duplicate_columns = on_duplicate_columns
-        self._ensure_table(schema)
+        self._schema = schema
+        # Delay table initialization until first use
+        self.table: Optional[Table] = None
+        self._table_initialized = False
+
+    def _ensure_table_ready(self):
+        """Ensure table is ready for operations, with proper error handling."""
+        if self._table_initialized:
+            return
+
+        # First check if embedding model is available
+        self._check_embedding_model_ready()
+        # Initialize table with embedding function
+        self._ensure_table(self._schema)
+        self._table_initialized = True
+        logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
+
+    def _search_all(self, where: str = "", select_fields: Optional[List[str]] = None) -> pa.Table:
+        self._ensure_table_ready()
+        query_builder = self.table.search().where(where)
+        if select_fields:
+            query_builder = query_builder.select(select_fields)
+        result = query_builder.limit(self.table.count_rows(where if where else None)).to_arrow()
+        if self.vector_column_name in result.column_names:
+            result = result.drop([self.vector_column_name])
+        return result
+
+    def _check_embedding_model_ready(self):
+        """Check if embedding model is ready for use."""
+        # Check if model has failed before
+        if self.model.is_model_failed:
+            raise DatusException(
+                ErrorCode.MODEL_EMBEDDING_ERROR,
+                message=(
+                    f"Embedding model '{self.model.model_name}' is not available:" f" {self.model.model_error_message}"
+                ),
+            )
+
+        # Try to access the model (this will trigger lazy loading)
+        try:
+            _ = self.model.model
+        except DatusException as e:
+            # Re-raise DatusException directly to avoid nesting
+            raise e
+        except Exception as e:
+            raise DatusException(
+                ErrorCode.MODEL_EMBEDDING_ERROR,
+                message=f"Embedding model '{self.model.model_name}' initialization failed: {str(e)}",
+            ) from e
 
     def _ensure_table(self, schema: Optional[Union[pa.Schema, LanceModel]] = None):
         try:
@@ -106,12 +157,10 @@ class BaseEmbeddingStore(StorageBase):
                 ],
                 exist_ok=True,
             )
-        except DatusException as e:
-            raise e
         except Exception as e:
             raise DatusException(
-                ErrorCode.TOOL_STORE_FAILED,
-                message=f"Failed to create LanceDB table named {self.table_name} because {str(e)}",
+                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                message_args={"operation": "create_table", "table_name": self.table_name, "error_message": str(e)},
             ) from e
 
     def create_vector_index(
@@ -127,6 +176,7 @@ class BaseEmbeddingStore(StorageBase):
             accelerator (str): Optional accelerator ('cuda' for GPU, 'mps' for MPS, None for CPU).
                 Default: none.
         """
+        self._ensure_table_ready()
         try:
             row_count = self.table.count_rows()
             logger.debug(f"Creating vector index for {self.table_name} with {row_count} rows")
@@ -181,6 +231,7 @@ class BaseEmbeddingStore(StorageBase):
             logger.warning(f"Failed to create vector index for {self.table_name}: {str(e)}")
 
     def create_fts_index(self, field_names: Union[str, List[str]]):
+        self._ensure_table_ready()
         try:
             self.table.create_fts_index(field_names=field_names, replace=True)
         except Exception as e:
@@ -200,6 +251,9 @@ class BaseEmbeddingStore(StorageBase):
         """
         if not data:
             return
+        # Ensure table is ready before storing data
+        self._ensure_table_ready()
+
         try:
             if len(data) <= self.batch_size:
                 self.table.add(pd.DataFrame(data))
@@ -209,12 +263,11 @@ class BaseEmbeddingStore(StorageBase):
                 batch = data[i : i + self.batch_size]
                 self.table.add(pd.DataFrame(batch))
         except Exception as e:
-            raise DatusException(
-                ErrorCode.TOOL_STORE_FAILED,
-                message=f"Failed to store batch because {str(e)}",
-            ) from e
+            raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
 
     def store(self, data: List[Dict[str, Any]]):
+        # Ensure table is ready before storing data
+        self._ensure_table_ready()
         self.table.add(pd.DataFrame(data))
 
     def search(
@@ -225,6 +278,9 @@ class BaseEmbeddingStore(StorageBase):
         where: str = "",
         reranker: Optional[Reranker] = None,
     ) -> pa.Table:
+        # Ensure table is ready before searching
+        self._ensure_table_ready()
+
         if reranker:
             search_result = self._search_hybrid(query_txt, reranker, select_fields, top_n, where)
         else:
@@ -263,15 +319,28 @@ class BaseEmbeddingStore(StorageBase):
         top_n: Optional[int] = None,
         where: str = "",
     ) -> pa.Table:
-        query_builder = self.table.search(
-            query=query_txt, query_type="vector", vector_column_name=self.vector_column_name
-        )
-        query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where)
-        if not top_n:
-            top_n = self.table.count_rows(where if where else None)
-        return query_builder.limit(top_n).to_arrow()
+        try:
+            query_builder = self.table.search(
+                query=query_txt, query_type="vector", vector_column_name=self.vector_column_name
+            )
+            query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where)
+            if not top_n:
+                top_n = self.table.count_rows(where if where else None)
+            return query_builder.limit(top_n).to_arrow()
+        except Exception as e:
+            raise DatusException(
+                ErrorCode.STORAGE_SEARCH_FAILED,
+                message_args={
+                    "error_message": str(e),
+                    "query": query_txt,
+                    "where_clause": where if where else "(none)",
+                    "top_n": str(top_n or "all"),
+                },
+            ) from e
 
     def table_size(self) -> int:
+        # Ensure table is ready before checking size
+        self._ensure_table_ready()
         return self.table.count_rows()
 
     @classmethod

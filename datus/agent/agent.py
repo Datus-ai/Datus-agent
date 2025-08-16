@@ -4,7 +4,9 @@ import json
 import os
 import shutil
 import time
-from typing import Optional, Set
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import AsyncGenerator, Optional, Set
 
 from langsmith import traceable
 
@@ -12,13 +14,11 @@ from datus.agent.evaluate import evaluate_result, setup_node_input
 from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
+from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
-from datus.models.claude_model import ClaudeModel
-from datus.models.deepseek_model import DeepSeekModel
-from datus.models.openai_model import OpenAIModel
-from datus.models.qwen_model import QwenModel
 
 # Import model implementations
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import BaseResult, SqlTask
 from datus.storage.document import DocumentStore
 from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge
@@ -35,17 +35,10 @@ from datus.utils.benchmark_utils import (
     generate_gold_standard_results,
     load_bird_dev_tasks,
 )
-from datus.utils.constants import DBType, LLMProvider
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-
-MODEL_TYPE_MAP = {
-    LLMProvider.DEEPSEEK: DeepSeekModel,
-    LLMProvider.QWEN: QwenModel,
-    LLMProvider.OPENAI: OpenAIModel,
-    LLMProvider.CLAUDE: ClaudeModel,
-}
 
 
 class Agent:
@@ -235,12 +228,31 @@ class Agent:
             logger.info(f"Executing task: {current_node.description}")
             current_node.run()
             if current_node.status == "failed":
-                logger.warning(f"Node failed: {current_node.description}")
-                break
+                if current_node.type == NodeType.TYPE_PARALLEL:
+                    try:
+                        has_any_success = False
+                        if current_node.result and hasattr(current_node.result, "child_results"):
+                            for v in current_node.result.child_results.values():
+                                ok = v.get("success", False) if isinstance(v, dict) else getattr(v, "success", False)
+                                if ok:
+                                    has_any_success = True
+                                    break
+                        if has_any_success:
+                            logger.warning("Parallel node partial failure, continue to selection")
+                        else:
+                            logger.warning(f"Parallel node all failed: {current_node.description}")
+                            break
+                    except Exception:
+                        logger.warning(f"Node failed: {current_node.description}")
+                        break
+                else:
+                    logger.warning(f"Node failed: {current_node.description}")
+                    break
             # evaluate the task result, update the context and setup the next node input if needed
             evaluation = evaluate_result(current_node, self.workflow)
-            logger.debug(f"Evaluation result: {evaluation}")
+            logger.debug(f"Evaluation result for {current_node.type}: {evaluation}")
             if not evaluation["success"]:
+                logger.error(f"Setting {current_node.type} status to failed due to evaluation failure")
                 current_node.status = "failed"
                 break
 
@@ -274,28 +286,238 @@ class Agent:
 
         return final_result
 
+    def _create_action_history(
+        self, action_id: str, messages: str, action_type: str, input_data: dict = None
+    ) -> ActionHistory:
+        """Helper method to create ActionHistory objects with consistent structure."""
+        return ActionHistory(
+            action_id=action_id,
+            role=ActionRole.WORKFLOW,
+            messages=messages,
+            action_type=action_type,
+            input=input_data or {},
+            status=ActionStatus.PROCESSING,
+        )
+
+    def _update_action_status(self, action: ActionHistory, success: bool, output_data: dict = None, error: str = None):
+        """Helper method to update ActionHistory status consistently."""
+        if success:
+            action.status = ActionStatus.SUCCESS
+            action.output = output_data or {}
+        else:
+            action.status = ActionStatus.FAILED
+            action.output = {"error": error or "Unknown error"}
+            if output_data:
+                action.output.update(output_data)
+
+    async def run_stream(
+        self,
+        sql_task: Optional[SqlTask] = None,
+        check_storage: bool = False,
+        action_history_manager: Optional[ActionHistoryManager] = None,
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """
+        Main execution loop for the agent with streaming support.
+
+        Yields ActionHistory objects for each workflow step and node execution.
+
+        Args:
+            sql_task: SQL task to execute
+            check_storage: Whether to check storage configuration
+            action_history_manager: Manager for tracking action history
+
+        Yields:
+            ActionHistory: Progress updates throughout execution
+        """
+        if check_storage:
+            self.global_config.check_init_storage_config("database")
+
+        logger.info("Starting agent execution with streaming")
+
+        # Workflow initialization action
+        init_action = self._create_action_history(
+            action_id="workflow_initialization",
+            messages="Initializing workflow and checking prerequisites",
+            action_type="workflow_init",
+            input_data={
+                "has_sql_task": bool(sql_task),
+                "check_storage": check_storage,
+                "load_from_checkpoint": bool(self.args.load_cp),
+            },
+        )
+        yield init_action
+
+        try:
+            # Initialize workflow
+            if not self.init_or_load_workflow(sql_task):
+                self._update_action_status(init_action, success=False, error="Failed to initialize workflow")
+                return
+
+            self.check_db()
+
+            self._update_action_status(
+                init_action,
+                success=True,
+                output_data={
+                    "workflow_ready": True,
+                    "total_nodes": len(self.workflow.nodes) if self.workflow else 0,
+                    "current_node_index": self.workflow.current_node_index if self.workflow else 0,
+                },
+            )
+
+        except Exception as e:
+            self._update_action_status(init_action, success=False, error=str(e))
+            logger.error(f"Workflow initialization failed: {e}")
+            return
+
+        # Main execution loop with streaming
+        step_count = 0
+
+        # Skip the first node (Start Node), and setup input for the next one
+        if self.workflow.current_node_index == 0:
+            self.workflow.get_current_node().complete(BaseResult(success=True))
+            next_node = self.workflow.advance_to_next_node()
+            setup_node_input(next_node, self.workflow)
+
+        while not self.workflow.is_complete() and step_count < self.args.max_steps:
+            # Get the next task
+            current_node = self.workflow.get_current_node()
+            if not current_node:
+                logger.warning("No more tasks to execute. Exiting.")
+                break
+
+            # Node execution start action
+            node_start_action = self._create_action_history(
+                action_id=f"node_execution_{current_node.id}",
+                messages=f"Executing node: {current_node.description}",
+                action_type="node_execution",
+                input_data={
+                    "node_id": current_node.id,
+                    "node_type": current_node.type,
+                    "description": current_node.description,
+                    "step_count": step_count,
+                },
+            )
+            yield node_start_action
+
+            try:
+                logger.info(f"Executing task: {current_node.description}")
+
+                # Execute node with streaming support
+                async for node_action in current_node.run_stream(action_history_manager):
+                    yield node_action
+
+                if current_node.status == "failed":
+                    self._update_action_status(
+                        node_start_action, success=False, error=f"Node execution failed: {current_node.description}"
+                    )
+                    logger.warning(f"Node failed: {current_node.description}")
+                    break
+
+                self._update_action_status(
+                    node_start_action,
+                    success=True,
+                    output_data={
+                        "node_completed": True,
+                        "execution_successful": True,
+                    },
+                )
+
+            except Exception as e:
+                self._update_action_status(node_start_action, success=False, error=str(e))
+                logger.error(f"Node execution error: {e}")
+                break
+
+            try:
+                evaluation = evaluate_result(current_node, self.workflow)
+                logger.debug(f"Evaluation result: {evaluation}")
+
+                if not evaluation["success"]:
+                    current_node.status = "failed"
+                    break
+
+            except Exception as e:
+                logger.error(f"Evaluation error: {e}")
+                break
+
+            self.workflow.advance_to_next_node()
+            step_count += 1
+
+        # Workflow completion action
+        completion_action = self._create_action_history(
+            action_id="workflow_completion",
+            messages="Finalizing workflow execution and saving results",
+            action_type="workflow_completion",
+            input_data={
+                "steps_completed": step_count,
+                "max_steps_reached": step_count >= self.args.max_steps,
+                "workflow_complete": self.workflow.is_complete(),
+            },
+        )
+        yield completion_action
+
+        try:
+            # Save trajectories and collect final results
+            self.workflow.display()
+            file_name = self.workflow.task.id
+            timestamp = int(time.time())
+            trajectory_dir = self.global_config.trajectory_dir
+
+            # Ensure trajectory directory exists
+            os.makedirs(trajectory_dir, exist_ok=True)
+
+            save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
+            self.workflow.save(save_path)
+            logger.info(f"Workflow saved to {save_path}")
+
+            final_result = self.workflow.get_final_result()
+            logger.info(f"Agent execution completed. Steps:{step_count}")
+
+            self._update_action_status(
+                completion_action,
+                success=True,
+                output_data={
+                    "workflow_saved": True,
+                    "save_path": save_path,
+                    "steps_completed": step_count,
+                    "final_result_available": bool(final_result),
+                },
+            )
+
+        except Exception as e:
+            self._update_action_status(completion_action, success=False, error=str(e))
+            logger.error(f"Workflow completion error: {e}")
+
+        # Yield the updated completion action with final status
+        yield completion_action
+
+        # Log if max steps reached
+        if step_count >= self.args.max_steps:
+            logger.warning(f"Workflow execution stopped after reaching max steps: {self.args.max_steps}")
+
     def check_db(self):
         """Validate database connectivity."""
         logger.info("Checking database connectivity")
-
-        try:
-            namespace = self.global_config.current_namespace
-            if namespace in self.global_config.namespaces:
-                connections = self.db_manager.get_connections(namespace)
-                if isinstance(connections, dict):
-                    for conn in connections.values():
+        namespace = self.global_config.current_namespace
+        if namespace in self.global_config.namespaces:
+            connections = self.db_manager.get_connections(namespace)
+            if not connections:
+                logger.warning(f"No connections found for {namespace}")
+                return {"status": "error", "message": f"No connections found for {namespace}"}
+            if isinstance(connections, dict):
+                for name, conn in connections.items():
+                    try:
                         conn.test_connection()
-                else:
-                    connections.test_connection()
-
-                logger.info(f"Database connection test successful {namespace}")
-                return {"status": "success", "message": "Database connection test successful"}
+                        logger.info(f"Database connection test successful for {name}")
+                    except Exception as e:
+                        logger.error(f"Database connection test failed for {name}: {str(e)}", exc_info=False)
             else:
-                logger.error(f"Database connection test failed: {namespace} not found in namespaces")
-                return {"status": "error", "message": f"{namespace} not found in namespaces"}
-        except Exception as e:
-            logger.error(f"Database connection test failed: {str(e)}")
-            return {"status": "error", "message": str(e)}
+                connections.test_connection()
+                logger.info(f"Database connection test successful {namespace}")
+            return {"status": "success", "message": "Database connection test successful"}
+        else:
+            logger.error(f"Database connection test failed: {namespace} not found in namespaces")
+            return {"status": "error", "message": f"{namespace} not found in namespaces"}
 
     def check_mcp(self):
         """Check MCP server connectivity for the current namespace."""
@@ -304,13 +526,12 @@ class Agent:
         try:
             from datus.tools.mcp_server import MCPServer
 
-            db_configs = self.db_manager.current_dbconfigs(self.global_config.current_namespace)
-            db_type = self.global_config.db_type
+            db_config = self.global_config.current_db_config()
 
-            logger.info(f"Checking MCP server for database type: {db_type}")
+            logger.info(f"Checking MCP server for database type: {db_config.type}")
 
             # Use the encapsulated method to check connectivity
-            return MCPServer.check_connectivity(db_type, db_configs)
+            return MCPServer.check_connectivity(db_config)
 
         except Exception as e:
             logger.error(f"MCP server check failed: {str(e)}")
@@ -518,15 +739,26 @@ class Agent:
 
         with open(task_file, "r") as f:
             task_configs = [json.loads(line) for line in f]
+
+        # Filter tasks by target_task_ids if specified
+        filtered_tasks = []
         for task_config in task_configs:
             task_id = task_config["instance_id"]
             if target_task_ids and task_id not in target_task_ids:
                 continue
+            filtered_tasks.append(task_config)
 
+        logger.info(f"Loaded {len(filtered_tasks)} tasks from Spider2 benchmark")
+        logger.info("Phase 1: Running agent benchmark tests...")
+
+        def run_single_spider2_task(task_config):
+            """Execute a single Spider2 benchmark task"""
+            task_id = task_config["instance_id"]
             task = task_config["instruction"]
             database_name = task_config["db_id"]
-            logger.info(f"start benchmark with {task_config['instance_id']}, database: {database_name}")
-            self.run(
+            logger.info(f"start benchmark with {task_id}: {task}")
+
+            result = self.run(
                 SqlTask(
                     id=task_id,
                     database_type="snowflake",
@@ -536,46 +768,127 @@ class Agent:
                 )
             )
             logger.info(
-                f"Finish benchmark_ids with {task_id}, "
-                f"database: {database_name}, "
-                f"file saved in {self.global_config.output_dir}/{task_id}.csv."
+                f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
             )
+            return task_id, result
+
+        # Get concurrency level from args or default to 1
+        max_workers = getattr(self.args, "max_workers", 1)
+        logger.info(f"Using {max_workers} worker threads for parallel execution")
+
+        # Execute tasks with thread pool
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_task = {
+                executor.submit(run_single_spider2_task, task_config): task_config for task_config in filtered_tasks
+            }
+
+            # Wait for completion
+            for future in as_completed(future_to_task):
+                task_config = future_to_task[future]
+                try:
+                    task_id, _ = future.result()
+                    logger.debug(f"Task {task_id} completed successfully")
+                except Exception as exc:
+                    task_id = task_config["instance_id"]
+                    logger.error(f"Task {task_id} generated an exception: {exc}")
+
+        logger.info("Phase 2: Evaluating benchmark accuracy...")
+        return evaluate_and_report_accuracy(
+            benchmark_path,
+            self.global_config.trajectory_dir,
+            self.global_config.current_namespace,
+            self.global_config.output_dir,
+            target_task_ids,
+        )
 
     def benchmark_bird_dev(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
         tasks = load_bird_dev_tasks(benchmark_path)
+        current_namespace = self.global_config.current_namespace
 
-        logger.info(f"Benchmarking tasks: {target_task_ids}")
-        task_group = {}
-        # group tasks by database_name
+        # Convert Bird tasks to format expected by generate_gold_standard_results
+        task_size = 0
+        group_task_ids = defaultdict(list)
+        # Prepare filtered tasks for parallel execution
+        filtered_bird_tasks = []
         for task in tasks:
             task_id = str(task["question_id"])
             if target_task_ids and task_id not in target_task_ids:
                 continue
+            db_id = task["db_id"]
+            filtered_bird_tasks.append(task)
+            group_task_ids[db_id].append(
+                {"question_id": task["question_id"], "sql": task["SQL"], "question": task["question"]}
+            )
+            task_size += 1
+        if task_size == 0:
+            logger.warning("There are no benchmarks that need to be run.")
+            return {}
+        logger.info(f"Loaded {task_size} tasks from Bird benchmark")
+        logger.info("Phase 1: Generating gold standard results...")
+
+        for db_id, converted_tasks in group_task_ids.items():
+            generate_gold_standard_results(
+                converted_tasks,
+                benchmark_path,
+                self.db_manager.get_conn(current_namespace, db_name=db_id),
+                target_task_ids,
+            )
+
+        logger.info("Phase 2: Running agent benchmark tests...")
+
+        def run_single_bird_task(task):
+            """Execute a single Bird benchmark task"""
+            task_id = str(task["question_id"])
+            question = task["question"]
             database_name = task["db_id"]
-            if database_name not in task_group:
-                task_group[database_name] = []
-            task_group[database_name].append(task)
-        for database_name, tasks in task_group.items():
-            for task in tasks:
-                self.run(
-                    SqlTask(
-                        id=str(task["question_id"]),
-                        database_type=DBType.SQLITE,
-                        task=task["question"],
-                        database_name=database_name,
-                        external_knowledge="" if "evidence" not in task else task["evidence"],
-                        output_dir=self.global_config.output_dir,
-                    )
+            logger.info(f"start benchmark with {task_id}: {question}")
+
+            result = self.run(
+                SqlTask(
+                    id=task_id,
+                    database_type=DBType.SQLITE,
+                    task=question,
+                    database_name=database_name,
+                    external_knowledge="" if "evidence" not in task else task["evidence"],
+                    output_dir=self.global_config.output_dir,
                 )
-                task_id = str(task["question_id"])
-                logger.info(
-                    f"Finish benchmark_ids with {task_id}, "
-                    f"database: {database_name}, "
-                    f"file saved in {self.global_config.output_dir}/{task_id}.csv."
-                )
+            )
+            logger.info(
+                f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
+            )
+            return task_id, result
+
+        # Get concurrency level from args or default to 1
+        max_workers = getattr(self.args, "max_workers", 1)
+        logger.info(f"Using {max_workers} worker threads for parallel execution")
+
+        # Execute tasks with thread pool
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_task = {executor.submit(run_single_bird_task, task): task for task in filtered_bird_tasks}
+
+            # Wait for completion
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    task_id, _ = future.result()
+                    logger.debug(f"Task {task_id} completed successfully")
+                except Exception as exc:
+                    task_id = str(task["question_id"])
+                    logger.error(f"Task {task_id} generated an exception: {exc}")
+
+        logger.info("Phase 3: Evaluating benchmark accuracy...")
+        return evaluate_and_report_accuracy(
+            benchmark_path,
+            self.global_config.trajectory_dir,
+            self.global_config.current_namespace,
+            self.global_config.output_dir,
+            target_task_ids,
+        )
 
     def benchmark_semantic_layer(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
-        task_file = os.path.join(benchmark_path, "testing_set.csv")
+        task_file = self.args.testing_set
         self._check_benchmark_file(task_file)
 
         tasks = []
@@ -590,8 +903,10 @@ class Agent:
 
         logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
         logger.info("Phase 1: Generating gold standard results...")
-        current_db_config = self.global_config.current_db_config()
-        generate_gold_standard_results(tasks, benchmark_path, current_db_config, target_task_ids)
+
+        generate_gold_standard_results(
+            tasks, benchmark_path, self.db_manager.get_conn(self.global_config.current_namespace), target_task_ids
+        )
         metric_meta = self.global_config.current_metric_meta(self.args.metric_meta)
 
         logger.info("Phase 2: Running agent benchmark tests...")
@@ -602,7 +917,7 @@ class Agent:
 
             question = task["question"]
             logger.info(f"start benchmark with {task_id}: {question}")
-
+            current_db_config = self.global_config.current_db_config()
             self.run(
                 SqlTask(
                     id=task_id,

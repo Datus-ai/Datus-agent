@@ -39,7 +39,7 @@ async def generate_metrics_with_mcp_stream(
         )
 
     # Setup MCP servers
-    db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+    db_mcp_server = MCPServer.get_db_mcp_server(db_config)
     # metricflow_mcp_server = MCPServer.get_metricflow_mcp_server()
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
     mcp_servers = {
@@ -74,7 +74,7 @@ def generate_metrics_with_mcp(
     if not isinstance(input_data, GenerateMetricsInput):
         raise ValueError("Input must be a GenerateMetricsInput instance")
 
-    db_mcp_server = MCPServer.get_db_mcp_server(db_config, input_data.sql_task.database_name)
+    db_mcp_server = MCPServer.get_db_mcp_server(db_config)
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
         database_name=input_data.sql_task.database_name,
         db_config=db_config,

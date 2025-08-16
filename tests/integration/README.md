@@ -1,52 +1,59 @@
 ## Integration Testing
 
-This document outlines the complete testing workflows for two different benchmarks: Bird and Spider2.
+This document outlines testing workflows and utilities for benchmarks.
 
-## Bird Testing Workflow
+## Automated Benchmark Testing
 
-### 1. Generate Bird Tests
+The Bird, Spider2, and Semantic Layer benchmarks now have fully automated testing integrated into the main benchmark functions. Simply run:
+
+### Bird Benchmark
 ```shell
-python gen_benchmark.py --namespace bird_sqlite --benchmark bird_dev --workdir=${path to datus agent} --extra_option '--plan fixed --schema_linking_rate medium'
+# Basic usage
+python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev
+
+# With specific options
+python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium --benchmark_task_ids <id1> <id2>...
+
+# With parallel execution (3 worker threads)
+python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --max_workers 3
 ```
 
-### 2. Generate Bird Gold SQL Results
+### Spider2 Benchmark
 ```shell
-python gen_exec_result.py --namespace bird_sqlite --benchmark bird_dev --type bird --workdir=${path to datus agent}
+# Basic usage
+python -m datus.main benchmark --namespace snowflake --benchmark spider2
+
+# With specific task IDs
+python -m datus.main benchmark --namespace snowflake --benchmark spider2 --benchmark_task_ids <id1> <id2>...
+
+# With parallel execution (2 worker threads)
+python -m datus.main benchmark --namespace snowflake --benchmark spider2 --max_workers 2
 ```
 
-### 3. Run Bird Tests
+### Semantic Layer Benchmark
 ```shell
-sh run_integration.sh
+# Basic usage
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial
+
+# With custom testing set file
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial --testing_set /path/to/custom_test.csv
+
+# With specific task IDs(line numbers)
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial --benchmark_task_ids <id1>  <id2>...
 ```
 
-### 4. Evaluate Bird Tests
-```shell
-python evaluation.py --namespace bird_sqlite --gold-path=benchmark/bird/dev_20240627/gold --workdir=${path to datus agent}
-```
+These commands will automatically:
+1. Generate gold standard results (Bird and Semantic Layer)
+2. Run benchmark tests (Bird/Spider2 support parallel execution)
+3. Evaluate accuracy and generate reports
 
-## Spider2 Testing Workflow
+### Parallel Execution Options
 
-### 1. Generate Spider2 Tests
-```shell
-python gen_benchmark.py --namespace snowflake --benchmark spider2 --workdir=${path to datus agent}
-```
-
-### 2. Run Spider2 Tests
-```shell
-sh run_integration.sh
-```
-
-### 3. Evaluate Spider2 Tests
-```shell
-python evaluation.py --namespace snowflake --gold-path=${path to gold} --workdir=${path to datus agent}
-```
-
-## General Testing Options
-
-### Run Tests Concurrently
-```shell
-cat run_integration.sh | xargs -I {} -P 3 bash -c "{}"
-```
+The `--max_workers` parameter controls the number of concurrent threads for **Bird and Spider2** benchmarks:
+- **Default**: `--max_workers 1` (single-threaded, safest)
+- **Recommended**: `--max_workers 2-3` for most systems
+- **Note**: Higher concurrency may cause API rate limits or resource contention
+- **Semantic Layer**: Does not support parallel execution (runs sequentially)
 
 ## Multi-agent testing
 

@@ -1,8 +1,9 @@
-from typing import Any, Dict
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
 from datus.prompts.selection import create_selection_prompt
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.parallel_node_models import SelectionResult
 from datus.utils.loggings import get_logger
 
@@ -50,11 +51,55 @@ class SelectionNode(Node):
 
     def setup_input(self, workflow: Workflow) -> Dict:
         """Setup input for selection node"""
+        logger.info(
+            f"SelectionNode.setup_input called: current_index={workflow.current_node_index}, "
+            f"node_order={workflow.node_order}"
+        )
+
         # Get parallel results from workflow context
         parallel_results = workflow.context.parallel_results
+        logger.info(f"SelectionNode.setup_input: parallel_results available = {parallel_results is not None}")
 
         if not parallel_results:
-            return {"success": False, "message": "No parallel results available in workflow context"}
+            # If no parallel results, look for any completed reasoning node
+            reasoning_node = None
+            # Check all nodes for a reasoning node that has completed successfully
+            for i, node_id in enumerate(workflow.node_order):
+                node = workflow.nodes.get(node_id)
+                logger.info(
+                    f"SelectionNode.setup_input: checking node at index {i}: node_id={node_id}, "
+                    f"node_type={node.type if node else None}, status={node.status if node else None}"
+                )
+                if (
+                    node
+                    and node.type == "reasoning"
+                    and node.status == "completed"
+                    and node.result
+                    and node.result.success
+                ):
+                    reasoning_node = node
+                    logger.info(f"Found completed reasoning node: {node_id}")
+                    break
+
+            if reasoning_node:
+                logger.info(f"No parallel results found, using reasoning node {reasoning_node.id} result as candidate")
+                # Create a single candidate result from the reasoning node
+                reasoning_result = {
+                    "reasoning_node": {
+                        "success": True,
+                        "result": reasoning_node.result,
+                        "node_id": reasoning_node.id,
+                        "node_type": reasoning_node.type,
+                    }
+                }
+                parallel_results = reasoning_result
+                logger.info(
+                    f"SelectionNode.setup_input: created reasoning_result candidate with {len(parallel_results)} "
+                    f"entries"
+                )
+            else:
+                logger.error("SelectionNode.setup_input: No completed reasoning node found with successful result")
+                return {"success": False, "message": "No parallel results available in workflow context"}
 
         # Create or update the SelectionInput with parallel results
         from datus.schemas.parallel_node_models import SelectionInput
@@ -209,3 +254,47 @@ class SelectionNode(Node):
             all_candidates=candidates,
             score_analysis=scores,
         )
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """
+        Execute the selection node with streaming support.
+
+        Args:
+            action_history_manager: Manager for tracking action history
+
+        Yields:
+            ActionHistory: Progress updates during node execution
+        """
+        # Create initial action history
+        action_id = f"{self.id}_stream"
+        if action_history_manager:
+            action_history = action_history_manager.create(
+                action_id=action_id,
+                action_type="selection",
+                status="running",
+                message="Selecting the best result from candidates",
+            )
+            yield action_history
+
+        # Execute the main logic (non-streaming)
+        result = self.execute()
+
+        # Generate final action history
+        if action_history_manager:
+            status = "completed" if result.success else "failed"
+            message = (
+                f"Selection completed. Selected source: {result.selected_source}" if result.success else result.error
+            )
+            action_history = action_history_manager.update(
+                action_id=action_id,
+                status=status,
+                message=message,
+                result={
+                    "success": result.success,
+                    "selected_source": result.selected_source if result.success else None,
+                    "reason": result.selection_reason if result.success else None,
+                },
+            )
+            yield action_history

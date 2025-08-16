@@ -3,6 +3,7 @@ import json
 import os
 
 import yaml
+from utils import fix_path
 
 
 def load_config(config_path):
@@ -133,7 +134,8 @@ def main():
     args = parser.parse_args()
 
     try:
-        config = load_config(args.workdir + "/" + args.config)
+        config_path = fix_path(args.workdir, args.config)
+        config = load_config(config_path)
 
         benchmark_file = get_benchmark_file_path(config, args.benchmark, args.workdir)
 
