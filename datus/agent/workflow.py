@@ -33,6 +33,7 @@ class Workflow:
         """
         self.name = name
         self.task = task
+        self.workflow_config = None
         self.metadata = {}
 
         self.nodes = {}  # Map of node_id to Node objects
