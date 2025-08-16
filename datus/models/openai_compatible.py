@@ -692,47 +692,69 @@ class OpenAICompatibleModel(LLMBaseModel):
             logger.debug(f"No text content found in message output: {content}")
             return None
 
-    def get_model_info(self) -> Optional[Dict]:
+    @property
+    def model_specs(self) -> Dict[str, Dict[str, int]]:
         """
-        Get model information from the /v1/models API endpoint.
-
-        Returns:
-            Dictionary with model info, or None if unavailable
+        Model specifications dictionary containing context_length and max_tokens for various models.
         """
-        if self._model_info is not None:
-            return self._model_info
-
-        try:
-            # Use the OpenAI client to get model info
-            model_info = self.client.models.retrieve(self.model_name)
-
-            # Convert to dict for easier access
-            self._model_info = {
-                "id": getattr(model_info, "id", None),
-                "context_length": getattr(model_info, "context_length", None),
-                "max_tokens": getattr(model_info, "max_tokens", None),
-                "owned_by": getattr(model_info, "owned_by", None),
-                "created": getattr(model_info, "created", None),
-            }
-
-            logger.debug(f"Retrieved model info for {self.model_name}: {self._model_info}")
-            return self._model_info
-
-        except Exception as e:
-            logger.warning(f"Failed to retrieve model info for {self.model_name}: {str(e)}")
-            self._model_info = {}  # Cache empty result to avoid repeated failures
-            return None
+        return {
+            # OpenAI Models
+            "gpt-5": {"context_length": 400000, "max_tokens": 128000},
+            "gpt-4o": {"context_length": 128000, "max_tokens": 16384},
+            "gpt-03": {"context_length": 200000, "max_tokens": 200000},
+            
+            # DeepSeek Models
+            "deepseek-chat": {"context_length": 65535, "max_tokens": 8192},
+            "deepseek-v3": {"context_length": 65535, "max_tokens": 8192},
+            "deepseek-reasoner": {"context_length": 65535, "max_tokens": 65535},
+            "deepseek-r1": {"context_length": 65535, "max_tokens": 65535},
+            
+            # Moonshot (Kimi) Models
+            "kimi-k2": {"context_length": 128000, "max_tokens": 8192},
+            
+            # Qwen Models
+            "qwen3-coder": {"context_length": 128000, "max_tokens": 8192},
+            
+            # Gemini Models
+            "gemini-2.5-pro": {"context_length": 1048576, "max_tokens": 65535},
+            "gemini-2.5-flash": {"context_length": 1048576, "max_tokens": 8192},
+            "gemini-2.5-flash-lite": {"context_length": 1048576, "max_tokens": 8192},
+        }
 
     def max_tokens(self) -> Optional[int]:
         """
-        Get the max tokens from model info.
+        Get the max tokens from model specs with prefix matching.
 
         Returns:
-            Max tokens from model info, or None if unavailable
+            Max tokens from model specs, or None if unavailable
         """
-        model_info = self.get_model_info()
-        if model_info:
-            return model_info.get("max_tokens")
+        # First try exact match
+        if self.model_name in self.model_specs:
+            return self.model_specs[self.model_name]["max_tokens"]
+        
+        # Try prefix matching for models like gpt-4o-mini, kimi-k2-0711-preview
+        for spec_model in self.model_specs:
+            if self.model_name.startswith(spec_model):
+                return self.model_specs[spec_model]["max_tokens"]
+        
+        return None
+
+    def context_length(self) -> Optional[int]:
+        """
+        Get the context length from model specs with prefix matching.
+
+        Returns:
+            Context length from model specs, or None if unavailable
+        """
+        # First try exact match
+        if self.model_name in self.model_specs:
+            return self.model_specs[self.model_name]["context_length"]
+        
+        # Try prefix matching for models like gpt-4o-mini, kimi-k2-0711-preview
+        for spec_model in self.model_specs:
+            if self.model_name.startswith(spec_model):
+                return self.model_specs[spec_model]["context_length"]
+        
         return None
 
     def token_count(self, prompt: str) -> int:

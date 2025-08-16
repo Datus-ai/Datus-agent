@@ -553,6 +553,37 @@ class ClaudeModel(LLMBaseModel):
                 logger.error(f"Error in streaming MCP execution: {str(e)}")
                 raise
 
+    @property
+    def model_specs(self) -> Dict[str, Dict[str, int]]:
+        """
+        Model specifications dictionary containing context_length and max_tokens for Claude models.
+        """
+        return {
+            # Claude Models
+            "claude-opus-4-1": {"context_length": 200000, "max_tokens": 32000},
+            "claude-opus-4": {"context_length": 200000, "max_tokens": 32000},
+            "claude-sonnet-4": {"context_length": 1048576, "max_tokens": 65536},  # 1M for beta 25/08
+            "claude-3-7-sonnet": {"context_length": 200000, "max_tokens": 128000},
+        }
+
+    def context_length(self) -> Optional[int]:
+        """
+        Get the context length from model specs with prefix matching.
+
+        Returns:
+            Context length from model specs, or None if unavailable
+        """
+        # First try exact match
+        if self.model_name in self.model_specs:
+            return self.model_specs[self.model_name]["context_length"]
+
+        # Try prefix matching for models like claude-3-5-sonnet-20241022
+        for spec_model in self.model_specs:
+            if self.model_name.startswith(spec_model):
+                return self.model_specs[spec_model]["context_length"]
+
+        return None
+
     def token_count(self, prompt: str) -> int:
         """Estimate the number of tokens in a text using a simple approximation.
 

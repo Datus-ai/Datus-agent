@@ -161,6 +161,16 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     def token_count(self, prompt: str) -> int:
         pass
 
+    @abstractmethod
+    def context_length(self) -> Optional[int]:
+        """
+        Get the context length for the model.
+
+        Returns:
+            Context length, or None if unavailable
+        """
+        pass
+
     def to_dict(self) -> Dict[str, str]:
         return {"model_name": self.model_config.model}
 
