@@ -47,7 +47,15 @@ class ChatAgenticNode(AgenticNode):
             max_turns: Maximum conversation turns per interaction
         """
         self.namespace = namespace
-        self.max_turns = max_turns
+        # Get max_turns from node configuration if available
+        node_max_turns = None
+        if agent_config and hasattr(agent_config, 'nodes') and 'chat' in agent_config.nodes:
+            chat_node_config = agent_config.nodes['chat']
+            if chat_node_config.input and hasattr(chat_node_config.input, 'max_turns'):
+                node_max_turns = chat_node_config.input.max_turns
+        
+        # Priority: provided value > node config > default 30
+        self.max_turns = max_turns if max_turns != 30 else (node_max_turns or 30)
 
         # Initialize MCP servers based on namespace
         mcp_servers = self._setup_mcp_servers()

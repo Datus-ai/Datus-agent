@@ -21,6 +21,7 @@ class ChatNodeInput(BaseInput):
     catalog: Optional[str] = Field(default=None, description="Database catalog for context")
     database: Optional[str] = Field(default=None, description="Database name for context")
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")
+    max_turns: int = Field(default=30, description="Maximum conversation turns per interaction")
 
     class Config:
         populate_by_name = True
