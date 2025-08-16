@@ -279,7 +279,7 @@ class SubworkflowNode(Node):
             potential_paths = [
                 config,
                 config.replace(".yaml", ".yml"),
-                os.path.join("conf", config),  # 添加conf前缀
+                os.path.join("conf", config),
                 os.path.join("conf", config.replace(".yaml", ".yml")),
             ]
 
