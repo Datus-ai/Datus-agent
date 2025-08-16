@@ -277,10 +277,10 @@ class SubworkflowNode(Node):
 
             # Try multiple path patterns to find the config file
             potential_paths = [
-                config,  # 原始路径
-                config.replace(".yaml", ".yml"),  # 处理扩展名不同的情况
+                config,
+                config.replace(".yaml", ".yml"),
                 os.path.join("conf", config),  # 添加conf前缀
-                os.path.join("conf", config.replace(".yaml", ".yml")),  # 添加conf前缀并处理扩展名
+                os.path.join("conf", config.replace(".yaml", ".yml")),
             ]
 
             for path in potential_paths:
