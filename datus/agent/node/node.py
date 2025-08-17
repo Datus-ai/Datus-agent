@@ -143,17 +143,20 @@ class Node(ABC):
         """Initialize the model for this node"""
         model_name = None
         nodes_config = {}
-        if not self.model:
-            model_name = None
-            nodes_config = self.agent_config.nodes
 
-        if self.type in nodes_config:
-            node_config = nodes_config[self.type]
-            model_name = node_config.model
-            node_input = node_config.input
-            for attr, value in node_input.__dict__.items():
-                if value is not None:
-                    setattr(self.input, attr, value)
+        # Check if model is already set (e.g., by subworkflow config)
+        if self.model:
+            model_name = self.model
+        else:
+            # Fall back to agent config
+            nodes_config = self.agent_config.nodes
+            if self.type in nodes_config:
+                node_config = nodes_config[self.type]
+                model_name = node_config.model
+                node_input = node_config.input
+                for attr, value in node_input.__dict__.items():
+                    if value is not None:
+                        setattr(self.input, attr, value)
 
         llm_model = LLMBaseModel.create_model(model_name=model_name, agent_config=self.agent_config)
         logger.info(

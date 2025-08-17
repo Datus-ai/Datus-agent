@@ -178,7 +178,7 @@ agent:
       - execute_sql
       - output
 
-  # Sub-workflow exmaple
+  # Sub-workflow example
   workflow:
     plan: bird_para
 
@@ -203,3 +203,35 @@ agent:
     subworkflow3:
       - reasoning
       - reflect
+
+  # Sub-workflow with config example
+   workflow:
+    plan: bird_para
+
+    bird_para:
+      - schema_linking
+      - parallel:
+        - subworkflow1
+        - subworkflow2
+        - subworkflow3
+      - selection
+      - execute_sql
+      - output
+
+    subworkflow1:
+      steps:
+      - search_metrics
+      - generate_sql
+      config: multi/agent1.yaml
+
+    subworkflow2:
+      steps:
+      - search_metrics
+      - reasoning
+      config: multi/agent2.yaml
+
+    subworkflow3:
+      steps:
+      - reasoning
+      - reflect
+      config: multi/agent3.yaml

@@ -140,7 +140,13 @@ class AgentConfig:
         # Initialize workflow configuration
         workflow_config = kwargs.get("workflow", {})
         self.workflow_plan = workflow_config.get("plan", "reflection")
-        self.custom_workflows = {k: v for k, v in workflow_config.items() if k != "plan"}
+
+        # Process custom workflows with enhanced config support
+        self.custom_workflows = {}
+        for k, v in workflow_config.items():
+            if k != "plan":
+                # Store workflow configuration, supporting both list format and {steps: [], config: {}} format
+                self.custom_workflows[k] = v
         self.namespaces: Dict[str, Dict[str, DbConfig]] = {}
         self._init_namespace_config(kwargs.get("namespace", {}))
 

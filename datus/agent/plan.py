@@ -212,8 +212,14 @@ def generate_workflow(
         selected_workflow = workflows[plan_type]
 
     # support { steps: [...] } structure for custom workflows
-    if isinstance(selected_workflow, dict) and "steps" in selected_workflow:
-        selected_workflow = selected_workflow["steps"]
+    workflow_steps = selected_workflow
+    workflow_config = None
+    if isinstance(selected_workflow, dict):
+        if "steps" in selected_workflow:
+            workflow_steps = selected_workflow["steps"]
+            # Extract config if available
+            if "config" in selected_workflow:
+                workflow_config = selected_workflow["config"]
 
     workflow = Workflow(
         name=f"SQL Query Workflow ({plan_type})",
@@ -221,7 +227,11 @@ def generate_workflow(
         agent_config=agent_config,
     )
 
-    nodes = create_nodes_from_config(selected_workflow, task, agent_config)
+    # Store workflow config in the workflow object if available
+    if workflow_config:
+        workflow.workflow_config = workflow_config
+
+    nodes = create_nodes_from_config(workflow_steps, task, agent_config)
 
     for node in nodes:
         workflow.add_node(node)

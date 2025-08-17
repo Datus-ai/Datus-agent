@@ -1,4 +1,4 @@
-from typing import AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.plan import generate_workflow
@@ -76,7 +76,11 @@ class SubworkflowNode(Node):
             if self.input.pass_context:
                 subworkflow.context = parent_workflow.context.copy()
 
-            # Override node parameters if provided
+            # Apply config from workflow if available
+            if hasattr(subworkflow, "workflow_config") and subworkflow.workflow_config:
+                self._apply_config_params(subworkflow, subworkflow.workflow_config)
+
+            # Override node parameters if provided (for backwards compatibility)
             if self.input.node_params:
                 self._apply_node_params(subworkflow)
 
@@ -256,6 +260,83 @@ class SubworkflowNode(Node):
                             logger.info(f"Applied parameter override '{param_name}' to node {node.id}")
                         else:
                             logger.warning(f"Parameter '{param_name}' not found in node {node.id}")
+
+    def _apply_config_params(self, workflow: Workflow, config: Any) -> None:
+        """Apply configuration parameters to nodes in the workflow
+
+        Args:
+            workflow: The workflow containing nodes to configure
+            config: Configuration dictionary or filename with node-specific settings
+        """
+        if not config:
+            return
+
+        # Handle the case when config is a string (filename)
+        if isinstance(config, str):
+            import os
+
+            # Try multiple path patterns to find the config file
+            potential_paths = [
+                config,
+                config.replace(".yaml", ".yml"),
+                os.path.join("conf", config),
+                os.path.join("conf", config.replace(".yaml", ".yml")),
+            ]
+
+            for path in potential_paths:
+                logger.info(f"Attempting to load config from file: {path}")
+                try:
+                    import yaml
+
+                    if os.path.exists(path):
+                        logger.info(f"Found config file at: {path}")
+                        with open(path, "r") as f:
+                            config_data = yaml.safe_load(f)
+                            if isinstance(config_data, dict) and "agent" in config_data:
+                                # Extract nodes configuration from the agent config file
+                                if "nodes" in config_data["agent"]:
+                                    node_configs = config_data["agent"]["nodes"]
+                                    self._apply_node_configs(workflow, node_configs)
+                                    return
+                except Exception as e:
+                    logger.error(f"Error loading config from file {path}: {e}")
+                    continue
+
+            logger.warning(f"Failed to load or parse config from any of the potential paths: {potential_paths}")
+            return
+
+        # Handle dict-type config
+        if isinstance(config, dict):
+            self._apply_node_configs(workflow, config)
+
+    def _apply_node_configs(self, workflow: Workflow, config: dict) -> None:
+        """Apply node configurations from a dictionary
+
+        Args:
+            workflow: The workflow containing nodes
+            config: Node configuration dictionary
+        """
+        # Iterate through each node type in the config
+        for node_type, params in config.items():
+            # Find all nodes of this type in the workflow
+            for node in workflow.nodes.values():
+                if node.type == node_type:
+                    # Apply config parameters to the node
+                    logger.info(f"Applying config for node type {node_type} to node {node.id}")
+
+                    # Handle model specification if present
+                    if isinstance(params, dict) and "model" in params:
+                        node.model = params["model"]
+                        logger.info(f"Set model={params['model']} for node {node.id}")
+
+                    # Apply other parameters to node.input if they exist
+                    if isinstance(params, dict):
+                        for param_name, param_value in params.items():
+                            if param_name != "model" and hasattr(node.input, param_name):
+                                setattr(node.input, param_name, param_value)
+                                logger.info(f"Set {param_name}={param_value} for node {node.id}")
+                            elif param_name != "model":
+                                logger.warning(f"Parameter '{param_name}' not found in node {node.id}")
 
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
