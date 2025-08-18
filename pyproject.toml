@@ -107,7 +107,7 @@ exclude = ["tests*", "benchmark*", "docs*"]
 "mcp.mcp-metricflow-server" = "mcp/mcp-metricflow-server"
 
 [tool.setuptools.data-files]
-"mcp/mcp-metricflow-server" = ["mcp/mcp-metricflow-server/LICENSE", "mcp/mcp-metricflow-server/pyproject.toml", "mcp/mcp-metricflow-server/mcp-metricflow-server"]
+"mcp/mcp-metricflow-server" = ["mcp/mcp-metricflow-server/LICENSE", "mcp/mcp-metricflow-server/pyproject.toml"]
 
 [tool.uv.pip]
 index-url = "http://mirrors.aliyun.com/pypi/simple"

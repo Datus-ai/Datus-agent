@@ -78,6 +78,20 @@ def find_mcp_directory(mcp_name: str) -> str:
     )
 
 
+def check_filesystem_mcp_installed() -> bool:
+    """Check if @modelcontextprotocol/server-filesystem is installed and available."""
+    import shutil
+
+    # Simply check if the binary is available in PATH
+    # If npm package is correctly installed, the binary should be available
+    if shutil.which("mcp-server-filesystem"):
+        logger.info("Found mcp-server-filesystem executable in PATH")
+        return True
+
+    logger.debug("mcp-server-filesystem executable not found in PATH")
+    return False
+
+
 class MCPServer:
     _snowflake_mcp_server = None
     _starrocks_mcp_server = None
@@ -362,10 +376,7 @@ class MCPServer:
         if cls._metricflow_mcp_server is None:
             with cls._lock:
                 if cls._metricflow_mcp_server is None:
-                    directory = os.environ.get("METRICFLOW_MCP_DIR", "mcp/mcp-metricflow-server")
-                    mf_path = os.environ.get("MF_PATH", "")
-                    mf_project_dir = os.environ.get("MF_PROJECT_DIR", "")
-                    mf_verbose = os.environ.get("MF_VERBOSE", "false")
+                    directory = os.getenv("METRICFLOW_MCP_DIR", "mcp/mcp-metricflow-server")
                     if not directory:
                         try:
                             directory = find_mcp_directory("mcp-metricflow-server")
@@ -376,9 +387,9 @@ class MCPServer:
 
                     env_settings = {
                         "MF_MODEL_PATH": os.getenv("FILESYSTEM_MCP_DIRECTORY", "/tmp"),
-                        "MF_PATH": mf_path,
-                        "MF_PROJECT_DIR": mf_project_dir,
-                        "MF_VERBOSE": mf_verbose,
+                        "MF_PATH": os.getenv("MF_PATH", ""),
+                        "MF_PROJECT_DIR": os.getenv("MF_PROJECT_DIR", ""),
+                        "MF_VERBOSE": os.getenv("MF_VERBOSE", "false"),
                     }
                     if db_config.type in (DBType.DUCKDB, DBType.SQLITE):
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
@@ -388,7 +399,7 @@ class MCPServer:
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_DIALECT"] = DBType.MYSQL
                         env_settings["MF_DWH_HOST"] = db_config.host
-                        env_settings["MF_DWH_PORT"] = str(db_config.port)
+                        env_settings["MF_DWH_PORT"] = db_config.port
                         env_settings["MF_DWH_USER"] = db_config.username
                         env_settings["MF_DWH_PASSWORD"] = db_config.password
                         env_settings["MF_DWH_DB"] = database_name
@@ -413,7 +424,7 @@ class MCPServer:
         if cls._filesystem_mcp_server is None:
             with cls._lock:
                 if cls._filesystem_mcp_server is None:
-                    filesystem_mcp_directory = path or os.environ.get("FILESYSTEM_MCP_DIRECTORY", "/tmp")
+                    filesystem_mcp_directory = path or os.getenv("FILESYSTEM_MCP_DIRECTORY", "/tmp")
 
                     # Convert to absolute path
                     if not os.path.isabs(filesystem_mcp_directory):
@@ -426,23 +437,39 @@ class MCPServer:
 
                     logger.info(f"Creating filesystem MCP server for directory: {filesystem_mcp_directory}")
 
-                    mcp_server_params = MCPServerStdioParams(
-                        command="npx",
-                        args=[
-                            "--silent",
-                            "-y",
-                            "@modelcontextprotocol/server-filesystem",
-                            filesystem_mcp_directory,
-                        ],
-                        env={
-                            "NODE_OPTIONS": "--no-warnings",
-                            "NPM_CONFIG_LOGLEVEL": "silent",
-                            "NPM_CONFIG_PROGRESS": "false",
-                            "NPX_SILENT": "true",
-                            "SUPPRESS_NO_CONFIG_WARNING": "1",
-                            "MCP_SERVER_QUIET": "1",  # Custom flag for MCP servers
-                        },
-                    )
+                    # Check if filesystem MCP server is already installed
+                    if check_filesystem_mcp_installed():
+                        # Option 1: Use direct executable if available (fastest)
+                        logger.info("Using pre-installed mcp-server-filesystem executable")
+                        mcp_server_params = MCPServerStdioParams(
+                            command="mcp-server-filesystem",
+                            args=[filesystem_mcp_directory],
+                            env={
+                                "NODE_OPTIONS": "--no-warnings",
+                                "MCP_SERVER_QUIET": "1",
+                            },
+                        )
+                    else:
+                        # Option 2: Use npx to download and run if not installed
+                        logger.info("Using npx to download and run @modelcontextprotocol/server-filesystem")
+                        mcp_server_params = MCPServerStdioParams(
+                            command="npx",
+                            args=[
+                                "--silent",
+                                "-y",
+                                "@modelcontextprotocol/server-filesystem",
+                                filesystem_mcp_directory,
+                            ],
+                            env={
+                                "NODE_OPTIONS": "--no-warnings",
+                                "NPM_CONFIG_LOGLEVEL": "silent",
+                                "NPM_CONFIG_PROGRESS": "false",
+                                "NPX_SILENT": "true",
+                                "SUPPRESS_NO_CONFIG_WARNING": "1",
+                                "MCP_SERVER_QUIET": "1",  # Custom flag for MCP servers
+                            },
+                        )
+
                     cls._filesystem_mcp_server = SilentMCPServerStdio(
                         params=mcp_server_params, client_session_timeout_seconds=30
                     )
