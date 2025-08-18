@@ -289,29 +289,29 @@ class AgentCommands:
             input.prompt_version = prompt_version.strip()
         elif isinstance(input, GenerateSemanticModelInput):
             # Allow user to modify table name
-            table_name = Prompt.ask(
-                "[bold]Enter table name to generate semantic model from[/]", default=input.table_name
+            table_name = self.cli._prompt_input(
+                "Enter table name to generate semantic model from", default=input.table_name
             )
             input.table_name = table_name.strip()
 
             # Interactive prompts for metadata (now using sql_task fields)
             self.console.print("[bold blue]Semantic Model Metadata:[/]")
-            catalog_name = Prompt.ask("[bold]Enter catalog name[/]", default=input.sql_task.catalog_name)
+            catalog_name = self.cli._prompt_input("Enter catalog name", default=input.sql_task.catalog_name)
             input.sql_task.catalog_name = catalog_name.strip()
 
-            database_name = Prompt.ask("[bold]Enter database name[/]", default=input.sql_task.database_name)
+            database_name = self.cli._prompt_input("Enter database name", default=input.sql_task.database_name)
             input.sql_task.database_name = database_name.strip()
 
-            schema_name = Prompt.ask("[bold]Enter schema name[/]", default=input.sql_task.schema_name)
+            schema_name = self.cli._prompt_input("Enter schema name", default=input.sql_task.schema_name)
             input.sql_task.schema_name = schema_name.strip()
 
-            layer1 = Prompt.ask("[bold]Enter layer1 (business layer)[/]", default=input.sql_task.layer1)
+            layer1 = self.cli._prompt_input("Enter layer1 (business layer)", default=input.sql_task.layer1)
             input.sql_task.layer1 = layer1.strip()
 
-            layer2 = Prompt.ask("[bold]Enter layer2 (sub-layer)[/]", default=input.sql_task.layer2)
+            layer2 = self.cli._prompt_input("Enter layer2 (sub-layer)", default=input.sql_task.layer2)
             input.sql_task.layer2 = layer2.strip()
 
-            domain = Prompt.ask("[bold]Enter domain[/]", default=input.sql_task.domain)
+            domain = self.cli._prompt_input("Enter domain", default=input.sql_task.domain)
             input.sql_task.domain = domain.strip()
 
             prompt_version = self.cli._prompt_input("Enter prompt version", default=input.prompt_version)

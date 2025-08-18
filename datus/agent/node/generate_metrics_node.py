@@ -80,7 +80,7 @@ class GenerateMetricsNode(Node):
     def setup_input(self, workflow: Workflow) -> Dict:
         next_input = GenerateMetricsInput(
             sql_task=workflow.task,
-            sql_query=workflow.get_last_sqlcontext().sql_query,
+            sql_query="",
         )
         self.input = next_input
         return {"success": True, "message": "Metrics generated", "suggestions": [next_input]}
