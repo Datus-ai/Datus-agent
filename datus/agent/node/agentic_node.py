@@ -126,6 +126,12 @@ class AgenticNode(ABC):
         if self.agent_config and hasattr(self.agent_config, "prompt_version"):
             version = self.agent_config.prompt_version
 
+        root_path = None
+        if self.agent_config and hasattr(self.agent_config, "nodes") and "chat" in self.agent_config.nodes:
+            chat_node_config = self.agent_config.nodes["chat"]
+            if chat_node_config.input and hasattr(chat_node_config.input, "workspace_root"):
+                root_path = chat_node_config.input.workspace_root
+
         # Construct template name: {template_name}_system_{version}
         template_name = f"{self.get_node_name()}_system"
 
@@ -137,6 +143,7 @@ class AgenticNode(ABC):
                 # Add common template variables
                 agent_config=self.agent_config,
                 namespace=getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
+                workspace_root=root_path,
             )
 
         except FileNotFoundError as e:

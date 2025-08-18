@@ -49,11 +49,11 @@ class ChatAgenticNode(AgenticNode):
         self.namespace = namespace
         # Get max_turns from node configuration if available
         node_max_turns = None
-        if agent_config and hasattr(agent_config, 'nodes') and 'chat' in agent_config.nodes:
-            chat_node_config = agent_config.nodes['chat']
-            if chat_node_config.input and hasattr(chat_node_config.input, 'max_turns'):
+        if agent_config and hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
+            chat_node_config = agent_config.nodes["chat"]
+            if chat_node_config.input and hasattr(chat_node_config.input, "max_turns"):
                 node_max_turns = chat_node_config.input.max_turns
-        
+
         # Priority: provided value > node config > default 30
         self.max_turns = max_turns if max_turns != 30 else (node_max_turns or 30)
 
@@ -90,16 +90,27 @@ class ChatAgenticNode(AgenticNode):
         mcp_servers = {}
 
         try:
-            # Add filesystem MCP server as default
+            # Add filesystem MCP server with configurable root path
             import os
 
-            sqls_path = os.path.join(os.getcwd(), "sqls")
-            filesystem_server = MCPServer.get_filesystem_mcp_server(path=sqls_path)
+            root_path = "."
+            if agent_config and hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
+                chat_node_config = agent_config.nodes["chat"]
+                if chat_node_config.input and hasattr(chat_node_config.input, "workspace_root"):
+                    root_path = chat_node_config.input.workspace_root
+
+            # Handle relative vs absolute paths
+            if os.path.isabs(root_path):
+                filesystem_path = root_path
+            else:
+                filesystem_path = os.path.join(os.getcwd(), root_path)
+
+            filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
             if filesystem_server:
                 mcp_servers["filesystem"] = filesystem_server
-                logger.debug(f"Added filesystem MCP server with path: {sqls_path}")
+                logger.debug(f"Added filesystem MCP server with path: {filesystem_path}")
             else:
-                logger.warning(f"Failed to create filesystem MCP server for path: {sqls_path}")
+                logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
 
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
@@ -192,7 +203,9 @@ class ChatAgenticNode(AgenticNode):
                         action_tokens = usage_info.get("total_tokens", 0)
                         if action_tokens > 0:
                             self._add_session_tokens(action_tokens)
-                            logger.debug(f"Added {action_tokens} tokens from {stream_action.action_type} action. Session total: {self._count_session_tokens()}")
+                            logger.debug(
+                                f"Added {action_tokens} tokens from {stream_action.action_type} action. Session total: {self._count_session_tokens()}"
+                            )
                             tokens_used += action_tokens
 
                 # Collect response content from successful actions
@@ -236,16 +249,22 @@ class ChatAgenticNode(AgenticNode):
                         if fallback_tokens > 0:
                             self._add_session_tokens(fallback_tokens)
                             tokens_used = fallback_tokens
-                            logger.debug(f"Used fallback: Added {fallback_tokens} tokens from final output. Session total: {self._count_session_tokens()}")
-                
+                            logger.debug(
+                                f"Used fallback: Added {fallback_tokens} tokens from final output. Session total: {self._count_session_tokens()}"
+                            )
+
                 # Last resort: rough estimation if no usage info available at all
                 if tokens_used == 0 and response_content:
                     estimated_tokens = int(len(response_content.split()) * 1.3)
                     self._add_session_tokens(estimated_tokens)
                     tokens_used = estimated_tokens
-                    logger.debug(f"Used estimation: Added {estimated_tokens} tokens. Session total: {self._count_session_tokens()}")
+                    logger.debug(
+                        f"Used estimation: Added {estimated_tokens} tokens. Session total: {self._count_session_tokens()}"
+                    )
             else:
-                logger.debug(f"Incremental token tracking complete. Total tokens used: {tokens_used}, Session total: {self._count_session_tokens()}")
+                logger.debug(
+                    f"Incremental token tracking complete. Total tokens used: {tokens_used}, Session total: {self._count_session_tokens()}"
+                )
 
             # Create final result
             result = ChatNodeResult(

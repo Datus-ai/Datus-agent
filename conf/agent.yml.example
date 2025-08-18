@@ -53,6 +53,10 @@ agent:
     output:
       prompt_version: "1.0"
       check_result: true # Whether to check the results of the previous step, the default value is false
+    chat:
+      workspace_root: sql2
+      model: anthropic
+      max_turns: 25
 
   # benchmark configuration
   benchmark:
