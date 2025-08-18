@@ -62,6 +62,7 @@ class AgenticNode(ABC):
         self.actions: List[ActionHistory] = []
         self.session_id: Optional[str] = None
         self._session: Optional[SQLiteSession] = None
+        self._session_tokens: int = 0
 
         # Initialize the model using agent config
         if agent_config:
@@ -79,8 +80,11 @@ class AgenticNode(ABC):
 
             # Create model with node-specific or default model
             self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config)
+            # Store context length for efficient token validation
+            self.context_length = self.model.context_length() if self.model else None
         else:
             self.model = None
+            self.context_length = None
 
         # Generate system prompt using prompt manager
         self.system_prompt = self._get_system_prompt()
@@ -169,24 +173,39 @@ class AgenticNode(ABC):
     def _count_session_tokens(self) -> int:
         """
         Count the total tokens in the current session.
+        Returns the cumulative token count stored in self._session_tokens.
 
         Returns:
             Total token count in the session
         """
-        if not self.model or not self._session:
-            return 0
+        return self._session_tokens
 
-        try:
-            # Get session items and count tokens
-            # ToDo: implement later
-            return 0
-        except Exception as e:
-            logger.warning(f"Failed to count session tokens: {e}")
-            return 0
+    def _add_session_tokens(self, tokens_used: int) -> None:
+        """
+        Add tokens to the current session count.
+        Validates that the total doesn't exceed the model's context length.
+
+        Args:
+            tokens_used: Number of tokens to add to the session count
+        """
+        if tokens_used <= 0:
+            return
+
+        # Validate against context length if available
+        if self.context_length and (self._session_tokens + tokens_used) > self.context_length:
+            logger.warning(
+                f"Cannot add {tokens_used} tokens: would exceed context length "
+                f"({self._session_tokens + tokens_used} > {self.context_length})"
+            )
+            return
+
+        self._session_tokens += tokens_used
+        logger.debug(f"Added {tokens_used} tokens to session. Total: {self._session_tokens}")
 
     async def _manual_compact(self) -> bool:
         """
         Manually compact the session by summarizing conversation history.
+        This creates a new session and resets token count to 0.
 
         Returns:
             True if compacting was successful, False otherwise
@@ -198,6 +217,10 @@ class AgenticNode(ABC):
         try:
             logger.info(f"Starting manual compacting for session {self.session_id}")
 
+            # Store old session info for logging
+            old_session_id = self.session_id
+            old_tokens = self._session_tokens
+
             # Get current session content
             # This would involve:
             # 1. Retrieving all messages from the current session
@@ -205,8 +228,16 @@ class AgenticNode(ABC):
             # 3. Creating a new session with the summary as context
             # 4. Clearing the old session
 
-            # For now, this is a placeholder implementation
-            logger.info("Manual compacting completed")
+            # Create new session (force recreation)
+            self.session_id = self._generate_session_id()
+            self._session = None  # Force recreation on next access
+
+            # Reset token count for new session
+            self._session_tokens = 0
+
+            logger.info(
+                f"Manual compacting completed. Session: {old_session_id} -> {self.session_id}, Token count reset: {old_tokens} -> 0"
+            )
             return True
 
         except Exception as e:
@@ -220,17 +251,15 @@ class AgenticNode(ABC):
         Returns:
             True if compacting was triggered and successful, False otherwise
         """
-        if not self.model:
+        if not self.model or not self.context_length:
             return False
 
         try:
             current_tokens = self._count_session_tokens()
-            # Get max tokens from model config - this is a simplified check
-            max_tokens = getattr(self.model.model_config, "max_context_tokens", 8192)
 
-            if current_tokens > (max_tokens * 0.9):
-                logger.info(f"Auto-compacting triggered: {current_tokens}/{max_tokens} tokens")
-                return await self._manual_compact()
+            if current_tokens > (self.context_length * 0.9):
+                logger.info(f"Auto-compacting triggered: {current_tokens}/{self.context_length} tokens")
+                return await self._manual_compact()  # Will reset tokens to 0
 
             return False
 
@@ -257,19 +286,21 @@ class AgenticNode(ABC):
         """
 
     def clear_session(self) -> None:
-        """Clear the current session."""
+        """Clear the current session and reset token count."""
         if self.model and self.session_id:
             self.model.clear_session(self.session_id)
             self._session = None
-            logger.info(f"Cleared session: {self.session_id}")
+            self._session_tokens = 0  # Reset token count
+            logger.info(f"Cleared session: {self.session_id}, tokens reset to 0")
 
     def delete_session(self) -> None:
-        """Delete the current session completely."""
+        """Delete the current session completely and reset token count."""
         if self.model and self.session_id:
             self.model.delete_session(self.session_id)
             self._session = None
             self.session_id = None
-            logger.info("Deleted session")
+            self._session_tokens = 0  # Reset token count
+            logger.info("Deleted session, tokens reset to 0")
 
     def get_session_info(self) -> Dict[str, Any]:
         """
@@ -281,9 +312,14 @@ class AgenticNode(ABC):
         if not self.session_id:
             return {"session_id": None, "active": False}
 
+        current_tokens = self._count_session_tokens()
+
         return {
             "session_id": self.session_id,
             "active": self._session is not None,
-            "token_count": self._count_session_tokens(),
+            "token_count": current_tokens,
             "action_count": len(self.actions),
+            "context_usage_ratio": current_tokens / self.context_length if self.context_length else 0,
+            "context_remaining": self.context_length - current_tokens if self.context_length else 0,
+            "context_length": self.context_length,
         }

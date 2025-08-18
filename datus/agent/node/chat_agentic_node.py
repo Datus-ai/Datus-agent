@@ -185,6 +185,16 @@ class ChatAgenticNode(AgenticNode):
             ):
                 yield stream_action
 
+                # Extract partial usage info from each stream_action if available
+                if stream_action.output and isinstance(stream_action.output, dict):
+                    usage_info = stream_action.output.get("usage", {})
+                    if isinstance(usage_info, dict) and usage_info.get("total_tokens"):
+                        action_tokens = usage_info.get("total_tokens", 0)
+                        if action_tokens > 0:
+                            self._add_session_tokens(action_tokens)
+                            logger.debug(f"Added {action_tokens} tokens from {stream_action.action_type} action. Session total: {self._count_session_tokens()}")
+                            tokens_used += action_tokens
+
                 # Collect response content from successful actions
                 if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
                     if isinstance(stream_action.output, dict):
@@ -214,9 +224,28 @@ class ChatAgenticNode(AgenticNode):
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 
-            # Count tokens (simplified - would need actual implementation)
-            if response_content:
-                tokens_used = len(response_content.split()) * 1.3  # Rough estimation
+            # Final token validation and correction
+            # Since we're now adding tokens incrementally, we only need to handle the case
+            # where no tokens were captured during streaming (fallback scenario)
+            if tokens_used == 0:
+                # Try to get usage from final result as fallback
+                if last_successful_output:
+                    usage_info = last_successful_output.get("usage", {})
+                    if isinstance(usage_info, dict) and usage_info.get("total_tokens"):
+                        fallback_tokens = usage_info.get("total_tokens", 0)
+                        if fallback_tokens > 0:
+                            self._add_session_tokens(fallback_tokens)
+                            tokens_used = fallback_tokens
+                            logger.debug(f"Used fallback: Added {fallback_tokens} tokens from final output. Session total: {self._count_session_tokens()}")
+                
+                # Last resort: rough estimation if no usage info available at all
+                if tokens_used == 0 and response_content:
+                    estimated_tokens = int(len(response_content.split()) * 1.3)
+                    self._add_session_tokens(estimated_tokens)
+                    tokens_used = estimated_tokens
+                    logger.debug(f"Used estimation: Added {estimated_tokens} tokens. Session total: {self._count_session_tokens()}")
+            else:
+                logger.debug(f"Incremental token tracking complete. Total tokens used: {tokens_used}, Session total: {self._count_session_tokens()}")
 
             # Create final result
             result = ChatNodeResult(
