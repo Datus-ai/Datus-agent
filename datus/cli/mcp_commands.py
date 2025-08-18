@@ -37,6 +37,8 @@ class MCPCommands:
             self.cmd_mcp_check(args[5:].strip())
         elif args.startswith("call"):
             self.cmd_call_tool(args[4:].strip())
+        elif args.startswith("filter"):
+            self.cmd_mcp_filter(args[6:].strip())
         else:
             self.console.print("[red]Invalid MCP command[/red]")
 
@@ -175,3 +177,101 @@ class MCPCommands:
             return
 
         self.console.print(result)
+
+    def cmd_mcp_filter(self, args: str):
+        """Handle MCP filter subcommands."""
+        if args.startswith("set"):
+            self.cmd_mcp_filter_set(args[3:].strip())
+        elif args.startswith("get"):
+            self.cmd_mcp_filter_get(args[3:].strip())
+        elif args.startswith("remove"):
+            self.cmd_mcp_filter_remove(args[6:].strip())
+        else:
+            self.console.print("[red]Invalid filter command. Use: set, get, or remove[/red]")
+
+    def cmd_mcp_filter_set(self, args: str):
+        """Set tool filter for a server."""
+        params = args.strip().split()
+        if len(params) < 2:
+            self.console.print(
+                "[red]Usage: @mcp filter set <server_name> [--allowed tool1,tool2] "
+                "[--blocked tool3,tool4] [--enabled true/false][/red]"
+            )
+            return
+
+        server_name = params[0]
+        allowed_tools = None
+        blocked_tools = None
+        enabled = True
+
+        i = 1
+        while i < len(params):
+            if params[i] == "--allowed" and i + 1 < len(params):
+                allowed_tools = [tool.strip() for tool in params[i + 1].split(",") if tool.strip()]
+                i += 2
+            elif params[i] == "--blocked" and i + 1 < len(params):
+                blocked_tools = [tool.strip() for tool in params[i + 1].split(",") if tool.strip()]
+                i += 2
+            elif params[i] == "--enabled" and i + 1 < len(params):
+                enabled = params[i + 1].lower() in ("true", "1", "yes", "on")
+                i += 2
+            else:
+                i += 1
+
+        result = self.mcp_tool.set_tool_filter(
+            server_name=server_name, allowed_tools=allowed_tools, blocked_tools=blocked_tools, enabled=enabled
+        )
+
+        if result.success:
+            self.console.print(f"[green]✓ Tool filter set for server '{server_name}'[/green]")
+            if allowed_tools:
+                self.console.print(f"  Allowed tools: {', '.join(allowed_tools)}")
+            if blocked_tools:
+                self.console.print(f"  Blocked tools: {', '.join(blocked_tools)}")
+            self.console.print(f"  Filter enabled: {enabled}")
+        else:
+            self.console.print(f"[red]✗ Error setting tool filter: {result.message}[/red]")
+
+    def cmd_mcp_filter_get(self, args: str):
+        """Get tool filter configuration for a server."""
+        server_name = args.strip()
+        if not server_name:
+            self.console.print("[red]Please specify the name of the MCP server[/red]")
+            return
+
+        result = self.mcp_tool.get_tool_filter(server_name)
+
+        if result.success:
+            if result.result["has_filter"]:
+                filter_config = result.result["filter_config"]
+                self.console.print(f"[cyan]Tool filter for server '{server_name}':[/cyan]")
+                self.console.print(f"  Enabled: {filter_config.get('enabled', False)}")
+
+                allowed = filter_config.get("allowed_tool_names")
+                if allowed:
+                    self.console.print(f"  Allowed tools: {', '.join(allowed)}")
+
+                blocked = filter_config.get("blocked_tool_names")
+                if blocked:
+                    self.console.print(f"  Blocked tools: {', '.join(blocked)}")
+
+                if not allowed and not blocked:
+                    self.console.print("  No specific tools configured")
+            else:
+                self.console.print(f"[yellow]No tool filter configured for server '{server_name}'[/yellow]")
+        else:
+            self.console.print(f"[red]✗ Error getting tool filter: {result.message}[/red]")
+
+    def cmd_mcp_filter_remove(self, args: str):
+        """Remove tool filter for a server."""
+        server_name = args.strip()
+        if not server_name:
+            self.console.print("[red]Please specify the name of the MCP server[/red]")
+            return
+
+        result = self.mcp_tool.remove_tool_filter(server_name)
+
+        if result.success:
+            self.console.print(f"[green]✓ Tool filter removed for server '{server_name}'[/green]")
+        else:
+            self.console.print(f"[red]✗ Error removing tool filter: {result.message}[/red]")
