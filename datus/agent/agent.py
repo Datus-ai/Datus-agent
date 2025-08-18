@@ -891,15 +891,20 @@ class Agent:
         task_file = self.args.testing_set
         self._check_benchmark_file(task_file)
 
+        # Clean up previous execution results to avoid interference
+        self._cleanup_benchmark_paths(benchmark_path)
+
         tasks = []
         with open(task_file, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for line_no, row in enumerate(reader, 1):
                 logger.debug(f"line {line_no}: {row}")
                 if "question" in row and "sql" in row and row["question"].strip() and row["sql"].strip():
-                    tasks.append(
-                        {"question_id": line_no, "question": row["question"].strip(), "sql": row["sql"].strip()}
-                    )
+                    task_data = {"question_id": line_no, "question": row["question"].strip(), "sql": row["sql"].strip()}
+                    # Check if ext_knowledge column exists and add it to task data
+                    if "external_knowledge" in row and row["external_knowledge"].strip():
+                        task_data["external_knowledge"] = row["external_knowledge"].strip()
+                    tasks.append(task_data)
 
         logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
         logger.info("Phase 1: Generating gold standard results...")
@@ -918,6 +923,17 @@ class Agent:
             question = task["question"]
             logger.info(f"start benchmark with {task_id}: {question}")
             current_db_config = self.global_config.current_db_config()
+
+            # Merge external knowledge from file with metric_meta
+            combined_ext_knowledge = metric_meta.ext_knowledge
+            if "external_knowledge" in task and task["external_knowledge"]:
+                if combined_ext_knowledge:
+                    # Combine both knowledge sources
+                    combined_ext_knowledge = f"{combined_ext_knowledge}\n\n{task['external_knowledge']}"
+                else:
+                    # Use only file knowledge if metric_meta doesn't have any
+                    combined_ext_knowledge = task["external_knowledge"]
+
             self.run(
                 SqlTask(
                     id=task_id,
@@ -929,7 +945,7 @@ class Agent:
                     layer1=metric_meta.layer1,
                     layer2=metric_meta.layer2,
                     output_dir=self.global_config.output_dir,
-                    external_knowledge=metric_meta.ext_knowledge,
+                    external_knowledge=combined_ext_knowledge,
                 )
             )
 
@@ -949,6 +965,31 @@ class Agent:
     def _check_benchmark_file(self, file_path: str):
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Benchmarking task file not found, file_path={file_path}")
+
+    def _cleanup_benchmark_paths(self, benchmark_path: str):
+        """Clean up previous benchmark execution results to avoid interference."""
+        current_namespace = self.global_config.current_namespace
+
+        # Clean up namespace directory in output directory
+        output_dir = self.global_config.output_dir
+        namespace_dir = os.path.join(output_dir, current_namespace)
+        if os.path.exists(namespace_dir):
+            logger.info(f"Cleaning up namespace directory: {namespace_dir}")
+            try:
+                shutil.rmtree(namespace_dir)
+                logger.info(f"Successfully removed namespace directory: {namespace_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to clean namespace directory {namespace_dir}: {e}")
+
+        # Clean up gold directory (which contains exec_result)
+        gold_path = os.path.join(benchmark_path, "gold")
+        if os.path.exists(gold_path):
+            logger.info(f"Cleaning up gold directory: {gold_path}")
+            try:
+                shutil.rmtree(gold_path)
+                logger.info(f"Successfully removed gold directory: {gold_path}")
+            except Exception as e:
+                logger.warning(f"Failed to clean gold directory {gold_path}: {e}")
 
     def benchmark_bird_critic(self):
         pass
