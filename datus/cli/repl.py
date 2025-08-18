@@ -982,12 +982,20 @@ class DatusCLI:
             (".mcp", "Manage MCP (Model Configuration Protocol) servers"),
             ("     .mcp list", "List all MCP servers"),
             (
-                "     .mcp add --transport [stdio/sse/http] <name> <command> [args1 args2 ...]",
+                "     .mcp add --transport \\[stdio/sse/http] <name> <command> \\[args1 args2 ...]",
                 "Add a new MCP server configuration",
             ),
             ("     .mcp remove <name>", "Remove an MCP server configuration"),
             ("     .mcp check <name>", "Check connectivity to an MCP server"),
-            ("     .mcp call <server.tool> [params]", "Call a tool on an MCP server"),
+            ("     .mcp call <server.tool> \\[params]", "Call a tool on an MCP server"),
+            ("     .mcp filter", "Manage tool filters for MCP servers"),
+            (
+                "       .mcp filter set <server> \\[--allowed tool1,tool2] "
+                + "\\[--blocked tool3,tool4] \\[--enabled true/false]",
+                "Set tool filter",
+            ),
+            ("       .mcp filter get <server>", "Get current tool filter configuration"),
+            ("       .mcp filter remove <server>", "Remove tool filter configuration"),
         ]
         for cmd, desc in internal_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")

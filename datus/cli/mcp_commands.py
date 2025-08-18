@@ -194,7 +194,7 @@ class MCPCommands:
         params = args.strip().split()
         if len(params) < 2:
             self.console.print(
-                "[red]Usage: @mcp filter set <server_name> [--allowed tool1,tool2] "
+                "[red]Usage: .mcp filter set <server_name> [--allowed tool1,tool2] "
                 "[--blocked tool3,tool4] [--enabled true/false][/red]"
             )
             return

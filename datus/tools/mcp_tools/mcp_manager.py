@@ -424,7 +424,7 @@ class MCPManager:
         if not url:
             return None, {"error": "URL is required for SSE server"}
 
-        headers = expanded_config.get("headers", {})
+        headers = expanded_config.get("headers") or {}
         timeout = 30.0 if not expanded_config.get("timeout") else float(expanded_config.get("timeout"))
         headers["Accept"] = "text/event-stream"
 
