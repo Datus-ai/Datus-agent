@@ -181,9 +181,9 @@ class SemanticMetricsRAG:
         query_text = input_param.input_text
         semantic_full_name: str = qualify_name(
             [
-                input_param.semantic_model_meta.catalog_name,
-                input_param.semantic_model_meta.database_name,
-                input_param.semantic_model_meta.schema_name,
+                input_param.sql_task.catalog_name,
+                input_param.sql_task.database_name,
+                input_param.sql_task.schema_name,
             ]
         )
 
@@ -199,9 +199,9 @@ class SemanticMetricsRAG:
 
         metric_full_name: str = qualify_name(
             [
-                input_param.semantic_model_meta.domain,
-                input_param.semantic_model_meta.layer1,
-                input_param.semantic_model_meta.layer2,
+                input_param.sql_task.domain,
+                input_param.sql_task.layer1,
+                input_param.sql_task.layer2,
             ],
         )
         metric_where = f"domain_layer1_layer2 = '{metric_full_name}'"

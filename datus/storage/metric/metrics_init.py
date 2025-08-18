@@ -13,10 +13,11 @@ from datus.agent.node.generate_semantic_model_node import GenerateSemanticModelN
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
-from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, SemanticModelMeta
+from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.schemas.node_models import Metrics, SqlTask
 from datus.storage.metric.init_utils import exists_semantic_metrics, gen_metric_id, gen_semantic_model_id
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import extract_table_names
 
 from .store import SemanticMetricsRAG
 
@@ -68,26 +69,18 @@ def process_line(
         database_name=current_db_config.database,
         schema_name=current_db_config.schema,
     )
-    current_metric_meta = agent_config.current_metric_meta(args.metric_meta)
-    semantic_model_meta = SemanticModelMeta(
-        layer1=current_metric_meta.layer1,
-        layer2=current_metric_meta.layer2,
-        domain=current_metric_meta.domain,
-        catalog_name=current_db_config.catalog,
-        database_name=current_db_config.database,
-        schema_name=current_db_config.schema,
-    )
-
     logger.debug(f"sql task: {sql_task}")
-    semantic_model_input_data = GenerateSemanticModelInput(
-        sql_task=sql_task, semantic_model_meta=semantic_model_meta, sql_query=row["sql"], prompt_version="1.0"
-    )
-    logger.debug(f"semantic model input data: {semantic_model_input_data}")
+    # Extract table name from SQL query
+    table_names = extract_table_names(row["sql"], agent_config.db_type)
+    table_name = table_names[0] if table_names else ""
+
+    semantic_model_input = GenerateSemanticModelInput(sql_task=sql_task, table_name=table_name, prompt_version="1.0")
+    logger.debug(f"semantic model input data: {semantic_model_input}")
     semantic_model_node = GenerateSemanticModelNode(
         node_id=f"semantic_model_node_{index}",
         description=f"Generate semantic model for {row['question']}",
         node_type=NodeType.TYPE_GENERATE_SEMANTIC_MODEL,
-        input_data=semantic_model_input_data,
+        input_data=semantic_model_input,
         agent_config=agent_config,
     )
     semantic_model_result = semantic_model_node.run()
@@ -95,13 +88,12 @@ def process_line(
     if not semantic_model_result.success:
         logger.error(f"Failed to generate semantic model for {row['question']}: {semantic_model_result.error}")
         return
-    semantic_model_meta = semantic_model_result.semantic_model_meta
     semantic_model = gen_semantic_model(
         semantic_model_result.semantic_model_file,
         sql_task.database_name,
-        semantic_model_meta.table_name,
-        semantic_model_meta.schema_name,
-        semantic_model_meta.catalog_name,
+        semantic_model_result.table_name,
+        sql_task.schema_name,
+        sql_task.catalog_name,
         args.domain,
     )
     logger.debug(f"semantic model: {semantic_model}")
@@ -129,6 +121,7 @@ def process_line(
         logger.error(f"Failed to generate metrics for {row['question']}: {metric_result.error}")
         return
 
+    current_metric_meta = agent_config.current_metric_meta(args.metric_meta)
     metrics = gen_metrics(
         semantic_model.get("semantic_model_name", ""),
         metric_result.sql_queries,

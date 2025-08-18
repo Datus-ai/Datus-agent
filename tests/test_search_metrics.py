@@ -2,8 +2,7 @@ import json
 
 import pytest
 
-from datus.schemas.generate_semantic_model_node_models import SemanticModelMeta
-from datus.schemas.node_models import Metrics
+from datus.schemas.node_models import Metrics, SqlTask
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
 from datus.storage.metric.store import qualify_name
 from datus.tools.metric_tools.search_metric import SearchMetricsTool
@@ -20,11 +19,13 @@ def search_metrics_tool() -> SearchMetricsTool:
 
 @pytest.fixture
 def build_empty_pure_scalar_input() -> SearchMetricsInput:
-    semantic_model_meta = SemanticModelMeta(
+    sql_task = SqlTask(
+        id="test_task",
+        database_type=DBType.DUCKDB,
+        task="test task",
         catalog_name="",
         database_name="",
         schema_name="",
-        table_name="",
         layer1="",
         layer2="",
         domain="",
@@ -33,7 +34,7 @@ def build_empty_pure_scalar_input() -> SearchMetricsInput:
     input_param = SearchMetricsInput(
         # input_text="Calculate the cancellation rate by transaction type (Quick Buy or Not Quick Buy).",
         input_text="",
-        semantic_model_meta=semantic_model_meta,
+        sql_task=sql_task,
         database_type=DBType.DUCKDB,
     )
 
@@ -42,11 +43,13 @@ def build_empty_pure_scalar_input() -> SearchMetricsInput:
 
 @pytest.fixture
 def build_some_value_pure_scalar_input() -> SearchMetricsInput:
-    semantic_model_meta = SemanticModelMeta(
+    sql_task = SqlTask(
+        id="test_task_2",
+        database_type=DBType.DUCKDB,
+        task="test task 2",
         catalog_name="",
         database_name="",
         schema_name="",
-        table_name="",
         layer1="",
         layer2="",
         domain="RGM_voice",
@@ -54,7 +57,7 @@ def build_some_value_pure_scalar_input() -> SearchMetricsInput:
 
     input_param = SearchMetricsInput(
         input_text="Calculate the cancellation rate by transaction type (Quick Buy or Not Quick Buy).",
-        semantic_model_meta=semantic_model_meta,
+        sql_task=sql_task,
         database_type=DBType.DUCKDB,
     )
 

@@ -3,14 +3,13 @@ from typing import List, Literal, Optional
 from pydantic import Field, field_validator
 
 from datus.schemas.base import BaseInput, BaseResult
-from datus.schemas.generate_semantic_model_node_models import SemanticModelMeta
-from datus.schemas.node_models import Metrics, SQLContext
+from datus.schemas.node_models import Metrics, SQLContext, SqlTask
 from datus.utils.constants import DBType
 
 
 class SearchMetricsInput(BaseInput):
     input_text: str = Field(..., description="The query text to analyze for schema linking")
-    semantic_model_meta: SemanticModelMeta = Field(..., description="The semantic model meta of this request")
+    sql_task: SqlTask = Field(..., description="The SQL task containing database and metadata info")
     database_type: str = Field(DBType.SQLITE, description="Database type: sqlite, duckdb snowflake, etc ")
     sql_contexts: Optional[List[SQLContext]] = Field(default=[], description="The SQL context")
     top_n: int = Field(default=5, description="Number of top tables to return")
@@ -35,6 +34,6 @@ class SearchMetricsInput(BaseInput):
 
 
 class SearchMetricsResult(BaseResult):
-    semantic_model_meta: SemanticModelMeta = Field(..., description="The semantic model meta of this request")
+    sql_task: SqlTask = Field(..., description="The SQL task containing database and metadata info")
     metrics: List[Metrics] = Field(..., description="The search metric")
     metrics_count: int = Field(..., description="Number of metrics values found")

@@ -288,46 +288,31 @@ class AgentCommands:
             prompt_version = self.cli._prompt_input("Enter prompt version", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()
         elif isinstance(input, GenerateSemanticModelInput):
-            # Allow user to modify SQL query with multi-line support
-            if input.sql_query:
-                # Show current SQL query
-                self.console.print(f"[bold]Current SQL query:[/]\n{input.sql_query}")
-                use_current = self.cli._prompt_input("Use current SQL query?", choices=["y", "n"], default="y")
-                if use_current == "y":
-                    pass  # Keep current query
-                else:
-                    sql_query = self.cli._prompt_input("Enter new SQL query", default=input.sql_query, multiline=True)
-                    input.sql_query = sql_query.strip()
-            else:
-                sql_query = self.cli._prompt_input(
-                    "Enter SQL query to generate semantic model from", default=input.sql_query, multiline=True
-                )
-                input.sql_query = sql_query.strip()
-
-            # Interactive prompts for semantic model metadata
-            self.console.print("[bold blue]Semantic Model Metadata:[/]")
-            catalog_name = self.cli._prompt_input("Enter catalog name", default=input.semantic_model_meta.catalog_name)
-            input.semantic_model_meta.catalog_name = catalog_name.strip()
-
-            database_name = self.cli._prompt_input(
-                "Enter database name", default=input.semantic_model_meta.database_name
+            # Allow user to modify table name
+            table_name = Prompt.ask(
+                "[bold]Enter table name to generate semantic model from[/]", default=input.table_name
             )
-            input.semantic_model_meta.database_name = database_name.strip()
+            input.table_name = table_name.strip()
 
-            schema_name = self.cli._prompt_input("Enter schema name", default=input.semantic_model_meta.schema_name)
-            input.semantic_model_meta.schema_name = schema_name.strip()
+            # Interactive prompts for metadata (now using sql_task fields)
+            self.console.print("[bold blue]Semantic Model Metadata:[/]")
+            catalog_name = Prompt.ask("[bold]Enter catalog name[/]", default=input.sql_task.catalog_name)
+            input.sql_task.catalog_name = catalog_name.strip()
 
-            table_name = self.cli._prompt_input("Enter table name", default=input.semantic_model_meta.table_name)
-            input.semantic_model_meta.table_name = table_name.strip()
+            database_name = Prompt.ask("[bold]Enter database name[/]", default=input.sql_task.database_name)
+            input.sql_task.database_name = database_name.strip()
 
-            layer1 = self.cli._prompt_input("Enter layer1 (business layer)", default=input.semantic_model_meta.layer1)
-            input.semantic_model_meta.layer1 = layer1.strip()
+            schema_name = Prompt.ask("[bold]Enter schema name[/]", default=input.sql_task.schema_name)
+            input.sql_task.schema_name = schema_name.strip()
 
-            layer2 = self.cli._prompt_input("Enter layer2 (sub-layer)", default=input.semantic_model_meta.layer2)
-            input.semantic_model_meta.layer2 = layer2.strip()
+            layer1 = Prompt.ask("[bold]Enter layer1 (business layer)[/]", default=input.sql_task.layer1)
+            input.sql_task.layer1 = layer1.strip()
 
-            domain = self.cli._prompt_input("Enter domain", default=input.semantic_model_meta.domain)
-            input.semantic_model_meta.domain = domain.strip()
+            layer2 = Prompt.ask("[bold]Enter layer2 (sub-layer)[/]", default=input.sql_task.layer2)
+            input.sql_task.layer2 = layer2.strip()
+
+            domain = Prompt.ask("[bold]Enter domain[/]", default=input.sql_task.domain)
+            input.sql_task.domain = domain.strip()
 
             prompt_version = self.cli._prompt_input("Enter prompt version", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()

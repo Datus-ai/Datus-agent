@@ -111,7 +111,7 @@ def generate_semantic_model_with_mcp(
         return GenerateSemanticModelResult(
             success=True,
             error="",
-            semantic_model_meta=input_data.semantic_model_meta,
+            table_name=input_data.table_name,
             semantic_model_file=content_dict.get("semantic_model_file", ""),
         )
     except Exception as e:
@@ -119,6 +119,6 @@ def generate_semantic_model_with_mcp(
         return GenerateSemanticModelResult(
             success=False,
             error=str(e),
-            semantic_model_meta=input_data.semantic_model_meta,
+            table_name=input_data.table_name,
             semantic_model_file="",
         )

@@ -3,7 +3,6 @@ from typing import AsyncGenerator, Dict, Optional
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.generate_semantic_model_node_models import SemanticModelMeta
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.tools.metric_tools.search_metric import SearchMetricsTool
 from datus.utils.loggings import get_logger
@@ -14,14 +13,6 @@ logger = get_logger(__name__)
 class SearchMetricsNode(Node):
     def setup_input(self, workflow: Workflow) -> Dict:
         logger.info("Setup search metrics input")
-        semantic_model_meta = SemanticModelMeta(
-            catalog_name=workflow.task.catalog_name,
-            database_name=workflow.task.database_name,
-            schema_name=workflow.task.schema_name,
-            layer1=workflow.task.layer1,
-            layer2=workflow.task.layer2,
-            domain=workflow.task.domain,
-        )
 
         # irrelevant to current node: it should be Start or Reflection node now
         matching_rate = self.agent_config.search_metrics_rate
@@ -33,7 +24,7 @@ class SearchMetricsNode(Node):
         next_input = SearchMetricsInput(
             input_text=workflow.task.task,
             matching_rate=final_matching_rate,
-            semantic_model_meta=semantic_model_meta,
+            sql_task=workflow.task,
             database_type=workflow.task.database_type,
             sql_contexts=workflow.context.sql_contexts,
         )
@@ -90,7 +81,7 @@ class SearchMetricsNode(Node):
         return SearchMetricsResult(
             success=False,
             error=error_msg,
-            semantic_model_meta=self.input.semantic_model_meta,
+            sql_task=self.input.sql_task,
             metrics=[],
             metrics_count=0,
         )
@@ -123,8 +114,8 @@ class SearchMetricsNode(Node):
                 input={
                     "input_text": getattr(self.input, "input_text", ""),
                     "matching_rate": getattr(self.input, "matching_rate", "medium"),
-                    "database_name": getattr(self.input.semantic_model_meta, "database_name", "")
-                    if hasattr(self.input, "semantic_model_meta")
+                    "database_name": getattr(self.input.sql_task, "database_name", "")
+                    if hasattr(self.input, "sql_task")
                     else "",
                 },
                 status=ActionStatus.PROCESSING,

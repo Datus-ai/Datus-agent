@@ -31,8 +31,12 @@ Output format: Return a JSON object with the following structure, *only JSON*:
       - email@domain.com
     tier: string|integer # Data tier
 
-    # === Data Source Definition ===
-    sql_table: schema.table_name
+    # === Data Source Definition (Choose ONE) ===
+    sql_table: schema.table_name # For databases with schema support (PostgreSQL, Snowflake, Redshift, BigQuery, etc.)
+    # OR
+    sql_query: | # For databases without schema (SQLite, DuckDB) or custom queries
+      SELECT * FROM table_name
+      WHERE condition = 'value'
 
     # === Core Components ===
     measures: # Measure definitions (array)
@@ -90,7 +94,8 @@ Output format: Return a JSON object with the following structure, *only JSON*:
   ## Key Constraints and Best Practices
 
   1. Naming Convention: All name fields must follow pattern ^[a-z][a-z0-9_]*[a-z0-9]$
-  2. Time Dimension: Each data_source should have one is_primary: true time dimension
+  2. Data Source Definition: Choose only ONE of sql_table and sql_query
+  3. Time Dimension: Each data_source should have one is_primary: true time dimension
   3. Expressions: Support SQL expressions including complex logic like CASE WHEN
   4. Aggregation Types:
     - SUM: Sum aggregation

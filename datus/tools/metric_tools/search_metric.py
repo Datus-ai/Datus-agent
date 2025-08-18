@@ -39,7 +39,7 @@ class SearchMetricsTool(BaseTool):
         return SearchMetricsResult(
             success=True,
             error=None,
-            semantic_model_meta=input_param.semantic_model_meta,
+            sql_task=input_param.sql_task,
             metrics=metric_list,
             metrics_count=len(metric_list),
         )
