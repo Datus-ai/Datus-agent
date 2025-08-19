@@ -406,7 +406,7 @@ class TestNode:
         assert reflect_input.sql_context[1]
         # save_to_yaml(reflection_input, "ReflectionInput.yaml")
 
-    @pytest.mark.acceptance
+    # @pytest.mark.acceptance
     def test_reasoning_node_snowflake(self, reasoning_input, agent_config):
         """Test reasoning node with real DeepSeek model and Snowflake database"""
         try:
