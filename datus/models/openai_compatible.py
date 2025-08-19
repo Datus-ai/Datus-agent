@@ -4,8 +4,10 @@ import asyncio
 import json
 import time
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+import yaml
 from agents import Agent, FunctionTool, OpenAIChatCompletionsModel, Runner, SQLiteSession
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_openai
@@ -277,6 +279,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             content = message.content
 
             # Handle reasoning content for reasoning models (DeepSeek R1, OpenAI O-series)
+            reasoning_content = None
             if enable_thinking:
                 if hasattr(message, "reasoning_content") and message.reasoning_content:
                     reasoning_content = message.reasoning_content
@@ -285,7 +288,13 @@ class OpenAICompatibleModel(LLMBaseModel):
                         content = reasoning_content + "\n" + content
                     logger.debug(f"Found reasoning_content: {reasoning_content[:100]}...")
 
-            return content or ""
+            final_content = content or ""
+
+            # Save LLM trace if method exists (for models that support it like DeepSeekModel)
+            if hasattr(self, "_save_llm_trace"):
+                self._save_llm_trace(messages, final_content, reasoning_content)
+
+            return final_content
 
         return self._with_retry(_generate_operation, "text generation")
 
@@ -443,6 +452,24 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 agent = Agent(**agent_kwargs)
                 result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+
+                # Save LLM trace if method exists (for models that support it like DeepSeekModel)
+                if hasattr(self, "_save_llm_trace"):
+                    # For tools calls, we need to extract messages from the result
+                    messages = [{"role": "user", "content": prompt}]
+                    if instruction:
+                        messages.insert(0, {"role": "system", "content": instruction})
+
+                    # Get complete conversation history including tool calls
+                    conversation_history = None
+                    if hasattr(result, "to_input_list"):
+                        try:
+                            conversation_history = result.to_input_list()
+                        except Exception as e:
+                            logger.debug(f"Failed to get conversation history: {e}")
+
+                    self._save_llm_trace(messages, result.final_output, conversation_history)
+
                 return {"content": result.final_output, "sql_contexts": extract_sql_contexts(result)}
 
         return await self._with_retry_async(_tools_operation, "tool execution")
@@ -518,6 +545,24 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                         if action:
                             yield action
+
+                # Save LLM trace if method exists (for models that support it like DeepSeekModel)
+                if hasattr(self, "_save_llm_trace"):
+                    # For tools calls, we need to extract messages from the result
+                    messages = [{"role": "user", "content": prompt}]
+                    if instruction:
+                        messages.insert(0, {"role": "system", "content": instruction})
+
+                    # Get complete conversation history including tool calls
+                    conversation_history = None
+                    if hasattr(result, "to_input_list"):
+                        try:
+                            conversation_history = result.to_input_list()
+                        except Exception as e:
+                            logger.debug(f"Failed to get conversation history: {e}")
+
+                    final_output = result.final_output if hasattr(result, "final_output") else ""
+                    self._save_llm_trace(messages, final_output, conversation_history)
 
         # Execute the streaming operation directly without retry logic
         async for action in _stream_operation():
@@ -696,6 +741,90 @@ class OpenAICompatibleModel(LLMBaseModel):
         Override in subclasses for model-specific tokenization.
         """
         return len(prompt) // 4
+
+    def _save_llm_trace(self, prompt: Any, response_content: str, reasoning_content: Any = None):
+        """Save LLM input/output trace to YAML file if tracing is enabled.
+
+        Args:
+            prompt: The input prompt (str or list of messages)
+            response_content: The response content from the model
+            reasoning_content: Optional reasoning content for reasoning models
+        """
+        if not self.model_config.save_llm_trace:
+            return
+
+        try:
+            # Get workflow and node context from current execution
+            if (
+                not hasattr(self, "workflow")
+                or not self.workflow
+                or not hasattr(self, "current_node")
+                or not self.current_node
+            ):
+                logger.debug("No workflow or node context available for trace saving")
+                return
+
+            # Create trace directory
+            trajectory_dir = Path(self.workflow.global_config.trajectory_dir)
+            task_id = self.workflow.task.id
+            trace_dir = trajectory_dir / task_id
+            trace_dir.mkdir(parents=True, exist_ok=True)
+
+            # Parse prompt to separate system and user content
+            system_prompt = ""
+            user_prompt = ""
+
+            if isinstance(prompt, list):
+                # Handle message format like [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
+                for message in prompt:
+                    if isinstance(message, dict):
+                        role = message.get("role", "")
+                        content = message.get("content", "")
+                        if role == "system":
+                            # Concatenate multiple system messages with newlines
+                            if system_prompt:
+                                system_prompt += "\n" + content
+                            else:
+                                system_prompt = content
+                        elif role == "user":
+                            # Concatenate multiple user messages with newlines
+                            if user_prompt:
+                                user_prompt += "\n" + content
+                            else:
+                                user_prompt = content
+                        elif role == "assistant":
+                            # Skip assistant messages in prompt parsing
+                            continue
+            elif isinstance(prompt, str):
+                # Handle string prompt - put it all in user_prompt
+                user_prompt = prompt
+            else:
+                # Handle other types by converting to string
+                user_prompt = str(prompt)
+
+            # Ensure we have valid strings
+            system_prompt = system_prompt or ""
+            user_prompt = user_prompt or ""
+            response_content = response_content or ""
+
+            # Create trace data with improved structure
+            trace_data = {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "reason_content": reasoning_content or "",
+                "output_content": response_content,
+            }
+
+            # Save to YAML file named after node ID
+            trace_file = trace_dir / f"{self.current_node.id}.yml"
+            with open(trace_file, "w", encoding="utf-8") as f:
+                yaml.dump(trace_data, f, default_flow_style=False, allow_unicode=True, indent=2, sort_keys=False)
+
+            logger.debug(f"LLM trace saved to {trace_file}")
+
+        except Exception as e:
+            logger.error(f"Failed to save LLM trace: {str(e)}")
+            # Don't re-raise to avoid breaking the main execution flow
 
     # ToDo: delete it later
     # Backward compatibility methods (with deprecation warnings)

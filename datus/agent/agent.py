@@ -1006,9 +1006,16 @@ class Agent:
         trajectory_dir = self.args.trajectory_dir
         dataset_name = self.args.dataset_name
         output_format = getattr(self.args, "format", "json")
+        benchmark_task_ids = getattr(self.args, "benchmark_task_ids", None)
 
         if not os.path.exists(trajectory_dir):
             raise FileNotFoundError(f"Trajectory directory not found: {trajectory_dir}")
+
+        # Parse benchmark_task_ids if provided
+        allowed_task_ids = None
+        if benchmark_task_ids:
+            allowed_task_ids = [task_id.strip() for task_id in benchmark_task_ids.split(",")]
+            logger.info(f"Filtering by task IDs: {allowed_task_ids}")
 
         # Find all trajectory YAML files
         trajectory_files = glob.glob(os.path.join(trajectory_dir, "*_*.yaml"))
@@ -1021,6 +1028,11 @@ class Agent:
                 # Extract task_id from filename (e.g., "0_1750662901.yaml" -> "0")
                 filename = os.path.basename(trajectory_file)
                 task_id = filename.split("_")[0]
+
+                # Filter by task_id if benchmark_task_ids is provided
+                if allowed_task_ids and task_id not in allowed_task_ids:
+                    logger.debug(f"Skipping trajectory file {filename} (task_id {task_id} not in allowed list)")
+                    continue
 
                 logger.info(f"Processing trajectory file: {filename}")
 
@@ -1113,8 +1125,9 @@ class Agent:
                     "Please install it with: pip install pandas pyarrow",
                 }
 
+        filter_info = f" (filtered by task IDs: {allowed_task_ids})" if allowed_task_ids else ""
         logger.info(f"Dataset generated successfully: {output_file}")
-        logger.info(f"Total entries: {len(dataset_data)}")
+        logger.info(f"Total entries: {len(dataset_data)}{filter_info}")
 
         return {
             "status": "success",
@@ -1122,4 +1135,5 @@ class Agent:
             "total_entries": len(dataset_data),
             "output_file": output_file,
             "format": output_format,
+            "filtered_task_ids": allowed_task_ids,
         }

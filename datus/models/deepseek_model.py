@@ -1,8 +1,5 @@
 import os
-from pathlib import Path
-from typing import Any
 
-import yaml
 from agents import set_tracing_disabled
 
 from datus.configuration.agent_config import ModelConfig
@@ -46,67 +43,6 @@ class DeepSeekModel(OpenAICompatibleModel):
     def _get_base_url(self) -> str:
         """Get DeepSeek base URL from config or environment."""
         return self.model_config.base_url or os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-
-    def _save_llm_trace(self, prompt: Any, response_content: str, reasoning_content: Any = None):
-        """Save LLM input/output trace to YAML file if tracing is enabled.
-
-        Args:
-            prompt: The input prompt (str or list of messages)
-            response_content: The response content from the model
-            reasoning_content: Optional reasoning content for reasoning models
-        """
-        if not self.model_config.save_llm_trace:
-            return
-
-        try:
-            # Get workflow and node context from current execution
-            if (
-                not hasattr(self, "workflow")
-                or not self.workflow
-                or not hasattr(self, "current_node")
-                or not self.current_node
-            ):
-                logger.debug("No workflow or node context available for trace saving")
-                return
-
-            # Create trace directory
-            trajectory_dir = Path(self.workflow.global_config.trajectory_dir)
-            task_id = self.workflow.task.id
-            trace_dir = trajectory_dir / task_id
-            trace_dir.mkdir(parents=True, exist_ok=True)
-
-            # Parse prompt to separate system and user content
-            system_prompt = ""
-            user_prompt = ""
-
-            if isinstance(prompt, list):
-                # Handle message format like [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
-                for message in prompt:
-                    if message.get("role") == "system":
-                        system_prompt = message.get("content", "")
-                    elif message.get("role") == "user":
-                        user_prompt = message.get("content", "")
-            else:
-                # Handle string prompt - put it all in user_prompt
-                user_prompt = str(prompt)
-
-            # Create trace data
-            trace_data = {
-                "system_prompt": system_prompt,
-                "user_prompt": user_prompt,
-                "reason_content": reasoning_content or "",
-                "output_content": response_content,
-            }
-
-            # Save to YAML file named after node ID
-            trace_file = trace_dir / f"{self.current_node.id}.yml"
-            with open(trace_file, "w", encoding="utf-8") as f:
-                yaml.dump(trace_data, f, default_flow_style=False, allow_unicode=True, indent=2, sort_keys=False)
-
-            logger.debug(f"LLM trace saved to {trace_file}")
-
-        except Exception as e:
-            logger.error(f"Failed to save LLM trace: {str(e)}")
 
     def token_count(self, prompt: str) -> int:
         """

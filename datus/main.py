@@ -193,6 +193,11 @@ def create_parser() -> argparse.ArgumentParser:
         default="json",
         help="Output format for the dataset (default: json)",
     )
+    generate_dataset_parser.add_argument(
+        "--benchmark_task_ids",
+        type=str,
+        help="Comma-separated list of task IDs to include (e.g., '1,2,3,4,10'). If not specified, all tasks will be processed.",
+    )
 
     # run command
     run_parser = subparsers.add_parser(
