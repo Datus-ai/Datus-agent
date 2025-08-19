@@ -105,5 +105,33 @@ class SQLiteConnector(SQLAlchemyConnector):
         """Convert connector to serializable dictionary with only essential info."""
         return {"db_type": DBType.SQLITE, "db_path": self.db_path}
 
+    def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> List[str]:
+        """
+        SQLite has only one database (the file itself), so return the database name.
+
+        Args:
+            catalog_name: Not used in SQLite
+            include_sys: Not applicable for SQLite as there's only one database
+
+        Returns:
+            List containing the database name
+        """
+        # For SQLite, the database is the file itself
+        return ["main"]
+
+    def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
+        """
+        SQLite has a limited schema concept. Return 'main' as the default schema.
+
+        Args:
+            catalog_name: Not used in SQLite
+            database_name: Not used in SQLite
+            include_sys: Not applicable as SQLite has limited system schemas
+
+        Returns:
+            List containing 'main' as the schema name
+        """
+        return ["main"]
+
     def get_type(self) -> str:
         return DBType.SQLITE

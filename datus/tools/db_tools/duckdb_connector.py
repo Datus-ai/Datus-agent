@@ -1,9 +1,10 @@
-from typing import Any, Dict, List, Literal, Optional, override
+from typing import Any, Dict, List, Literal, Optional, Set, override
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from datus.configuration.agent_config import duckdb_database_name
 from datus.schemas.base import TABLE_TYPE
+from datus.tools.db_tools.base import list_to_in_str
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -20,7 +21,7 @@ class DuckdbConnector(SQLAlchemyConnector):
     def __init__(self, db_path: str, **kwargs):
         # Force read-only mode for DuckDB to avoid lock conflicts
         connection_string = db_path if db_path.startswith("duckdb:///") else f"duckdb:///{db_path}"
-        connection_string += "?access_mode=read_only"
+        # connection_string += "?access_mode=read_only"
         super().__init__(connection_string=connection_string)
         self.db_path = db_path
         self.database_name = duckdb_database_name(self.connection_string)
@@ -36,15 +37,25 @@ class DuckdbConnector(SQLAlchemyConnector):
         return f'"{schema_name}"."{table_name}"'
 
     @override
-    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
+    def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
         sql = "select schema_name from duckdb_schemas()"
+        has_where = False
         if database_name:
-            sql += f" where database_name='{database_name}'"
-        else:
-            sql += " WHERE database_name not in ('system', 'temp')"
+            sql += f" WHERE database_name='{database_name}'"
+            has_where = True
+
+        if not include_sys:
+            if not has_where:
+                sql += list_to_in_str(" WHERE database_name not in", list(self._sys_schemas()))
+            else:
+                sql += list_to_in_str(" AND database_name not in", list(self._sys_schemas()))
 
         schema_names = self.execute_query(sql)
         return schema_names["schema_name"].to_list()
+
+    @override
+    def _sys_schemas(self) -> Set[str]:
+        return {"system", "temp"}
 
     @override
     def sqlalchemy_schema(

@@ -4,7 +4,7 @@ import platform
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional
 
-from agents import FunctionTool, SQLiteSession
+from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
@@ -94,7 +94,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     async def generate_with_tools(
         self,
         prompt: str,
-        tools: Optional[List[FunctionTool]] = None,
+        tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         instruction: str = "",
         output_type: type = str,
@@ -122,7 +122,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     async def generate_with_tools_stream(
         self,
         prompt: str,
-        tools: Optional[List[FunctionTool]] = None,
+        tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         instruction: str = "",
         output_type: type = str,

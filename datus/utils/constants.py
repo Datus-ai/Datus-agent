@@ -20,32 +20,37 @@ class DBType(str, Enum):
     @classmethod
     def support_catalog(cls, db_type: str) -> bool:
         # bigquery support project as catalog
-        return db_type in [DBType.STARROCKS, DBType.SNOWFLAKE, DBType.BIGQUERY]
+        return db_type in SUPPORT_CATALOG_DIALECTS
 
     @classmethod
     def support_database(cls, db_type: str) -> bool:
-        return db_type in [
-            DBType.STARROCKS,
-            DBType.SNOWFLAKE,
-            DBType.BIGQUERY,
-            DBType.MYSQL,
-            DBType.MSSQL,
-            DBType.SQLSERVER,
-            DBType.ORACLE,
-            DBType.POSTGRES,
-            DBType.POSTGRESQL,
-        ]
+        return db_type in SUPPORT_DATABASE_DIALECTS
 
     @classmethod
     def support_schema(cls, db_type: str) -> bool:
-        return db_type in [
-            DBType.SNOWFLAKE,
-            DBType.BIGQUERY,
-            DBType.MSSQL,
-            DBType.SQLSERVER,
-            DBType.ORACLE,
-            DBType.DUCKDB,
-        ]
+        return db_type in SUPPORT_SCHEMA_DIALECTS
+
+
+SUPPORT_CATALOG_DIALECTS = {DBType.STARROCKS, DBType.SNOWFLAKE, DBType.BIGQUERY}
+SUPPORT_DATABASE_DIALECTS = {
+    DBType.STARROCKS,
+    DBType.SNOWFLAKE,
+    DBType.BIGQUERY,
+    DBType.MYSQL,
+    DBType.MSSQL,
+    DBType.SQLSERVER,
+    DBType.ORACLE,
+    DBType.POSTGRES,
+    DBType.POSTGRESQL,
+}
+SUPPORT_SCHEMA_DIALECTS = {
+    DBType.SNOWFLAKE,
+    DBType.BIGQUERY,
+    DBType.MSSQL,
+    DBType.SQLSERVER,
+    DBType.ORACLE,
+    DBType.DUCKDB,
+}
 
 
 class LLMProvider(str, Enum):
@@ -77,5 +82,6 @@ class SQLType(str, Enum):
     UPDATE = "update"
     DELETE = "delete"
     DDL = "ddl"
+    METADATA = "metadata"
     SWITCH = "switch"
     UNKNOWN = "unknown"

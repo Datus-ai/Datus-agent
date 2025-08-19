@@ -76,7 +76,7 @@ class StarRocksConnector(MySQLConnectorBase):
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of tables in the database."""
         # FIXME use full name?
-        result = self._get_metadatas(catalog_name=catalog_name, database_name=database_name)
+        result = self._get_metadata(catalog_name=catalog_name, database_name=database_name)
         return [table["table_name"] for table in result]
 
     # @override
@@ -177,7 +177,7 @@ class StarRocksConnector(MySQLConnectorBase):
                         }
                     )
         else:
-            for table in self._get_metadatas(catalog_name=catalog_name, database_name=database_name):
+            for table in self._get_metadata(catalog_name=catalog_name, database_name=database_name):
                 sql = (
                     f"SELECT * FROM `{table['catalog_name']}`.`{table['database_name']}`.`{table['table_name']}` "
                     "LIMIT {top_n}"
@@ -216,9 +216,9 @@ class StarRocksConnector(MySQLConnectorBase):
         """Return the database type."""
         return DBType.STARROCKS
 
-    def get_databases(self, catalog_name: str = "default_catalog") -> List[str]:
+    def get_databases(self, catalog_name: str = "default_catalog", include_sys: bool = False) -> List[str]:
         """Get list of available databases."""
-        return super().get_databases(catalog_name)
+        return super().get_databases(catalog_name, include_sys=include_sys)
 
     def test_connection(self) -> bool:
         """Test the database connection."""

@@ -1,7 +1,8 @@
-from typing import Any, Dict, List, Literal, Optional, Tuple, override
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, override
 from urllib.parse import quote_plus
 
 from datus.schemas.base import TABLE_TYPE
+from datus.tools.db_tools.base import list_to_in_str
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -19,10 +20,6 @@ def db_table_type_to_inner(db_table_type: str) -> TABLE_TYPE:
     elif db_table_type == "MATERIALIZED VIEW":
         return "mv"
     return "table"
-
-
-def list_to_in_str(prefix: str, values: Optional[List[str]] = None) -> str:
-    return "" if not values else f"{prefix} ({str(values)[1:-1]})"
 
 
 def inner_table_type_to_db(table_type: TABLE_TYPE) -> Tuple[META_TABLE_NAMES, CREATE_TYPE]:
@@ -52,7 +49,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         )
         super().__init__(self.connection_string, dialect=DBType.MYSQL)
 
-    def _get_metadatas(
+    def _get_metadata(
         self,
         meta_table_name: META_TABLE_NAMES = "TABLES",
         inner_table_type: Optional[List[str]] = None,
@@ -66,7 +63,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         if database_name:
             where = f"{where} AND TABLE_SCHEMA = '{database_name}'"
         else:
-            where = f"{where} {list_to_in_str('and TABLE_SCHEMA not in', self.ignore_schemas())}"
+            where = f"{where} {list_to_in_str('and TABLE_SCHEMA not in', list(self._sys_databases()))}"
 
         query_result = self.execute_query(
             (
@@ -86,8 +83,13 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             )
         return result
 
-    def ignore_schemas(self) -> List[str]:
-        return ["sys", "information_schema", "performance_schema", "mysql"]
+    @override
+    def _sys_databases(self) -> Set[str]:
+        return {"sys", "information_schema", "performance_schema", "mysql"}
+
+    @override
+    def _sys_schemas(self) -> Set[str]:
+        return {"sys", "information_schema", "performance_schema", "mysql"}
 
     def default_catalog(self) -> str:
         return ""
@@ -198,16 +200,11 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         return ["BASE TABLE"]
 
     @override
-    def get_databases(self, catalog_name: str = "") -> List[str]:
-        schema_names = super().get_schemas()
-        databases = []
-        for item in schema_names:
-            if item not in self.ignore_schemas():
-                databases.append(str(item))
-        return databases
+    def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> List[str]:
+        return super().get_schemas(catalog_name=catalog_name, include_sys=include_sys)
 
     @override
-    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
+    def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
         return []
 
     def _get_meta_with_ddl(
@@ -231,7 +228,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         result = []
         filter_tables = self._reset_filter_tables(tables, catalog_name=catalog_name, database_name=database_name)
         meta_table_name, create_type = inner_table_type_to_db(inner_table_type)
-        for table in self._get_metadatas(
+        for table in self._get_metadata(
             meta_table_name=meta_table_name,
             inner_table_type=None if inner_table_type != "table" else self.db_meta_table_type(),
             catalog_name=catalog_name,
@@ -305,7 +302,7 @@ class MySQLConnector(MySQLConnectorBase):
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         return [
             table["table_name"]
-            for table in self._get_metadatas(
+            for table in self._get_metadata(
                 meta_table_name="TABLES",
                 inner_table_type=self.db_meta_table_type(),
                 catalog_name=catalog_name,
@@ -345,7 +342,7 @@ class MySQLConnector(MySQLConnectorBase):
                         }
                     )
         else:
-            for t in self._get_metadatas(
+            for t in self._get_metadata(
                 meta_table_name="TABLES",
                 database_name=database_name,
             ):

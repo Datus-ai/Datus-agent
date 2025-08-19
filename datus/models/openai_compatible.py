@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import yaml
-from agents import Agent, FunctionTool, OpenAIChatCompletionsModel, Runner, SQLiteSession
+from agents import Agent, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_openai
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
@@ -335,7 +335,7 @@ class OpenAICompatibleModel(LLMBaseModel):
     async def generate_with_tools(
         self,
         prompt: str,
-        tools: Optional[Dict[str, FunctionTool]] = None,
+        tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         instruction: str = "",
         output_type: type = str,
@@ -407,7 +407,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self,
         prompt: str,
         mcp_servers: Optional[Dict[str, MCPServerStdio]],
-        tools: Optional[Dict[str, FunctionTool]],
+        tools: Optional[List[Tool]],
         instruction: str,
         output_type: type,
         max_turns: int,
@@ -478,7 +478,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self,
         prompt: str,
         mcp_servers: Optional[Dict[str, MCPServerStdio]],
-        tools: Optional[Dict[str, FunctionTool]],
+        tools: Optional[List[Tool]],
         instruction: str,
         output_type: type,
         max_turns: int,
@@ -519,7 +519,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 # Only add tools if we have them
                 if tools:
-                    agent_kwargs["tools"] = list(tools.values())
+                    agent_kwargs["tools"] = tools
 
                 agent = Agent(**agent_kwargs)
 
@@ -611,7 +611,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         action = ActionHistory(
             action_id=action_id,
             role=ActionRole.TOOL,
-            messages="MCP call",
+            messages="Tool call",
             action_type=function_name or "unknown",
             input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
             status=ActionStatus.PROCESSING,

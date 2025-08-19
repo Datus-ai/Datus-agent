@@ -11,7 +11,7 @@ import uuid
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from agents import FunctionTool, SQLiteSession
+from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
 
 from datus.configuration.agent_config import AgentConfig
@@ -43,7 +43,7 @@ class AgenticNode(ABC):
 
     def __init__(
         self,
-        tools: Optional[List[FunctionTool]] = None,
+        tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         agent_config: Optional[AgentConfig] = None,
     ):
@@ -55,7 +55,7 @@ class AgenticNode(ABC):
             mcp_servers: Dictionary of MCP servers available to this node
             agent_config: Agent configuration
         """
-        self.tools = tools or []
+        self.tools = tools or {}
         self.mcp_servers = mcp_servers or {}
         self.agent_config = agent_config
         self.plan = Plan()

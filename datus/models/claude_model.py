@@ -662,7 +662,7 @@ class ClaudeModel(LLMBaseModel):
         action = ActionHistory(
             action_id=action_id,
             role=ActionRole.TOOL,
-            messages="MCP call",
+            messages="Tool call",
             action_type=function_name or "unknown",
             input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
             status=ActionStatus.PROCESSING,

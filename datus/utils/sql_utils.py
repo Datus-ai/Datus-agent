@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import sqlglot
 from sqlglot.expressions import CTE, Table
 
-from datus.utils.constants import DBType
+from datus.utils.constants import DBType, SQLType
 
 from .loggings import get_logger
 
@@ -271,3 +271,44 @@ def parse_table_names_parts(full_table_names: List[str], dialect: str = DBType.S
         List of dicts with keys: catalog_name, database_name, schema_name, table_name
     """
     return [parse_table_name_parts(table_name, dialect) for table_name in full_table_names]
+
+
+def parse_sql_type(sql: str) -> SQLType:
+    """
+    Determines the type of an SQL statement based on its first keyword.
+
+    This function analyzes the beginning of an SQL query to classify it into
+    one of the SQLType categories (SELECT, DDL, METADATA, etc.). It is designed
+    to handle common SQL commands across different database dialects.
+
+    Args:
+        sql: The SQL query string.
+
+    Returns:
+        The determined SQLType enum member.
+    """
+    if not sql or not isinstance(sql, str):
+        return SQLType.UNKNOWN
+
+    # Normalize the query for parsing by stripping whitespace and getting the first word.
+    normalized_sql = sql.strip().lower()
+    first_word = normalized_sql.split()[0] if normalized_sql else ""
+
+    if first_word in ("select", "with"):
+        return SQLType.SELECT
+    elif first_word == "insert":
+        return SQLType.INSERT
+    elif first_word == "update":
+        return SQLType.UPDATE
+    elif first_word == "delete":
+        return SQLType.DELETE
+    elif first_word in ("create", "alter", "drop", "truncate", "rename"):
+        return SQLType.DDL
+    elif first_word in ("show", "describe", "desc", "explain"):
+        return SQLType.METADATA
+    elif first_word in ("use", "set"):
+        # 'USE' is common for switching databases/schemas (e.g., MySQL, Snowflake).
+        # 'SET' can be used for setting context like catalog/schema.
+        return SQLType.SWITCH
+    else:
+        return SQLType.UNKNOWN

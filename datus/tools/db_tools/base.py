@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Literal, Optional, Set, Tuple
 
 from pyarrow import Table as ArrowTable
 
@@ -28,8 +28,10 @@ class BaseSqlConnector(ABC):
     def connect(self):
         return
 
-    def execute(self, input_params: Any, result_format: Literal["csv", "arrow", "list"] = "csv") -> ExecuteSQLResult:
-        """Execute a SQL query against the SQLite database.
+    def execute(
+        self, input_params: Any, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+    ) -> ExecuteSQLResult:
+        """Execute a SQL query against the database.
 
         Args:
             input_params: Dictionary containing the input parameters including:
@@ -43,6 +45,42 @@ class BaseSqlConnector(ABC):
         if isinstance(input_params, dict):
             input_params = ExecuteSQLInput(**input_params)
         return self.do_execute(input_params, result_format)
+
+    @abstractmethod
+    def execute_insert(self, sql: str) -> ExecuteSQLResult:
+        """Execute an INSERT SQL statement.
+
+        Args:
+            sql: The INSERT SQL statement to execute
+
+        Returns:
+            A dictionary containing the insert operation results
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def execute_update(self, sql: str) -> ExecuteSQLResult:
+        """Execute an UPDATE SQL statement.
+
+        Args:
+            sql: The UPDATE SQL statement to execute
+
+        Returns:
+            A dictionary containing the update operation results
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def execute_delete(self, sql: str) -> ExecuteSQLResult:
+        """Execute a DELETE SQL statement.
+
+        Args:
+            sql: The DELETE SQL statement to execute
+
+        Returns:
+            A dictionary containing the delete operation results
+        """
+        raise NotImplementedError
 
     def validate_input(self, input_params: Any):
         """Validate the input parameters before execution.
@@ -60,11 +98,19 @@ class BaseSqlConnector(ABC):
 
     @abstractmethod
     def do_execute(
-        self, input_params: ExecuteSQLInput, result_format: Literal["csv", "arrow", "list"] = "csv"
+        self, input_params: ExecuteSQLInput, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
     ) -> ExecuteSQLResult:
         raise NotImplementedError
 
     def execute_arrow(self, query: str) -> ExecuteSQLResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def execute_pandas(self, query: str) -> ExecuteSQLResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def execute_ddl(self, sql: str) -> ExecuteSQLResult:
         raise NotImplementedError
 
     @abstractmethod
@@ -77,11 +123,41 @@ class BaseSqlConnector(ABC):
     def get_catalogs(self) -> List[str]:
         return []
 
-    def get_databases(self, catalog_name: str = "") -> List[str]:
+    def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> List[str]:
         return []
 
-    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
+    def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
         return []
+
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
+        """
+        Get all table names from the database.
+        Parameters contains catalog_name, database_name and schema_name
+        should be passed via kwargs and handled by subclasses as needed.
+        """
+        raise NotImplementedError
+
+    def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
+        """
+        Get all view names from the database.
+        Parameters contains catalog_name, database_name and schema_name
+        """
+        return []
+
+    def get_materialized_views(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[str]:
+        """
+        Get all materialized view names from the database.
+        Parameters contains catalog_name, database_name and schema_name
+        """
+        return []
+
+    def _sys_databases(self) -> Set[str]:
+        return set()
+
+    def _sys_schemas(self) -> Set[str]:
+        return set()
 
     def execute_csv_iterator(
         self, query: str, max_rows: int = 100, with_header: bool = True
@@ -152,14 +228,6 @@ class BaseSqlConnector(ABC):
         """
         raise NotImplementedError
 
-    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        """
-        Get all table names from the database.
-        Parameters contains catalog_name, database_name and schema_name
-        should be passed via kwargs and handled by subclasses as needed.
-        """
-        raise NotImplementedError
-
     def switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         """
         Switch context, including catalogs, databases and schemas.
@@ -226,3 +294,145 @@ class BaseSqlConnector(ABC):
             schema_name=schema_name,
             table_name=table_name,
         )
+
+    def parse_full_table_name(self, full_table_name: str) -> Dict[str, str]:
+        """
+        Parse a full table name into its components (catalog, database, schema, table).
+
+        Handles different database quoting styles and formats:
+        - MySQL: `database`.`table` or `catalog`.`database`.`table`
+        - Snowflake: "database"."schema"."table" or "schema"."table"
+        - PostgreSQL: "schema"."table"
+        - SQLite: just "table"
+
+        Args:
+            full_table_name: The full table name string to parse
+
+        Returns:
+            Dict with keys: catalog_name, database_name, schema_name, table_name
+            Missing components will be empty strings
+        """
+        import re
+
+        # Remove leading/trailing whitespace
+        full_table_name = full_table_name.strip()
+
+        # Handle different quote styles: `backticks`, "double quotes", [brackets]
+        quote_patterns = [
+            r'(["`])(?:(?=(\\?))\2.)*?\1',  # "quoted" or `quoted`
+            r"\[(.*?)\]",  # [bracketed]
+        ]
+
+        # Find all quoted parts
+        parts = []
+
+        # First, extract all quoted parts
+        for pattern in quote_patterns:
+            matches = re.findall(pattern, full_table_name)
+            if matches:
+                # Handle different regex return formats
+                if isinstance(matches[0], tuple):
+                    # Pattern returns tuples, extract the actual content
+                    for match in matches:
+                        if isinstance(match, tuple):
+                            part = match[0] if match[0] else match[1] if len(match) > 1 else ""
+                        else:
+                            part = str(match)
+                        if part and part not in parts:
+                            parts.append(part.strip('"`[]'))
+                else:
+                    # Pattern returns strings
+                    parts.extend([str(m).strip('"`[]') for m in matches])
+
+        # If no quoted parts found, split by dots
+        if not parts:
+            parts = [part.strip() for part in full_table_name.split(".")]
+        else:
+            # Split by dots, but respect quotes
+            pattern = r'(?:["`\[][^"`\]]*["`\]]|[^.])+'
+            matches = re.findall(pattern, full_table_name)
+            parts = [match.strip('"`[] ') for match in matches]
+
+        # Clean up parts - remove empty strings
+        parts = [p for p in parts if p]
+
+        # Determine components based on number of parts and database type
+        result = {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": ""}
+
+        if len(parts) == 1:
+            # Just table name
+            result["table_name"] = parts[0]
+        elif len(parts) == 2:
+            # database.table or schema.table
+            if self.dialect in ["mysql", "starrocks"]:
+                result["database_name"] = parts[0]
+                result["table_name"] = parts[1]
+            else:
+                # Default: treat as schema.table
+                result["schema_name"] = parts[0]
+                result["table_name"] = parts[1]
+        elif len(parts) == 3:
+            # catalog.database.table or database.schema.table
+            if self.dialect == "snowflake":
+                result["database_name"] = parts[0]
+                result["schema_name"] = parts[1]
+                result["table_name"] = parts[2]
+            elif self.dialect == "starrocks":
+                result["catalog_name"] = parts[0]
+                result["database_name"] = parts[1]
+                result["table_name"] = parts[2]
+            else:
+                # Default: catalog.database.table
+                result["catalog_name"] = parts[0]
+                result["database_name"] = parts[1]
+                result["table_name"] = parts[2]
+        elif len(parts) == 4:
+            # catalog.database.schema.table
+            result["catalog_name"] = parts[0]
+            result["database_name"] = parts[1]
+            result["schema_name"] = parts[2]
+            result["table_name"] = parts[3]
+        else:
+            # Fallback: last part is table name, rest as appropriate
+            result["table_name"] = parts[-1]
+            if len(parts) >= 2:
+                if self.dialect in ["mysql", "starrocks"]:
+                    result["database_name"] = parts[-2]
+                else:
+                    result["schema_name"] = parts[-2]
+
+        # Special handling for SQLite
+        if self.dialect == "sqlite":
+            result["catalog_name"] = ""
+            result["database_name"] = "main"
+            result["schema_name"] = ""
+            if len(parts) == 1:
+                result["table_name"] = parts[0]
+            else:
+                result["table_name"] = parts[-1]
+                if len(parts) >= 2:
+                    result["database_name"] = parts[-2]
+
+        # Special handling for DuckDB
+        if self.dialect == "duckdb":
+            if len(parts) == 1:
+                result["catalog_name"] = ""
+                result["database_name"] = ""
+                result["schema_name"] = "main"
+                result["table_name"] = parts[0]
+            elif len(parts) == 2:
+                result["catalog_name"] = ""
+                result["database_name"] = parts[0]
+                result["schema_name"] = "main"
+                result["table_name"] = parts[1]
+            elif len(parts) == 3:
+                result["catalog_name"] = ""
+                result["database_name"] = parts[0]
+                result["schema_name"] = parts[1]
+                result["table_name"] = parts[2]
+
+        return result
+
+
+def list_to_in_str(prefix: str, values: Optional[List[str]] = None) -> str:
+    return "" if not values else f"{prefix} ({str(values)[1:-1]})"

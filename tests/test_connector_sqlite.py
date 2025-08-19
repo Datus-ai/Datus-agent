@@ -2,6 +2,7 @@ import os
 
 import pytest
 import structlog
+from pandas import DataFrame
 
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 
@@ -55,9 +56,9 @@ def test_test_connection(tmp_path):
 def test_execute_select(sqlite_connector: SQLiteConnector):
     """Test SELECT query execution"""
     # Create a test table and insert data
-    sqlite_connector.execute({"sql_query": "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)"})
-    sqlite_connector.execute({"sql_query": "INSERT INTO test (name) VALUES ('test1')"})
-    sqlite_connector.execute({"sql_query": "INSERT INTO test (name) VALUES ('test2')"})
+    sqlite_connector.execute_ddl("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+    sqlite_connector.execute_insert("INSERT INTO test (name) VALUES ('test1')")
+    sqlite_connector.execute_insert("INSERT INTO test (name) VALUES ('test2')")
 
     # Test SELECT query
     result = sqlite_connector.execute({"sql_query": "SELECT * FROM test"}, result_format="list")
@@ -68,6 +69,10 @@ def test_execute_select(sqlite_connector: SQLiteConnector):
     assert result.sql_return[0]["name"] == "test1"
     assert result.sql_return[1]["name"] == "test2"
 
+    result = sqlite_connector.execute_pandas("select * from test")
+    assert isinstance(result.sql_return, DataFrame)
+    assert result.row_count == 2
+
     sample_values = sqlite_connector.get_sample_rows(tables=["test"], top_n=5)
     assert len(sample_values) == 1
     assert sample_values[0]["table_name"] == "test"
@@ -76,12 +81,12 @@ def test_execute_select(sqlite_connector: SQLiteConnector):
 def test_execute_insert(sqlite_connector):
     """Test INSERT query execution"""
     # Create test table
-    sqlite_connector.execute({"sql_query": "CREATE TABLE test_insert (id INTEGER PRIMARY KEY, value TEXT)"})
+    sqlite_connector.execute_ddl("CREATE TABLE test_insert (id INTEGER PRIMARY KEY, value TEXT)")
 
     # Test INSERT
-    result = sqlite_connector.execute({"sql_query": "INSERT INTO test_insert (value) VALUES ('test_value')"})
-    assert result["success"] is True
-    assert result["row_count"] == 1
+    result = sqlite_connector.execute_insert("INSERT INTO test_insert (value) VALUES ('test_value')")
+    assert result.success is True
+    assert result.row_count == 1
 
     # Verify insertion
     verify = sqlite_connector.execute({"sql_query": "SELECT * FROM test_insert"}, result_format="list")
@@ -91,19 +96,11 @@ def test_execute_insert(sqlite_connector):
 def test_execute_update(sqlite_connector):
     """Test UPDATE query execution"""
     # Setup test data
-    sqlite_connector.execute(
-        {"sql_query": "CREATE TABLE test_update (id INTEGER PRIMARY KEY, value TEXT)"},
-        result_format="list",
-    )
-    sqlite_connector.execute(
-        {"sql_query": "INSERT INTO test_update (value) VALUES ('old_value')"}, result_format="list"
-    )
+    sqlite_connector.execute_ddl("CREATE TABLE test_update (id INTEGER PRIMARY KEY, value TEXT)")
+    sqlite_connector.execute_insert("INSERT INTO test_update (value) VALUES ('old_value')")
 
     # Test UPDATE
-    result = sqlite_connector.execute(
-        {"sql_query": "UPDATE test_update SET value = 'new_value' WHERE value = 'old_value'"},
-        result_format="list",
-    )
+    result = sqlite_connector.execute_update("UPDATE test_update SET value = 'new_value' WHERE value = 'old_value'")
     assert result["success"] is True
     assert result["row_count"] == 1
 
@@ -115,18 +112,11 @@ def test_execute_update(sqlite_connector):
 def test_execute_delete(sqlite_connector):
     """Test DELETE query execution"""
     # Setup test data
-    sqlite_connector.execute(
-        {"sql_query": "CREATE TABLE test_delete (id INTEGER PRIMARY KEY, value TEXT)"},
-        result_format="list",
-    )
-    sqlite_connector.execute(
-        {"sql_query": "INSERT INTO test_delete (value) VALUES ('to_delete')"}, result_format="list"
-    )
+    sqlite_connector.execute_ddl("CREATE TABLE test_delete (id INTEGER PRIMARY KEY, value TEXT)")
+    sqlite_connector.execute_insert("INSERT INTO test_delete (value) VALUES ('to_delete')")
 
     # Test DELETE
-    result = sqlite_connector.execute(
-        {"sql_query": "DELETE FROM test_delete WHERE value = 'to_delete'"}, result_format="list"
-    )
+    result = sqlite_connector.execute_delete("DELETE FROM test_delete WHERE value = 'to_delete'")
     assert result["success"] is True
     assert result["row_count"] == 1
 

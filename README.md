@@ -101,10 +101,10 @@ agent:
     # Default: all-MiniLM-L6-v2 if no model is configured.
     # Claude model suggestions: Now we just support openai.
     database:
-      registry_name: openai # default is sentence-transformers
+      registry_name: sentence-transformers # default is sentence-transformers, now just support sentence-transformers and openai.
       model_name: text-embedding-v3
       dim_size: 1024
-      batch_size: 10 # Aliyun only supports no more than 10
+      # batch_size: 10 # This configuration is required when the registration mode is openai
     document:
       model_name: intfloat/multilingual-e5-large-instruct
       dim_size: 1024

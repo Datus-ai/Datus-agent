@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Sequence, override
+from typing import Any, Dict, List, Literal, Sequence, Set, override
 
 from pandas import DataFrame
 from snowflake.connector import Connect, SnowflakeConnection
@@ -57,7 +57,7 @@ class SnowflakeConnector(BaseSqlConnector):
     def close(self):
         self.connection.close()
 
-    def do_execute(self, input_params, result_format: Literal["csv", "arrow", "list"] = "csv"):
+    def do_execute(self, input_params, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"):
         """Execute SQL query on Snowflake."""
         try:
             with self.connection.cursor() as cursor:
@@ -81,6 +81,10 @@ class SnowflakeConnector(BaseSqlConnector):
                 elif result_format == "list":
                     rows = cursor.fetchall()
                     final_result = [{columns[i]: value for i, value in enumerate(row)} for row in rows]
+                    row_count = len(rows)
+                elif result_format == "pandas":
+                    rows = cursor.fetch_pandas_all()
+                    final_result = rows
                     row_count = len(rows)
                 else:
                     rows = cursor.fetch_pandas_all()
@@ -122,6 +126,88 @@ class SnowflakeConnector(BaseSqlConnector):
                 cursor.execute(f'USE DATABASE "{database_name}"')
             else:
                 cursor.execute(f'USE SCHEMA "{database_name}"."{schema_name}"')
+
+    @override
+    def execute_ddl(self, sql: str) -> ExecuteSQLResult:
+        return self._execute_update_or_delete(sql)
+
+    @override
+    def execute_insert(self, sql: str) -> ExecuteSQLResult:
+        """Execute an INSERT SQL statement on Snowflake."""
+        try:
+            with self.connection.cursor() as cursor:
+                # For INSERT operations, return affected rows and last insert ID
+                rowcount = cursor.rowcount
+                last_rowid = cursor.sfqid  # Snowflake query ID as identifier
+
+                return ExecuteSQLResult(
+                    sql_query=sql,
+                    row_count=rowcount,
+                    sql_return=str(last_rowid),
+                    success=True,
+                    error=None,
+                )
+        except ProgrammingError as e:
+            return ExecuteSQLResult(
+                sql_query=sql,
+                row_count=0,
+                sql_return="",
+                success=False,
+                error=f"errno:{e.errno}, sqlstate: {e.sqlstate}, message: {e.msg}, query_id: {e.sfqid}",
+            )
+        except Exception as e:
+            return ExecuteSQLResult(
+                sql_query=sql,
+                row_count=0,
+                sql_return="",
+                success=False,
+                error=f"Unknown error: {str(e)}",
+            )
+
+    @override
+    def execute_update(
+        self,
+        sql: str,
+    ) -> ExecuteSQLResult:
+        """Execute an UPDATE SQL statement on Snowflake."""
+        return self._execute_update_or_delete(sql)
+
+    @override
+    def execute_delete(self, sql: str) -> ExecuteSQLResult:
+        """Execute a DELETE SQL statement on Snowflake."""
+        return self._execute_update_or_delete(sql)
+
+    def _execute_update_or_delete(self, sql: str):
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql)
+
+                # For DELETE operations, return affected rows count
+                rowcount = cursor.rowcount
+
+                return ExecuteSQLResult(
+                    sql_query=sql,
+                    row_count=rowcount,
+                    sql_return=str(rowcount),
+                    success=True,
+                    error=None,
+                )
+        except ProgrammingError as e:
+            return ExecuteSQLResult(
+                sql_query=sql,
+                row_count=0,
+                sql_return="",
+                success=False,
+                error=f"errno:{e.errno}, sqlstate: {e.sqlstate}, message: {e.msg}, query_id: {e.sfqid}",
+            )
+        except Exception as e:
+            return ExecuteSQLResult(
+                sql_query=sql,
+                row_count=0,
+                sql_return="",
+                success=False,
+                error=f"Unknown error: {str(e)}",
+            )
 
     def do_execute_arrow(self, input_params) -> ExecuteSQLResult:
         """Execute SQL query on Snowflake and return results in Apache Arrow format.
@@ -195,16 +281,23 @@ class SnowflakeConnector(BaseSqlConnector):
                 raise ValueError("params must be dict or Sequence")
 
     def get_schema(
-        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
+        self,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_name: str = "",
+        table_type: str = "table",
     ) -> List[Dict[str, Any]]:
         """
-        Get Table schema information including column name, type, nullability, and primary key information.
+        Get schema information for tables, views, and materialized views including column name, type, nullability,
+        and primary key information.
 
         Args:
             catalog_name: Catalog name (not used in Snowflake)
             database_name: Database name
             schema_name: Schema name
             table_name: Table name to get schema for
+            table_type: Type of table_name to get schema
 
         Returns:
             List of dictionaries containing column information and table information
@@ -222,13 +315,22 @@ class SnowflakeConnector(BaseSqlConnector):
                 catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
             )
 
-            # Get primary key information using SHOW PRIMARY KEYS command
-            cursor.execute(f"""SHOW PRIMARY KEYS IN TABLE {full_name}""")
-            pk_results = cursor.fetchall()
+            table_type = table_type.upper()
 
-            # Extract column names that are primary keys
-            # The column name is in position 4 (0-indexed) according to Snowflake documentation
-            pk_columns = set(row[4] for row in pk_results)
+            # Initialize primary key columns - only for base tables
+            pk_columns = set()
+            if table_type == "TABLE":
+                try:
+                    # Get primary key information using SHOW PRIMARY KEYS command
+                    cursor.execute(f"""SHOW PRIMARY KEYS IN TABLE {full_name}""")
+                    pk_results = cursor.fetchall()
+                    # Extract column names that are primary keys
+                    # The column name is in position 4 (0-indexed) according to Snowflake documentation
+                    pk_columns = set(row[4] for row in pk_results)
+                except Exception as e:
+                    # If SHOW PRIMARY KEYS fails (e.g., for views), skip primary key detection
+                    logger.debug(f"Failed to get primary keys for {full_name}: {e}")
+
             columns_table_name = (
                 "INFORMATION_SCHEMA.COLUMNS" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.COLUMNS'
             )
@@ -278,11 +380,12 @@ class SnowflakeConnector(BaseSqlConnector):
                 schemas.append(column_info)
                 columns_list.append({"name": column_name, "type": data_type})
 
-            # Add table information
+            # Add table information with type
             schemas.append(
                 {
                     "table": table_name,
                     "columns": columns_list,
+                    "table_type": table_type.lower(),
                 }
             )
 
@@ -297,6 +400,12 @@ class SnowflakeConnector(BaseSqlConnector):
             cursor.execute(sql, params)
             return cursor.fetch_pandas_all()
 
+    def _sys_databases(self) -> Set[str]:
+        return {"SNOWFLAKE", "SNOWFLAKE_SAMPLE_DATA"}
+
+    def _sys_schemas(self) -> Set[str]:
+        return {"PUBLIC", "INFORMATION_SCHEMA"}
+
     def execute_query(
         self,
         sql: str,
@@ -307,18 +416,24 @@ class SnowflakeConnector(BaseSqlConnector):
             return cursor.fetchall()
 
     @override
-    def get_databases(self, catalog_name: str = "") -> List[str]:
+    def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> List[str]:
         res = self.execute_query(sql="SHOW DATABASES")
-        return [it[1] for it in res]
+        databases = [it[1] for it in res]
+        if not include_sys:
+            # Filter out system databases
+            system_dbs = self._sys_databases()
+            databases = [db for db in databases if db.upper() not in system_dbs]
+        return databases
 
     @override
-    def get_schemas(self, catalog_name: str = "", database_name: str = "") -> List[str]:
+    def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
         """
         Get schema names using SHOW SCHEMAS command which is more efficient than INFORMATION_SCHEMA queries.
 
         Args:
             catalog_name: Catalog name (not used in Snowflake)
             database_name: Database name to get schemas from
+            include_sys: Whether to include system schemas in the results
 
         Returns:
             List of schema names
@@ -336,12 +451,12 @@ class SnowflakeConnector(BaseSqlConnector):
                 cursor.execute(sql)
                 results = cursor.fetchall()
 
-                # Filter out system schemas
                 schemas = []
                 for row in results:
                     schema_name = row[1]  # Schema name is in the second column
+                    sys_schemas = self._sys_schemas()
                     # Skip system schemas
-                    if schema_name.upper() not in ("PUBLIC", "INFORMATION_SCHEMA"):
+                    if include_sys or schema_name.upper() not in sys_schemas:
                         schemas.append(schema_name)
 
                 return schemas
@@ -352,11 +467,16 @@ class SnowflakeConnector(BaseSqlConnector):
                 "INFORMATION_SCHEMA.SCHEMATA" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.SCHEMATA'
             )
 
-            sql = (
-                f"SELECT SCHEMA_NAME FROM {select_table_name} WHERE SCHEMA_NAME NOT IN ('PUBLIC', 'INFORMATION_SCHEMA')"
-            )
+            sql = f"SELECT SCHEMA_NAME FROM {select_table_name}"
+            if not include_sys:
+                sql += " WHERE SCHEMA_NAME NOT IN ('PUBLIC', 'INFORMATION_SCHEMA')"
+
             if database_name:
-                sql += f" AND CATALOG_NAME='{database_name}'"
+                if not include_sys:
+                    sql += f" AND CATALOG_NAME='{database_name}'"
+                else:
+                    sql += f" WHERE CATALOG_NAME='{database_name}'"
+
             df = self.execute_query_to_df(sql=sql)
             return [item for item in df["SCHEMA_NAME"]]
 
@@ -412,6 +532,27 @@ class SnowflakeConnector(BaseSqlConnector):
 
     def get_type(self) -> str:
         return DBType.SNOWFLAKE
+
+    def execute_pandas(self, query: str) -> ExecuteSQLResult:
+        try:
+            df = self.execute_query_to_df(query)
+            return ExecuteSQLResult(
+                sql_query=query,
+                row_count=len(df),
+                sql_return=df,
+                success=True,
+                error=None,
+                result_format="pandas",
+            )
+        except Exception as e:
+            return ExecuteSQLResult(
+                sql_query=query,
+                row_count=0,
+                sql_return=None,
+                success=False,
+                error=str(e),
+                result_format="pandas",
+            )
 
     def execute_arrow(self, query: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results in Arrow format.

@@ -371,7 +371,7 @@ class ExecuteSQLResult(BaseResult):
     sql_return: Any = Field(  # TODO: change to Union[str, ArrowTable, List[Reuslt]]
         default=None, description="The result of SQL execution (string or Arrow data)"
     )
-    result_format: str = Field(default="csv", description="Format of the result: 'csv' or 'arrow' or 'list'")
+    result_format: str = Field(default="", description="Format of the result: 'csv' or 'arrow' or 'pandas' or 'list'")
 
     class Config:
         arbitrary_types_allowed = True
