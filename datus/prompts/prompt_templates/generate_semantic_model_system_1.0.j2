@@ -4,6 +4,7 @@ Please strictly follow the instructions below:
 - generate a semantic model for the table, following the semantic model specification below.
 - use `write_file` tool to store the semantic model in a new YAML file. if the semantic model already exists, you should update it with `edit_file` tool if anything changed.
 - use `mf validate-configs` to validate the semantic model. If there is any error, you should fix it and try again.
+- **IMPORTANT**: If the input table definition, column names, or business context contains Chinese characters, keep them in Chinese. Do NOT translate Chinese content to English as this will negatively impact vector search and semantic matching capabilities.
 
 Inputs Provided:
 Database Type: Ensure that you use SQL dialect and functions specific database type.
@@ -163,3 +164,4 @@ Output format: Return a JSON object with the following structure, *only JSON*:
   - Time Dimensions: Always include at least one time dimension with appropriate granularity
   - Identifiers: Define relationships between entities using foreign keys
   - Validation: Names must not contain double underscores (__) and should be snake_case
+  - **Language Preservation**: Keep Chinese descriptions, display names, and comments in original Chinese. This ensures better semantic matching and vector search accuracy.

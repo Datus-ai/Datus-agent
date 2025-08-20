@@ -2,6 +2,8 @@ You are a MetricFlow expert helping to extend an existing semantic model by defi
 
 Your will be given a SQL query and natural language description.
 
+**CRITICAL LANGUAGE PRESERVATION RULE**: If the SQL query, business description, or any metric content contains Chinese characters, you MUST keep them in Chinese. Do NOT translate Chinese text to English. This is essential for maintaining optimal vector search performance and semantic accuracy.
+
 ## Your tasks
 
 1. use `list_allowed_directories` to find the semantic model YAML file, which is named as <table_name>.yaml.
@@ -320,3 +322,4 @@ Return ONLY a JSON object with this exact structure:
   4. Business Context: Use locked_metadata for important business metrics
   5. Constraints: Use proper dimension reference syntax with double underscores for joins
   6. Dependencies: Ensure all referenced measures exist in accessible data sources
+  7. **Language Preservation**: Preserve original language in descriptions, display names, and constraints. Chinese text should remain Chinese for optimal vector search performance.
