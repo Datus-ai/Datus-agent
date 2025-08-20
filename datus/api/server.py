@@ -5,9 +5,11 @@ Supports foreground and daemon (background) modes with start/stop/restart/status
 """
 import argparse
 import atexit
+import multiprocessing
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -74,31 +76,16 @@ def _redirect_stdio(log_file: Path) -> None:
     os.dup2(se.fileno(), sys.stderr.fileno())
 
 
-def _daemonize(pid_file: Path, log_file: Path) -> None:
-    """UNIX double-fork to background and detach from terminal."""
-    try:
-        pid = os.fork()
-        if pid > 0:
-            # Exit first parent
-            os._exit(0)
-    except OSError as exc:
-        print(f"First fork failed: {exc}", file=sys.stderr)
-        os._exit(1)
-
+def _daemon_worker(args: argparse.Namespace, agent_args: argparse.Namespace, pid_file: Path, log_file: Path) -> None:
+    """Worker function that runs in the daemon process."""
+    # Set process session and umask
     os.setsid()
     os.umask(0)
 
-    try:
-        pid = os.fork()
-        if pid > 0:
-            # Exit second parent
-            os._exit(0)
-    except OSError as exc:
-        print(f"Second fork failed: {exc}", file=sys.stderr)
-        os._exit(1)
-
-    # In daemon process now
+    # Redirect stdio
     _redirect_stdio(log_file)
+
+    # Write PID file
     _write_pid_file(pid_file, os.getpid())
 
     def _cleanup(*_args):
@@ -106,6 +93,9 @@ def _daemonize(pid_file: Path, log_file: Path) -> None:
 
     atexit.register(_cleanup)
     signal.signal(signal.SIGTERM, lambda *_a: (_cleanup(), os._exit(0)))
+
+    # Run the actual server
+    _run_server(args, agent_args)
 
 
 def _stop(pid_file: Path, timeout_seconds: float = 10.0) -> int:
@@ -181,6 +171,13 @@ def _run_server(args: argparse.Namespace, agent_args: argparse.Namespace) -> Non
 
 def main():
     """Main entry point for starting the Datus Agent API server."""
+    # Set multiprocessing start method to avoid potential issues
+    if hasattr(multiprocessing, "set_start_method"):
+        try:
+            multiprocessing.set_start_method("spawn", force=True)
+        except RuntimeError:
+            # Start method can only be set once
+            pass
     parser = argparse.ArgumentParser(description="Start Datus Agent FastAPI server")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind the server to (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind the server to (default: 8000)")
@@ -259,10 +256,26 @@ def main():
             f"Starting Datus Agent API server (daemon) on {args.host}:{args.port} | "
             f"Workers: {args.workers}, LogLevel: {args.log_level}"
         )
-        _daemonize(pid_file, log_file)
+
+        # Create daemon process using multiprocessing
         agent_args = _build_agent_args(args)
-        _run_server(args, agent_args)
-        return
+        daemon_process = multiprocessing.Process(
+            target=_daemon_worker, args=(args, agent_args, pid_file, log_file), daemon=False
+        )
+        daemon_process.start()
+
+        # Give the daemon a moment to start
+        time.sleep(0.5)
+
+        # Check if the daemon started successfully
+        if daemon_process.is_alive():
+            print(f"Daemon started successfully (pid={daemon_process.pid})")
+            # Force exit main process immediately - don't wait for daemon
+            os._exit(0)
+        else:
+            print("Failed to start daemon process", file=sys.stderr)
+            daemon_process.join()  # Clean up failed process
+            os._exit(1)
     else:
         # Foreground mode - normal logging setup with console output
         configure_logging(args.log_level)

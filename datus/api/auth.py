@@ -3,6 +3,7 @@ Authentication module for Datus Agent API.
 """
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import jwt
@@ -21,18 +22,37 @@ security = HTTPBearer()
 _depends_security = Depends(security)
 
 
-def load_auth_config() -> Dict:
-    """Load authentication configuration from conf/auth_clients.yml."""
-    config_path = "conf/auth_clients.yml"
+def load_auth_config(config_path: Optional[str] = None) -> Dict:
+    """
+    Load authentication configuration from auth_clients.yml.
 
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-            return config
-    except Exception as e:
-        print(f"Warning: Failed to load auth config from {config_path}: {e}")
-        # Return default configuration if file not found or failed to load
-        return {"clients": DEFAULT_CLIENTS, "jwt": DEFAULT_JWT_CONFIG}
+    Args:
+        config_path: Path to the config file (searches in order:
+            config_path > conf/auth_clients.yml > ~/.datus/conf/auth_clients.yml)
+    """
+    yaml_path = None
+    if config_path:
+        yaml_path = Path(config_path).expanduser()
+
+    if not yaml_path and Path("conf/auth_clients.yml").exists():
+        yaml_path = Path("conf/auth_clients.yml")
+
+    if not yaml_path:
+        home_config = Path.home() / ".datus" / "conf" / "auth_clients.yml"
+        if home_config.exists():
+            yaml_path = home_config
+
+    # Try to load from the found path
+    if yaml_path and yaml_path.exists():
+        try:
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+                return config
+        except Exception as e:
+            print(f"Warning: Failed to load auth config from {yaml_path}: {e}")
+
+    # Return default configuration if no config file found or failed to load
+    return {"clients": DEFAULT_CLIENTS, "jwt": DEFAULT_JWT_CONFIG}
 
 
 class AuthService:
