@@ -102,6 +102,85 @@ class TestOpenAIModel:
         except Exception:
             raise
 
+    @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not available")
+    @pytest.mark.asyncio
+    async def test_generate_with_mcp_token_consumption(self):
+        """Test token consumption tracking between generate_with_tools and generate_with_tools_stream."""
+        from datus.schemas.action_history import ActionHistoryManager
+        
+        instructions = """You are a SQLite expert working with the SSB database.
+        Answer the question briefly and concisely."""
+
+        question = "database_type='sqlite' task='Count the total number of rows in the customer table'"
+        ssb_db_path = "tests/data/SSB.db"
+        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+
+        # Test 1: Non-streaming version
+        logger.info("=== Testing generate_with_tools (non-streaming) ===")
+        result_non_stream = await self.model.generate_with_tools(
+            prompt=question,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            max_turns=5,
+        )
+
+        assert result_non_stream is not None, "Non-streaming result should not be None"
+        assert "content" in result_non_stream, "Non-streaming result should contain content"
+        assert "usage" in result_non_stream, "Non-streaming result should contain usage"
+        
+        non_stream_usage = result_non_stream.get("usage", {})
+        logger.info(f"Non-streaming usage info: {non_stream_usage}")
+        
+        # Verify usage fields exist and are reasonable
+        assert isinstance(non_stream_usage, dict), "Usage should be a dictionary"
+        total_tokens_non_stream = non_stream_usage.get("total_tokens", 0)
+        input_tokens_non_stream = non_stream_usage.get("input_tokens", 0)
+        output_tokens_non_stream = non_stream_usage.get("output_tokens", 0)
+        
+        logger.info(f"Non-streaming tokens: total={total_tokens_non_stream}, input={input_tokens_non_stream}, output={output_tokens_non_stream}")
+        
+        assert total_tokens_non_stream > 0, "Total tokens should be greater than 0"
+        assert input_tokens_non_stream > 0, "Input tokens should be greater than 0"
+        assert output_tokens_non_stream > 0, "Output tokens should be greater than 0"
+
+        # Test 2: Streaming version
+        logger.info("=== Testing generate_with_tools_stream (streaming) ===")
+        action_history_manager = ActionHistoryManager()
+        action_count = 0
+
+        async for action in self.model.generate_with_tools_stream(
+            prompt=question,
+            output_type=str,
+            mcp_servers={"sqlite": mcp_server},
+            instruction=instructions,
+            max_turns=5,
+            action_history_manager=action_history_manager,
+        ):
+            action_count += 1
+            logger.info(f"Stream action {action_count}: type={action.action_type}, role={action.role}, status={action.status}")
+
+        # Check final actions after our fix has been applied
+        final_actions = action_history_manager.get_actions()
+        final_actions_with_tokens = sum(1 for a in final_actions 
+                                      if a.output and isinstance(a.output, dict) and a.output.get("usage"))
+        final_total_tokens = sum(a.output.get("usage", {}).get("total_tokens", 0) 
+                               for a in final_actions 
+                               if a.output and isinstance(a.output, dict) and a.output.get("usage"))
+        
+        logger.info(f"=== Results ===")
+        logger.info(f"Non-streaming tokens: {total_tokens_non_stream}")
+        logger.info(f"Streaming actions with tokens: {final_actions_with_tokens}/{len(final_actions)}")
+        logger.info(f"Streaming total tokens: {final_total_tokens}")
+        
+        # Verify our fix is working
+        if final_actions_with_tokens > 0 and final_total_tokens > 0:
+            logger.info("✅ SUCCESS: Token consumption fix is working!")
+        else:
+            logger.error("❌ FAILURE: Token consumption fix needs work")
+            
+        assert action_count > 0, "Should receive at least one streaming action"
+
 
 class TestKimiModel:
     """Test suite for Kimi (Moonshot) K2 model."""

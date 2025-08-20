@@ -633,6 +633,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
 
+                # Yield streaming actions as they come
                 while not result.is_complete:
                     async for event in result.stream_events():
                         if not hasattr(event, "type") or event.type != "run_item_stream_event":
@@ -671,6 +672,10 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                     final_output = result.final_output if hasattr(result, "final_output") else ""
                     self._save_llm_trace(messages, final_output, conversation_history)
+
+                # After streaming completes, extract usage information from the final result
+                # and distribute it to the actions in the action_history_manager
+                await self._extract_and_distribute_token_usage(result, action_history_manager)
 
         # Execute the streaming operation directly without retry logic
         async for action in _stream_operation():
@@ -799,6 +804,94 @@ class OpenAICompatibleModel(LLMBaseModel):
         else:
             logger.debug(f"No text content found in message output: {content}")
             return None
+
+    async def _extract_and_distribute_token_usage(self, result, action_history_manager: ActionHistoryManager) -> None:
+        """Extract token usage from completed streaming result and distribute to ActionHistory objects."""
+        try:
+            if not (hasattr(result, "context_wrapper") and hasattr(result.context_wrapper, "usage")):
+                logger.warning("No usage information found in streaming result")
+                return
+
+            usage = result.context_wrapper.usage
+
+            # Extract all usage information (same as non-streaming version)
+            usage_info = {
+                "requests": getattr(usage, "requests", 0),
+                "input_tokens": getattr(usage, "input_tokens", 0),
+                "output_tokens": getattr(usage, "output_tokens", 0),
+                "total_tokens": getattr(usage, "total_tokens", 0),
+                "cached_tokens": (
+                    getattr(usage.input_tokens_details, "cached_tokens", 0)
+                    if hasattr(usage, "input_tokens_details") and usage.input_tokens_details
+                    else 0
+                ),
+                "reasoning_tokens": (
+                    getattr(usage.output_tokens_details, "reasoning_tokens", 0)
+                    if hasattr(usage, "output_tokens_details") and usage.output_tokens_details
+                    else 0
+                ),
+                "cache_hit_rate": (
+                    round(
+                        getattr(usage.input_tokens_details, "cached_tokens", 0) / getattr(usage, "input_tokens", 1), 3
+                    )
+                    if hasattr(usage, "input_tokens_details") and getattr(usage, "input_tokens", 0) > 0
+                    else 0
+                ),
+                "context_usage_ratio": (
+                    round(getattr(usage, "total_tokens", 0) / self.context_length(), 3)
+                    if self.context_length() and getattr(usage, "total_tokens", 0) > 0
+                    else 0
+                ),
+            }
+
+            logger.debug(f"Extracted streaming token usage: {usage_info}")
+            self._distribute_token_usage_to_actions(action_history_manager, usage_info)
+
+        except Exception as e:
+            logger.error(f"Error extracting and distributing token usage: {e}")
+
+    def _distribute_token_usage_to_actions(
+        self, action_history_manager: ActionHistoryManager, usage_info: dict
+    ) -> None:
+        """
+        Distribute token usage information to ActionHistory objects.
+        Only adds full usage to final assistant action to avoid double-counting.
+
+        Args:
+            action_history_manager: ActionHistoryManager containing actions
+            usage_info: Usage information dictionary with token counts
+        """
+        try:
+            actions = action_history_manager.get_actions()
+            if not actions:
+                return
+
+            total_tokens = usage_info.get("total_tokens", 0)
+            assistant_actions = [a for a in actions if a.role == "assistant"]
+
+            # Add full usage to the final assistant action (represents the complete conversation cost)
+            if assistant_actions:
+                final_assistant = assistant_actions[-1]
+                self._add_usage_to_action(final_assistant, usage_info)
+                logger.debug(
+                    f"Added full usage to final assistant action: {final_assistant.action_id} ({total_tokens} tokens)"
+                )
+
+            # Note: Tool actions don't get token counts to avoid double-counting
+            # The final assistant action represents the total conversation cost
+            logger.debug(f"Distributed {total_tokens} tokens to final assistant action only")
+
+        except Exception as e:
+            logger.error(f"Error distributing token usage: {e}")
+
+    def _add_usage_to_action(self, action: ActionHistory, usage_info: dict) -> None:
+        """Add usage information to an action's output."""
+        if action.output is None:
+            action.output = {}
+        elif not isinstance(action.output, dict):
+            action.output = {"raw_output": action.output}
+
+        action.output["usage"] = usage_info
 
     @property
     def model_specs(self) -> Dict[str, Dict[str, int]]:
