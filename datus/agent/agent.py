@@ -23,7 +23,7 @@ from datus.schemas.node_models import BaseResult, SqlTask
 from datus.storage.document import DocumentStore
 from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
-from datus.storage.metric.metrics_init import init_success_story_metrics
+from datus.storage.metric.metrics_init import init_semantic_yaml_metrics, init_success_story_metrics
 from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
 from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
@@ -661,9 +661,14 @@ class Agent:
                 else:
                     self.global_config.check_init_storage_config("metric")
                 self.metrics_store = SemanticMetricsRAG(dir_path)
-                init_success_story_metrics(
-                    self.metrics_store, self.args, self.global_config, build_mode=kb_update_strategy
-                )
+                if hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
+                    init_semantic_yaml_metrics(
+                        self.metrics_store, self.args, self.global_config, build_mode=kb_update_strategy
+                    )
+                else:
+                    init_success_story_metrics(
+                        self.metrics_store, self.args, self.global_config, build_mode=kb_update_strategy
+                    )
                 return {
                     "status": "success",
                     "message": f"metrics bootstrap completed, "

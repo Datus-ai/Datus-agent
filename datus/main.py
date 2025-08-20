@@ -127,6 +127,11 @@ def create_parser() -> argparse.ArgumentParser:
         default="benchmark/semantic_layer/success_story.csv",
         help="Path to success story file",
     )
+    bootstrap_parser.add_argument(
+        "--semantic_yaml",
+        type=str,
+        help="Path to semantic model YAML file",
+    )
     bootstrap_parser.add_argument("--metric_meta", type=str, help="Metric meta for the success story")
     bootstrap_parser.add_argument("--domain", type=str, help="Domain of the success story")
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")

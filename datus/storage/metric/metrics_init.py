@@ -198,3 +198,142 @@ def gen_metrics(
         metric_dict["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         metric_list.append(metric_dict)
     return metric_list
+
+
+def init_semantic_yaml_metrics(
+    storage: SemanticMetricsRAG,
+    args: argparse.Namespace,
+    agent_config: AgentConfig,
+    build_mode: str = "overwrite",
+):
+    all_semantic_models, all_metrics = exists_semantic_metrics(storage, build_mode)
+    logger.debug(f"all_semantic_models: {all_semantic_models}")
+    logger.debug(f"all_metrics: {all_metrics}")
+
+    if not args.semantic_yaml or not os.path.exists(args.semantic_yaml):
+        logger.error(f"Semantic YAML file {args.semantic_yaml} not found")
+        return
+
+    process_semantic_yaml_file(storage, args.semantic_yaml, args, agent_config, all_semantic_models, all_metrics)
+    storage.after_init()
+
+
+def process_semantic_yaml_file(
+    storage: SemanticMetricsRAG,
+    yaml_file_path: str,
+    args: argparse.Namespace,
+    agent_config: AgentConfig,
+    all_semantic_models: Set[str],
+    all_metrics: Set[str],
+):
+    logger.info(f"Processing semantic YAML file: {yaml_file_path}")
+
+    with open(yaml_file_path, "r") as f:
+        docs = yaml.safe_load_all(f)
+
+        data_source = None
+        metrics_list = []
+
+        for doc in docs:
+            if "data_source" in doc:
+                data_source = doc["data_source"]
+            elif "metric" in doc:
+                metrics_list.append(doc["metric"])
+
+        if not data_source:
+            logger.error("No data_source found in YAML file")
+            return
+
+        current_db_config = agent_config.current_db_config()
+
+        # Generate semantic model from data_source
+        semantic_model = gen_semantic_model_from_data_source(
+            data_source,
+            current_db_config.database,
+            current_db_config.schema,
+            current_db_config.catalog,
+            args.domain,
+            yaml_file_path,
+        )
+
+        if not semantic_model:
+            logger.error("Failed to generate semantic model from data_source")
+            return
+
+        # Store semantic model if not exists
+        if semantic_model.get("id", "") not in all_semantic_models:
+            storage.semantic_model_storage.store([semantic_model])
+            all_semantic_models.add(semantic_model.get("id", ""))
+        else:
+            logger.info(f"semantic model {semantic_model['id']} already exists")
+
+        # Process metrics
+        current_metric_meta = agent_config.current_metric_meta(args.metric_meta)
+
+        for metric_doc in metrics_list:
+            metric_dict = gen_metric_from_yaml(
+                semantic_model.get("semantic_model_name", ""),
+                metric_doc,
+                current_metric_meta.domain,
+                current_metric_meta.layer1,
+                current_metric_meta.layer2,
+            )
+
+            if metric_dict.get("id", "") not in all_metrics:
+                storage.metric_storage.store([metric_dict])
+                all_metrics.add(metric_dict.get("id", ""))
+            else:
+                logger.info(f"metric {metric_dict.get('id', '')} already exists")
+
+
+def gen_semantic_model_from_data_source(
+    data_source: dict,
+    database_name: str,
+    schema_name: str,
+    catalog_name: str,
+    domain: str,
+    yaml_file_path: str,
+):
+    table_name = data_source.get("name", "")
+
+    semantic_model = {}
+    semantic_model["id"] = gen_semantic_model_id(catalog_name, database_name, schema_name, table_name)
+    semantic_model["catalog_name"] = catalog_name
+    semantic_model["database_name"] = database_name
+    semantic_model["schema_name"] = schema_name
+    semantic_model["table_name"] = table_name
+    semantic_model["catalog_database_schema"] = f"{catalog_name}_{database_name}_{schema_name}"
+    semantic_model["domain"] = domain
+    semantic_model["semantic_file_path"] = yaml_file_path
+    semantic_model["semantic_model_name"] = data_source.get("name", "")
+    semantic_model["semantic_model_desc"] = data_source.get("description", "")
+    semantic_model["identifiers"] = json.dumps(data_source.get("identifiers", []))
+    semantic_model["dimensions"] = json.dumps(data_source.get("dimensions", []))
+    semantic_model["measures"] = json.dumps(data_source.get("measures", []))
+    semantic_model["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    return semantic_model
+
+
+def gen_metric_from_yaml(
+    semantic_model_name: str,
+    metric_doc: dict,
+    domain: str,
+    layer1: str,
+    layer2: str,
+):
+    metric_dict = {}
+    metric_name = metric_doc.get("name", "")
+    metric_dict["id"] = gen_metric_id(domain, layer1, layer2, semantic_model_name, metric_name)
+    metric_dict["semantic_model_name"] = semantic_model_name
+    metric_dict["domain"] = domain
+    metric_dict["layer1"] = layer1
+    metric_dict["layer2"] = layer2
+    metric_dict["domain_layer1_layer2"] = f"{domain}_{layer1}_{layer2}"
+    metric_dict["metric_name"] = metric_name
+    metric_dict["metric_value"] = json.dumps(metric_doc)
+    metric_dict["metric_type"] = metric_doc.get("type", "")
+    metric_dict["metric_sql_query"] = ""  # YAML metrics don't have SQL queries
+    metric_dict["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    return metric_dict
