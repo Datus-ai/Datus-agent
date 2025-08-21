@@ -1,6 +1,7 @@
 """OpenAI-compatible base model for models that use OpenAI-compatible APIs."""
 
 import asyncio
+import contextlib
 import json
 import time
 from datetime import date, datetime
@@ -116,6 +117,52 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         # Cache for model info
         self._model_info = None
+
+    async def aclose(self) -> None:
+        """Safely close underlying async client to avoid httpx/anyio errors at shutdown.
+
+        This must be called before the event loop is closed. Use the async
+        context manager protocol ("async with") or call this explicitly.
+        """
+        if self._async_client is None:
+            return
+
+        client = self._async_client
+        self._async_client = None
+
+        # Prefer aclose if available (AsyncOpenAI exposes close/aclose depending on version)
+        try:
+            try:
+                aclose_method = client.aclose  # type: ignore[attr-defined]
+            except AttributeError:
+                aclose_method = None
+
+            if callable(aclose_method):
+                await aclose_method()  # type: ignore[func-returns-value]
+            else:
+                try:
+                    close_method = client.close  # type: ignore[attr-defined]
+                except AttributeError:
+                    close_method = None
+
+                if callable(close_method):
+                    maybe_coro = close_method()  # may return coroutine in some versions
+                    if asyncio.iscoroutine(maybe_coro):
+                        await maybe_coro
+        except RuntimeError as e:
+            # Swallow shutdown-time loop errors to prevent noisy logs during interpreter exit
+            # (e.g., "Event loop is closed")
+            logger.debug(f"Ignoring error while closing async client: {e}")
+        except Exception:
+            # Do not raise during cleanup
+            logger.exception("Unexpected error while closing async client")
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        with contextlib.suppress(Exception):
+            await self.aclose()
 
     def _get_api_key(self) -> str:
         """Get API key from config or environment. Override in subclasses."""
