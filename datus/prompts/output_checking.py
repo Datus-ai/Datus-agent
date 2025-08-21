@@ -1,6 +1,6 @@
 from typing import Dict, List, Union
 
-from datus.schemas.node_models import Metrics, TableSchema
+from datus.schemas.node_models import Metric, TableSchema
 from datus.utils.constants import DBType
 
 from .prompt_manager import prompt_manager
@@ -11,7 +11,7 @@ def gen_prompt(
     table_schemas: Union[List[TableSchema], str],
     sql_query: str,
     sql_execution_result: str,
-    metrics: List[Metrics] = None,
+    metrics: List[Metric] = None,
     dialect: str = DBType.SQLITE,
     external_knowledge: str = "",
     prompt_version: str = "1.0",

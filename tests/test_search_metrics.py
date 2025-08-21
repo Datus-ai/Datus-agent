@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from datus.schemas.node_models import Metrics, SqlTask
+from datus.schemas.node_models import Metric, SqlTask
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
 from datus.storage.metric.store import qualify_name
-from datus.tools.metric_tools.search_metric import SearchMetricsTool
+from datus.tools.metric_tools.search_metrics import SearchMetricsTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
@@ -109,11 +109,11 @@ def test_invalid_input(search_metrics_tool):
 
 
 def test_json():
-    metric = Metrics(
-        metric_name="metric_name",
-        metric_sql_query="SELECT metric_name FROM metrics",
-        metric_value='{"name": "cancellation_rate", "owners": ["support@transformdata.io"], "type": "ratio", '
-        '"type_params": {"numerator": "cancellations_usd", "denominator": "transaction_amount_usd"}}',
+    metric = Metric(
+        name="metric_name",
+        sql_query="SELECT metric_name FROM metrics",
+        description="a description of this metric",
+        constraint="a constraint of this metric",
     )
     json_str = json.dumps(metric.__dict__)
     print(f"json:{json_str}")

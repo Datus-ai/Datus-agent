@@ -99,10 +99,16 @@ class SentenceTransformerEmbeddings(TextEmbeddingFunction):
 
 
 def check_snapshot(model_name: str):
+    # If model_name already contains a namespace (has '/'), use it as-is
+    # Otherwise, prepend 'sentence-transformers/' for backward compatibility
+    if "/" in model_name:
+        repo_id = model_name
+    else:
+        repo_id = f"sentence-transformers/{model_name}"
+
     try:
-        # now just support sentence-transformers
-        snapshot_download(f"sentence-transformers/{model_name}", local_files_only=True)
+        snapshot_download(repo_id, local_files_only=True)
     except LocalEntryNotFoundError:
         # download
-        logger.info(f"Download sentence-transformers/{model_name} from huggingface_hub")
-        snapshot_download(f"sentence-transformers/{model_name}")
+        logger.info(f"Download {repo_id} from huggingface_hub")
+        snapshot_download(repo_id)

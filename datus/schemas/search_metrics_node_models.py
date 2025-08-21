@@ -3,7 +3,7 @@ from typing import List, Literal, Optional
 from pydantic import Field, field_validator
 
 from datus.schemas.base import BaseInput, BaseResult
-from datus.schemas.node_models import Metrics, SQLContext, SqlTask
+from datus.schemas.node_models import Metric, SQLContext, SqlTask
 from datus.utils.constants import DBType
 
 
@@ -35,5 +35,5 @@ class SearchMetricsInput(BaseInput):
 
 class SearchMetricsResult(BaseResult):
     sql_task: SqlTask = Field(..., description="The SQL task containing database and metadata info")
-    metrics: List[Metrics] = Field(..., description="The search metric")
+    metrics: List[Metric] = Field(..., description="The searched metrics")
     metrics_count: int = Field(..., description="Number of metrics values found")

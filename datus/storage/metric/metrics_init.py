@@ -14,7 +14,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
-from datus.schemas.node_models import Metrics, SqlTask
+from datus.schemas.node_models import Metric, SqlTask
 from datus.storage.metric.init_utils import exists_semantic_metrics, gen_metric_id, gen_semantic_model_id
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names
@@ -157,7 +157,7 @@ def gen_semantic_model(
 def gen_metrics(
     semantic_model_name: str,
     sql_queries: List[str],
-    metrics: List[Metrics],
+    metrics: List[Metric],
     domain: str,
     layer1: str,
     layer2: str,
@@ -165,12 +165,12 @@ def gen_metrics(
     return [
         _build_metric_dict(
             semantic_model_name,
-            metric.metric_name,
+            metric.name,
             domain,
             layer1,
             layer2,
-            metric.metric_value,
-            metric.metric_type,
+            metric.description,
+            metric.constraint,
             sql_query,
         )
         for metric, sql_query in zip(metrics, sql_queries)
@@ -193,9 +193,9 @@ def _build_metric_dict(
     domain: str,
     layer1: str,
     layer2: str,
-    metric_value: str,
-    metric_type: str,
-    metric_sql_query: str = "",
+    description: str,
+    constraint: str,
+    sql_query: str = "",
 ):
     """Build metric dictionary with common fields."""
     return {
@@ -205,10 +205,10 @@ def _build_metric_dict(
         "layer1": layer1,
         "layer2": layer2,
         "domain_layer1_layer2": f"{domain}_{layer1}_{layer2}",
-        "metric_name": metric_name,
-        "metric_value": metric_value,
-        "metric_type": metric_type,
-        "metric_sql_query": metric_sql_query,
+        "name": metric_name,
+        "description": description,
+        "constraint": constraint,
+        "sql_query": sql_query,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -314,9 +314,9 @@ def _build_semantic_model_dict(
         "semantic_file_path": semantic_file_path,
         "semantic_model_name": content.get("name", ""),
         "semantic_model_desc": content.get("description", ""),
-        "identifiers": json.dumps(content.get("identifiers", [])),
-        "dimensions": json.dumps(content.get("dimensions", [])),
-        "measures": json.dumps(content.get("measures", [])),
+        "identifiers": json.dumps(content.get("identifiers", []), ensure_ascii=False),
+        "dimensions": json.dumps(content.get("dimensions", []), ensure_ascii=False),
+        "measures": json.dumps(content.get("measures", []), ensure_ascii=False),
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -348,7 +348,7 @@ def gen_metric_from_yaml(
         domain,
         layer1,
         layer2,
-        json.dumps(metric_doc, ensure_ascii=False),
-        metric_doc.get("type", ""),
+        metric_doc.get("description", ""),
+        metric_doc.get("constraint", ""),
         "",  # YAML metrics don't have SQL queries
     )

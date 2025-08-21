@@ -2,7 +2,7 @@ from typing import Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
-from datus.schemas.node_models import Metrics
+from datus.schemas.node_models import Metric
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.storage.metric.store import SemanticMetricsRAG, rag_by_configuration
 from datus.tools import BaseTool
@@ -34,7 +34,7 @@ class SearchMetricsTool(BaseTool):
         metric_results = self.store.search_hybrid_metrics(input_param, input_param.top_n_by_rate())
 
         # Convert dictionaries to proper model instances
-        metric_list = [Metrics.from_dict(metric) for metric in metric_results]
+        metric_list = [Metric.from_dict(metric) for metric in metric_results]
 
         return SearchMetricsResult(
             success=True,

@@ -397,7 +397,7 @@ class WorkflowScreen(Screen):
             if hasattr(context, "metrics") and context.metrics:
                 content += "\n### Metrics\n"
                 for metric in context.metrics[:5]:  # Limit to 5
-                    content += f"- {metric.metric_name}: {metric.metric_value}\n"
+                    content += f"- {metric.name}: {metric.description} {metric.constraint} {metric.sql_query}\n"
                 if len(context.metrics) > 5:
                     content += f"... and {len(context.metrics) - 5} more\n"
 

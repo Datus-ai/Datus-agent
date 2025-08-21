@@ -4,7 +4,7 @@ from datus.agent.node import Node
 from datus.agent.workflow import Workflow
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
-from datus.tools.metric_tools.search_metric import SearchMetricsTool
+from datus.tools.metric_tools.search_metrics import SearchMetricsTool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -63,7 +63,7 @@ class SearchMetricsNode(Node):
                 tool = SearchMetricsTool(db_path=self.agent_config.rag_storage_path())
                 if tool:
                     result = tool.execute(self.input, self.model)
-                    logger.info(f"Search metric result: found {result} ")
+                    logger.info(f"Search metrics result: found {result}")
                     if not result:
                         logger.info("No search result , please check your config or table data")
                         return self.get_bad_result("No search result , please check your config or table data")

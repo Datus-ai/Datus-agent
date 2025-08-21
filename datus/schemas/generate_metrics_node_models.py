@@ -3,7 +3,7 @@ from typing import List
 from pydantic import Field
 
 from datus.schemas.base import BaseInput, BaseResult
-from datus.schemas.node_models import Metrics, SqlTask
+from datus.schemas.node_models import Metric, SqlTask
 
 
 class GenerateMetricsInput(BaseInput):
@@ -24,6 +24,6 @@ class GenerateMetricsResult(BaseResult):
     """
 
     sql_queries: List[str] = Field(default_factory=list, description="The SQL queries generated from metrics")
-    metrics: List[Metrics] = Field(
+    metrics: List[Metric] = Field(
         default_factory=list, description="The metrics you added to the semantic model YAML file"
     )

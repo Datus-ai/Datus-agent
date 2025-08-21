@@ -296,26 +296,26 @@ class TableValue(BaseTableSchema):
         return self.model_dump()
 
 
-class Metrics(BaseModel):
+class Metric(BaseModel):
     """
     Model for metrics information used in SQL generation.
     """
 
-    metric_name: str = Field(..., description="Name of the metric")
-    metric_value: str = Field(..., description="Value of the metric")
-    metric_type: str = Field(default="", description="Type of the metric")
-    metric_sql_query: str = Field(default="", description="sql of the metric")
+    name: str = Field(..., description="Name of the metric")
+    description: str = Field(..., description="Description of the metric")
+    constraint: str = Field(..., description="Constraint of the metric")
+    sql_query: str = Field(default="", description="SQL query of the metric")
 
     def to_prompt(self, dialect: str = "snowflake") -> str:
         return ""
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> Metrics:
+    def from_dict(cls, data: Dict[str, Any]) -> Metric:
         return cls(
-            metric_name=data["metric_name"],
-            metric_value=data["metric_value"],
-            metric_sql_query=data["metric_sql_query"],
-            metric_type=data["metric_type"],
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            constraint=data.get("constraint", ""),
+            sql_query=data.get("sql_query", ""),
         )
 
 
@@ -328,7 +328,7 @@ class GenerateSQLInput(BaseInput):
     database_type: Optional[str] = Field(None, description="Type of the database")
     table_schemas: Union[List[TableSchema], str] = Field(..., description="List of table schemas to use")
     data_details: Optional[List[TableValue]] = Field(None, description="Optional sample data from tables")
-    metrics: Optional[List[Metrics]] = Field(None, description="Optional metrics for query generation")
+    metrics: Optional[List[Metric]] = Field(None, description="Optional metrics for query generation")
     sql_task: SqlTask = Field(..., description="The SQL task to generate SQL from")
     contexts: Optional[List[SQLContext]] = Field(default=[], description="Optional context information for the input")
     external_knowledge: str = Field(default="", description="External knowledge for the input")
@@ -473,7 +473,7 @@ class Context(BaseModel):
     sql_contexts: List[SQLContext] = Field(default_factory=list, description="The SQL contexts")
     table_schemas: List[TableSchema] = Field(default_factory=list, description="The table schemas")
     table_values: List[TableValue] = Field(default_factory=list, description="The table values")
-    metrics: List[Metrics] = Field(default_factory=list, description="The metrics")
+    metrics: List[Metric] = Field(default_factory=list, description="The metrics")
     doc_search_keywords: List[str] = Field(default_factory=list, description="The document search keywords")
     document_result: Optional[DocSearchResult] = Field(default=None, description="The document result")
     parallel_results: Optional[Dict[str, Any]] = Field(default=None, description="Results from parallel node execution")
@@ -489,7 +489,7 @@ class Context(BaseModel):
     def update_last_sql_context(self, sql_context: SQLContext):
         self.sql_contexts[-1] = sql_context
 
-    def update_metrics(self, metrics: List[Metrics]):
+    def update_metrics(self, metrics: List[Metric]):
         self.metrics = metrics
 
     def update_document_result(self, document_result: DocSearchResult):
@@ -549,7 +549,7 @@ class OutputInput(BaseInput):
     sql_result: str = Field(..., description="The result of SQL execution")
     row_count: int = Field(..., description="The number of rows returned")
     table_schemas: List[TableSchema] = Field(..., description="The schemas of the tables")
-    metrics: List[Metrics] = Field(default=[], description="The metrics")
+    metrics: List[Metric] = Field(default=[], description="The metrics")
     external_knowledge: str = Field(default="", description="The external knowledge")
     prompt_version: str = Field(default="1.0", description="Version for prompt")
     check_result: bool = Field(default=False, description="Whether to check the result of the previous step")

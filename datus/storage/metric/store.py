@@ -96,15 +96,15 @@ class MetricStorage(BaseEmbeddingStore):
                     pa.field("layer1", pa.string()),
                     pa.field("layer2", pa.string()),
                     pa.field("domain_layer1_layer2", pa.string()),
-                    pa.field("metric_name", pa.string()),
-                    pa.field("metric_value", pa.string()),
-                    pa.field("metric_type", pa.string()),
-                    pa.field("metric_sql_query", pa.string()),
+                    pa.field("name", pa.string()),
+                    pa.field("description", pa.string()),
+                    pa.field("constraint", pa.string()),
+                    pa.field("sql_query", pa.string()),
                     pa.field("created_at", pa.string()),
                     pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
                 ]
             ),
-            vector_source_name="metric_value",
+            vector_source_name="description",
         )
         self.reranker = None
 
@@ -115,7 +115,7 @@ class MetricStorage(BaseEmbeddingStore):
         self.table.create_scalar_index("id", replace=True)
         self.table.create_scalar_index("semantic_model_name", replace=True)
         self.table.create_scalar_index("domain_layer1_layer2", replace=True)
-        self.create_fts_index(["metric_name", "metric_value", "metric_sql_query"])
+        self.create_fts_index(["name", "description", "constraint", "sql_query"])
 
     def search_all(self, semantic_model_name: str) -> List[Dict[str, Any]]:
         """Search all schemas for a given database name."""
@@ -124,13 +124,13 @@ class MetricStorage(BaseEmbeddingStore):
 
         search_result = self._search_all(
             where="" if not semantic_model_name else f"semantic_model_name='{semantic_model_name}'",
-            select_fields=["id", "semantic_model_name", "metric_name"],
+            select_fields=["id", "semantic_model_name", "name"],
         )
         return [
             {
                 "id": search_result["id"][i],
                 "semantic_model_name": search_result["semantic_model_name"][i],
-                "metric_name": search_result["metric_name"][i],
+                "name": search_result["name"][i],
             }
             for i in range(search_result.num_rows)
         ]
@@ -220,9 +220,7 @@ class SemanticMetricsRAG:
                 for result in metric_search_results.to_pylist():
                     if result["semantic_model_name"] in semantic_names_set:
                         filtered_result = {
-                            k: v
-                            for k, v in result.items()
-                            if k in ["metric_name", "metric_value", "metric_type", "metric_sql_query"]
+                            k: v for k, v in result.items() if k in ["name", "description", "constraint", "sql_query"]
                         }
                         metric_result.append(filtered_result)
             except Exception as e:

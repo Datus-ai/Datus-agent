@@ -2,7 +2,7 @@
 import json
 from typing import List, Union
 
-from datus.schemas.node_models import Metrics, TableSchema, TableValue
+from datus.schemas.node_models import Metric, TableSchema, TableValue
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
@@ -15,7 +15,7 @@ def get_sql_prompt(
     database_type: str,
     table_schemas: Union[List[TableSchema], str],
     data_details: List[TableValue],
-    metrics: List[Metrics],
+    metrics: List[Metric],
     question: str,
     external_knowledge: str = "",
     prompt_version: str = "1.0",

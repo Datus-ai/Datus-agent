@@ -9,7 +9,7 @@ from datus.models.base import LLMBaseModel
 from datus.prompts.generate_metrics_with_mcp import get_generate_metrics_prompt
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
-from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult, Metrics
+from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult, Metric
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
 from datus.utils.json_utils import extract_json_str
@@ -135,7 +135,7 @@ def generate_metrics_with_mcp(
         )
 
 
-def parse_metrics(content_dict: Dict[str, Any]) -> List[Metrics]:
+def parse_metrics(content_dict: Dict[str, Any]) -> List[Metric]:
     metrics = []
     metric_list = content_dict.get("metrics", [])
     query_list = content_dict.get("sql_queries", [])
@@ -144,11 +144,11 @@ def parse_metrics(content_dict: Dict[str, Any]) -> List[Metrics]:
         return metrics
     for metric, query in zip(metric_list, query_list):
         metrics.append(
-            Metrics(
-                metric_name=metric.get("name", ""),
-                metric_value=json.dumps(metric, ensure_ascii=False),
-                metric_type=metric.get("type", ""),
-                metric_sql_query=query,
+            Metric(
+                name=metric.get("name", ""),
+                description=metric.get("description", ""),
+                constraint=metric.get("constraint", ""),
+                sql_query=query,
             )
         )
     return metrics
