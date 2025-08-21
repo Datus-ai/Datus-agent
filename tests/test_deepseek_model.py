@@ -430,11 +430,12 @@ class TestDeepSeekModel:
     async def test_generate_with_mcp_token_consumption(self):
         """Test token consumption tracking between generate_with_tools and generate_with_tools_stream."""
         from datus.schemas.action_history import ActionHistoryManager
-        
+
         instructions = """You are a SQLite expert working with the SSB database.
         Answer the question briefly and concisely."""
 
         question = "database_type='sqlite' task='Count the total number of rows in the customer table'"
+        # question = "database_type='sqlite' task='To calculate the gross profit of orders where both the customer and supplier are located in the Americas, and the parts are manufactured by 'MFGR#1' or 'MFGR#2', you would aggregate by year, supplier country, and part category. The result should be sorted in ascending order by year, supplier country, and part category'"
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
@@ -445,24 +446,26 @@ class TestDeepSeekModel:
             output_type=str,
             mcp_servers={"sqlite": mcp_server},
             instruction=instructions,
-            max_turns=5,
+            max_turns=20,
         )
 
         assert result_non_stream is not None, "Non-streaming result should not be None"
         assert "content" in result_non_stream, "Non-streaming result should contain content"
         assert "usage" in result_non_stream, "Non-streaming result should contain usage"
-        
+
         non_stream_usage = result_non_stream.get("usage", {})
         logger.info(f"Non-streaming usage info: {non_stream_usage}")
-        
+
         # Verify usage fields exist and are reasonable
         assert isinstance(non_stream_usage, dict), "Usage should be a dictionary"
         total_tokens_non_stream = non_stream_usage.get("total_tokens", 0)
         input_tokens_non_stream = non_stream_usage.get("input_tokens", 0)
         output_tokens_non_stream = non_stream_usage.get("output_tokens", 0)
-        
-        logger.info(f"Non-streaming tokens: total={total_tokens_non_stream}, input={input_tokens_non_stream}, output={output_tokens_non_stream}")
-        
+
+        logger.info(
+            f"Non-streaming tokens: total={total_tokens_non_stream}, input={input_tokens_non_stream}, output={output_tokens_non_stream}"
+        )
+
         assert total_tokens_non_stream > 0, "Total tokens should be greater than 0"
         assert input_tokens_non_stream > 0, "Input tokens should be greater than 0"
         assert output_tokens_non_stream > 0, "Output tokens should be greater than 0"
@@ -480,12 +483,14 @@ class TestDeepSeekModel:
             output_type=str,
             mcp_servers={"sqlite": mcp_server},
             instruction=instructions,
-            max_turns=5,
+            max_turns=20,
             action_history_manager=action_history_manager,
         ):
             action_count += 1
-            logger.info(f"Stream action {action_count}: type={action.action_type}, role={action.role}, status={action.status}")
-            
+            logger.info(
+                f"Stream action {action_count}: type={action.action_type}, role={action.role}, status={action.status}"
+            )
+
             # Check if action has token usage information
             if action.output and isinstance(action.output, dict):
                 usage_info = action.output.get("usage", {})
@@ -494,33 +499,67 @@ class TestDeepSeekModel:
                     if action_tokens > 0:
                         actions_with_tokens += 1
                         total_tokens_stream += action_tokens
-                        all_usage_info.append({
-                            "action_id": action.action_id,
-                            "action_type": action.action_type,
-                            "role": action.role,
-                            "usage": usage_info
-                        })
+                        all_usage_info.append(
+                            {
+                                "action_id": action.action_id,
+                                "action_type": action.action_type,
+                                "role": action.role,
+                                "usage": usage_info,
+                            }
+                        )
                         logger.info(f"Action {action.action_id} ({action.action_type}) tokens: {usage_info}")
 
         # Check final actions after our fix has been applied
         final_actions = action_history_manager.get_actions()
-        final_actions_with_tokens = sum(1 for a in final_actions 
-                                      if a.output and isinstance(a.output, dict) and a.output.get("usage"))
-        final_total_tokens = sum(a.output.get("usage", {}).get("total_tokens", 0) 
-                               for a in final_actions 
-                               if a.output and isinstance(a.output, dict) and a.output.get("usage"))
-        
-        logger.info(f"=== Results ===")
+
+        # Detailed logging of usage information
+        logger.debug("=== Detailed Action Usage Analysis ===")
+        final_actions_with_tokens = 0
+        final_total_tokens = 0
+
+        for i, action in enumerate(final_actions):
+            logger.debug(f"Action {i}: type={action.action_type}, role={action.role}, status={action.status}")
+
+            if action.output and isinstance(action.output, dict):
+                logger.debug(f"  Output keys: {list(action.output.keys())}")
+
+                if "usage" in action.output:
+                    usage = action.output["usage"]
+                    logger.debug(f"  Usage found: {usage}")
+
+                    if isinstance(usage, dict):
+                        total_tokens = usage.get("total_tokens", 0)
+                        input_tokens = usage.get("input_tokens", 0)
+                        output_tokens = usage.get("output_tokens", 0)
+                        estimated = usage.get("estimated", False)
+
+                        logger.info(f"    Total tokens: {total_tokens}")
+                        logger.info(f"    Input tokens: {input_tokens}")
+                        logger.info(f"    Output tokens: {output_tokens}")
+                        logger.info(f"    Estimated: {estimated}")
+
+                        if total_tokens > 0:
+                            final_actions_with_tokens += 1
+                            final_total_tokens += total_tokens
+                    else:
+                        logger.info(f"    Usage is not a dict: {type(usage)}")
+                else:
+                    logger.info("  No usage info in output")
+            else:
+                logger.info(f"  No output or invalid output type: {type(action.output)}")
+
+        logger.info(f"=== Results Summary ===")
         logger.info(f"Non-streaming tokens: {total_tokens_non_stream}")
         logger.info(f"Streaming actions with tokens: {final_actions_with_tokens}/{len(final_actions)}")
         logger.info(f"Streaming total tokens: {final_total_tokens}")
-        
+        logger.info(f"Summary: {final_actions_with_tokens} actions with tokens, {final_total_tokens} total tokens")
+
         # Verify our fix is working
         if final_actions_with_tokens > 0 and final_total_tokens > 0:
             logger.info("✅ SUCCESS: Token consumption fix is working!")
         else:
             logger.error("❌ FAILURE: Token consumption fix needs work")
-            
+
         assert action_count > 0, "Should receive at least one streaming action"
 
     @pytest.mark.asyncio

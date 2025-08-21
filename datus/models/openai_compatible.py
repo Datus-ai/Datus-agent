@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import yaml
-from agents import Agent, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool
+from agents import Agent, Tool, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession
 from agents.mcp import MCPServerStdio
 from langsmith.wrappers import wrap_openai
 from langsmith import traceable
@@ -609,6 +609,10 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         async def _stream_operation():
             async_client = self._create_async_client()
+
+            # Configure stream_options to include usage information for token tracking
+            model_settings = ModelSettings(extra_body={"stream_options": {"include_usage": True}})
+
             model_params = {"model": self.model_name}
             async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
@@ -619,6 +623,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     "instructions": instruction,
                     "output_type": output_type,
                     "model": async_model,
+                    "model_settings": model_settings,
                 }
 
                 # Only add mcp_servers if we have connected servers
@@ -808,6 +813,7 @@ class OpenAICompatibleModel(LLMBaseModel):
     async def _extract_and_distribute_token_usage(self, result, action_history_manager: ActionHistoryManager) -> None:
         """Extract token usage from completed streaming result and distribute to ActionHistory objects."""
         try:
+            # With stream_options: {"include_usage": true}, usage should now be properly populated
             if not (hasattr(result, "context_wrapper") and hasattr(result.context_wrapper, "usage")):
                 logger.warning("No usage information found in streaming result")
                 return
@@ -845,6 +851,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             }
 
             logger.debug(f"Extracted streaming token usage: {usage_info}")
+
             self._distribute_token_usage_to_actions(action_history_manager, usage_info)
 
         except Exception as e:

@@ -97,10 +97,12 @@ class ChatAgenticNode(AgenticNode):
             if agent_config and hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
                 chat_node_config = agent_config.nodes["chat"]
                 if chat_node_config.input and hasattr(chat_node_config.input, "workspace_root"):
-                    root_path = chat_node_config.input.workspace_root
+                    workspace_root = chat_node_config.input.workspace_root
+                    if workspace_root is not None:
+                        root_path = workspace_root
 
             # Handle relative vs absolute paths
-            if os.path.isabs(root_path):
+            if root_path and os.path.isabs(root_path):
                 filesystem_path = root_path
             else:
                 filesystem_path = os.path.join(os.getcwd(), root_path)
@@ -196,18 +198,6 @@ class ChatAgenticNode(AgenticNode):
             ):
                 yield stream_action
 
-                # Extract partial usage info from each stream_action if available
-                if stream_action.output and isinstance(stream_action.output, dict):
-                    usage_info = stream_action.output.get("usage", {})
-                    if isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                        action_tokens = usage_info.get("total_tokens", 0)
-                        if action_tokens > 0:
-                            self._add_session_tokens(action_tokens)
-                            logger.debug(
-                                f"Added {action_tokens} tokens from {stream_action.action_type} action. Session total: {self._count_session_tokens()}"
-                            )
-                            tokens_used += action_tokens
-
                 # Collect response content from successful actions
                 if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
                     if isinstance(stream_action.output, dict):
@@ -237,34 +227,64 @@ class ChatAgenticNode(AgenticNode):
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 
-            # Final token validation and correction
-            # Since we're now adding tokens incrementally, we only need to handle the case
-            # where no tokens were captured during streaming (fallback scenario)
-            if tokens_used == 0:
-                # Try to get usage from final result as fallback
-                if last_successful_output:
-                    usage_info = last_successful_output.get("usage", {})
-                    if isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                        fallback_tokens = usage_info.get("total_tokens", 0)
-                        if fallback_tokens > 0:
-                            self._add_session_tokens(fallback_tokens)
-                            tokens_used = fallback_tokens
-                            logger.debug(
-                                f"Used fallback: Added {fallback_tokens} tokens from final output. Session total: {self._count_session_tokens()}"
-                            )
+            # Extract token usage from final actions using our new approach
+            # With our streaming token fix, only the final assistant action will have accurate usage
+            final_actions = action_history_manager.get_actions()
+            tokens_used = 0
+            
+            logger.debug(f"ChatAgenticNode: Looking for token usage in {len(final_actions)} final actions")
 
-                # Last resort: rough estimation if no usage info available at all
-                if tokens_used == 0 and response_content:
-                    estimated_tokens = int(len(response_content.split()) * 1.3)
-                    self._add_session_tokens(estimated_tokens)
-                    tokens_used = estimated_tokens
-                    logger.debug(
-                        f"Used estimation: Added {estimated_tokens} tokens. Session total: {self._count_session_tokens()}"
-                    )
-            else:
-                logger.debug(
-                    f"Incremental token tracking complete. Total tokens used: {tokens_used}, Session total: {self._count_session_tokens()}"
-                )
+            # Find the final assistant action with token usage
+            for i, action in enumerate(reversed(final_actions)):
+                logger.debug(f"ChatAgenticNode: Checking action {len(final_actions)-i-1}: type={action.action_type}, role={action.role}")
+                
+                if action.role == "assistant":
+                    logger.debug(f"ChatAgenticNode: Found assistant action, checking output...")
+                    if action.output and isinstance(action.output, dict):
+                        logger.debug(f"ChatAgenticNode: Output keys: {list(action.output.keys())}")
+                        usage_info = action.output.get("usage", {})
+                        if usage_info:
+                            logger.debug(f"ChatAgenticNode: Found usage info: {usage_info}")
+                            if isinstance(usage_info, dict) and usage_info.get("total_tokens"):
+                                conversation_tokens = usage_info.get("total_tokens", 0)
+                                if conversation_tokens > 0:
+                                    # Add this conversation's tokens to the session
+                                    self._add_session_tokens(conversation_tokens)
+                                    tokens_used = conversation_tokens
+                                    logger.debug(
+                                        f"ChatAgenticNode: Added {conversation_tokens} tokens from assistant action to session"
+                                    )
+                                    break
+                        else:
+                            logger.debug("ChatAgenticNode: No usage info in assistant action output")
+                    else:
+                        logger.debug("ChatAgenticNode: Assistant action has no output or invalid output type")
+            
+            if tokens_used == 0:
+                logger.debug("ChatAgenticNode: No token usage found in any assistant action, will use fallback")
+
+            ## Fallback approaches if no tokens found in actions
+            # if tokens_used == 0:
+            #    # Try to get usage from last successful output
+            #    if last_successful_output:
+            #        usage_info = last_successful_output.get("usage", {})
+            #        if isinstance(usage_info, dict) and usage_info.get("total_tokens"):
+            #            fallback_tokens = usage_info.get("total_tokens", 0)
+            #            if fallback_tokens > 0:
+            #                self._add_session_tokens(fallback_tokens)
+            #                tokens_used = fallback_tokens
+            #                logger.debug(
+            #                    f"Used fallback: Added {fallback_tokens} tokens from final output. Session total: {self._count_session_tokens()}"
+            #                )
+
+            #    # Last resort: rough estimation if no usage info available at all
+            #    if tokens_used == 0 and response_content:
+            #        estimated_tokens = int(len(response_content.split()) * 1.3)
+            #        self._add_session_tokens(estimated_tokens)
+            #        tokens_used = estimated_tokens
+            #        logger.debug(
+            #            f"Used estimation: Added {estimated_tokens} tokens. Session total: {self._count_session_tokens()}"
+            #        )
 
             # Create final result
             result = ChatNodeResult(
