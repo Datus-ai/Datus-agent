@@ -49,6 +49,8 @@ class DBManager:
         self._init_connections(namespace)
         connector_or_dict = self._conn_dict[namespace]
         if isinstance(connector_or_dict, Dict):
+            if not db_name:
+                return list(connector_or_dict.values())[0]
             if db_name not in connector_or_dict:
                 raise DatusException(
                     code=ErrorCode.DB_CONNECTION_FAILED,

@@ -280,21 +280,21 @@ class SQLAlchemyConnector(BaseSqlConnector):
                     result_format=result_format,
                 )
             else:
-                df = self._execute_query(sql_query)
+                result_list = self._execute_query(sql_query)
                 result = ExecuteSQLResult(
                     success=True,
                     sql_query=sql_query,
-                    row_count=len(df),
+                    row_count=len(result_list),
                     result_format=result_format,
                 )
                 if result_format == "pandas":
-                    result.sql_return = df
+                    result.sql_return = DataFrame(result_list)
                 if result_format == "csv":
-                    result.sql_return = df.to_csv(index=False)
+                    result.sql_return = DataFrame(result_list).to_csv(index=False)
                 elif result_format == "arrow":
-                    result.sql_return = Table.from_pandas(df)
+                    result.sql_return = Table.from_pylist(result_list)
                 else:
-                    result.sql_return = df.to_dict(orient="records")
+                    result.sql_return = result_list
                 return result
         except Exception as e:
             logger.error(f"Execute sql error: {str(e)}")
@@ -307,61 +307,37 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 result_format=result_format,
             )
 
-    def execute_pandas(self, query: str) -> ExecuteSQLResult:
+    def execute_pandas(self, query_sql: str) -> ExecuteSQLResult:
         try:
-            result = self.connection.execute(text(query))
-            df = DataFrame(result.fetchall(), columns=result.keys())
+            df = self._execute_pandas(query_sql)
             return ExecuteSQLResult(
                 success=True,
-                sql_query=query,
+                sql_query=query_sql,
                 sql_return=df,
                 row_count=len(df),
                 result_format="pandas",
             )
         except Exception as e:
-            ex = self._trans_sqlalchemy_exception(e)
-            return ExecuteSQLResult(success=False, error=str(ex), sql_query=query)
+            return ExecuteSQLResult(success=False, error=str(e), sql_query=query_sql)
         # return self.do_execute(ExecuteSQLInput(sql_query=query), "pandas")
 
-    def execute_csv(self, query: str) -> ExecuteSQLResult:
+    def execute_csv(self, query_sql: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results with csv format."""
         self.connect()
 
         try:
-            result = self.connection.execute(text(query))
-
-            if result.returns_rows:  # rows returned: select
-                rows = result.fetchall()
-                return ExecuteSQLResult(
-                    success=True,
-                    error=None,
-                    sql_query=query,
-                    sql_return=str(rows),
-                    row_count=len(rows),
-                    result_format="csv",
-                )
-            else:  # no rows returned: insert, update, delete
-                return ExecuteSQLResult(
-                    success=True,
-                    error=None,
-                    sql_query=query,
-                    sql_return="",
-                    row_count=result.rowcount,
-                    result_format="csv",
-                )
-        except SQLAlchemyError as e:
+            df = self._execute_pandas(query_sql)
             return ExecuteSQLResult(
                 success=True,
-                error=str(e),
-                sql_query=query,
-                sql_return="",
-                row_count=0,
+                sql_query=query_sql,
+                sql_return=df.to_csv(index=False),
+                row_count=len(df),
                 result_format="csv",
             )
         except Exception as e:
             return ExecuteSQLResult(
                 success=False,
-                sql_query=query,
+                sql_query=query_sql,
                 sql_return="",
                 row_count=0,
                 error=str(e),
@@ -470,9 +446,9 @@ class SQLAlchemyConnector(BaseSqlConnector):
 
     def test_connection(self) -> bool:
         """Test the database connection."""
+        self.connect()
         try:
-            self.connect()
-            self.execute_query("SELECT 1")
+            self._execute_query("SELECT 1")
             return True
         except DatusException as e:
             raise e
@@ -586,23 +562,27 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 row_count=0,
             )
 
-    def _execute_query(self, query: str) -> DataFrame:
-        result = self.connection.execute(text(query))
-        return DataFrame(result.fetchall(), columns=list(result.keys()))
+    def execute_query(self, query_sql: str) -> ExecuteSQLResult:
+        try:
+            self.connect()
+            result = self._execute_query(query_sql)
+            return ExecuteSQLResult(
+                success=True, sql_query=query_sql, sql_return=result, row_count=len(result), result_format="list"
+            )
+        except Exception as e:
+            return ExecuteSQLResult(success=False, error=str(e), sql_query=query_sql)
 
-    # def insert(self, sql: str) -> Tuple[int, int]:
-    #     """Insert the database.
-    #     Args:
-    #         sql: insert sql
-    #     Returns:
-    #         lastrowid
-    #     """
-    #     self.connect()
-    #     try:
-    #         res = self.connection.execute(text(sql))
-    #         return (res.lastrowid, res.rowcount)
-    #     except SQLAlchemyError as e:
-    #         raise self._trans_sqlalchemy_exception(e, sql) from e
+    def _execute_query(self, query_sql: str) -> List[Dict[str, Any]]:
+        if parse_sql_type(query_sql) in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE, SQLType.CONTENT_SET):
+            raise
+        try:
+            result = self.connection.execute(text(query_sql))
+            return result.fetchall()
+        except Exception as e:
+            raise self._trans_sqlalchemy_exception(e, query_sql) from e
+
+    def _execute_pandas(self, query_sql: str) -> DataFrame:
+        return DataFrame(self._execute_query(query_sql))
 
     @override
     def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
@@ -638,16 +618,6 @@ class SQLAlchemyConnector(BaseSqlConnector):
             The number of rows deleted
         """
         return self._update_or_delete(sql, "delete")
-
-    def execute_query(self, query: str) -> DataFrame:
-        """Execute a query and return the result."""
-        if not isinstance(query, str):
-            raise ValueError("Query must be a string")
-        self.connect()
-        try:
-            return self._execute_query(query)
-        except SQLAlchemyError as e:
-            raise self._trans_sqlalchemy_exception(e, sql=query) from e
 
     def _execute(self, query: str) -> Any:
         result = self.connection.execute(text(query))
@@ -806,7 +776,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
                     table_name=table_name,
                 )
                 query = f"SELECT * FROM {full_table_name} LIMIT {top_n}"
-                result = self.execute_query(query)
+                result = self._execute_pandas(query)
                 if not result.empty:
                     samples.append(
                         {

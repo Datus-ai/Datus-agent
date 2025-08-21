@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional, override
 
 from datus.tools.db_tools.mysql_connector import MySQLConnectorBase, list_to_in_str
 from datus.utils.constants import DBType
-from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -117,7 +116,7 @@ class StarRocksConnector(MySQLConnectorBase):
                 "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION FROM information_schema.materialized_views"
                 f"{list_to_in_str(' where TABLE_SCHEMA not in ', self.ignore_schemas())}"
             )
-        result = self.execute_query(query_sql)
+        result = self._execute_pandas(query_sql)
         view_list = []
         for i in range(len(result)):
             view_list.append(
@@ -160,7 +159,7 @@ class StarRocksConnector(MySQLConnectorBase):
                     full_table_name = f"`{database_name}`.`{table_name}`" if database_name else f"`{table_name}`"
 
                 sql = f"SELECT * FROM {full_table_name} LIMIT {top_n}"
-                res = self.execute_query(sql)
+                res = self._execute_pandas(sql)
                 if not res.empty:
                     result.append(
                         {
@@ -182,7 +181,7 @@ class StarRocksConnector(MySQLConnectorBase):
                     f"SELECT * FROM `{table['catalog_name']}`.`{table['database_name']}`.`{table['table_name']}` "
                     "LIMIT {top_n}"
                 )
-                res = self.execute_query(sql)
+                res = self._execute_pandas(sql)
                 if not res.empty:
                     result.append(
                         {
@@ -197,7 +196,7 @@ class StarRocksConnector(MySQLConnectorBase):
 
     @override
     def get_catalogs(self) -> List[str]:
-        result = self.execute_query("SHOW CATALOGS")
+        result = self._execute_pandas("SHOW CATALOGS")
         if result.empty:
             return []
         return result["Catalog"].tolist()
@@ -223,17 +222,7 @@ class StarRocksConnector(MySQLConnectorBase):
     def test_connection(self) -> bool:
         """Test the database connection."""
         try:
-            self.execute_query("SELECT 1")
-            return True
-        except DatusException as e:
-            raise e
-        except Exception as e:
-            raise DatusException(
-                ErrorCode.DB_CONNECTION_FAILED,
-                message_args={
-                    "error_message": str(e),
-                },
-            ) from e
+            return super().test_connection()
         finally:
             if hasattr(self, "_conn") and self._conn:
                 try:

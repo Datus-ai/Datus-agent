@@ -102,11 +102,18 @@ class BaseSqlConnector(ABC):
     ) -> ExecuteSQLResult:
         raise NotImplementedError
 
-    def execute_arrow(self, query: str) -> ExecuteSQLResult:
+    def execute_arrow(self, query_sql: str) -> ExecuteSQLResult:
         raise NotImplementedError
 
     @abstractmethod
-    def execute_pandas(self, query: str) -> ExecuteSQLResult:
+    def execute_query(self, query_sql: str) -> ExecuteSQLResult:
+        """
+        The best performing query in the current connector
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def execute_pandas(self, query_sql: str) -> ExecuteSQLResult:
         raise NotImplementedError
 
     @abstractmethod
@@ -114,7 +121,7 @@ class BaseSqlConnector(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def execute_csv(self, query: str) -> ExecuteSQLResult:
+    def execute_csv(self, query_sql: str) -> ExecuteSQLResult:
         raise NotImplementedError
 
     def execute_arrow_iterator(self, query: str, max_rows: int = 100) -> Iterator[ArrowTable]:
@@ -294,144 +301,6 @@ class BaseSqlConnector(ABC):
             schema_name=schema_name,
             table_name=table_name,
         )
-
-    def parse_full_table_name(self, full_table_name: str) -> Dict[str, str]:
-        """
-        Parse a full table name into its components (catalog, database, schema, table).
-
-        Handles different database quoting styles and formats:
-        - MySQL: `database`.`table` or `catalog`.`database`.`table`
-        - Snowflake: "database"."schema"."table" or "schema"."table"
-        - PostgreSQL: "schema"."table"
-        - SQLite: just "table"
-
-        Args:
-            full_table_name: The full table name string to parse
-
-        Returns:
-            Dict with keys: catalog_name, database_name, schema_name, table_name
-            Missing components will be empty strings
-        """
-        import re
-
-        # Remove leading/trailing whitespace
-        full_table_name = full_table_name.strip()
-
-        # Handle different quote styles: `backticks`, "double quotes", [brackets]
-        quote_patterns = [
-            r'(["`])(?:(?=(\\?))\2.)*?\1',  # "quoted" or `quoted`
-            r"\[(.*?)\]",  # [bracketed]
-        ]
-
-        # Find all quoted parts
-        parts = []
-
-        # First, extract all quoted parts
-        for pattern in quote_patterns:
-            matches = re.findall(pattern, full_table_name)
-            if matches:
-                # Handle different regex return formats
-                if isinstance(matches[0], tuple):
-                    # Pattern returns tuples, extract the actual content
-                    for match in matches:
-                        if isinstance(match, tuple):
-                            part = match[0] if match[0] else match[1] if len(match) > 1 else ""
-                        else:
-                            part = str(match)
-                        if part and part not in parts:
-                            parts.append(part.strip('"`[]'))
-                else:
-                    # Pattern returns strings
-                    parts.extend([str(m).strip('"`[]') for m in matches])
-
-        # If no quoted parts found, split by dots
-        if not parts:
-            parts = [part.strip() for part in full_table_name.split(".")]
-        else:
-            # Split by dots, but respect quotes
-            pattern = r'(?:["`\[][^"`\]]*["`\]]|[^.])+'
-            matches = re.findall(pattern, full_table_name)
-            parts = [match.strip('"`[] ') for match in matches]
-
-        # Clean up parts - remove empty strings
-        parts = [p for p in parts if p]
-
-        # Determine components based on number of parts and database type
-        result = {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": ""}
-
-        if len(parts) == 1:
-            # Just table name
-            result["table_name"] = parts[0]
-        elif len(parts) == 2:
-            # database.table or schema.table
-            if self.dialect in ["mysql", "starrocks"]:
-                result["database_name"] = parts[0]
-                result["table_name"] = parts[1]
-            else:
-                # Default: treat as schema.table
-                result["schema_name"] = parts[0]
-                result["table_name"] = parts[1]
-        elif len(parts) == 3:
-            # catalog.database.table or database.schema.table
-            if self.dialect == "snowflake":
-                result["database_name"] = parts[0]
-                result["schema_name"] = parts[1]
-                result["table_name"] = parts[2]
-            elif self.dialect == "starrocks":
-                result["catalog_name"] = parts[0]
-                result["database_name"] = parts[1]
-                result["table_name"] = parts[2]
-            else:
-                # Default: catalog.database.table
-                result["catalog_name"] = parts[0]
-                result["database_name"] = parts[1]
-                result["table_name"] = parts[2]
-        elif len(parts) == 4:
-            # catalog.database.schema.table
-            result["catalog_name"] = parts[0]
-            result["database_name"] = parts[1]
-            result["schema_name"] = parts[2]
-            result["table_name"] = parts[3]
-        else:
-            # Fallback: last part is table name, rest as appropriate
-            result["table_name"] = parts[-1]
-            if len(parts) >= 2:
-                if self.dialect in ["mysql", "starrocks"]:
-                    result["database_name"] = parts[-2]
-                else:
-                    result["schema_name"] = parts[-2]
-
-        # Special handling for SQLite
-        if self.dialect == "sqlite":
-            result["catalog_name"] = ""
-            result["database_name"] = "main"
-            result["schema_name"] = ""
-            if len(parts) == 1:
-                result["table_name"] = parts[0]
-            else:
-                result["table_name"] = parts[-1]
-                if len(parts) >= 2:
-                    result["database_name"] = parts[-2]
-
-        # Special handling for DuckDB
-        if self.dialect == "duckdb":
-            if len(parts) == 1:
-                result["catalog_name"] = ""
-                result["database_name"] = ""
-                result["schema_name"] = "main"
-                result["table_name"] = parts[0]
-            elif len(parts) == 2:
-                result["catalog_name"] = ""
-                result["database_name"] = parts[0]
-                result["schema_name"] = "main"
-                result["table_name"] = parts[1]
-            elif len(parts) == 3:
-                result["catalog_name"] = ""
-                result["database_name"] = parts[0]
-                result["schema_name"] = parts[1]
-                result["table_name"] = parts[2]
-
-        return result
 
 
 def list_to_in_str(prefix: str, values: Optional[List[str]] = None) -> str:

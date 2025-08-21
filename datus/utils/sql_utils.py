@@ -226,7 +226,44 @@ def parse_table_name_parts(full_table_name: str, dialect: str = DBType.SNOWFLAKE
     dialect = parse_dialect(dialect)
 
     # Split the table name by dots
-    parts = full_table_name.split(".")
+    # Handle different quote styles: `backticks`, "double quotes", [brackets]
+    quote_patterns = [
+        r'(["`])(?:(?=(\\?))\2.)*?\1',  # "quoted" or `quoted`
+        r"\[(.*?)\]",  # [bracketed]
+    ]
+
+    # Find all quoted parts
+    parts = []
+
+    # First, extract all quoted parts
+    for pattern in quote_patterns:
+        matches = re.findall(pattern, full_table_name)
+        if matches:
+            # Handle different regex return formats
+            if isinstance(matches[0], tuple):
+                # Pattern returns tuples, extract the actual content
+                for match in matches:
+                    if isinstance(match, tuple):
+                        part = match[0] if match[0] else match[1] if len(match) > 1 else ""
+                    else:
+                        part = str(match)
+                    if part and part not in parts:
+                        parts.append(part.strip('"`[]'))
+            else:
+                # Pattern returns strings
+                parts.extend([str(m).strip('"`[]') for m in matches])
+
+    # If no quoted parts found, split by dots
+    if not parts:
+        parts = [part.strip() for part in full_table_name.split(".")]
+    else:
+        # Split by dots, but respect quotes
+        pattern = r'(?:["`\[][^"`\]]*["`\]]|[^.])+'
+        matches = re.findall(pattern, full_table_name)
+        parts = [match.strip('"`[] ') for match in matches]
+
+    # Clean up parts - remove empty strings
+    parts = [p for p in parts if p]
 
     # Initialize result with empty strings
     result = {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": ""}
@@ -288,7 +325,7 @@ def parse_sql_type(sql: str) -> SQLType:
         The determined SQLType enum member.
     """
     if not sql or not isinstance(sql, str):
-        return SQLType.UNKNOWN
+        return SQLType.CONTENT_SET
 
     # Normalize the query for parsing by stripping whitespace and getting the first word.
     normalized_sql = sql.strip().lower()
@@ -305,10 +342,6 @@ def parse_sql_type(sql: str) -> SQLType:
     elif first_word in ("create", "alter", "drop", "truncate", "rename"):
         return SQLType.DDL
     elif first_word in ("show", "describe", "desc", "explain"):
-        return SQLType.METADATA
-    elif first_word in ("use", "set"):
-        # 'USE' is common for switching databases/schemas (e.g., MySQL, Snowflake).
-        # 'SET' can be used for setting context like catalog/schema.
-        return SQLType.SWITCH
+        return SQLType.METADATA_SHOW
     else:
-        return SQLType.UNKNOWN
+        return SQLType.CONTENT_SET

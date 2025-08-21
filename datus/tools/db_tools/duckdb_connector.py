@@ -50,7 +50,7 @@ class DuckdbConnector(SQLAlchemyConnector):
             else:
                 sql += list_to_in_str(" AND database_name not in", list(self._sys_schemas()))
 
-        schema_names = self.execute_query(sql)
+        schema_names = self._execute_pandas(sql)
         return schema_names["schema_name"].to_list()
 
     @override
@@ -114,7 +114,7 @@ class DuckdbConnector(SQLAlchemyConnector):
             query_sql += f" and database_name = '{database_name}'"
         if schema_name:
             query_sql += f" and schema_name = '{schema_name}'"
-        tables = self.execute_query(query_sql)
+        tables = self._execute_pandas(query_sql)
         result = []
         for i in range(len(tables)):
             table_name = str(tables[name_field][i])
@@ -184,7 +184,7 @@ class DuckdbConnector(SQLAlchemyConnector):
                         query = f"""SELECT * FROM {prefix}."{table_name}" LIMIT {top_n}"""
                     else:
                         query = f"""SELECT * FROM "{table_name}" LIMIT {top_n}"""
-                    result = self.execute_query(query)
+                    result = self._execute_pandas(query)
                     if len(result) > 0:
                         samples.append(
                             {
@@ -201,7 +201,7 @@ class DuckdbConnector(SQLAlchemyConnector):
                         f'SELECT * FROM "{table["database_name"]}"."{table["schema_name"]}"."{table["table_name"]}" '
                         f"LIMIT {top_n}"
                     )
-                    result = self.execute_query(query)
+                    result = self._execute_pandas(query)
                     if len(result) > 0:
                         samples.append(
                             {
@@ -231,7 +231,7 @@ class DuckdbConnector(SQLAlchemyConnector):
         if table_name:
             sql = f"PRAGMA table_info('{full_name}')"
             try:
-                return self.execute_query(sql).to_dict(orient="records")
+                return self._execute_pandas(sql).to_dict(orient="records")
             except Exception as e:
                 raise DatusException(
                     ErrorCode.DB_QUERY_METADATA_FAILED,

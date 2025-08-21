@@ -55,7 +55,7 @@ class AgenticNode(ABC):
             mcp_servers: Dictionary of MCP servers available to this node
             agent_config: Agent configuration
         """
-        self.tools = tools or {}
+        self.tools = tools or []
         self.mcp_servers = mcp_servers or {}
         self.agent_config = agent_config
         self.plan = Plan()

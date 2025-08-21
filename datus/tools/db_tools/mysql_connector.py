@@ -65,7 +65,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         else:
             where = f"{where} {list_to_in_str('and TABLE_SCHEMA not in', list(self._sys_databases()))}"
 
-        query_result = self.execute_query(
+        query_result = self._execute_pandas(
             (
                 f"SELECT TABLE_CATALOG, TABLE_SCHEMA,TABLE_NAME FROM information_schema.{meta_table_name} WHERE {where}"
                 f"{list_to_in_str(' and TABLE_TYPE in ', inner_table_type)}"
@@ -106,7 +106,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         try:
             # Use DESCRIBE or SHOW COLUMNS to get table schema
             sql = f"DESCRIBE {table_name}"
-            query_result = self.execute_query(sql)
+            query_result = self._execute_pandas(sql)
             result = []
             for i in range(len(query_result)):
                 result.append(
@@ -282,7 +282,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
 
     def _show_create(self, full_name: str, create_type: CREATE_TYPE = "TABLE") -> str:
         sql = f"show create {create_type} {full_name}"
-        ddl_result = self.execute_query(sql)
+        ddl_result = self._execute_pandas(sql)
         if not ddl_result.empty and len(ddl_result.columns) >= 2:
             return str(ddl_result.iloc[0, 1])
         else:
@@ -326,7 +326,7 @@ class MySQLConnector(MySQLConnectorBase):
             for table in tables:
                 full_name = self.full_name(database_name=database_name, table_name=table)
                 sql = f"select * from {full_name} limit {top_n}"
-                res = self.execute_query(sql)
+                res = self._execute_pandas(sql)
                 if not res.empty:
                     result.append(
                         {
@@ -347,7 +347,7 @@ class MySQLConnector(MySQLConnectorBase):
                 database_name=database_name,
             ):
                 sql = f"select * from `{t['database_name']}`.`{t['table_name']}` limit {top_n}"
-                res = self.execute_query(sql)
+                res = self._execute_pandas(sql)
                 if not res.empty:
                     result.append(
                         {

@@ -2,11 +2,11 @@
 import json
 from typing import Any, Callable, List, Optional
 
-import pandas as pd
 from agents import FunctionTool, Tool, function_tool
 from pydantic import BaseModel, Field
 
 from datus.tools.db_tools import BaseSqlConnector
+from datus.utils.compress_utils import DataCompressor
 from datus.utils.constants import SUPPORT_CATALOG_DIALECTS, SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS
 
 
@@ -64,12 +64,9 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
 class DBFuncTool:
     def __init__(self, connector: BaseSqlConnector):
         self.connector = connector
-        self._tools = None
+        self.compressor = DataCompressor()
 
     def available_tools(self) -> List[Tool]:
-        if self._tools is not None:
-            return self._tools
-
         bound_tools = []
         methods_to_convert: List[Callable] = [
             self.list_tables,
@@ -88,8 +85,7 @@ class DBFuncTool:
 
         for bound_method in methods_to_convert:
             bound_tools.append(trans_to_function_tool(bound_method))
-        self._tools = bound_tools
-        return self._tools
+        return bound_tools
 
     def list_catalogs(self) -> FuncToolResult:
         """
@@ -244,15 +240,14 @@ class DBFuncTool:
             dict: A dictionary with the execution result, containing these keys:
                   - 'success' (int): 1 for success, 0 for failure.
                   - 'error' (Optional[str]): Error message on failure.
-                  - 'result' (Optional[dict]): Query results on success, including row count, data and compressed data.
+                  - 'result' (Optional[dict]): Query results on success, including original_rows, original_columns,
+                   is_compressed, and compressed_data.
         """
         try:
-            result = self.connector.execute_pandas(sql)
+            result = self.connector.execute_query(sql)
             if result.success:
-                data: pd.DataFrame = result.sql_return
-                return FuncToolResult(
-                    result={"row_nums": result.row_count, "data": data, "compressed_data": data.to_string(max_rows=10)}
-                )
+                data = result.sql_return
+                return FuncToolResult(result=self.compressor.compress(data))
             else:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:

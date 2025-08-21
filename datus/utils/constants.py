@@ -82,6 +82,5 @@ class SQLType(str, Enum):
     UPDATE = "update"
     DELETE = "delete"
     DDL = "ddl"
-    METADATA = "metadata"
-    SWITCH = "switch"
-    UNKNOWN = "unknown"
+    METADATA_SHOW = "metadata"
+    CONTENT_SET = "CONTENT_SET"

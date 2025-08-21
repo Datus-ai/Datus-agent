@@ -134,6 +134,7 @@ class SnowflakeConnector(BaseSqlConnector):
     @override
     def execute_insert(self, sql: str) -> ExecuteSQLResult:
         """Execute an INSERT SQL statement on Snowflake."""
+        # FIXME check sql type
         try:
             with self.connection.cursor() as cursor:
                 # For INSERT operations, return affected rows and last insert ID
@@ -406,7 +407,7 @@ class SnowflakeConnector(BaseSqlConnector):
     def _sys_schemas(self) -> Set[str]:
         return {"PUBLIC", "INFORMATION_SCHEMA"}
 
-    def execute_query(
+    def _execute_list(
         self,
         sql: str,
         params: Sequence[Any] | dict[Any, Any] | None = None,
@@ -417,7 +418,7 @@ class SnowflakeConnector(BaseSqlConnector):
 
     @override
     def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> List[str]:
-        res = self.execute_query(sql="SHOW DATABASES")
+        res = self._execute_list(sql="SHOW DATABASES")
         databases = [it[1] for it in res]
         if not include_sys:
             # Filter out system databases
@@ -533,11 +534,15 @@ class SnowflakeConnector(BaseSqlConnector):
     def get_type(self) -> str:
         return DBType.SNOWFLAKE
 
-    def execute_pandas(self, query: str) -> ExecuteSQLResult:
+    @override
+    def execute_query(self, query_sql: str) -> ExecuteSQLResult:
+        return self.do_execute_arrow({"sql_query": query_sql})
+
+    def execute_pandas(self, query_sql: str) -> ExecuteSQLResult:
         try:
-            df = self.execute_query_to_df(query)
+            df = self.execute_query_to_df(query_sql)
             return ExecuteSQLResult(
-                sql_query=query,
+                sql_query=query_sql,
                 row_count=len(df),
                 sql_return=df,
                 success=True,
@@ -546,7 +551,7 @@ class SnowflakeConnector(BaseSqlConnector):
             )
         except Exception as e:
             return ExecuteSQLResult(
-                sql_query=query,
+                sql_query=query_sql,
                 row_count=0,
                 sql_return=None,
                 success=False,
@@ -554,16 +559,16 @@ class SnowflakeConnector(BaseSqlConnector):
                 result_format="pandas",
             )
 
-    def execute_arrow(self, query: str) -> ExecuteSQLResult:
+    def execute_arrow(self, query_sql: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results in Arrow format.
 
         Args:
-            query: SQL query string to execute
+            query_sql: SQL query string to execute
 
         Returns:
             ExecuteSQLResult with Arrow data
         """
-        input_params = {"sql_query": query}
+        input_params = {"sql_query": query_sql}
         return self.do_execute_arrow(input_params)
 
     def execute_csv(self, query: str) -> ExecuteSQLResult:

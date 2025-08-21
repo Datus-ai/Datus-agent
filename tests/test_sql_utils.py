@@ -1,6 +1,6 @@
 from datus.utils.constants import DBType
 from datus.utils.json_utils import llm_result2json
-from datus.utils.sql_utils import extract_table_names, parse_metadata
+from datus.utils.sql_utils import extract_table_names, parse_metadata, parse_table_name_parts
 
 SQL = """create or replace TABLE GT.GT2.VARIANTS (
     "reference_name" VARCHAR(16777216),
@@ -530,3 +530,23 @@ def test_parse_sqlite_select():
     tables = extract_table_names(sql, dialect=DBType.SQLITE)
     print(tables)
     assert tables == ["atom", "molecule"]
+
+
+def test_parse_full_tables():
+    table_meta = parse_table_name_parts("test.abc", dialect=DBType.DUCKDB)
+    assert table_meta["schema_name"] == "test"
+    assert table_meta["table_name"] == "abc"
+    assert table_meta["database_name"] == ""
+    assert table_meta["catalog_name"] == ""
+
+    table_meta = parse_table_name_parts("`test`.abc", dialect=DBType.MYSQL)
+    assert table_meta["schema_name"] == "test"
+    assert table_meta["table_name"] == "abc"
+    assert table_meta["database_name"] == ""
+    assert table_meta["catalog_name"] == ""
+
+    table_meta = parse_table_name_parts('''TEST_DB."test_schema"."abc"''', dialect=DBType.SNOWFLAKE)
+    assert table_meta["schema_name"] == "test_schema"
+    assert table_meta["table_name"] == "abc"
+    assert table_meta["database_name"] == "TEST_DB"
+    assert table_meta["catalog_name"] == ""

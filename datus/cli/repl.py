@@ -23,6 +23,7 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
+from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
@@ -132,7 +133,7 @@ class DatusCLI:
             ".clear": self._cmd_clear_chat,
             ".chat_info": self._cmd_chat_info,
             # temporary commands for sqlite, remove after mcp server is ready
-            ".databases": self._cmd_databases,
+            ".databases": self._cmd_list_databases,
             ".database": self._cmd_switch_database,
             ".tables": self._cmd_tables,
             ".schemas": self._cmd_schemas,
@@ -152,7 +153,7 @@ class DatusCLI:
         self.actions = ActionHistoryManager()
 
         # Persistent chat node for session continuity
-        self.chat_node = None
+        self.chat_node: ChatAgenticNode | None = None
 
         self.current_db_name = getattr(args, "database", "")
         self.current_catalog = getattr(args, "catalog", "")
@@ -366,24 +367,47 @@ class DatusCLI:
     def _cmd_switch_namespace(self, args: str):
         if args.strip() == "":
             self._cmd_list_namespaces()
+        elif self.agent_config.current_namespace == args.strip():
+            self.console.print(
+                (
+                    f"[yellow]It's now under the namespace [bold]{self.agent_config.current_namespace}[/]"
+                    " and doesn't need to be switched[/]"
+                )
+            )
+            self._cmd_list_namespaces()
+            return
         else:
             self.agent_config.current_namespace = args.strip()
             name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_namespace)
             self.current_catalog = self.db_connector.catalog_name
             self.current_db_name = self.db_connector.database_name if not name else name
             self.current_schema = self.db_connector.schema_name
+            if self.chat_node:
+                self.chat_node.setup_tools()
             self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_namespace}[/]")
 
-    def _cmd_switch_database(self, args: str):
+    def _cmd_switch_database(self, args: str = ""):
         new_db = args.strip()
         if not new_db:
             self.console.print("[bold red]Error:[/] Database name is required")
+            self._cmd_list_databases()
             return
+        if new_db == self.current_db_name:
+            self.console.print(
+                f"[yellow]It's now under the database [bold]{new_db}[/] and doesn't need to be switched[/]"
+            )
+            return
+
+        self.db_connector.switch_context(database_name=new_db)
+        self.current_db_name = new_db
         if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
             self.db_connector = self.db_manager.get_conn(self.agent_config.current_namespace, self.current_db_name)
-        self.db_connector.switch_context(database_name=new_db)
+        self.agent_config._current_database = new_db
+        if self.chat_node and (
+            self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB
+        ):
+            self.chat_node.setup_tools()
         self.console.print(f"[bold green]Database switched to: {self.current_db_name}[/]")
-        self.current_db_name = new_db
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """
@@ -598,7 +622,6 @@ class DatusCLI:
 
         try:
             # Import here to avoid circular imports
-            from datus.agent.node.chat_agentic_node import ChatAgenticNode
             from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
             # Create chat input with current database context
@@ -1046,7 +1069,7 @@ class DatusCLI:
         self.selected_catalog_path = selected_path
         self.selected_catalog_data = selected_data
 
-    def _cmd_databases(self, args: str):
+    def _cmd_list_databases(self, args: str = ""):
         """List all databases in the current connection."""
         try:
             # For SQLite, this is simply the current database file
@@ -1057,12 +1080,18 @@ class DatusCLI:
             if isinstance(connections, dict):
                 show_uri = True
                 for name, conn in connections.items():
-                    result.append({"name": name, "uri": conn.connection_string})
+                    result.append(
+                        {
+                            "name": name if name != self.current_db_name else f"[bold green]{name}[/]",
+                            "uri": conn.connection_string,
+                        }
+                    )
             else:
                 db_type = connections.dialect
                 self.db_connector = connections
                 if db_type == DBType.SQLITE:
                     show_uri = True
+                    # FIXME use database_name
                     result.append({"name": namespace, "uri": connections.connection_string})
                 elif db_type == DBType.DUCKDB:
                     show_uri = True
@@ -1079,7 +1108,8 @@ class DatusCLI:
             if show_uri:
                 table.add_column("URI")
                 for db_config in result:
-                    table.add_row(db_config["name"], db_config["uri"])
+                    name = db_config["name"]
+                    table.add_row(name if name != self.current_db_name else f"[bold green]{name}[/]", db_config["uri"])
             else:
                 for db_config in result:
                     table.add_row(db_config["name"])

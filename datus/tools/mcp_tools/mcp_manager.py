@@ -492,7 +492,7 @@ class MCPManager:
                 return False, {"error": f"Operation failed - {str(e)}"}
 
     async def _run_tools_operation_async(
-        self, server_instance, server_name: str, operation: str, timeout=30.0, **kwargs
+        self, server_instance: SilentMCPServerStdio, server_name: str, operation: str, timeout=30.0, **kwargs
     ) -> Tuple[bool, Dict[str, Any]]:
         """Run tools operation with proper async handling."""
         try:
