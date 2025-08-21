@@ -71,9 +71,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
             return e
         """Map SQLAlchemy exceptions to specific Datus ErrorCode values."""
         error_message = str(e)
-        message_args = {"error_message": error_message}
-        if sql:
-            message_args["sql"] = sql
+        message_args = {"error_message": error_message, "sql": sql}
 
         error_msg_lower = error_message.lower()
         if any(keyword in error_msg_lower for keyword in ["syntax", "parse error", "sql error"]):
@@ -104,6 +102,11 @@ class SQLAlchemyConnector(BaseSqlConnector):
                     ErrorCode.DB_EXECUTION_SYNTAX_ERROR,
                     message_args=message_args,
                 )
+            elif any(
+                keyword in error_msg_lower
+                for keyword in ["connection refused", "connection failed", "connect", "unable to open database"]
+            ):
+                return DatusException(ErrorCode.DB_CONNECTION_FAILED, message_args=message_args)
             else:
                 return DatusException(
                     ErrorCode.DB_EXECUTION_ERROR,
@@ -574,7 +577,10 @@ class SQLAlchemyConnector(BaseSqlConnector):
 
     def _execute_query(self, query_sql: str) -> List[Dict[str, Any]]:
         if parse_sql_type(query_sql) in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE, SQLType.CONTENT_SET):
-            raise
+            raise DatusException(
+                ErrorCode.DB_EXECUTION_ERROR, message="Only supports normal queries and metadata queries."
+            )
+        self.connect()
         try:
             result = self.connection.execute(text(query_sql))
             return result.fetchall()

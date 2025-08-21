@@ -48,10 +48,12 @@ def test_execute_query(duckdb_connector: DuckdbConnector):
     duckdb_connector.test_connection()
 
     res = duckdb_connector.execute_query("select * from bank_failures limit 10")
-    assert len(res) > 0
+    assert res.success
+    assert len(res.sql_return) > 0
 
-    with pytest.raises(DatusException, match=ErrorCode.DB_EXECUTION_ERROR.code):
-        duckdb_connector.execute_query("select * from unexist_table")
+    res = duckdb_connector.execute_query("select * from unexist_table")
+    assert not res.success
+    assert ErrorCode.DB_EXECUTION_ERROR.code in res.error
 
 
 @pytest.mark.acceptance

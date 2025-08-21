@@ -341,7 +341,7 @@ def parse_sql_type(sql: str) -> SQLType:
         return SQLType.DELETE
     elif first_word in ("create", "alter", "drop", "truncate", "rename"):
         return SQLType.DDL
-    elif first_word in ("show", "describe", "desc", "explain"):
+    elif first_word in ("show", "describe", "desc", "explain", "pragma"):
         return SQLType.METADATA_SHOW
     else:
         return SQLType.CONTENT_SET

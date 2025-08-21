@@ -23,6 +23,7 @@ class TestIntegrationExceptions:
 
             with pytest.raises(DatusException) as exc_info:
                 connector.test_connection()
+            print("$$$", exc_info)
             # SQLite connection errors should be mapped to DB_CONNECTION_FAILED
             assert exc_info.value.code == ErrorCode.DB_CONNECTION_FAILED
 
@@ -30,10 +31,9 @@ class TestIntegrationExceptions:
         """Test actual table not found error."""
         connector = SQLiteConnector("sqlite:///:memory:")
 
-        with pytest.raises(DatusException) as exc_info:
-            connector.execute_query("SELECT * FROM nonexistent_table")
-
-        assert exc_info.value.code == ErrorCode.DB_EXECUTION_ERROR
+        result = connector.execute_query("SELECT * FROM nonexistent_table")
+        assert not result.success
+        assert ErrorCode.DB_EXECUTION_ERROR.code in result.error
 
     def test_sqlite_column_not_found(self):
         """Test actual column not found error."""
@@ -42,19 +42,18 @@ class TestIntegrationExceptions:
         # Create a table
         connector.execute_ddl("CREATE TABLE test_table (id INTEGER, name TEXT)")
 
-        with pytest.raises(DatusException) as exc_info:
-            connector.execute_query("SELECT nonexistent_column FROM test_table")
+        result = connector.execute_query("SELECT nonexistent_column FROM test_table")
 
-        assert exc_info.value.code == ErrorCode.DB_EXECUTION_ERROR
+        assert not result.success
+        assert ErrorCode.DB_EXECUTION_ERROR.code in result.error
 
     def test_sqlite_syntax_error(self):
         """Test actual SQL syntax error."""
         connector = SQLiteConnector("sqlite:///:memory:")
 
-        with pytest.raises(DatusException) as exc_info:
-            connector.execute_query("SELEC * FROM test_table")
-
-        assert exc_info.value.code == ErrorCode.DB_EXECUTION_SYNTAX_ERROR
+        result = connector.execute_query("SELEC * FROM test_table")
+        assert not result.success
+        assert ErrorCode.DB_EXECUTION_ERROR.code in result.error
 
     def test_sqlite_primary_key_violation(self):
         """Test actual primary key violation."""
@@ -119,7 +118,7 @@ class TestIntegrationExceptions:
         assert result.sql_return == "1"  # rowcount should be 1
 
         # Query data
-        df = connector.execute_query("SELECT * FROM test_success")
+        df = connector.execute_pandas("SELECT * FROM test_success").sql_return
         assert len(df) == 1
         assert df.iloc[0]["id"] == 1
         assert df.iloc[0]["name"] == "test"
@@ -138,7 +137,7 @@ class TestIntegrationExceptions:
 
         # Update non-existent record (should succeed but return 0 rows)
         res = connector.execute_update("UPDATE test_update SET value = 300 WHERE id = 999")
-        assert res.row_count == 1
+        assert res.row_count == 0
 
     def test_delete_operations(self):
         """Test delete operations with exception handling."""

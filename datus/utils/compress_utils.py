@@ -1,6 +1,6 @@
 import re
 from io import StringIO
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import pandas as pd
 import pyarrow as pa
@@ -231,7 +231,7 @@ class DataCompressor:
         model_name: str = "gpt-3.5-turbo",
         token_threshold: int = 1024,
         tolerance_ratio: float = 0.1,
-        output_format: str = "csv",
+        output_format: Literal["table", "csv"] = "csv",
     ):
         """
         Initialize data compressor
@@ -458,7 +458,7 @@ class DataCompressor:
         data: Union[List[Dict], pd.DataFrame, pa.Table],
         model_name: str = "gpt-3.5-turbo",
         token_threshold: int = 1024,
-        output_format: str = "csv",
+        output_format: Literal["table", "csv"] = "csv",
     ) -> str:
         """
         Quick compress method for one-time use

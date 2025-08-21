@@ -34,7 +34,7 @@ class DuckdbConnector(SQLAlchemyConnector):
             if schema_name:
                 return f'"{database_name}"."{schema_name}"."{table_name}"'
             return f'"{database_name}"."{table_name}"'
-        return f'"{schema_name}"."{table_name}"'
+        return f'"{schema_name}"."{table_name}"' if schema_name else table_name
 
     @override
     def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
