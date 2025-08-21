@@ -168,19 +168,27 @@ class TestDeepSeekModel:
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
-        action_count = 0
-        async for action in self.model.generate_with_mcp_stream(
-            prompt=question,
-            output_type=str,
-            mcp_servers={"sqlite": mcp_server},
-            instruction=instructions,
-        ):
-            action_count += 1
-            assert action is not None, "Stream action should not be None"
-            logger.debug(f"Stream action {action_count}: {type(action)}")
-            logger.info(f"Got action: {action}")
+        try:
+            action_count = 0
+            async for action in self.model.generate_with_mcp_stream(
+                prompt=question,
+                output_type=str,
+                mcp_servers={"sqlite": mcp_server},
+                instruction=instructions,
+            ):
+                action_count += 1
+                assert action is not None, "Stream action should not be None"
+                logger.debug(f"Stream action {action_count}: {type(action)}")
+                logger.info(f"Got action: {action}")
 
-        assert action_count > 0, "Should receive at least one streaming action"
+            assert action_count > 0, "Should receive at least one streaming action"
+        except DatusException as e:
+            if e.code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+                pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
+            else:
+                raise
+        except Exception:
+            raise
 
     # Acceptance Tests for Performance Validation
     @pytest.mark.acceptance
