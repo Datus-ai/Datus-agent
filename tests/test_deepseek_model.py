@@ -435,7 +435,10 @@ class TestDeepSeekModel:
         Answer the question briefly and concisely."""
 
         question = "database_type='sqlite' task='Count the total number of rows in the customer table'"
-        # question = "database_type='sqlite' task='To calculate the gross profit of orders where both the customer and supplier are located in the Americas, and the parts are manufactured by 'MFGR#1' or 'MFGR#2', you would aggregate by year, supplier country, and part category. The result should be sorted in ascending order by year, supplier country, and part category'"
+        # question = "database_type='sqlite' task='To calculate the gross profit of orders where both the customer and"
+        # " $supplier are located in the Americas, and the parts are manufactured by 'MFGR#1' or 'MFGR#2', you would"
+        # " aggregate by year, supplier country, and part category. The result should be sorted in ascending order by"
+        # " year, supplier country, and part category'"
         ssb_db_path = "tests/data/SSB.db"
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
@@ -463,7 +466,8 @@ class TestDeepSeekModel:
         output_tokens_non_stream = non_stream_usage.get("output_tokens", 0)
 
         logger.info(
-            f"Non-streaming tokens: total={total_tokens_non_stream}, input={input_tokens_non_stream}, output={output_tokens_non_stream}"
+            f"Non-streaming tokens: total={total_tokens_non_stream}, input={input_tokens_non_stream},"
+            f" output={output_tokens_non_stream}"
         )
 
         assert total_tokens_non_stream > 0, "Total tokens should be greater than 0"
@@ -548,7 +552,7 @@ class TestDeepSeekModel:
             else:
                 logger.info(f"  No output or invalid output type: {type(action.output)}")
 
-        logger.info(f"=== Results Summary ===")
+        logger.info("=== Results Summary ===")
         logger.info(f"Non-streaming tokens: {total_tokens_non_stream}")
         logger.info(f"Streaming actions with tokens: {final_actions_with_tokens}/{len(final_actions)}")
         logger.info(f"Streaming total tokens: {final_total_tokens}")

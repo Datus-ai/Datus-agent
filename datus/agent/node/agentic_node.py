@@ -243,7 +243,8 @@ class AgenticNode(ABC):
             self._session_tokens = 0
 
             logger.info(
-                f"Manual compacting completed. Session: {old_session_id} -> {self.session_id}, Token count reset: {old_tokens} -> 0"
+                f"Manual compacting completed. Session: {old_session_id} -> {self.session_id},"
+                f" Token reset: {old_tokens} -> 0"
             )
             return True
 

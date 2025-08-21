@@ -107,7 +107,7 @@ class TestOpenAIModel:
     async def test_generate_with_mcp_token_consumption(self):
         """Test token consumption tracking between generate_with_tools and generate_with_tools_stream."""
         from datus.schemas.action_history import ActionHistoryManager
-        
+
         instructions = """You are a SQLite expert working with the SSB database.
         Answer the question briefly and concisely."""
 
@@ -128,18 +128,21 @@ class TestOpenAIModel:
         assert result_non_stream is not None, "Non-streaming result should not be None"
         assert "content" in result_non_stream, "Non-streaming result should contain content"
         assert "usage" in result_non_stream, "Non-streaming result should contain usage"
-        
+
         non_stream_usage = result_non_stream.get("usage", {})
         logger.info(f"Non-streaming usage info: {non_stream_usage}")
-        
+
         # Verify usage fields exist and are reasonable
         assert isinstance(non_stream_usage, dict), "Usage should be a dictionary"
         total_tokens_non_stream = non_stream_usage.get("total_tokens", 0)
         input_tokens_non_stream = non_stream_usage.get("input_tokens", 0)
         output_tokens_non_stream = non_stream_usage.get("output_tokens", 0)
-        
-        logger.info(f"Non-streaming tokens: total={total_tokens_non_stream}, input={input_tokens_non_stream}, output={output_tokens_non_stream}")
-        
+
+        logger.info(
+            f"Non-streaming tokens: total={total_tokens_non_stream}, input={input_tokens_non_stream},"
+            f" output={output_tokens_non_stream}"
+        )
+
         assert total_tokens_non_stream > 0, "Total tokens should be greater than 0"
         assert input_tokens_non_stream > 0, "Input tokens should be greater than 0"
         assert output_tokens_non_stream > 0, "Output tokens should be greater than 0"
@@ -158,27 +161,32 @@ class TestOpenAIModel:
             action_history_manager=action_history_manager,
         ):
             action_count += 1
-            logger.info(f"Stream action {action_count}: type={action.action_type}, role={action.role}, status={action.status}")
+            logger.info(
+                f"Stream action {action_count}: type={action.action_type}, role={action.role}, status={action.status}"
+            )
 
         # Check final actions after our fix has been applied
         final_actions = action_history_manager.get_actions()
-        final_actions_with_tokens = sum(1 for a in final_actions 
-                                      if a.output and isinstance(a.output, dict) and a.output.get("usage"))
-        final_total_tokens = sum(a.output.get("usage", {}).get("total_tokens", 0) 
-                               for a in final_actions 
-                               if a.output and isinstance(a.output, dict) and a.output.get("usage"))
-        
-        logger.info(f"=== Results ===")
+        final_actions_with_tokens = sum(
+            1 for a in final_actions if a.output and isinstance(a.output, dict) and a.output.get("usage")
+        )
+        final_total_tokens = sum(
+            a.output.get("usage", {}).get("total_tokens", 0)
+            for a in final_actions
+            if a.output and isinstance(a.output, dict) and a.output.get("usage")
+        )
+
+        logger.info("=== Results ===")
         logger.info(f"Non-streaming tokens: {total_tokens_non_stream}")
         logger.info(f"Streaming actions with tokens: {final_actions_with_tokens}/{len(final_actions)}")
         logger.info(f"Streaming total tokens: {final_total_tokens}")
-        
+
         # Verify our fix is working
         if final_actions_with_tokens > 0 and final_total_tokens > 0:
             logger.info("✅ SUCCESS: Token consumption fix is working!")
         else:
             logger.error("❌ FAILURE: Token consumption fix needs work")
-            
+
         assert action_count > 0, "Should receive at least one streaming action"
 
 

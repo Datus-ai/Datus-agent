@@ -169,7 +169,6 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         Returns:
             Context length, or None if unavailable
         """
-        pass
 
     def to_dict(self) -> Dict[str, str]:
         return {"model_name": self.model_config.model}

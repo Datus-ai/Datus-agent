@@ -231,60 +231,22 @@ class ChatAgenticNode(AgenticNode):
             # With our streaming token fix, only the final assistant action will have accurate usage
             final_actions = action_history_manager.get_actions()
             tokens_used = 0
-            
-            logger.debug(f"ChatAgenticNode: Looking for token usage in {len(final_actions)} final actions")
 
             # Find the final assistant action with token usage
-            for i, action in enumerate(reversed(final_actions)):
-                logger.debug(f"ChatAgenticNode: Checking action {len(final_actions)-i-1}: type={action.action_type}, role={action.role}")
-                
+            for action in reversed(final_actions):
                 if action.role == "assistant":
-                    logger.debug(f"ChatAgenticNode: Found assistant action, checking output...")
                     if action.output and isinstance(action.output, dict):
-                        logger.debug(f"ChatAgenticNode: Output keys: {list(action.output.keys())}")
                         usage_info = action.output.get("usage", {})
-                        if usage_info:
-                            logger.debug(f"ChatAgenticNode: Found usage info: {usage_info}")
-                            if isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                                conversation_tokens = usage_info.get("total_tokens", 0)
-                                if conversation_tokens > 0:
-                                    # Add this conversation's tokens to the session
-                                    self._add_session_tokens(conversation_tokens)
-                                    tokens_used = conversation_tokens
-                                    logger.debug(
-                                        f"ChatAgenticNode: Added {conversation_tokens} tokens from assistant action to session"
-                                    )
-                                    break
-                        else:
-                            logger.debug("ChatAgenticNode: No usage info in assistant action output")
-                    else:
-                        logger.debug("ChatAgenticNode: Assistant action has no output or invalid output type")
-            
-            if tokens_used == 0:
-                logger.debug("ChatAgenticNode: No token usage found in any assistant action, will use fallback")
-
-            ## Fallback approaches if no tokens found in actions
-            # if tokens_used == 0:
-            #    # Try to get usage from last successful output
-            #    if last_successful_output:
-            #        usage_info = last_successful_output.get("usage", {})
-            #        if isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-            #            fallback_tokens = usage_info.get("total_tokens", 0)
-            #            if fallback_tokens > 0:
-            #                self._add_session_tokens(fallback_tokens)
-            #                tokens_used = fallback_tokens
-            #                logger.debug(
-            #                    f"Used fallback: Added {fallback_tokens} tokens from final output. Session total: {self._count_session_tokens()}"
-            #                )
-
-            #    # Last resort: rough estimation if no usage info available at all
-            #    if tokens_used == 0 and response_content:
-            #        estimated_tokens = int(len(response_content.split()) * 1.3)
-            #        self._add_session_tokens(estimated_tokens)
-            #        tokens_used = estimated_tokens
-            #        logger.debug(
-            #            f"Used estimation: Added {estimated_tokens} tokens. Session total: {self._count_session_tokens()}"
-            #        )
+                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
+                            conversation_tokens = usage_info.get("total_tokens", 0)
+                            if conversation_tokens > 0:
+                                # Add this conversation's tokens to the session
+                                self._add_session_tokens(conversation_tokens)
+                                tokens_used = conversation_tokens
+                                logger.info(f"Added {conversation_tokens} tokens to session")
+                                break
+                            else:
+                                logger.warning(f"no usage token found in this action {action.messages}")
 
             # Create final result
             result = ChatNodeResult(

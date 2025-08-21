@@ -1058,6 +1058,9 @@ class DatusCLI:
                 self.console.print(f"  Active: {session_info['active']}")
                 self.console.print(f"  Token Count: {session_info['token_count']}")
                 self.console.print(f"  Action Count: {session_info['action_count']}")
+                self.console.print(f"  Context Usage Ratio: {session_info['context_usage_ratio']:.2%}")
+                self.console.print(f"  Context Remaining: {session_info['context_remaining']}")
+                self.console.print(f"  Context Length: {session_info['context_length']}")
             else:
                 self.console.print("[yellow]Chat node exists but no active session.[/]")
         else:

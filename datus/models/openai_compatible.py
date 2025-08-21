@@ -10,8 +10,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import yaml
 from agents import Agent, Tool, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession
 from agents.mcp import MCPServerStdio
-from langsmith.wrappers import wrap_openai
 from langsmith import traceable
+from langsmith.wrappers import wrap_openai
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from pydantic import AnyUrl
 
@@ -227,7 +227,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
 
-    # @traceable(name="openai_compatible_generate", run_type="llm")
+    @traceable(name="openai_compatible_generate", run_type="chain")
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """
         Generate a response from the model with error handling and retry logic.
@@ -241,7 +241,6 @@ class OpenAICompatibleModel(LLMBaseModel):
             Generated text response
         """
 
-        # @traceable(name="openai_compatible_generate_operation", run_type="llm")
         def _generate_operation():
             params = {
                 "model": self.model_name,
@@ -361,7 +360,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             return {"error": "Failed to parse JSON response", "raw_response": response_text}
 
-    # @traceable(name="openai_compatible_generate_with_tools", run_type="chain")
+    @traceable(name="openai_compatible_tools", run_type="chain")
     async def generate_with_tools(
         self,
         prompt: str,
@@ -409,7 +408,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         return enhanced_result
 
-    # @traceable(name="openai_compatible_generate_with_tools_stream", run_type="chain")
+    @traceable(name="openai_compatible_tools_stream", run_type="chain")
     async def generate_with_tools_stream(
         self,
         prompt: str,
@@ -442,24 +441,11 @@ class OpenAICompatibleModel(LLMBaseModel):
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
-        # Log stream start for tracing
-        logger.debug(
-            f"Starting tool stream: model={self.model_name}, max_turns={max_turns}, "
-            f"mcp_servers={len(mcp_servers) if mcp_servers else 0}, "
-            f"tools={len(tools) if tools else 0}"
-        )
-
-        action_count = 0
         async for action in self._generate_with_tools_stream_internal(
             prompt, mcp_servers, tools, instruction, output_type, max_turns, session, action_history_manager, **kwargs
         ):
-            action_count += 1
             yield action
 
-        # Log stream completion for tracing
-        logger.debug(f"Completed tool stream: total_actions={action_count}")
-
-    @traceable(name="openai_compatible_tools_internal", run_type="chain")
     async def _generate_with_tools_internal(
         self,
         prompt: str,
@@ -566,7 +552,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         "cache_hit_rate": cache_hit_rate,
                         "context_usage_ratio": context_usage_ratio,
                     }
-                    logger.debug(f"Agent execution usage (from context_wrapper): {usage_info}")
+                    logger.debug(f"Agent execution usage: {usage_info}")
                 else:
                     logger.warning("No usage information found in result.context_wrapper")
 
@@ -581,7 +567,6 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         return await self._with_retry_async(_tools_operation, "tool execution")
 
-    @traceable(name="openai_compatible_tools_stream_internal", run_type="chain")
     async def _generate_with_tools_stream_internal(
         self,
         prompt: str,
@@ -880,13 +865,9 @@ class OpenAICompatibleModel(LLMBaseModel):
             if assistant_actions:
                 final_assistant = assistant_actions[-1]
                 self._add_usage_to_action(final_assistant, usage_info)
-                logger.debug(
-                    f"Added full usage to final assistant action: {final_assistant.action_id} ({total_tokens} tokens)"
-                )
+                logger.debug(f"Distributed {total_tokens} tokens to final assistant action")
 
             # Note: Tool actions don't get token counts to avoid double-counting
-            # The final assistant action represents the total conversation cost
-            logger.debug(f"Distributed {total_tokens} tokens to final assistant action only")
 
         except Exception as e:
             logger.error(f"Error distributing token usage: {e}")
