@@ -770,7 +770,7 @@ class Agent:
                     task=task,
                     database_name=database_name,
                     output_dir=self.global_config.output_dir,
-                    current_time=self.args.current_time,
+                    current_date=self.args.current_date,
                 )
             )
             logger.info(
@@ -858,7 +858,7 @@ class Agent:
                     database_name=database_name,
                     external_knowledge="" if "evidence" not in task else task["evidence"],
                     output_dir=self.global_config.output_dir,
-                    current_time=self.args.current_time,
+                    current_date=self.args.current_date,
                 )
             )
             logger.info(
@@ -953,7 +953,7 @@ class Agent:
                     layer2=metric_meta.layer2,
                     output_dir=self.global_config.output_dir,
                     external_knowledge=combined_ext_knowledge,
-                    current_time=self.args.current_time,
+                    current_date=self.args.current_date,
                 )
             )
 

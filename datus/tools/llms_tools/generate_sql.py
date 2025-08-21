@@ -7,7 +7,7 @@ from datus.prompts.gen_sql import get_sql_prompt
 from datus.schemas.node_models import GenerateSQLInput, GenerateSQLResult
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
-from datus.utils.time_utils import get_default_current_time
+from datus.utils.time_utils import get_default_current_date
 
 logger = get_logger(__name__)
 
@@ -35,7 +35,7 @@ def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateS
             max_value_length=input_data.max_value_length,
             max_text_mark_length=input_data.max_text_mark_length,
             database_docs=input_data.database_docs,
-            current_time=get_default_current_time(input_data.current_time),
+            current_date=get_default_current_date(input_data.current_date),
         )
 
         logger.debug(f"Generated SQL prompt:  {type(model)}, {prompt}")

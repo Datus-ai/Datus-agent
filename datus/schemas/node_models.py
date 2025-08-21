@@ -35,8 +35,8 @@ class SqlTask(BaseModel):
     output_dir: str = Field(default="output", description="Output directory path")
     external_knowledge: str = Field(default="", description="External knowledge for the input")
     schema_linking_type: TABLE_TYPE = Field(default="table", description="Schema linking type for the task")
-    current_time: Optional[str] = Field(
-        default=None, description="Current time reference for relative time expressions"
+    current_date: Optional[str] = Field(
+        default=None, description="Current date reference for relative time expressions"
     )
 
     # Metrics relative part
@@ -339,8 +339,8 @@ class GenerateSQLInput(BaseInput):
     max_value_length: int = Field(default=500, description="Max value length")
     max_text_mark_length: int = Field(default=16, description="Max text mark length")
     database_docs: Optional[str] = Field(default="", description="Database documentation")
-    current_time: Optional[str] = Field(
-        default=None, description="Current time reference for relative time expressions"
+    current_date: Optional[str] = Field(
+        default=None, description="Current date reference for relative time expressions"
     )
 
 

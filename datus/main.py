@@ -166,7 +166,7 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--layer2", type=str, help="Layer2 for the task")
     benchmark_parser.add_argument("--task_ext_knowledge", type=str, default="", help="External knowledge for the task")
     benchmark_parser.add_argument(
-        "--current_time", type=str, help="Current time reference for relative time expressions (e.g., '2025-07-01')"
+        "--current_date", type=str, help="Current date reference for relative time expressions (e.g., '2025-07-01')"
     )
     benchmark_parser.add_argument(
         "--max_workers",
@@ -238,7 +238,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--task_ext_knowledge", type=str, default="", help="External knowledge for the task")
     run_parser.add_argument(
-        "--current_time", type=str, help="Current time reference for relative time expressions (e.g., '2025-07-01')"
+        "--current_date", type=str, help="Current date reference for relative time expressions (e.g., '2025-07-01')"
     )
     run_parser.add_argument("--domain", type=str, default="", help="Domain of the success story")
     run_parser.add_argument("--layer1", type=str, default="", help="Layer1 of the metrics")
@@ -329,7 +329,7 @@ def main():
                     domain=args.domain,
                     layer1=args.layer1,
                     layer2=args.layer2,
-                    current_time=args.current_time,
+                    current_date=args.current_date,
                 ),
                 True,
             )

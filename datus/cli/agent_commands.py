@@ -176,8 +176,8 @@ class AgentCommands:
                 # output_dir = self.cli._prompt_input("Enter output directory", default="output")
                 # External knowledge - optional input
                 external_knowledge = self.cli._prompt_input("Enter external knowledge (optional)", default="")
-                # Current time - optional input for relative time expressions
-                current_time = self.cli._prompt_input("Enter current time (optional, e.g., '2025-07-01')", default="")
+                # Current date - optional input for relative time expressions
+                current_date = self.cli._prompt_input("Enter current date (optional, e.g., '2025-07-01')", default="")
 
             # Create the SQL task
             sql_task = SqlTask(
@@ -187,7 +187,7 @@ class AgentCommands:
                 database_name=database_name,
                 output_dir=output_dir,
                 external_knowledge=external_knowledge,
-                current_time=current_time if current_time.strip() else None,
+                current_date=current_date if current_date.strip() else None,
             )
 
             self.console.print(f"[green]SQL Task created: {task_id}[/]")
