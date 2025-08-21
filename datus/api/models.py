@@ -35,6 +35,7 @@ class RunWorkflowRequest(BaseModel):
     catalog_name: Optional[str] = Field(None, description="Catalog name")
     database_name: Optional[str] = Field(None, description="Database name")
     schema_name: Optional[str] = Field(None, description="Schema name")
+    current_time: Optional[str] = Field(None, description="Current time reference for relative time expressions")
 
 
 class RunWorkflowResponse(BaseModel):

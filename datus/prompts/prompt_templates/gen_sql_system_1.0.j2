@@ -3,6 +3,8 @@ Some suggestion:
 1. For complex queries, break down the logic into clear steps using Common Table Expressions (CTEs) to maintain readability and facilitate debugging.
 2. When handling intricate date-time calculations, carefully evaluate the requirements and select an appropriate function or method to ensure accurate results first.
 3. Use the provided primary key and foreign key constraints to determine the relationships between tables.
+
+**RELATIVE TIME HANDLING**: When the natural language question contains relative time references (such as "next two weeks", "past month", "last quarter", "future 30 days" etc.), use the provided current_time parameter as the reference point. The current_time will be provided in date format (e.g., "2025-07-01"). Convert all relative time expressions to absolute date ranges or constraints based on this reference date.
 Inputs Provided:
 Database Type: Ensure that you use SQL dialect and functions specific database type. And strictly follow the specific rules provided.
 Table Schemas: Detailed definitions of tables, including all columns, primary keys, and foreign keys. Choose the tables that best answer the question.

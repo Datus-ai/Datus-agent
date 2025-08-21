@@ -26,6 +26,7 @@ def get_sql_prompt(
     max_value_length: int = 500,
     max_text_mark_length: int = 16,
     database_docs: str = "",
+    current_time: str = None,
 ) -> str:
     if context is None:
         context = []
@@ -86,6 +87,7 @@ def get_sql_prompt(
         version=prompt_version,
         processed_context=processed_context,
         database_docs=database_docs,
+        current_time=current_time,
     )
 
     return [

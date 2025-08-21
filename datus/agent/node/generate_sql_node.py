@@ -7,6 +7,7 @@ from datus.schemas.node_models import GenerateSQLInput, GenerateSQLResult, SQLCo
 from datus.tools.lineage_graph_tools import SchemaLineageTool
 from datus.tools.llms_tools import LLMTool
 from datus.utils.loggings import get_logger
+from datus.utils.time_utils import get_default_current_time
 
 logger = get_logger(__name__)
 
@@ -39,6 +40,7 @@ class GenerateSQLNode(Node):
             contexts=workflow.context.sql_contexts,
             external_knowledge=workflow.task.external_knowledge,
             database_docs=database_docs,
+            current_time=get_default_current_time(workflow.task.current_time),
         )
         self.input = next_input
         return {"success": True, "message": "Schema appears valid", "suggestions": [next_input]}
