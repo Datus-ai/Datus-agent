@@ -72,7 +72,7 @@ def get_sql_prompt(
 
     processed_metrics = ""
     if metrics:
-        processed_metrics = json.dumps([m.__dict__ for m in metrics], indent=2)
+        processed_metrics = json.dumps([m.__dict__ for m in metrics], indent=2, ensure_ascii=False)
 
     system_content = prompt_manager.get_raw_template("gen_sql_system", version=prompt_version)
     user_content = prompt_manager.render_template(
