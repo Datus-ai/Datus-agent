@@ -5,6 +5,8 @@ import os
 import sys
 from datetime import datetime
 
+from datus.utils.async_utils import setup_windows_policy
+
 # Add path fixing to ensure proper imports
 if __package__ is None:
     # Add parent directory to Python path
@@ -333,4 +335,5 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_windows_policy()
     sys.exit(main())

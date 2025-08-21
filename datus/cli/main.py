@@ -9,6 +9,7 @@ from pathlib import Path
 
 from datus import __version__
 from datus.cli.repl import DatusCLI
+from datus.utils.async_utils import setup_windows_policy
 from datus.utils.constants import DBType
 from datus.utils.loggings import configure_logging, get_logger
 
@@ -109,4 +110,5 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_windows_policy()
     main()

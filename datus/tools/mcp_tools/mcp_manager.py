@@ -7,7 +7,6 @@ and status monitoring.
 """
 
 import asyncio
-import concurrent.futures
 import json
 import threading
 from pathlib import Path
@@ -249,7 +248,7 @@ class MCPManager:
         """
         return self.config.get_server(name)
 
-    def check_connectivity(self, name: str) -> Tuple[bool, str, Dict[str, Any]]:
+    async def check_connectivity(self, name: str) -> Tuple[bool, str, Dict[str, Any]]:
         """Check server connectivity by attempting to connect and list tools."""
         valid, error_msg, config = _validate_server_exists(self, name)
         if not valid:
@@ -262,7 +261,7 @@ class MCPManager:
             return False, f"Failed to create server instance for '{name}': {error_msg}", connectivity_details
 
         # Run connectivity test
-        success, tools_data = self._run_tools_operation(server_instance, name, "connectivity_test")
+        success, tools_data = await self._run_tools_operation_async(server_instance, name, "connectivity_test")
         connectivity_details.update(tools_data)
         connectivity_details["type"] = config.type
 
@@ -272,7 +271,7 @@ class MCPManager:
             error_msg = tools_data.get("error", "Connectivity test failed")
             return False, f"Server '{name}' connectivity test failed: {error_msg}", connectivity_details
 
-    def list_tools(self, server_name: str, apply_filter: bool = True) -> Tuple[bool, str, List[Dict[str, Any]]]:
+    async def list_tools(self, server_name: str, apply_filter: bool = True) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """List tools available on the specified MCP server."""
         try:
             valid, error_msg, config = _validate_server_exists(self, server_name)
@@ -286,7 +285,7 @@ class MCPManager:
                 return False, f"Failed to connect to server '{server_name}': {error_msg}", []
 
             # Run list_tools operation
-            success, tools_data = self._run_tools_operation(server_instance, server_name, "list_tools")
+            success, tools_data = await self._run_tools_operation_async(server_instance, server_name, "list_tools")
 
             if success:
                 tools_list = tools_data.get("tools", [])
@@ -309,11 +308,11 @@ class MCPManager:
             logger.error(f"Error listing tools for server {server_name}: {e}")
             return False, f"Error listing tools: {e}", []
 
-    def list_filtered_tools(self, server_name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
+    async def list_filtered_tools(self, server_name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """List tools available on the specified MCP server with filtering applied."""
-        return self.list_tools(server_name, apply_filter=True)
+        return await self.list_tools(server_name, apply_filter=True)
 
-    def call_tool(
+    async def call_tool(
         self, server_name: str, tool_name: str, arguments: Dict[str, Any]
     ) -> Tuple[bool, str, Dict[str, Any]]:
         """Call a tool on the specified MCP server."""
@@ -333,7 +332,7 @@ class MCPManager:
                 return False, f"Failed to connect to server '{server_name}': {error_msg}", {}
 
             # Run call_tool operation
-            success, result_data = self._run_tools_operation(
+            success, result_data = await self._run_tools_operation_async(
                 server_instance, server_name, "call_tool", tool_name=tool_name, arguments=arguments
             )
 
@@ -455,41 +454,6 @@ class MCPManager:
         server_instance = MCPServerStreamableHttp(params=server_params, client_session_timeout_seconds=60)
         details = {"url": url, "headers_count": len(merged_headers), "timeout": timeout}
         return server_instance, details
-
-    def _run_tools_operation(
-        self, server_instance, server_name: str, operation: str, timeout=30.0, **kwargs
-    ) -> Tuple[bool, Dict[str, Any]]:
-        """Run tools operation with proper async handling."""
-
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            # Use asyncio.run which works in both sync and async contexts
-            return asyncio.run(
-                self._run_tools_operation_async(server_instance, server_name, operation, timeout=timeout, **kwargs)
-            )
-
-        def run_in_thread():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                task = loop.create_task(
-                    self._run_tools_operation_async(server_instance, server_name, operation, timeout=timeout, **kwargs)
-                )
-                loop.run_until_complete(task)
-                return task.result()
-            except asyncio.CancelledError:
-                return False, {"error": f"Operation '{operation}' cancelled"}
-            finally:
-                loop.close()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(run_in_thread)
-            try:
-                return future.result()
-            except Exception as e:
-                logger.error(f"Failed to run operation '{operation}' for server '{server_name}': {e}")
-                return False, {"error": f"Operation failed - {str(e)}"}
 
     async def _run_tools_operation_async(
         self, server_instance, server_name: str, operation: str, timeout=30.0, **kwargs

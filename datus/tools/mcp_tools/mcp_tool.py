@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from datus.tools.base import BaseTool, BaseToolExecResult, ToolAction
 from datus.tools.mcp_tools.mcp_config import ToolFilterConfig
 from datus.tools.mcp_tools.mcp_manager import MCPManager, create_static_tool_filter
+from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -167,7 +168,7 @@ class MCPTool(BaseTool):
             BaseToolExecResult with connectivity status
         """
         try:
-            success, message, details = self.manager.check_connectivity(name)
+            success, message, details = run_async(self.manager.check_connectivity(name))
 
             return BaseToolExecResult(
                 success=success,
@@ -196,7 +197,7 @@ class MCPTool(BaseTool):
             BaseToolExecResult with list of available tools
         """
         try:
-            success, message, tools_list = self.manager.list_tools(server_name, apply_filter=apply_filter)
+            success, message, tools_list = run_async(self.manager.list_tools(server_name, apply_filter=apply_filter))
 
             if success:
                 return BaseToolExecResult(
@@ -252,7 +253,7 @@ class MCPTool(BaseTool):
             if arguments is None:
                 arguments = {}
 
-            success, message, result_data = self.manager.call_tool(server_name, tool_name, arguments)
+            success, message, result_data = run_async(self.manager.call_tool(server_name, tool_name, arguments))
 
             if success:
                 return BaseToolExecResult(

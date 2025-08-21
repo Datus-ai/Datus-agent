@@ -38,7 +38,7 @@ class SilentMCPServerStdio(MCPServerStdio):
             if sys.platform == "win32":
                 # Windows: redirect stderr to nul
                 redirect_cmd = "cmd"
-                redirect_args = ["/c", f'"{original_command}" {" ".join(original_args)} 2>nul']
+                redirect_args = ["/c", f'{original_command} {" ".join(original_args)} 2>nul']
             else:
                 # Unix/Linux/macOS: redirect stderr to /dev/null
                 args_str = " ".join(f'"{arg}"' for arg in original_args)
