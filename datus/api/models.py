@@ -36,6 +36,10 @@ class RunWorkflowRequest(BaseModel):
     database_name: Optional[str] = Field(None, description="Database name")
     schema_name: Optional[str] = Field(None, description="Schema name")
     current_date: Optional[str] = Field(None, description="Current date reference for relative time expressions")
+    domain: Optional[str] = Field(None, description="Domain for the task")
+    layer1: Optional[str] = Field(None, description="Layer1 for the task")
+    layer2: Optional[str] = Field(None, description="Layer2 for the task")
+    ext_knowledge: Optional[str] = Field(None, description="External knowledge for the task")
 
 
 class RunWorkflowResponse(BaseModel):

@@ -82,6 +82,9 @@ def _daemon_worker(args: argparse.Namespace, agent_args: argparse.Namespace, pid
     os.setsid()
     os.umask(0)
 
+    # Configure logging for daemon process
+    configure_logging(args.debug, log_dir="logs", console_output=False)
+
     # Redirect stdio
     _redirect_stdio(log_file)
 
@@ -151,6 +154,7 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
         max_steps=args.max_steps,
         plan=args.plan,
         load_cp=args.load_cp,
+        debug=args.debug,
     )
 
 
@@ -164,7 +168,7 @@ def _run_server(args: argparse.Namespace, agent_args: argparse.Namespace) -> Non
         port=args.port,
         reload=args.reload,
         workers=args.workers if not args.reload else 1,
-        log_level=args.log_level,
+        log_level="debug" if args.debug else "info",
         access_log=True,
     )
 
@@ -183,12 +187,7 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="Port to bind the server to (default: 8000)")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes (default: 1)")
-    parser.add_argument(
-        "--log-level",
-        default="info",
-        choices=["critical", "error", "warning", "info", "debug"],
-        help="Log level (default: info)",
-    )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument(
         "--namespace",
         type=str,
@@ -230,14 +229,14 @@ def main():
     log_file = Path(args.daemon_log_file) if args.daemon_log_file else default_log
 
     if args.action in {"status", "stop"}:
-        configure_logging(args.log_level)
+        configure_logging(args.debug)
         if args.action == "status":
             raise SystemExit(_status(pid_file))
         if args.action == "stop":
             raise SystemExit(_stop(pid_file))
 
     if args.action == "restart":
-        configure_logging(args.log_level)
+        configure_logging(args.debug)
         _stop(pid_file)
         # fall-through to start
 
@@ -251,10 +250,10 @@ def main():
             print(f"Already running (pid={pid})", file=sys.stderr)
             raise SystemExit(0)
 
-        configure_logging(args.log_level, log_dir="logs", console_output=False)
+        configure_logging(args.debug, log_dir="logs", console_output=False)
         logger.info(
             f"Starting Datus Agent API server (daemon) on {args.host}:{args.port} | "
-            f"Workers: {args.workers}, LogLevel: {args.log_level}"
+            f"Workers: {args.workers}, Debug: {args.debug}"
         )
 
         # Create daemon process using multiprocessing
@@ -278,11 +277,11 @@ def main():
             os._exit(1)
     else:
         # Foreground mode - normal logging setup with console output
-        configure_logging(args.log_level)
+        configure_logging(args.debug)
 
     # Foreground run (existing behavior)
     logger.info(f"Starting Datus Agent API server on {args.host}:{args.port}")
-    logger.info(f"Workers: {args.workers}, Reload: {args.reload}, Log Level: {args.log_level}")
+    logger.info(f"Workers: {args.workers}, Reload: {args.reload}, Debug: {args.debug}")
     logger.info(f"Agent config - Namespace: {args.namespace}, Config: {args.config}")
     agent_args = _build_agent_args(args)
     _run_server(args, agent_args)
