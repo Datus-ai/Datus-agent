@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import yaml
-from agents import Agent, Tool, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession
+from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
 from langsmith import traceable
 from langsmith.wrappers import wrap_openai
