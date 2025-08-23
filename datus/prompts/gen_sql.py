@@ -27,6 +27,7 @@ def get_sql_prompt(
     max_text_mark_length: int = 16,
     database_docs: str = "",
     current_date: str = None,
+    date_ranges: str = "",
 ) -> str:
     if context is None:
         context = []
@@ -88,6 +89,7 @@ def get_sql_prompt(
         processed_context=processed_context,
         database_docs=database_docs,
         current_date=current_date,
+        date_ranges=date_ranges,
     )
 
     return [

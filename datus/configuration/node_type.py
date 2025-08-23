@@ -4,6 +4,7 @@ from pydantic import BaseModel, create_model
 
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.schemas.compare_node_models import CompareInput
+from datus.schemas.date_parser_node_models import DateParserInput
 from datus.schemas.doc_search_node_models import DocSearchInput
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
@@ -41,6 +42,7 @@ class NodeType:
     TYPE_GENERATE_SEMANTIC_MODEL = "generate_semantic_model"  # For generating semantic models
     TYPE_SEARCH_METRICS = "search_metrics"  # For search metrics
     TYPE_COMPARE = "compare"  # For comparing SQL with expectations
+    TYPE_DATE_PARSER = "date_parser"  # For parsing temporal expressions
 
     # Agentic node types
     TYPE_CHAT = "chat"  # For conversational AI interactions
@@ -57,6 +59,7 @@ class NodeType:
         TYPE_GENERATE_SEMANTIC_MODEL,
         TYPE_SEARCH_METRICS,
         TYPE_COMPARE,
+        TYPE_DATE_PARSER,
     ]
 
     # Agentic node types list
@@ -80,6 +83,7 @@ class NodeType:
         TYPE_SELECTION: "Select best result from multiple candidates",
         TYPE_SUBWORKFLOW: "Execute a nested workflow",
         TYPE_COMPARE: "Compare SQL with expectations",
+        TYPE_DATE_PARSER: "Parse temporal expressions in queries",
         TYPE_CHAT: "Conversational AI interactions with tool calling",
     }
 
@@ -120,6 +124,8 @@ class NodeType:
             input_data_cls = SubworkflowInput
         elif node_type == NodeType.TYPE_COMPARE:
             input_data_cls = CompareInput
+        elif node_type == NodeType.TYPE_DATE_PARSER:
+            input_data_cls = DateParserInput
         elif node_type == NodeType.TYPE_CHAT:
             input_data_cls = ChatNodeInput
         else:

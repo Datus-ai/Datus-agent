@@ -8,6 +8,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
@@ -52,6 +53,7 @@ class Node(ABC):
         from datus.agent.node import (
             BeginNode,
             CompareNode,
+            DateParserNode,
             DocSearchNode,
             ExecuteSQLNode,
             FixNode,
@@ -103,6 +105,8 @@ class Node(ABC):
             return SubworkflowNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_COMPARE:
             return CompareNode(node_id, description, node_type, input_data, agent_config)
+        elif node_type == NodeType.TYPE_DATE_PARSER:
+            return DateParserNode(node_id, description, node_type, input_data, agent_config)
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 
@@ -345,6 +349,8 @@ class Node(ABC):
                     input_data = GenerateMetricsInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
                     input_data = GenerateSemanticModelInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
+                    input_data = DateParserInput(**input_data)
             except Exception as e:
                 logger.warning(f"Failed to convert input data for {node_dict['type']}: {e}")
                 input_data = None
@@ -379,6 +385,8 @@ class Node(ABC):
                     result_data = GenerateMetricsResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
                     result_data = GenerateSemanticModelResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
+                    result_data = DateParserResult(**result_data)
                 elif "success" in result_data:
                     result_data = BaseResult(**result_data)
             except Exception as e:

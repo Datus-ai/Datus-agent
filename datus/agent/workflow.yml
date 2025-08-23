@@ -25,6 +25,7 @@ workflow:
   metric_to_sql:
     - schema_linking
     - search_metrics
+    - date_parser
     - generate_sql
     - execute_sql
     - output

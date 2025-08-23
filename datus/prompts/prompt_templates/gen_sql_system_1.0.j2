@@ -4,12 +4,15 @@ Some suggestion:
 2. When handling intricate date-time calculations, carefully evaluate the requirements and select an appropriate function or method to ensure accurate results first.
 3. Use the provided primary key and foreign key constraints to determine the relationships between tables.
 
-**RELATIVE TIME HANDLING**: When the natural language question contains relative time references (such as "next two weeks", "past month", "last quarter", "future 30 days" etc.), use the provided current_date parameter as the reference point. The current_date will be provided in date format (e.g., "2025-07-01"). Convert all relative time expressions to absolute date ranges or constraints based on this reference date.
+**RELATIVE TIME HANDLING**: 
+1. **FIRST PRIORITY**: If "Parsed Date Ranges" section is provided, USE THE SPECIFIC DATES from that section instead of interpreting relative time expressions yourself. The parsed date ranges have already converted relative expressions like "last month", "最近3个月", "Q1 2025" to exact date ranges.
+2. **FALLBACK**: Only when no parsed date ranges are available, use the provided current_date parameter as the reference point to convert relative time expressions to absolute date ranges or constraints.
 Inputs Provided:
 Database Type: Ensure that you use SQL dialect and functions specific database type. And strictly follow the specific rules provided.
 Table Schemas: Detailed definitions of tables, including all columns, primary keys, and foreign keys. Choose the tables that best answer the question.
 Data Details: Sample data and descriptions of key columns. Use related dimension data as guidance for constructing your query.
 Metrics (Semantic Layer): Predefined SQL fragments representing common metrics or aggregations.
+Parsed Date Ranges: (When provided) Pre-parsed temporal expressions with exact date ranges. ALWAYS use these specific dates instead of interpreting relative time expressions.
 Natural Language Question: A user's query written in plain language.
 Context: Related context includes results from previous attempts.
 Output format: Return a JSON object with the following structure, *only JSON*:

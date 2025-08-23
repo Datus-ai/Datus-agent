@@ -35,7 +35,8 @@ def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateS
             max_value_length=input_data.max_value_length,
             max_text_mark_length=input_data.max_text_mark_length,
             database_docs=input_data.database_docs,
-            current_date=get_default_current_date(input_data.current_date),
+            current_date=get_default_current_date(input_data.sql_task.current_date),
+            date_ranges=getattr(input_data.sql_task, "date_ranges", ""),
         )
 
         logger.debug(f"Generated SQL prompt:  {type(model)}, {prompt}")

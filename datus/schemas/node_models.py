@@ -38,6 +38,7 @@ class SqlTask(BaseModel):
     current_date: Optional[str] = Field(
         default=None, description="Current date reference for relative time expressions"
     )
+    date_ranges: str = Field(default="", description="Parsed date ranges context from date parser for SQL generation")
 
     # Metrics relative part
     layer1: str = Field(default="", description="Layer1 name")
@@ -339,9 +340,6 @@ class GenerateSQLInput(BaseInput):
     max_value_length: int = Field(default=500, description="Max value length")
     max_text_mark_length: int = Field(default=16, description="Max text mark length")
     database_docs: Optional[str] = Field(default="", description="Database documentation")
-    current_date: Optional[str] = Field(
-        default=None, description="Current date reference for relative time expressions"
-    )
 
 
 class GenerateSQLResult(BaseResult):
