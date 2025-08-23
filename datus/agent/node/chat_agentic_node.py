@@ -58,11 +58,11 @@ class ChatAgenticNode(AgenticNode):
         self.max_turns = max_turns if max_turns != 30 else (node_max_turns or 30)
 
         # Initialize MCP servers based on namespace
-        mcp_servers = self._setup_mcp_servers()
+        self.mcp_servers = self._setup_mcp_servers(agent_config)
 
         super().__init__(
             tools=[],
-            mcp_servers=mcp_servers,
+            mcp_servers=self.mcp_servers,
             agent_config=agent_config,
         )
 
@@ -79,7 +79,7 @@ class ChatAgenticNode(AgenticNode):
         self.tool_instance = DBFuncTool(conn)
         self.tools = self.tool_instance.available_tools()
 
-    def _setup_mcp_servers(self) -> Dict[str, MCPServerStdio]:
+    def _setup_mcp_servers(self, agent_config: Optional[AgentConfig] = None) -> Dict[str, MCPServerStdio]:
         """
         Set up MCP servers based on namespace and configuration.
 
@@ -94,8 +94,8 @@ class ChatAgenticNode(AgenticNode):
             import os
 
             root_path = "."
-            if self.agent_config and hasattr(self.agent_config, "nodes") and "chat" in self.agent_config.nodes:
-                chat_node_config = self.agent_config.nodes["chat"]
+            if agent_config and hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
+                chat_node_config = agent_config.nodes["chat"]
                 if chat_node_config.input and hasattr(chat_node_config.input, "workspace_root"):
                     workspace_root = chat_node_config.input.workspace_root
                     if workspace_root is not None:
@@ -110,7 +110,7 @@ class ChatAgenticNode(AgenticNode):
             filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
             if filesystem_server:
                 mcp_servers["filesystem"] = filesystem_server
-                logger.debug(f"Added filesystem MCP server with path: {filesystem_path}")
+                logger.info(f"Added filesystem MCP server with path: {filesystem_path}")
             else:
                 logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
 

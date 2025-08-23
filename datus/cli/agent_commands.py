@@ -169,8 +169,12 @@ class AgentCommands:
                     self.cli.current_db_name
                     or self.current_database
                     or (self.cli.args.db_path if hasattr(self.cli.args, "db_path") else "")
+                    or ""
                 )
                 database_name = self.cli._prompt_input("Enter database name", default=default_db)
+                if not database_name.strip():
+                    self.console.print("[bold red]Error:[/] Database name is required")
+                    return
                 # Output directory - optional input
                 output_dir = "output"
                 # output_dir = self.cli._prompt_input("Enter output directory", default="output")
