@@ -38,6 +38,3 @@ json-repair>=0.47.6
 pymysql>=1.1.1
 fastapi>=0.104.0
 uvicorn>=0.24.0
-dateparser>=1.1.0
-python-dateutil>=2.8.0
-parsedatetime>=2.6
