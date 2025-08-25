@@ -685,34 +685,50 @@ class DatusCLI:
                     sql = None
                     clean_output = None
 
+                    logger.debug(f"DEBUG: final_action.output: {final_action.output}")
+
                     # First check if SQL and response are directly available
                     sql = final_action.output.get("sql")
                     response = final_action.output.get("response")
 
-                    # If response contains debug format, extract from it
-                    if isinstance(response, dict) and "raw_output" in response:
-                        extracted_sql, extracted_output = self._extract_sql_and_output_from_content(
-                            response["raw_output"]
-                        )
-                        sql = sql or extracted_sql  # Use extracted if not already available
-                        clean_output = extracted_output
-                    elif isinstance(response, str):
-                        clean_output = response
+                    logger.debug(f"DEBUG: sql={sql}")
+                    logger.debug(f"DEBUG: response={response} (type: {type(response)})")
 
-                    # If we still don't have clean output, check other actions for content
-                    if not clean_output:
-                        for action in reversed(incremental_actions):
-                            if (
-                                action.status == ActionStatus.SUCCESS
-                                and action.output
-                                and isinstance(action.output, dict)
-                            ):
-                                content = action.output.get("content")
-                                if content:
-                                    extracted_sql, extracted_output = self._extract_sql_and_output_from_content(content)
-                                    sql = sql or extracted_sql
-                                    clean_output = extracted_output or content
-                                    break
+                    # Try to extract SQL and output from the string response
+                    extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
+                    sql = sql or extracted_sql
+                    # Determine clean_output based on sql and extracted_output
+                    clean_output = None
+
+                    if sql:
+                        # Has SQL: use extracted_output or fallback to response
+                        clean_output = extracted_output or response
+                        logger.debug(f"DEBUG: Has SQL, using extracted_output or response")
+                    elif isinstance(extracted_output, dict):
+                        # No SQL, extracted_output is dict: get raw_output from dict
+                        clean_output = extracted_output.get("raw_output", str(extracted_output))
+                        logger.debug(f"DEBUG: No SQL, extracted dict, using raw_output")
+                    else:
+                        # No SQL, no extracted_output: try to parse raw_output from response string
+                        try:
+                            import ast
+
+                            response_dict = ast.literal_eval(response)
+                            clean_output = (
+                                response_dict.get("raw_output", response)
+                                if isinstance(response_dict, dict)
+                                else response
+                            )
+                            logger.debug(f"DEBUG: No SQL, parsed raw_output from response string")
+                        except:
+                            clean_output = response
+                            logger.debug(f"DEBUG: No SQL, failed to parse response, using original")
+
+                    logger.debug(
+                        f"DEBUG: Extracted from string response - sql={extracted_sql}, output={extracted_output}"
+                    )
+
+                    logger.debug(f"DEBUG: Final result - sql={sql}, clean_output={clean_output}")
 
                     # Display using simple, focused methods
                     if sql:
@@ -1513,7 +1529,7 @@ Type '.help' for a list of commands or '.exit' to quit.
                 try:
                     json_content = json.loads(json_match.group(1))
                     sql = json_content.get("sql")
-                    output = json_content.get("output")
+                    output = json_content.get("output") or json_content.get("raw_output")
                     if output:
                         output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
                     return sql, output
@@ -1522,13 +1538,18 @@ Type '.help' for a list of commands or '.exit' to quit.
 
             # Pattern 2: Direct JSON in content
             try:
-                json_content = json.loads(content)
+                # Handle escaped quotes in the JSON string
+                unescaped_content = content.replace("\\'", "'").replace('\\"', '"')
+                json_content = json.loads(unescaped_content)
+                logger.debug(f"DEBUG: Successfully parsed JSON: {json_content}")
                 sql = json_content.get("sql")
-                output = json_content.get("output")
-                if output:
+                output = json_content.get("output") or json_content.get("raw_output")
+                logger.debug(f"DEBUG: Extracted sql={sql}, output={output} (type: {type(output)})")
+                if output and isinstance(output, str):
                     output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
                 return sql, output
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.debug(f"DEBUG: JSON decode failed for content: {content[:100]}... Error: {e}")
                 pass
 
             # Pattern 3: Look for SQL code blocks
