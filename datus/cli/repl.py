@@ -1069,7 +1069,7 @@ class DatusCLI:
                 self.console.print(f"  Context Remaining: {session_info['context_remaining']}")
                 self.console.print(f"  Context Length: {session_info['context_length']}")
             else:
-                self.console.print("[yellow]Chat node exists but no active session.[/]")
+                self.console.print("[yellow]No active session, you can use / to start a new one[/]")
         else:
             self.console.print("[yellow]No active chat session.[/]")
 
