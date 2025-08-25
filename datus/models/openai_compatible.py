@@ -9,6 +9,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import yaml
 from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool
+from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from langsmith import traceable
 from langsmith.wrappers import wrap_openai
@@ -494,7 +495,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_kwargs["tools"] = list(tools.values())
 
                 agent = Agent(**agent_kwargs)
-                result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+                try:
+                    result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+                except MaxTurnsExceeded as e:
+                    logger.error(f"Max turns exceeded: {str(e)}")
+                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
 
                 # Save LLM trace if method exists (for models that support it like DeepSeekModel)
                 if hasattr(self, "_save_llm_trace"):
@@ -621,7 +626,11 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 agent = Agent(**agent_kwargs)
 
-                result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+                try:
+                    result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+                except MaxTurnsExceeded as e:
+                    logger.error(f"Max turns exceeded in streaming: {str(e)}")
+                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
 
                 # Yield streaming actions as they come
                 while not result.is_complete:

@@ -174,6 +174,7 @@ class TestDeepSeekModel:
                 prompt=question,
                 output_type=str,
                 mcp_servers={"sqlite": mcp_server},
+                max_turns=20,
                 instruction=instructions,
             ):
                 action_count += 1
