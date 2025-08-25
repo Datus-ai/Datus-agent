@@ -1096,12 +1096,10 @@ class DatusCLI:
             success = asyncio.run(run_compact())
 
             if success:
-                # Get new session info after compacting
-                new_session_info = self.chat_node.get_session_info()
-                
                 self.console.print("[bold green]✓ Chat session compacted successfully![/]")
-                self.console.print(f"  New Session ID: {new_session_info['session_id']}")
-                self.console.print(f"  Token Count Reset: {session_info['token_count']} → {new_session_info['token_count']}")
+                self.console.print(f"  Previous Session ID: {session_info['session_id']}")
+                self.console.print(f"  Token Count Reset: {session_info['token_count']} → 0")
+                self.console.print("  Session cleared. Next chat will create new session with summary context.")
                 self.console.print("  Conversation history summarized and preserved as context.")
             else:
                 self.console.print("[bold red]✗ Failed to compact chat session.[/]")

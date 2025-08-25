@@ -130,7 +130,7 @@ class AgenticNode(ABC):
         if self.agent_config and hasattr(self.agent_config, "prompt_version"):
             version = self.agent_config.prompt_version
 
-        root_path = None
+        root_path = "~/.datus/sqls"
         if self.agent_config and hasattr(self.agent_config, "nodes") and "chat" in self.agent_config.nodes:
             chat_node_config = self.agent_config.nodes["chat"]
             if chat_node_config.input and hasattr(chat_node_config.input, "workspace_root"):
