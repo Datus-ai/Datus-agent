@@ -147,6 +147,9 @@ class ChatAgenticNode(AgenticNode):
         yield action
 
         try:
+            # Check for auto-compact before session creation to ensure fresh context
+            await self._auto_compact()
+
             # Get or create session and any available summary
             session, conversation_summary = self._get_or_create_session()
 
@@ -165,9 +168,6 @@ class ChatAgenticNode(AgenticNode):
                     context_parts.append(f"schema: {user_input.db_schema}")
 
                 enhanced_message = f"Context: {', '.join(context_parts)}\n\nUser question: {user_input.user_message}"
-
-            # Check for auto-compact
-            await self._auto_compact()
 
             # Execute with streaming
             response_content = ""

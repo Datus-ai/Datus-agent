@@ -699,6 +699,12 @@ class DatusCLI:
                     elif isinstance(response, str):
                         clean_output = response
 
+                    # Check for direct raw_output in final_action.output (priority fallback)
+                    if not clean_output and "raw_output" in final_action.output:
+                        raw_output = final_action.output.get("raw_output")
+                        if isinstance(raw_output, str):
+                            clean_output = raw_output
+
                     # If we still don't have clean output, check other actions for content
                     if not clean_output:
                         for action in reversed(incremental_actions):
@@ -728,9 +734,11 @@ class DatusCLI:
             self.chat_history.append(
                 {
                     "user": message,
-                    "response": incremental_actions[-1].output.get("response", "")
-                    if incremental_actions and incremental_actions[-1].output
-                    else "",
+                    "response": (
+                        incremental_actions[-1].output.get("response", "")
+                        if incremental_actions and incremental_actions[-1].output
+                        else ""
+                    ),
                     "actions": len(incremental_actions),
                 }
             )
@@ -1097,13 +1105,8 @@ class DatusCLI:
 
             if success:
                 self.console.print("[bold green]✓ Chat session compacted successfully![/]")
-                self.console.print(f"  Previous Session ID: {session_info['session_id']}")
-                self.console.print(f"  Token Count Reset: {session_info['token_count']} → 0")
-                self.console.print("  Session cleared. Next chat will create new session with summary context.")
-                self.console.print("  Conversation history summarized and preserved as context.")
             else:
                 self.console.print("[bold red]✗ Failed to compact chat session.[/]")
-                self.console.print("  Check logs for more details.")
 
         except Exception as e:
             logger.error(f"Compact command error: {str(e)}")
