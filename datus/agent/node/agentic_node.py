@@ -173,13 +173,13 @@ class AgenticNode(ABC):
     def _get_or_create_session(self) -> tuple[SQLiteSession, Optional[str]]:
         """
         Get or create the session for this node.
-        
+
         Returns:
-            Tuple of (session, summary) where summary is the conversation summary 
+            Tuple of (session, summary) where summary is the conversation summary
             from previous compact (if any), None otherwise
         """
         summary = None
-        
+
         if self._session is None:
             if self.session_id is None:
                 self.session_id = self._generate_session_id()
@@ -193,7 +193,7 @@ class AgenticNode(ABC):
                 if self.last_summary:
                     summary = self.last_summary
                     logger.debug(f"Returning summary from previous compact: {len(summary)} chars")
-                    
+
                     # Clear the summary after using it once
                     self.last_summary = None
 
@@ -251,17 +251,19 @@ class AgenticNode(ABC):
             old_tokens = self._session_tokens
 
             # 1. Generate summary using LLM with existing session
-            summarization_prompt = """Summarize our conversation up to this point. The summary should be a concise yet comprehensive overview of all key topics, questions, answers, and important details discussed. This summary will replace the current chat history to conserve tokens, so it must capture everything essential to understand the context and continue our conversation effectively as if no information was lost."""
+            summarization_prompt = (
+                "Summarize our conversation up to this point. The summary should be a concise yet comprehensive "
+                "overview of all key topics, questions, answers, and important details discussed. This summary "
+                "will replace the current chat history to conserve tokens, so it must capture everything "
+                "essential to understand the context and continue our conversation effectively as if no "
+                "information was lost."
+            )
 
             try:
                 result = await self.model.generate_with_tools(
-                    prompt=summarization_prompt,
-                    session=self._session,
-                    max_turns=1,
-                    temperature=0.3,
-                    max_tokens=2000
+                    prompt=summarization_prompt, session=self._session, max_turns=1, temperature=0.3, max_tokens=2000
                 )
-                summary = result.get('content', '')
+                summary = result.get("content", "")
                 logger.debug(f"Generated summary: {len(summary)} characters")
             except Exception as e:
                 logger.error(f"Failed to generate summary with LLM: {e}")

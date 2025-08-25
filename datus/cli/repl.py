@@ -691,9 +691,6 @@ class DatusCLI:
                     sql = final_action.output.get("sql")
                     response = final_action.output.get("response")
 
-                    logger.debug(f"DEBUG: sql={sql}")
-                    logger.debug(f"DEBUG: response={response} (type: {type(response)})")
-
                     # Try to extract SQL and output from the string response
                     extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
                     sql = sql or extracted_sql
@@ -703,11 +700,9 @@ class DatusCLI:
                     if sql:
                         # Has SQL: use extracted_output or fallback to response
                         clean_output = extracted_output or response
-                        logger.debug(f"DEBUG: Has SQL, using extracted_output or response")
                     elif isinstance(extracted_output, dict):
                         # No SQL, extracted_output is dict: get raw_output from dict
                         clean_output = extracted_output.get("raw_output", str(extracted_output))
-                        logger.debug(f"DEBUG: No SQL, extracted dict, using raw_output")
                     else:
                         # No SQL, no extracted_output: try to parse raw_output from response string
                         try:
@@ -719,16 +714,8 @@ class DatusCLI:
                                 if isinstance(response_dict, dict)
                                 else response
                             )
-                            logger.debug(f"DEBUG: No SQL, parsed raw_output from response string")
-                        except:
+                        except (ValueError, SyntaxError):
                             clean_output = response
-                            logger.debug(f"DEBUG: No SQL, failed to parse response, using original")
-
-                    logger.debug(
-                        f"DEBUG: Extracted from string response - sql={extracted_sql}, output={extracted_output}"
-                    )
-
-                    logger.debug(f"DEBUG: Final result - sql={sql}, clean_output={clean_output}")
 
                     # Display using simple, focused methods
                     if sql:
@@ -1550,7 +1537,6 @@ Type '.help' for a list of commands or '.exit' to quit.
                 return sql, output
             except json.JSONDecodeError as e:
                 logger.debug(f"DEBUG: JSON decode failed for content: {content[:100]}... Error: {e}")
-                pass
 
             # Pattern 3: Look for SQL code blocks
             sql_pattern = r"```sql\s*(.*?)\s*```"
