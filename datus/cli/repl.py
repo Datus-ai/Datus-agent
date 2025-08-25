@@ -699,12 +699,6 @@ class DatusCLI:
                     elif isinstance(response, str):
                         clean_output = response
 
-                    # Check for direct raw_output in final_action.output (priority fallback)
-                    if not clean_output and "raw_output" in final_action.output:
-                        raw_output = final_action.output.get("raw_output")
-                        if isinstance(raw_output, str):
-                            clean_output = raw_output
-
                     # If we still don't have clean output, check other actions for content
                     if not clean_output:
                         for action in reversed(incremental_actions):
