@@ -81,4 +81,11 @@ async def multiple_mcp_servers(mcp_servers: Dict[str, Any]):
 
     finally:
         logger.debug("Cleaning up all MCP servers via AsyncExitStack")
-        await stack.aclose()
+        try:
+            await stack.aclose()
+        except RuntimeError as e:
+            if "Attempted to exit cancel scope in a different task than it was entered in" in str(e):
+                # This is a known anyio issue that can be safely ignored during cleanup
+                logger.debug("Suppressed cancel scope error during MCP server cleanup")
+            else:
+                raise

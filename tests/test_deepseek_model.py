@@ -162,7 +162,7 @@ class TestDeepSeekModel:
             "explanation": "Business insights..."
         }"""
 
-        question = """database_type='sqlite' task='Calculate the total revenue in 1993 from orders with a discount
+        question = """database_type='sqlite' task='Calculate the total revenue in 1992 from orders with a discount
          between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the extended
          price by the discount'"""
         ssb_db_path = "tests/data/SSB.db"
