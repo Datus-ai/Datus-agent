@@ -2,8 +2,8 @@ from typing import Any, Dict, List
 
 import pytest
 
+from datus.agent.node.date_parser_node import DateParserNode
 from datus.models.base import LLMBaseModel
-from datus.tools.date_tools.date_parser import DateParsingTool
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
 
@@ -128,14 +128,41 @@ def agent_config():
     return load_acceptance_config()
 
 
-@pytest.fixture
-def date_parser(agent_config):
-    """Create date parser instance"""
+def _create_date_parser(agent_config, language: str):
+    """Helper function to create date parser instance with specified language"""
     try:
         model = LLMBaseModel.create_model(agent_config)
-        return DateParsingTool(model)
+        # Set language for date parsing
+        if not hasattr(agent_config, "nodes"):
+            agent_config.nodes = {}
+
+        # Create a mock NodeConfig with input containing language setting
+        mock_input = type("DateParserInput", (), {"language": language})()
+        mock_node_config = type("NodeConfig", (), {"input": mock_input})()
+        agent_config.nodes["date_parser"] = mock_node_config
+
+        parser = DateParserNode(
+            node_id="test_date_parser",
+            description="Test date parser node",
+            node_type="date_parser",
+            agent_config=agent_config,
+        )
+        parser.model = model
+        return parser
     except Exception as e:
         pytest.skip(f"Date parser initialization failed: {e}")
+
+
+@pytest.fixture
+def date_parser_en(agent_config):
+    """Create English date parser instance"""
+    return _create_date_parser(agent_config, "en")
+
+
+@pytest.fixture
+def date_parser(agent_config):
+    """Create Chinese date parser instance"""
+    return _create_date_parser(agent_config, "cn")
 
 
 class TestDateParser:
@@ -144,7 +171,7 @@ class TestDateParser:
     def test_chinese_expressions(self, chinese_expressions_test_cases, date_parser):
         """Test Chinese temporal expressions parsing"""
         for test_case in chinese_expressions_test_cases:
-            results = date_parser.extract_and_parse_dates(test_case["text"], test_case["reference"])
+            results = date_parser._extract_and_parse_dates(test_case["text"], test_case["reference"])
 
             assert results is not None, f"No results for: {test_case['description']}"
             assert len(results) > 0, f"Empty results for: {test_case['description']}"
@@ -167,10 +194,10 @@ class TestDateParser:
                 f"expected {test_case['expected_end']}, got {actual_end}"
             )
 
-    def test_english_expressions(self, english_expressions_test_cases, date_parser):
+    def test_english_expressions(self, english_expressions_test_cases, date_parser_en):
         """Test English temporal expressions parsing"""
         for test_case in english_expressions_test_cases:
-            results = date_parser.extract_and_parse_dates(test_case["text"], test_case["reference"])
+            results = date_parser_en._extract_and_parse_dates(test_case["text"], test_case["reference"])
 
             assert results is not None, f"No results for: {test_case['description']}"
             assert len(results) > 0, f"Empty results for: {test_case['description']}"
@@ -196,7 +223,7 @@ class TestDateParser:
     def test_mixed_expressions(self, mixed_expressions_test_cases, date_parser):
         """Test mixed temporal expressions parsing"""
         for test_case in mixed_expressions_test_cases:
-            results = date_parser.extract_and_parse_dates(test_case["text"], test_case["reference"])
+            results = date_parser._extract_and_parse_dates(test_case["text"], test_case["reference"])
 
             assert results is not None, f"No results for: {test_case['description']}"
             assert len(results) > 0, f"Empty results for: {test_case['description']}"

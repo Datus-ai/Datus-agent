@@ -21,6 +21,7 @@ class DateParserInput(BaseInput):
     """Input model for date parser node."""
 
     sql_task: SqlTask = Field(description="The SQL task containing the query to parse")
+    language: Optional[str] = Field(default="en", description="Language for date parsing (en/cn)")
 
 
 class DateParserResult(BaseResult):

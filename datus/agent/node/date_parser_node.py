@@ -1,11 +1,12 @@
-from typing import AsyncGenerator, Dict, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult
+from datus.prompts.extract_dates import get_date_extraction_prompt, parse_date_extraction_response
+from datus.prompts.prompt_manager import prompt_manager
+from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult, ExtractedDate
 from datus.schemas.node_models import SqlTask
-from datus.tools.date_tools import DateParsingTool
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import get_default_current_date
 
@@ -15,16 +16,20 @@ logger = get_logger(__name__)
 class DateParserNode(Node):
     """Node for parsing temporal expressions in SQL tasks."""
 
+    def _get_language_setting(self) -> str:
+        """Get the language setting from agent config."""
+        if self.agent_config and hasattr(self.agent_config, "nodes"):
+            nodes_config = self.agent_config.nodes
+            if "date_parser" in nodes_config:
+                date_parser_config = nodes_config["date_parser"]
+                # Check if language is in the input attribute of NodeConfig
+                if hasattr(date_parser_config, "input") and hasattr(date_parser_config.input, "language"):
+                    return date_parser_config.input.language
+        return "en"
+
     def execute(self):
         """Execute date parsing."""
         self.result = self._execute_date_parsing()
-
-    async def execute_stream(
-        self, action_history_manager: Optional[ActionHistoryManager] = None
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """Execute date parsing with streaming support."""
-        async for action in self._date_parsing_stream(action_history_manager):
-            yield action
 
     def setup_input(self, workflow: Workflow) -> Dict:
         """Setup input for date parsing node."""
@@ -75,16 +80,13 @@ class DateParserNode(Node):
             )
 
         try:
-            # Create date parsing tool
-            date_tool = DateParsingTool(self.model)
-
             # Extract and parse temporal expressions
-            extracted_dates = date_tool.extract_and_parse_dates(
+            extracted_dates = self._extract_and_parse_dates(
                 text=self.input.sql_task.task, current_date=get_default_current_date(self.input.sql_task.current_date)
             )
 
             # Generate date context for SQL generation
-            date_context = date_tool.generate_date_context(extracted_dates)
+            date_context = self._generate_date_context(extracted_dates)
 
             # Create enriched task with date information
             enriched_task_data = self.input.sql_task.model_dump()
@@ -112,81 +114,160 @@ class DateParserNode(Node):
                 success=False, error=str(e), extracted_dates=[], enriched_task=self.input.sql_task, date_context=""
             )
 
-    async def _date_parsing_stream(
-        self, action_history_manager: Optional[ActionHistoryManager] = None
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """Date parsing with streaming support and action history tracking."""
-        if not self.model:
-            logger.error("Model not available for date parsing")
-            return
+    def _extract_and_parse_dates(self, text: str, current_date: Optional[str] = None) -> List[ExtractedDate]:
+        """
+        Extract temporal expressions from text and parse them using LLM.
+        Support both English and Chinese temporal expressions.
 
+        Args:
+            text: The text to analyze for temporal expressions
+            current_date: Reference date for relative expressions (YYYY-MM-DD format)
+
+        Returns:
+            List of ExtractedDate objects with parsed date information
+        """
         try:
-            # Date parsing preparation action
-            prep_action = ActionHistory(
-                action_id="date_parsing_prep",
-                role=ActionRole.WORKFLOW,
-                messages="Preparing date parsing for temporal expressions in the query",
-                action_type="date_preparation",
-                input={
-                    "task": self.input.sql_task.task if hasattr(self.input, "sql_task") else "",
-                    "current_date": get_default_current_date(self.input.sql_task.current_date)
-                    if hasattr(self.input, "sql_task")
-                    else None,
-                },
-                status=ActionStatus.PROCESSING,
-            )
-            yield prep_action
+            # Step 1: Use LLM to extract temporal expressions
+            extraction_prompt = get_date_extraction_prompt(text)
+            logger.debug(f"Date extraction prompt: {extraction_prompt}")
 
-            # Date extraction action
-            extraction_action = ActionHistory(
-                action_id="date_extraction",
-                role=ActionRole.WORKFLOW,
-                messages="Extracting temporal expressions using LLM",
-                action_type="date_extraction",
-                input={
-                    "query_text": self.input.sql_task.task if hasattr(self.input, "sql_task") else "",
-                },
-                status=ActionStatus.PROCESSING,
-            )
-            yield extraction_action
+            # Get LLM response
+            llm_response = self.model.generate_with_json_output(extraction_prompt)
+            logger.debug(f"LLM date extraction response: {llm_response}")
 
-            # Execute date parsing - reuse existing logic
-            try:
-                result = self._execute_date_parsing()
+            # Parse the response
+            extracted_expressions = parse_date_extraction_response(llm_response)
+            logger.debug(f"Extracted expressions: {extracted_expressions}")
 
-                # Update preparation action
-                prep_action.status = ActionStatus.SUCCESS
-                prep_action.output = {
-                    "preparation_complete": True,
-                    "model_ready": True,
-                }
+            if not extracted_expressions:
+                logger.info("No temporal expressions found in the text")
+                return []
 
-                # Update extraction action
-                extraction_action.status = ActionStatus.SUCCESS
-                extraction_action.output = {
-                    "success": result.success,
-                    "extracted_count": len(result.extracted_dates),
-                    "has_date_context": bool(result.date_context),
-                    "expressions": [date.original_text for date in result.extracted_dates]
-                    if result.extracted_dates
-                    else [],
-                }
+            # Step 2: Parse each expression using LLM
+            parsed_dates = []
+            reference_date = datetime.strptime(current_date, "%Y-%m-%d")
 
-                # Store result for later use
-                self.result = result
+            for expr in extracted_expressions:
+                parsed_date = self._parse_temporal_expression(expr, reference_date)
+                if parsed_date:
+                    parsed_dates.append(parsed_date)
 
-            except Exception as e:
-                prep_action.status = ActionStatus.FAILED
-                prep_action.output = {"error": str(e)}
-
-                extraction_action.status = ActionStatus.FAILED
-                extraction_action.output = {"error": str(e)}
-                logger.error(f"Date parsing error: {str(e)}")
-                raise
-
-            # Yield the updated actions with final status
-            yield extraction_action
+            logger.info(f"Successfully parsed {len(parsed_dates)} temporal expressions")
+            return parsed_dates
 
         except Exception as e:
-            logger.error(f"Date parsing streaming error: {str(e)}")
-            raise
+            logger.error(f"Error in date extraction and parsing: {str(e)}")
+            return []
+
+    def _parse_temporal_expression(
+        self, expression: Dict[str, Any], reference_date: datetime
+    ) -> Optional[ExtractedDate]:
+        """
+        Parse temporal expression using LLM.
+
+        Args:
+            expression: Dictionary containing the temporal expression info
+            reference_date: Reference datetime for relative expressions
+
+        Returns:
+            ExtractedDate object or None if parsing fails
+        """
+        original_text = expression.get("original_text", "")
+        date_type = expression.get("date_type", "relative")
+        confidence = expression.get("confidence", 1.0)
+
+        logger.debug(f"Parsing '{original_text}' using LLM")
+
+        result = self._parse_with_llm(original_text, reference_date)
+        if result:
+            start_date, end_date = result
+            return self._create_extracted_date(original_text, date_type, confidence, start_date, end_date)
+
+        logger.warning(f"LLM parsing failed for: '{original_text}'")
+        return None
+
+    def _parse_with_llm(self, text: str, reference_date: datetime) -> Optional[Tuple[datetime, datetime]]:
+        """Parse temporal expressions using LLM."""
+        response = None
+        try:
+            prompt = prompt_manager.render_template(
+                f"date_parser_{self._get_language_setting()}",
+                version="1.0",
+                text=text,
+                reference_date=reference_date,
+            )
+
+            response = self.model.generate_with_json_output(prompt)
+            logger.debug(f"LLM parsing response: {response}")
+            # generate_with_json_output should always return a dict
+            if not isinstance(response, dict):
+                logger.debug(f"Expected dict from generate_with_json_output, got {type(response)}: {response}")
+                return None
+
+            result = response
+
+            start_date = datetime.strptime(result["start_date"], "%Y-%m-%d")
+            end_date = datetime.strptime(result["end_date"], "%Y-%m-%d")
+            return start_date, end_date
+
+        except Exception as e:
+            logger.error(f"LLM parsing failed for '{text}': {e}")
+            if response is not None:
+                logger.error(f"LLM response was: {response}")
+                logger.error(f"Response type: {type(response)}")
+
+        return None
+
+    def _create_extracted_date(
+        self, original_text: str, date_type: str, confidence: float, start_date: datetime, end_date: datetime
+    ) -> ExtractedDate:
+        """Create an ExtractedDate object from parsed dates."""
+        if start_date == end_date:
+            # Single date
+            return ExtractedDate(
+                original_text=original_text,
+                parsed_date=start_date.strftime("%Y-%m-%d"),
+                start_date=None,
+                end_date=None,
+                date_type="specific" if date_type == "range" else date_type,
+                confidence=confidence,
+            )
+        else:
+            # Date range
+            return ExtractedDate(
+                original_text=original_text,
+                parsed_date=None,
+                start_date=start_date.strftime("%Y-%m-%d"),
+                end_date=end_date.strftime("%Y-%m-%d"),
+                date_type="range",
+                confidence=confidence,
+            )
+
+    def _generate_date_context(self, extracted_dates: List[ExtractedDate]) -> str:
+        """
+        Generate date context for SQL generation prompt.
+        This content will be used in the "Parsed Date Ranges:" section.
+
+        Args:
+            extracted_dates: List of extracted and parsed dates
+
+        Returns:
+            String containing parsed date ranges for SQL prompt
+        """
+        if not extracted_dates:
+            return ""
+
+        context_parts = []
+
+        for date in extracted_dates:
+            if date.date_type == "range" and date.start_date and date.end_date:
+                context_parts.append(f"- '{date.original_text}' → {date.start_date} to {date.end_date}")
+            elif date.parsed_date:
+                context_parts.append(f"- '{date.original_text}' → {date.parsed_date}")
+
+        return "\n".join(context_parts)
+
+    async def execute_stream(self, action_history_manager=None):
+        """Empty streaming implementation - not needed for date parsing."""
+        return
+        yield

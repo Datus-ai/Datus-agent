@@ -1,0 +1,42 @@
+Parse the temporal expression "{{ text }}" with reference date {{ reference_date.strftime('%Y-%m-%d') }}.
+
+IMPORTANT RULES:
+1. For duration-based expressions (N天内/N天, N周内/N周, N个月内/N个月): The reference date is ALWAYS INCLUDED in the time range
+2. For period-based expressions (上个月, 去年, 下个月, 明年, 上周, 下周): The reference date is NOT included - return the complete period only
+3. For "未来N天内": start_date = reference_date, end_date = reference_date + N days
+4. For "最近N天": start_date = reference_date - N days, end_date = reference_date
+5. For "接下来N周": start_date = reference_date, end_date = reference_date + (N × 7) days
+6. For "最近N周": start_date = reference_date - (N × 7) days, end_date = reference_date
+7. For "未来N个月内": start_date = reference_date, end_date = reference_date + N months
+8. For "最近N个月": start_date = reference_date - N months, end_date = reference_date
+9. For "下个月": return the complete next month (start = first day of next month, end = last day of next month)
+10. For "上个月": return the complete last month (start = first day of last month, end = last day of last month)
+11. For "下周": return the complete next week (Monday to Sunday)
+12. For "上周": return the complete last week (Monday to Sunday)
+13. For "今年": return the complete current year (start = Jan 1, end = Dec 31)
+14. For expressions with "现在"/"今天": treat as the reference date
+15. For expressions like "A到现在": end_date should be the reference date
+16. Week ranges are from Monday to Sunday (Monday = start, Sunday = end)
+
+Return JSON format:
+{
+    "start_date": "YYYY-MM-DD",
+    "end_date": "YYYY-MM-DD"
+}
+
+Examples:
+- "未来三个月内" with reference 2025-01-01 → start_date: "2025-01-01", end_date: "2025-04-01" (duration-based)
+- "最近三个月" with reference 2025-01-01 → start_date: "2024-10-01", end_date: "2025-01-01" (duration-based)
+- "下个月" with reference 2025-01-15 → start_date: "2025-02-01", end_date: "2025-02-28" (period-based)
+- "上个月" with reference 2025-01-15 → start_date: "2024-12-01", end_date: "2024-12-31" (period-based)
+- "未来30天内" with reference 2025-01-01 → start_date: "2025-01-01", end_date: "2025-01-31" (duration-based)
+- "最近7天" with reference 2025-01-01 → start_date: "2024-12-25", end_date: "2025-01-01" (duration-based)
+- "上周" with reference 2025-02-15 (Saturday) → start_date: "2025-02-03" (Monday), end_date: "2025-02-09" (Sunday) (period-based)
+- "下周" with reference 2025-02-15 (Saturday) → start_date: "2025-02-17" (Monday), end_date: "2025-02-23" (Sunday) (period-based)
+- "接下来两周" with reference 2025-02-15 → start_date: "2025-02-15", end_date: "2025-03-01" (duration-based)
+- "最近两周" with reference 2025-02-15 → start_date: "2025-02-01", end_date: "2025-02-15" (duration-based)
+- "今年" with reference 2025-06-15 → start_date: "2025-01-01", end_date: "2025-12-31" (period-based)
+- "从上个月到下个月" with reference 2025-01-15 → start_date: "2024-12-01", end_date: "2025-02-28"
+- "2024年底到现在" with reference 2025-01-15 → start_date: "2024-12-31", end_date: "2025-01-15"
+
+For single dates, use the same date for both start_date and end_date.

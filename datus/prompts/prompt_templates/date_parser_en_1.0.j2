@@ -1,0 +1,41 @@
+Parse the temporal expression "{{ text }}" with reference date {{ reference_date.strftime('%Y-%m-%d') }}.
+
+IMPORTANT RULES:
+1. For duration-based expressions (last/next N days, last/next N weeks, last/next N months): The reference date is ALWAYS INCLUDED in the time range
+2. For period-based expressions (last month, last year, next month, next year, last week, next week): The reference date is NOT included - return the complete period only
+3. For "next N days": start_date = reference_date, end_date = reference_date + N days
+4. For "last N days": start_date = reference_date - N days, end_date = reference_date
+5. For "next N weeks": start_date = reference_date, end_date = reference_date + (N × 7) days
+6. For "last N weeks": start_date = reference_date - (N × 7) days, end_date = reference_date
+7. For "next N months": start_date = reference_date, end_date = reference_date + N months
+8. For "last N months": start_date = reference_date - N months, end_date = reference_date
+9. For "next month": return the complete next month (start = first day of next month, end = last day of next month)
+10. For "last month": return the complete last month (start = first day of last month, end = last day of last month)
+11. For "next week": return the complete next week (Sunday to Saturday)
+12. For "last week": return the complete last week (Sunday to Saturday)
+13. For "this year": return the complete current year (start = Jan 1, end = Dec 31)
+14. For expressions with "now"/"today": treat as the reference date
+15. For expressions like "A to now": end_date should be the reference date
+16. Week ranges are from Sunday to Saturday (Sunday = start, Saturday = end)
+
+Return JSON format:
+{
+    "start_date": "YYYY-MM-DD",
+    "end_date": "YYYY-MM-DD"
+}
+
+Examples:
+- "next three months" with reference 2025-01-01 → start_date: "2025-01-01", end_date: "2025-04-01" (duration-based)
+- "last three months" with reference 2025-01-01 → start_date: "2024-10-01", end_date: "2025-01-01" (duration-based)
+- "next month" with reference 2025-01-15 → start_date: "2025-02-01", end_date: "2025-02-28" (period-based)
+- "last month" with reference 2025-01-15 → start_date: "2024-12-01", end_date: "2024-12-31" (period-based)
+- "next 30 days" with reference 2025-01-01 → start_date: "2025-01-01", end_date: "2025-01-31" (duration-based)
+- "last 7 days" with reference 2025-01-01 → start_date: "2024-12-25", end_date: "2025-01-01" (duration-based)
+- "last week" with reference 2025-01-15 (Wednesday) → start_date: "2025-01-05" (Sunday), end_date: "2025-01-11" (Saturday) (period-based)
+- "last two weeks" with reference 2025-01-15 (Wednesday) → start_date: "2025-01-01", end_date: "2025-01-15" (duration-based)
+- "next week" with reference 2025-01-15 (Wednesday) → start_date: "2025-01-19" (Sunday), end_date: "2025-01-25" (Saturday) (period-based)
+- "this year" with reference 2025-06-15 → start_date: "2025-01-01", end_date: "2025-12-31" (period-based)
+- "from last month to next month" with reference 2025-01-15 → start_date: "2024-12-01", end_date: "2025-02-28"
+- "from end of 2024 to now" with reference 2025-01-15 → start_date: "2024-12-31", end_date: "2025-01-15"
+
+For single dates, use the same date for both start_date and end_date.
