@@ -60,43 +60,8 @@ def chinese_expressions_test_cases() -> List[Dict[str, Any]]:
 
 
 @pytest.fixture
-def english_expressions_test_cases() -> List[Dict[str, Any]]:
-    """Test cases for English temporal expressions"""
-    return [
-        {
-            "text": "next 3 months performance data",
-            "reference": "2025-01-01",
-            "expected_start": "2025-01-01",
-            "expected_end": "2025-04-01",
-            "description": "next 3 months",
-        },
-        {
-            "text": "last 6 months sales report",
-            "reference": "2025-01-01",
-            "expected_start": "2024-07-01",
-            "expected_end": "2025-01-01",
-            "description": "last 6 months",
-        },
-        {
-            "text": "yesterday's meeting notes",
-            "reference": "2025-01-15",
-            "expected_start": "2025-01-14",
-            "expected_end": "2025-01-14",
-            "description": "yesterday",
-        },
-        {
-            "text": "this year's budget",
-            "reference": "2025-06-15",
-            "expected_start": "2025-01-01",
-            "expected_end": "2025-12-31",
-            "description": "this year",
-        },
-    ]
-
-
-@pytest.fixture
 def mixed_expressions_test_cases() -> List[Dict[str, Any]]:
-    """Test cases for mixed or complex expressions"""
+    """Test cases for mixed or complex Chinese expressions"""
     return [
         {
             "text": "从上个月到下个月的趋势分析",
@@ -128,16 +93,17 @@ def agent_config():
     return load_acceptance_config()
 
 
-def _create_date_parser(agent_config, language: str):
-    """Helper function to create date parser instance with specified language"""
+@pytest.fixture
+def date_parser_cn(agent_config):
+    """Create Chinese date parser instance"""
     try:
         model = LLMBaseModel.create_model(agent_config)
-        # Set language for date parsing
+        # Set Chinese language for date parsing
         if not hasattr(agent_config, "nodes"):
             agent_config.nodes = {}
 
         # Create a mock NodeConfig with input containing language setting
-        mock_input = type("DateParserInput", (), {"language": language})()
+        mock_input = type("DateParserInput", (), {"language": "cn"})()
         mock_node_config = type("NodeConfig", (), {"input": mock_input})()
         agent_config.nodes["date_parser"] = mock_node_config
 
@@ -153,25 +119,13 @@ def _create_date_parser(agent_config, language: str):
         pytest.skip(f"Date parser initialization failed: {e}")
 
 
-@pytest.fixture
-def date_parser_en(agent_config):
-    """Create English date parser instance"""
-    return _create_date_parser(agent_config, "en")
+class TestChineseDateParser:
+    """Test suite for Chinese Date Parser"""
 
-
-@pytest.fixture
-def date_parser(agent_config):
-    """Create Chinese date parser instance"""
-    return _create_date_parser(agent_config, "cn")
-
-
-class TestDateParser:
-    """Test suite for DateParser class"""
-
-    def test_chinese_expressions(self, chinese_expressions_test_cases, date_parser):
+    def test_chinese_expressions(self, chinese_expressions_test_cases, date_parser_cn):
         """Test Chinese temporal expressions parsing"""
         for test_case in chinese_expressions_test_cases:
-            results = date_parser._extract_and_parse_dates(test_case["text"], test_case["reference"])
+            results = date_parser_cn._extract_and_parse_dates(test_case["text"], test_case["reference"])
 
             assert results is not None, f"No results for: {test_case['description']}"
             assert len(results) > 0, f"Empty results for: {test_case['description']}"
@@ -194,36 +148,10 @@ class TestDateParser:
                 f"expected {test_case['expected_end']}, got {actual_end}"
             )
 
-    def test_english_expressions(self, english_expressions_test_cases, date_parser_en):
-        """Test English temporal expressions parsing"""
-        for test_case in english_expressions_test_cases:
-            results = date_parser_en._extract_and_parse_dates(test_case["text"], test_case["reference"])
-
-            assert results is not None, f"No results for: {test_case['description']}"
-            assert len(results) > 0, f"Empty results for: {test_case['description']}"
-
-            result = results[0]
-
-            if result.date_type == "range":
-                actual_start = result.start_date
-                actual_end = result.end_date
-            else:
-                actual_start = result.parsed_date
-                actual_end = result.parsed_date
-
-            assert actual_start == test_case["expected_start"], (
-                f"Start date mismatch for {test_case['description']}: "
-                f"expected {test_case['expected_start']}, got {actual_start}"
-            )
-            assert actual_end == test_case["expected_end"], (
-                f"End date mismatch for {test_case['description']}: "
-                f"expected {test_case['expected_end']}, got {actual_end}"
-            )
-
-    def test_mixed_expressions(self, mixed_expressions_test_cases, date_parser):
-        """Test mixed temporal expressions parsing"""
+    def test_mixed_expressions(self, mixed_expressions_test_cases, date_parser_cn):
+        """Test mixed Chinese temporal expressions parsing"""
         for test_case in mixed_expressions_test_cases:
-            results = date_parser._extract_and_parse_dates(test_case["text"], test_case["reference"])
+            results = date_parser_cn._extract_and_parse_dates(test_case["text"], test_case["reference"])
 
             assert results is not None, f"No results for: {test_case['description']}"
             assert len(results) > 0, f"Empty results for: {test_case['description']}"

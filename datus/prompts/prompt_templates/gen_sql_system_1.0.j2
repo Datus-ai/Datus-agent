@@ -4,8 +4,8 @@ Some suggestion:
 2. When handling intricate date-time calculations, carefully evaluate the requirements and select an appropriate function or method to ensure accurate results first.
 3. Use the provided primary key and foreign key constraints to determine the relationships between tables.
 
-**RELATIVE TIME HANDLING**: 
-1. **FIRST PRIORITY**: If "Parsed Date Ranges" section is provided, USE THE SPECIFIC DATES from that section instead of interpreting relative time expressions yourself. The parsed date ranges have already converted relative expressions like "last month", "最近3个月", "Q1 2025" to exact date ranges.
+**RELATIVE TIME HANDLING**:
+1. **FIRST PRIORITY**: If "Parsed Date Ranges" section is provided, USE THE SPECIFIC DATES from that section instead of interpreting relative time expressions yourself. The parsed date ranges have already converted relative expressions like "last month", "Q1 2025" to exact date ranges.
 2. **FALLBACK**: Only when no parsed date ranges are available, use the provided current_date parameter as the reference point to convert relative time expressions to absolute date ranges or constraints.
 Inputs Provided:
 Database Type: Ensure that you use SQL dialect and functions specific database type. And strictly follow the specific rules provided.
