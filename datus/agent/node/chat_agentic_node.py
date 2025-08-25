@@ -147,11 +147,11 @@ class ChatAgenticNode(AgenticNode):
         yield action
 
         try:
-            # Get or create session
-            session = self._get_or_create_session()
+            # Get or create session and any available summary
+            session, conversation_summary = self._get_or_create_session()
 
-            # Get system instruction from template
-            system_instruction = self.system_prompt
+            # Get system instruction from template, passing summary if available
+            system_instruction = self._get_system_prompt(conversation_summary)
 
             # Add database context to user message if provided
             enhanced_message = user_input.user_message

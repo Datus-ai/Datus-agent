@@ -132,6 +132,7 @@ class DatusCLI:
             ".quit": self._cmd_exit,
             ".clear": self._cmd_clear_chat,
             ".chat_info": self._cmd_chat_info,
+            ".compact": self._cmd_compact,
             # temporary commands for sqlite, remove after mcp server is ready
             ".databases": self._cmd_list_databases,
             ".database": self._cmd_switch_database,
@@ -997,6 +998,7 @@ class DatusCLI:
             (".exit, .quit", "Exit the CLI"),
             (".clear", "Clear console and chat session"),
             (".chat_info", "Show current chat session information"),
+            (".compact", "Compact chat session by summarizing conversation history"),
             (".databases", "List all databases"),
             (".database database_name", "Switch current database"),
             (".tables", "List all tables"),
@@ -1065,6 +1067,49 @@ class DatusCLI:
                 self.console.print("[yellow]Chat node exists but no active session.[/]")
         else:
             self.console.print("[yellow]No active chat session.[/]")
+
+    def _cmd_compact(self, args: str):
+        """Manually compact the chat session by summarizing conversation history."""
+        if not self.chat_node:
+            self.console.print("[yellow]No active chat session to compact.[/]")
+            return
+
+        session_info = self.chat_node.get_session_info()
+        if not session_info["session_id"]:
+            self.console.print("[yellow]No active chat session to compact.[/]")
+            return
+
+        try:
+            # Display session info before compacting
+            self.console.print("[bold blue]Compacting Chat Session...[/]")
+            self.console.print(f"  Current Session ID: {session_info['session_id']}")
+            self.console.print(f"  Current Token Count: {session_info['token_count']}")
+            self.console.print(f"  Current Action Count: {session_info['action_count']}")
+
+            # Call the manual compact method asynchronously
+            import asyncio
+
+            async def run_compact():
+                return await self.chat_node._manual_compact()
+
+            # Run the compact operation
+            success = asyncio.run(run_compact())
+
+            if success:
+                # Get new session info after compacting
+                new_session_info = self.chat_node.get_session_info()
+                
+                self.console.print("[bold green]✓ Chat session compacted successfully![/]")
+                self.console.print(f"  New Session ID: {new_session_info['session_id']}")
+                self.console.print(f"  Token Count Reset: {session_info['token_count']} → {new_session_info['token_count']}")
+                self.console.print("  Conversation history summarized and preserved as context.")
+            else:
+                self.console.print("[bold red]✗ Failed to compact chat session.[/]")
+                self.console.print("  Check logs for more details.")
+
+        except Exception as e:
+            logger.error(f"Compact command error: {str(e)}")
+            self.console.print(f"[bold red]Error:[/] Failed to compact session: {str(e)}")
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:

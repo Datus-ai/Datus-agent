@@ -63,6 +63,7 @@ class AgenticNode(ABC):
         self.session_id: Optional[str] = None
         self._session: Optional[SQLiteSession] = None
         self._session_tokens: int = 0
+        self.last_summary: Optional[str] = None
 
         # Initialize the model using agent config
         if agent_config:
@@ -109,11 +110,14 @@ class AgenticNode(ABC):
 
         return template_name.lower()
 
-    def _get_system_prompt(self) -> str:
+    def _get_system_prompt(self, conversation_summary: Optional[str] = None) -> str:
         """
         Get the system prompt for this agentic node using PromptManager.
 
         The template name follows the pattern: {get_node_name()}_system_{version}
+
+        Args:
+            conversation_summary: Optional summary from previous conversation compact
 
         Returns:
             System prompt string loaded from the template
@@ -144,6 +148,8 @@ class AgenticNode(ABC):
                 agent_config=self.agent_config,
                 namespace=getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
                 workspace_root=root_path,
+                # Add conversation summary if available
+                conversation_summary=conversation_summary,
             )
 
         except FileNotFoundError as e:
@@ -164,8 +170,16 @@ class AgenticNode(ABC):
         """Generate a unique session ID."""
         return f"{self.get_node_name()}_session_{str(uuid.uuid4())[:8]}"
 
-    def _get_or_create_session(self) -> SQLiteSession:
-        """Get or create the session for this node."""
+    def _get_or_create_session(self) -> tuple[SQLiteSession, Optional[str]]:
+        """
+        Get or create the session for this node.
+        
+        Returns:
+            Tuple of (session, summary) where summary is the conversation summary 
+            from previous compact (if any), None otherwise
+        """
+        summary = None
+        
         if self._session is None:
             if self.session_id is None:
                 self.session_id = self._generate_session_id()
@@ -175,7 +189,15 @@ class AgenticNode(ABC):
                 self._session = self.model.create_session(self.session_id)
                 logger.debug(f"Created session: {self.session_id}")
 
-        return self._session
+                # If we have a summary from previous compact, return it
+                if self.last_summary:
+                    summary = self.last_summary
+                    logger.debug(f"Returning summary from previous compact: {len(summary)} chars")
+                    
+                    # Clear the summary after using it once
+                    self.last_summary = None
+
+        return self._session, summary
 
     def _count_session_tokens(self) -> int:
         """
@@ -212,7 +234,7 @@ class AgenticNode(ABC):
     async def _manual_compact(self) -> bool:
         """
         Manually compact the session by summarizing conversation history.
-        This creates a new session and resets token count to 0.
+        This clears the session and stores summary for next session creation.
 
         Returns:
             True if compacting was successful, False otherwise
@@ -228,23 +250,45 @@ class AgenticNode(ABC):
             old_session_id = self.session_id
             old_tokens = self._session_tokens
 
-            # Get current session content
-            # This would involve:
-            # 1. Retrieving all messages from the current session
-            # 2. Generating a summary using the LLM
-            # 3. Creating a new session with the summary as context
-            # 4. Clearing the old session
+            # 1. Generate summary using LLM with existing session
+            summarization_prompt = """Summarize our conversation up to this point. The summary should be a concise yet comprehensive overview of all key topics, questions, answers, and important details discussed. This summary will replace the current chat history to conserve tokens, so it must capture everything essential to understand the context and continue our conversation effectively as if no information was lost."""
 
-            # Create new session (force recreation)
-            self.session_id = self._generate_session_id()
-            self._session = None  # Force recreation on next access
+            try:
+                result = await self.model.generate_with_tools(
+                    prompt=summarization_prompt,
+                    session=self._session,
+                    max_turns=1,
+                    temperature=0.3,
+                    max_tokens=2000
+                )
+                summary = result.get('content', '')
+                logger.debug(f"Generated summary: {len(summary)} characters")
+            except Exception as e:
+                logger.error(f"Failed to generate summary with LLM: {e}")
+                return False
+
+            # 2. Store summary for next session creation
+            self.last_summary = summary
+            logger.info(f"Stored summary for next session: {len(summary)} characters")
+
+            # 3. Clear current session
+            if old_session_id:
+                try:
+                    self.model.delete_session(old_session_id)
+                    logger.debug(f"Deleted old session: {old_session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete old session {old_session_id}: {e}")
+
+            # Clear session references
+            self.session_id = None
+            self._session = None
 
             # Reset token count for new session
             self._session_tokens = 0
 
             logger.info(
-                f"Manual compacting completed. Session: {old_session_id} -> {self.session_id},"
-                f" Token reset: {old_tokens} -> 0"
+                f"Manual compacting completed. Cleared session: {old_session_id}, "
+                f"Token reset: {old_tokens} -> 0, Summary stored: {len(summary)} chars"
             )
             return True
 

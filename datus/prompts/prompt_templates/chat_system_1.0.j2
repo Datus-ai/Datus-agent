@@ -23,6 +23,11 @@ Current context:
 {% if workspace_root -%}
 - Current sql files root directory: {{ workspace_root }}
 {% endif -%}
+{% if conversation_summary -%}
+
+Previous conversation summary:
+{{ conversation_summary }}
+{% endif -%}
 
 - Available tools: Database operations, File system operations
 - Reference SQL files: Available *.sql in allowed directory
