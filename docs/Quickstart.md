@@ -114,7 +114,7 @@ For more command references and options, see the documentation: [Cli references]
 
 Run benchmark tests in a pre-configured Docker image to evaluate Datus using standard benchmark datasets: Bird and Spider-snow
 
--  pul image
+-  pull image
 
 ```bash
 docker pull luochen2025/datus-agent
@@ -225,8 +225,6 @@ mf validate-configs
 - Set up MetricFlow for Datus Demo
 
 Edit the `~/.metricflow/config.yml` file
-
-edit the `～/.metricflow/config.yml
 
 ```bash
 model_path: ~/mf/metricflow/semantic_models   # Path to directory containing defined models (Leave until after DWH setup)
@@ -366,3 +364,4 @@ metric:
 ```
 
 For more details about metrics: [Metrics](./metrics/metrics.md)
+
