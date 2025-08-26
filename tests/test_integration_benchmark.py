@@ -41,6 +41,7 @@ def test_benchmark_bird(agent_config: AgentConfig, db_manager: DBManager):
             "layer1": "",
             "layer2": "",
             "task_ext_knowledge": "",
+            "current_date": None,
         }
     )
     agent = Agent(args=args, agent_config=agent_config, db_manager=db_manager)
