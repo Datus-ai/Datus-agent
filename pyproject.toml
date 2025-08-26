@@ -50,7 +50,7 @@ dependencies = [
     "pyarrow<19.0.0",
     "rich==14.0.0",
     "prompt_toolkit>=3.0.51",
-    "textual==5.1.1",
+    "textual[syntax]==5.1.1",
     "anthropic==0.51.0",
     "duckdb-engine>=0.17.0",
     "snowflake-sqlalchemy>=1.7.3",
@@ -68,7 +68,8 @@ dependencies = [
     "json-repair>=0.47.6",
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
-    "google-generativeai>=0.8.0"
+    "google-generativeai>=0.8.0",
+    "pyperclip==1.9.0",
 ]
 
 

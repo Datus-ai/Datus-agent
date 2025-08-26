@@ -25,6 +25,12 @@ class SQLiteConnector(SQLAlchemyConnector):
         return f'"{table_name}"'
 
     @override
+    def get_materialized_views(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[str]:
+        return []
+
+    @override
     def sqlalchemy_schema(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
     ) -> Optional[str]:

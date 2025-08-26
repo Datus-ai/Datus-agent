@@ -688,12 +688,12 @@ class SQLAlchemyConnector(BaseSqlConnector):
                         "default_value": col["default"],
                     }
                 )
-            schemas.append(
-                {
-                    "table": table_name,
-                    "columns": [{"name": col["name"], "type": str(col["type"])} for col in columns],
-                }
-            )
+            # schemas.append(
+            #     {
+            #         "table": table_name,
+            #         "columns": [{"name": col["name"], "type": str(col["type"])} for col in columns],
+            #     }
+            # )
 
             return schemas
         except Exception as e:
