@@ -130,12 +130,25 @@ class SessionManager:
             session_id: Session ID to get info for
 
         Returns:
-            Dictionary with session information
+            Dictionary with session information including timestamps, file size, etc.
         """
         if not self.session_exists(session_id):
             return {"exists": False}
 
         session = self.get_session(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+
+        # Get basic file information
+        file_info = {}
+        try:
+            if os.path.exists(db_path):
+                stat = os.stat(db_path)
+                file_info = {
+                    "file_size": stat.st_size,
+                    "file_modified": stat.st_mtime,
+                }
+        except Exception as e:
+            logger.debug(f"Could not get file info for {db_path}: {e}")
 
         # Handle async get_items() call synchronously
         import asyncio
@@ -156,11 +169,47 @@ class SessionManager:
             # No event loop, create new one
             items = asyncio.run(session.get_items())
 
+        # Get session metadata from database
+        session_metadata = {}
+        try:
+            import sqlite3
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get session metadata
+                cursor.execute(
+                    "SELECT created_at, updated_at FROM agent_sessions WHERE session_id = ?", 
+                    (session_id,)
+                )
+                session_row = cursor.fetchone()
+                if session_row:
+                    session_metadata = {
+                        "created_at": session_row[0],
+                        "updated_at": session_row[1],
+                    }
+                
+                # Get message count and latest message timestamp
+                cursor.execute(
+                    "SELECT COUNT(*), MAX(created_at) FROM agent_messages WHERE session_id = ?", 
+                    (session_id,)
+                )
+                message_row = cursor.fetchone()
+                if message_row:
+                    session_metadata.update({
+                        "message_count": message_row[0],
+                        "latest_message_at": message_row[1],
+                    })
+                    
+        except Exception as e:
+            logger.debug(f"Could not get session metadata for {session_id}: {e}")
+
         return {
             "exists": True,
             "session_id": session_id,
-            "item_count": len(items),
-            "db_path": os.path.join(self.session_dir, f"{session_id}.db"),
+            "item_count": len(items) if items is not None else 0,
+            "db_path": db_path,
+            **file_info,
+            **session_metadata,
         }
 
     def close_all_sessions(self) -> None:

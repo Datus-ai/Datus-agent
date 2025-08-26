@@ -133,6 +133,7 @@ class DatusCLI:
             ".clear": self._cmd_clear_chat,
             ".chat_info": self._cmd_chat_info,
             ".compact": self._cmd_compact,
+            ".sessions": self._cmd_list_sessions,
             # temporary commands for sqlite, remove after mcp server is ready
             ".databases": self._cmd_list_databases,
             ".database": self._cmd_switch_database,
@@ -1004,6 +1005,7 @@ class DatusCLI:
             (".clear", "Clear console and chat session"),
             (".chat_info", "Show current chat session information"),
             (".compact", "Compact chat session by summarizing conversation history"),
+            (".sessions", "List all stored SQLite sessions with detailed information"),
             (".databases", "List all databases"),
             (".database database_name", "Switch current database"),
             (".tables", "List all tables"),
@@ -1111,6 +1113,136 @@ class DatusCLI:
         except Exception as e:
             logger.error(f"Compact command error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] Failed to compact session: {str(e)}")
+
+    def _cmd_list_sessions(self, args: str = ""):
+        """List all stored SQLite sessions with detailed information."""
+        try:
+            # Create a session manager directly (don't rely on chat_node)
+            from datus.models.session_manager import SessionManager
+            session_manager = SessionManager()
+
+            # Get all session IDs
+            session_ids = session_manager.list_sessions()
+            
+            if not session_ids:
+                self.console.print("[dim]No sessions found.[/]")
+                return
+
+            # Get current session ID for highlighting (if chat_node exists)
+            current_session_id = None
+            if self.chat_node and hasattr(self.chat_node, 'session_id'):
+                current_session_id = self.chat_node.session_id
+
+            # Create table to display sessions
+            from rich.table import Table
+            import datetime
+            
+            table = Table(title="Available SQLite Sessions", show_header=True, header_style="bold magenta")
+            table.add_column("Session ID", style="cyan", no_wrap=True)
+            table.add_column("Messages", justify="right", style="green")
+            table.add_column("Size", justify="right", style="blue")
+            table.add_column("Created", style="yellow")
+            table.add_column("Last Updated", style="yellow")
+            table.add_column("Status", justify="center")
+
+            # Get session info for all sessions first to enable sorting
+            sessions_with_info = []
+            for session_id in session_ids:
+                try:
+                    session_info = session_manager.get_session_info(session_id)
+                    sessions_with_info.append((session_id, session_info))
+                except Exception as e:
+                    logger.debug(f"Error getting info for session {session_id}: {e}")
+                    sessions_with_info.append((session_id, {"exists": False, "error": str(e)}))
+            
+            # Sort by last updated timestamp (descending), then by session_id
+            def sort_key(item):
+                session_id, info = item
+                if not info.get("exists", False):
+                    return (0, session_id)  # Put error sessions at end
+                
+                # Use updated_at, latest_message_at, or file_modified as sort key
+                updated_at = info.get("updated_at") or info.get("latest_message_at") or ""
+                if updated_at:
+                    try:
+                        import datetime
+                        if "T" in updated_at:
+                            dt = datetime.datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                        else:
+                            dt = datetime.datetime.fromisoformat(updated_at)
+                        return (1, dt.timestamp())  # Sort by timestamp (higher = more recent)
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Fallback to file modification time
+                file_modified = info.get("file_modified", 0)
+                return (1, file_modified)
+            
+            # Sort sessions (most recent first)
+            sessions_with_info.sort(key=sort_key, reverse=True)
+
+            # Add each session to the table
+            for session_id, session_info in sessions_with_info:
+                try:
+                    
+                    if session_info.get("exists", False):
+                        # Format message count (prefer message_count over item_count if available)
+                        msg_count = session_info.get("message_count", session_info.get("item_count", 0))
+                        message_count_str = str(msg_count)
+                        
+                        # Format file size
+                        file_size = session_info.get("file_size", 0)
+                        if file_size < 1024:
+                            size_str = f"{file_size}B"
+                        elif file_size < 1024 * 1024:
+                            size_str = f"{file_size/1024:.1f}KB"
+                        else:
+                            size_str = f"{file_size/(1024*1024):.1f}MB"
+                        
+                        # Format timestamps
+                        created_at = session_info.get("created_at", "Unknown")
+                        updated_at = session_info.get("updated_at", session_info.get("latest_message_at", "Unknown"))
+                        
+                        # Format timestamp for display (just date/time, no microseconds)
+                        def format_timestamp(ts_str):
+                            if ts_str == "Unknown":
+                                return ts_str
+                            try:
+                                # Parse ISO format and show as local time
+                                if "T" in ts_str:
+                                    dt = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                                else:
+                                    dt = datetime.datetime.fromisoformat(ts_str)
+                                return dt.strftime("%m/%d %H:%M")
+                            except (ValueError, TypeError):
+                                return ts_str[:16] if len(ts_str) > 16 else ts_str
+                        
+                        created_str = format_timestamp(created_at)
+                        updated_str = format_timestamp(updated_at)
+                        
+                        # Mark current session
+                        status = "[bold green]●[/]" if session_id == current_session_id else "[dim]○[/]"
+                        
+                        table.add_row(session_id, message_count_str, size_str, created_str, updated_str, status)
+                    else:
+                        table.add_row(session_id, "?", "?", "?", "?", "[red]Error[/]")
+                        
+                except Exception as e:
+                    logger.debug(f"Error getting info for session {session_id}: {e}")
+                    table.add_row(session_id, "?", "?", "?", "?", "[red]Error[/]")
+
+            self.console.print(table)
+            
+            # Show summary information
+            total_sessions = len(session_ids)
+            if current_session_id:
+                self.console.print(f"\n[dim]Total: {total_sessions} sessions • Current: {current_session_id} (●)[/]")
+            else:
+                self.console.print(f"\n[dim]Total: {total_sessions} sessions • No active session[/]")
+
+        except Exception as e:
+            logger.error(f"List sessions command error: {str(e)}")
+            self.console.print(f"[bold red]Error:[/] Failed to list sessions: {str(e)}")
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:
