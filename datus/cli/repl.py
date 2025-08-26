@@ -1098,10 +1098,13 @@ class DatusCLI:
                 return await self.chat_node._manual_compact()
 
             # Run the compact operation
-            success = asyncio.run(run_compact())
+            result = asyncio.run(run_compact())
 
-            if success:
+            if result["success"]:
                 self.console.print("[bold green]✓ Chat session compacted successfully![/]")
+                self.console.print(f"[dim]Summary ({result['summary_token']} tokens):[/]")
+                # Display full summary
+                self.console.print(f"[italic]{result['summary']}[/]")
             else:
                 self.console.print("[bold red]✗ Failed to compact chat session.[/]")
 
