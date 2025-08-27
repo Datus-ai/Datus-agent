@@ -373,7 +373,7 @@ class ActionContentGenerator(BaseActionContentGenerator):
 class ActionHistoryDisplay:
     """Display ActionHistory in a rich format with separated content generation logic"""
 
-    def __init__(self, console: Optional[Console] = None, enable_truncation: bool = False):
+    def __init__(self, console: Optional[Console] = None, enable_truncation: bool = True):
         self.console = console or Console()
         self.enable_truncation = enable_truncation
 

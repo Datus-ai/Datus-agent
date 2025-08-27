@@ -24,9 +24,9 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
+from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import SQLCompleter
-from datus.cli.chat_executor import ChatExecutor
 from datus.cli.context_commands import ContextCommands
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -74,8 +74,6 @@ class DatusCLI:
         history_file = Path(args.history_file)
         history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history = FileHistory(str(history_file))
-        # Chat executor for handling streaming sessions
-        self.chat_executor: ChatExecutor | None = None
 
         # Setup prompt session with custom key bindings
         # custom_bindings = self._create_custom_key_bindings()
@@ -87,6 +85,7 @@ class DatusCLI:
             multiline=False,
             # This conflicts with textual.
             # key_bindings=custom_bindings,
+            key_bindings=KeyBindings(),
             enable_history_search=True,
             search_ignore_case=True,
             style=Style.from_dict(
@@ -169,32 +168,32 @@ class DatusCLI:
         self._async_init_agent()
         self._init_connection()
 
-    def _create_custom_key_bindings(self):
-        """Create custom key bindings for the REPL."""
-        kb = KeyBindings()
-
-        @kb.add("c-d")
-        def _(event):
-            """Handle Ctrl+R for mode switching if available."""
-            # Check if chat executor is available and mode switch is enabled
-            if (
-                self.chat_executor
-                and hasattr(self.chat_executor, "is_mode_switch_available")
-                and self.chat_executor.is_mode_switch_available()
-            ):
-                # Switch to app display
-                success = self.chat_executor.switch_to_app_display()
-                if success:
-                    # Refresh the prompt after returning from textual
-                    event.app.invalidate()
-                else:
-                    # Show error message if switch failed
-                    self.console.print("[yellow]Mode switching is not available at this time[/yellow]")
-            else:
-                # Show message that Ctrl+R is reserved for mode switching
-                self.console.print("[dim]Ctrl+D is reserved for mode switching after chat completion[/dim]")
-
-        return kb
+    # def _create_custom_key_bindings(self):
+    #     """Create custom key bindings for the REPL."""
+    #     kb = KeyBindings()
+    #
+    #     @kb.add("c-d")
+    #     def _(event):
+    #         """Handle Ctrl+R for mode switching if available."""
+    #         # Check if chat executor is available and mode switch is enabled
+    #         if (
+    #             self.chat_executor
+    #             and hasattr(self.chat_executor, "is_mode_switch_available")
+    #             and self.chat_executor.is_mode_switch_available()
+    #         ):
+    #             # Switch to app display
+    #             success = self.chat_executor.switch_to_app_display()
+    #             if success:
+    #                 # Refresh the prompt after returning from textual
+    #                 event.app.invalidate()
+    #             else:
+    #                 # Show error message if switch failed
+    #                 self.console.print("[yellow]Mode switching is not available at this time[/yellow]")
+    #         else:
+    #             # Show message that Ctrl+R is reserved for mode switching
+    #             self.console.print("[dim]Ctrl+D is reserved for mode switching after chat completion[/dim]")
+    #
+    #     return kb
 
     def run(self):
         """Run the REPL loop."""
@@ -652,74 +651,157 @@ class DatusCLI:
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
 
-        # Import here to avoid circular imports
-        from datus.schemas.chat_agentic_node_models import ChatNodeInput
+        try:
+            # Import here to avoid circular imports
+            from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
-        # Get or create persistent ChatAgenticNode
-        if self.chat_node is None:
-            self.console.print("[dim]Creating new chat session...[/]")
-            self.chat_node = ChatAgenticNode(
-                namespace=self.agent_config.current_namespace,
-                agent_config=self.agent_config,
+            # Create chat input with current database context
+            chat_input = ChatNodeInput(
+                user_message=message,
+                catalog=self.current_catalog if self.current_catalog else None,
+                database=self.current_db_name if self.current_db_name else None,
+                db_schema=self.current_schema if self.current_schema else None,
             )
-        else:
-            # Show session info for existing session
-            session_info = self.chat_node.get_session_info()
-            if session_info["session_id"]:
-                session_display = (
-                    f"[dim]Using existing session: {session_info['session_id']} "
-                    f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+
+            # Get or create persistent ChatAgenticNode
+            if self.chat_node is None:
+                self.console.print("[dim]Creating new chat session...[/]")
+                self.chat_node = ChatAgenticNode(
+                    namespace=self.agent_config.current_namespace,
+                    agent_config=self.agent_config,
                 )
-                self.console.print(session_display)
-        # Create or get chat executor
-        if self.chat_executor is None:
-            self.chat_executor = ChatExecutor(self.actions, chat_node=self.chat_node, console=self.console)
+            else:
+                # Show session info for existing session
+                session_info = self.chat_node.get_session_info()
+                if session_info["session_id"]:
+                    session_display = (
+                        f"[dim]Using existing session: {session_info['session_id']} "
+                        f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+                    )
+                    self.console.print(session_display)
 
-        # Create chat input with current database context
-        chat_input = ChatNodeInput(
-            user_message=message,
-            catalog=self.current_catalog if self.current_catalog else None,
-            database=self.current_db_name if self.current_db_name else None,
-            db_schema=self.current_schema if self.current_schema else None,
-        )
-        # Display streaming execution
-        self.console.print("[bold green]Processing chat request...[/]")
-        incremental_actions, sql = self.chat_executor.execute_chat(chat_input)
+            # Display streaming execution
+            self.console.print("[bold green]Processing chat request...[/]")
 
-        self.actions.actions.extend(incremental_actions)
-        if sql:
-            self.last_sql = sql
+            # Initialize action history display for incremental actions only
+            action_display = ActionHistoryDisplay(self.console)
+            incremental_actions = []
 
-        # Add all actions from chat to our main action history
-        self.actions.actions.extend(self.chat_executor.incremental_actions)
+            # Run streaming execution with real-time display
+            import asyncio
 
-        # Update chat history for potential context in future interactions
-        self.chat_history.append(
-            {
-                "user": message,
-                "response": self.chat_executor.incremental_actions[-1].output.get("response", "")
-                if self.chat_executor.incremental_actions and self.chat_executor.incremental_actions[-1].output
-                else "",
-                "actions": len(self.chat_executor.incremental_actions),
-            }
-        )
-        if incremental_actions[-1].status == ActionStatus.SUCCESS:
-            while True:
-                choice = self._prompt_input(
-                    "Would you like to check the details? yes/no",
-                    choices=["y", "n"],
-                    default="y",
-                )
-                # modify the node input
-                if choice == "y":
-                    self.chat_executor.switch_to_app_display()
-                    break
-                # execute the node
-                elif choice == "n":
-                    break
-                # cancel the node
-                elif choice == "n":
-                    return
+            # Create a live display like the !reason command (shows only new actions)
+            with action_display.display_streaming_actions(incremental_actions):
+                # Run the async streaming method
+                async def run_chat_stream():
+                    async for action in self.chat_node.execute_stream(chat_input, self.actions):
+                        incremental_actions.append(action)
+                        # Add delay to make the streaming visible
+                        await asyncio.sleep(0.5)
+
+                # Execute the streaming chat
+                asyncio.run(run_chat_stream())
+
+            # Display final response from the last successful action
+            if incremental_actions:
+                final_action = incremental_actions[-1]
+
+                if (
+                    final_action.output
+                    and isinstance(final_action.output, dict)
+                    and final_action.status == ActionStatus.SUCCESS
+                ):
+                    # Parse response to extract clean SQL and output
+                    sql = None
+                    clean_output = None
+
+                    logger.debug(f"DEBUG: final_action.output: {final_action.output}")
+
+                    # First check if SQL and response are directly available
+                    sql = final_action.output.get("sql")
+                    response = final_action.output.get("response")
+
+                    # Try to extract SQL and output from the string response
+                    extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
+                    sql = sql or extracted_sql
+                    # Determine clean_output based on sql and extracted_output
+                    clean_output = None
+
+                    if sql:
+                        # Has SQL: use extracted_output or fallback to response
+                        clean_output = extracted_output or response
+                    elif isinstance(extracted_output, dict):
+                        # No SQL, extracted_output is dict: get raw_output from dict
+                        clean_output = extracted_output.get("raw_output", str(extracted_output))
+                    else:
+                        # No SQL, no extracted_output: try to parse raw_output from response string
+                        try:
+                            import ast
+
+                            response_dict = ast.literal_eval(response)
+                            clean_output = (
+                                response_dict.get("raw_output", response)
+                                if isinstance(response_dict, dict)
+                                else response
+                            )
+                        except (ValueError, SyntaxError):
+                            clean_output = response
+
+                    # Display using simple, focused methods
+                    if sql:
+                        self._display_sql_with_copy(sql)
+
+                    if clean_output:
+                        self._display_markdown_response(clean_output)
+
+                    self._show_detail(incremental_actions)
+
+            # Add all actions from chat to our main action history
+            self.actions.actions.extend(incremental_actions)
+
+            # Update chat history for potential context in future interactions
+            self.chat_history.append(
+                {
+                    "user": message,
+                    "response": (
+                        incremental_actions[-1].output.get("response", "")
+                        if incremental_actions and incremental_actions[-1].output
+                        else ""
+                    ),
+                    "actions": len(incremental_actions),
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Chat error: {str(e)}")
+            self.console.print(f"[bold red]Error:[/] Failed to process chat request: {str(e)}")
+
+            # Add error action to history
+            error_action = ActionHistory.create_action(
+                role=ActionRole.USER,
+                action_type="chat_error",
+                messages=f"Chat command failed: {str(e)}",
+                input_data={"message": message},
+                status=ActionStatus.FAILED,
+            )
+            self.actions.add_action(error_action)
+
+    def _show_detail(self, actions: List[ActionHistory]):
+        while True:
+            choice = self._prompt_input(
+                "Would you like to check the details? yes/no",
+                choices=["y", "n"],
+                default="y",
+            )
+            # modify the node input
+            if choice == "y":
+                from datus.cli.screen.action_display_app import ChatApp
+
+                app = ChatApp(actions)
+                app.run()
+                break
+            else:
+                return
 
     def _execute_internal_command(self, cmd: str, args: str):
         """Execute an internal command (. prefix)."""
@@ -1379,6 +1461,71 @@ Type '.help' for a list of commands or '.exit' to quit.
             self.console.print(f"[bold red]Connection Error:[/] {str(e)}")
             raise
 
+    def _display_sql_with_copy(self, sql: str):
+        """
+        Display SQL in a formatted panel with automatic clipboard copy functionality.
+
+        Args:
+            sql: SQL query string to display and copy
+        """
+        try:
+            # Store SQL for reference
+            self.last_sql = sql
+
+            # Try to copy to clipboard
+            copied_indicator = ""
+            try:
+                # Try pyperclip first
+                try:
+                    import pyperclip
+
+                    pyperclip.copy(sql)
+                    copied_indicator = " (copied)"
+                except ImportError:
+                    # Fallback to system clipboard commands
+                    import platform
+                    import subprocess
+
+                    system = platform.system()
+                    if system == "Darwin":  # macOS
+                        subprocess.run("pbcopy", input=sql.encode(), check=True)
+                        copied_indicator = " (copied)"
+                    elif system == "Linux":
+                        # Try xclip or xsel
+                        try:
+                            subprocess.run(["xclip", "-selection", "clipboard"], input=sql.encode(), check=True)
+                            copied_indicator = " (copied)"
+                        except FileNotFoundError:
+                            try:
+                                subprocess.run(["xsel", "--clipboard", "--input"], input=sql.encode(), check=True)
+                                copied_indicator = " (copied)"
+                            except FileNotFoundError:
+                                pass  # No clipboard tool available
+                    elif system == "Windows":
+                        subprocess.run("clip", input=sql.encode(), shell=True, check=True)
+                        copied_indicator = " (copied)"
+            except Exception as e:
+                logger.debug(f"Failed to copy SQL to clipboard: {e}")
+                # If clipboard fails, don't show the indicator
+
+            # Display SQL in a beautiful syntax-highlighted panel
+            sql_syntax = Syntax(sql, "sql", theme="default", line_numbers=False)
+            sql_panel = Panel(
+                sql_syntax,
+                title=f"Generated SQL{copied_indicator}",
+                title_align="left",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+
+            self.console.print()  # Add spacing
+            self.console.print(sql_panel)
+
+        except Exception as e:
+            logger.error(f"Error displaying SQL: {e}")
+            # Fallback to simple display
+            self.console.print(f"\n[bold cyan]Generated SQL:[/]\n```sql\n{sql}\n```")
+
     def _display_markdown_response(self, response: str):
         """
         Display clean response content as formatted markdown.
@@ -1396,3 +1543,57 @@ Type '.help' for a list of commands or '.exit' to quit.
             logger.error(f"Error displaying markdown: {e}")
             # Fallback to plain text display
             self.console.print(f"\n[bold blue]Assistant:[/] {response}")
+
+    def _extract_sql_and_output_from_content(self, content: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Extract SQL and output from content string that might contain JSON or debug format.
+
+        Args:
+            content: Content string to parse
+
+        Returns:
+            Tuple of (sql_string, output_string) - both can be None if not found
+        """
+        try:
+            import json
+            import re
+
+            # Try to extract JSON from various patterns
+            # Pattern 1: json\n{...} format
+            json_match = re.search(r"json\s*\n\s*({.*?})\s*$", content, re.DOTALL)
+            if json_match:
+                try:
+                    json_content = json.loads(json_match.group(1))
+                    sql = json_content.get("sql")
+                    output = json_content.get("output") or json_content.get("raw_output")
+                    if output:
+                        output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                    return sql, output
+                except json.JSONDecodeError:
+                    pass
+
+            # Pattern 2: Direct JSON in content
+            try:
+                # Handle escaped quotes in the JSON string
+                unescaped_content = content.replace("\\'", "'").replace('\\"', '"')
+                json_content = json.loads(unescaped_content)
+                logger.debug(f"DEBUG: Successfully parsed JSON: {json_content}")
+                sql = json_content.get("sql")
+                output = json_content.get("output") or json_content.get("raw_output")
+                logger.debug(f"DEBUG: Extracted sql={sql}, output={output} (type: {type(output)})")
+                if output and isinstance(output, str):
+                    output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                return sql, output
+            except json.JSONDecodeError as e:
+                logger.debug(f"DEBUG: JSON decode failed for content: {content[:100]}... Error: {e}")
+
+            # Pattern 3: Look for SQL code blocks
+            sql_pattern = r"```sql\s*(.*?)\s*```"
+            sql_matches = re.findall(sql_pattern, content, re.DOTALL | re.IGNORECASE)
+            sql = sql_matches[0].strip() if sql_matches else None
+
+            return sql, None
+
+        except Exception as e:
+            logger.warning(f"Failed to extract SQL and output from content: {e}")
+            return None, None
