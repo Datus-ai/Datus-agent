@@ -1133,18 +1133,6 @@ class DatusCLI:
             if self.chat_node and hasattr(self.chat_node, 'session_id'):
                 current_session_id = self.chat_node.session_id
 
-            # Create table to display sessions
-            from rich.table import Table
-            import datetime
-            
-            table = Table(title="Available SQLite Sessions", show_header=True, header_style="bold magenta")
-            table.add_column("Session ID", style="cyan", no_wrap=True)
-            table.add_column("Messages", justify="right", style="green")
-            table.add_column("Size", justify="right", style="blue")
-            table.add_column("Created", style="yellow")
-            table.add_column("Last Updated", style="yellow")
-            table.add_column("Status", justify="center")
-
             # Get session info for all sessions first to enable sorting
             sessions_with_info = []
             for session_id in session_ids:
@@ -1178,8 +1166,39 @@ class DatusCLI:
                 file_modified = info.get("file_modified", 0)
                 return (1, file_modified)
             
-            # Sort sessions (most recent first)
+            # Sort sessions (most recent first) and limit to top 20
             sessions_with_info.sort(key=sort_key, reverse=True)
+            total_sessions = len(sessions_with_info)
+            sessions_with_info = sessions_with_info[:20]  # Show only top 20
+
+            # Create table to display sessions
+            from rich.table import Table
+            import datetime
+            
+            table = Table(title="Available SQLite Sessions (Top 20)" if total_sessions > 20 else "Available SQLite Sessions", show_header=True, header_style="bold magenta")
+            table.add_column("Session ID", style="cyan", no_wrap=True, width=18)
+            table.add_column("Messages", justify="right", style="green", width=8)
+            table.add_column("Tokens", justify="right", style="blue", width=8)  
+            table.add_column("Created", style="yellow", width=12)
+            table.add_column("Last Updated", style="yellow", width=12)
+            table.add_column("Latest Message", style="white", width=50)
+            table.add_column("Status", justify="center", width=6)
+
+            # Helper function to clean user message prefixes
+            def clean_user_message(message_content):
+                import re
+                if not message_content:
+                    return ""
+                
+                # Remove common prefix pattern: "Context: database: [db_name]\n\nUser question: "
+                cleaned = re.sub(r"Context:\s*database:\s*\w+\s*\n\nUser question:\s*", "", message_content, flags=re.IGNORECASE)
+                
+                # If nothing was removed, try alternative patterns
+                if cleaned == message_content:
+                    # Try more flexible pattern
+                    cleaned = re.sub(r"Context:.*?\n\nUser question:\s*", "", message_content, flags=re.IGNORECASE | re.DOTALL)
+                
+                return cleaned.strip()
 
             # Add each session to the table
             for session_id, session_info in sessions_with_info:
@@ -1190,14 +1209,14 @@ class DatusCLI:
                         msg_count = session_info.get("message_count", session_info.get("item_count", 0))
                         message_count_str = str(msg_count)
                         
-                        # Format file size
-                        file_size = session_info.get("file_size", 0)
-                        if file_size < 1024:
-                            size_str = f"{file_size}B"
-                        elif file_size < 1024 * 1024:
-                            size_str = f"{file_size/1024:.1f}KB"
+                        # Format token count (use actual tokens from database)
+                        actual_tokens = session_info.get("total_tokens", 0)
+                        if actual_tokens < 1000:
+                            tokens_str = str(actual_tokens)
+                        elif actual_tokens < 1000000:
+                            tokens_str = f"{actual_tokens/1000:.1f}K"
                         else:
-                            size_str = f"{file_size/(1024*1024):.1f}MB"
+                            tokens_str = f"{actual_tokens/1000000:.1f}M"
                         
                         # Format timestamps
                         created_at = session_info.get("created_at", "Unknown")
@@ -1220,25 +1239,43 @@ class DatusCLI:
                         created_str = format_timestamp(created_at)
                         updated_str = format_timestamp(updated_at)
                         
+                        # Format latest user message
+                        latest_msg = session_info.get("latest_user_message", "")
+                        if latest_msg:
+                            # Clean the message prefix and format for display
+                            cleaned_msg = clean_user_message(latest_msg)
+                            cleaned_msg = cleaned_msg.strip().replace('\n', ' ').replace('\r', ' ')
+                            if len(cleaned_msg) > 47:
+                                cleaned_msg = cleaned_msg[:44] + "..."
+                            latest_msg = f'"{cleaned_msg}"'
+                        else:
+                            latest_msg = "[dim]No user messages[/]"
+                        
                         # Mark current session
                         status = "[bold green]●[/]" if session_id == current_session_id else "[dim]○[/]"
                         
-                        table.add_row(session_id, message_count_str, size_str, created_str, updated_str, status)
+                        table.add_row(session_id, message_count_str, tokens_str, created_str, updated_str, latest_msg, status)
                     else:
-                        table.add_row(session_id, "?", "?", "?", "?", "[red]Error[/]")
+                        table.add_row(session_id, "?", "?", "?", "?", "?", "[red]Error[/]")
                         
                 except Exception as e:
                     logger.debug(f"Error getting info for session {session_id}: {e}")
-                    table.add_row(session_id, "?", "?", "?", "?", "[red]Error[/]")
+                    table.add_row(session_id, "?", "?", "?", "?", "?", "[red]Error[/]")
 
             self.console.print(table)
             
             # Show summary information
-            total_sessions = len(session_ids)
+            displayed_sessions = len(sessions_with_info)
             if current_session_id:
-                self.console.print(f"\n[dim]Total: {total_sessions} sessions • Current: {current_session_id} (●)[/]")
+                if total_sessions > 20:
+                    self.console.print(f"\n[dim]Showing top {displayed_sessions} of {total_sessions} total sessions • Current: {current_session_id} (●)[/]")
+                else:
+                    self.console.print(f"\n[dim]Total: {total_sessions} sessions • Current: {current_session_id} (●)[/]")
             else:
-                self.console.print(f"\n[dim]Total: {total_sessions} sessions • No active session[/]")
+                if total_sessions > 20:
+                    self.console.print(f"\n[dim]Showing top {displayed_sessions} of {total_sessions} total sessions • No active session[/]")
+                else:
+                    self.console.print(f"\n[dim]Total: {total_sessions} sessions • No active session[/]")
 
         except Exception as e:
             logger.error(f"List sessions command error: {str(e)}")
