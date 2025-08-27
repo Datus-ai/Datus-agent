@@ -52,7 +52,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             start = action.messages.index(":")
             content_widgets.append(TextArea(f"{title}:\n{action.messages[start + 2:]}", read_only=True))
         else:
-            content_widgets.extend(self._create_non_tool_content(action))
+            content_widgets.extend(self._create_non_tool_content(action, index))
 
         # Create vertical container with all content
         content_container = Vertical(*content_widgets)
@@ -65,19 +65,19 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
 
         # 1. Parameters as table
         if action.input and isinstance(action.input, dict):
-            params_table = self._create_params_table(action.input, str(index))
+            params_table = self._create_params_table(action.input, index)
             if params_table:
                 widgets.extend(params_table)
 
         # 3. Output as table
         if action.output:
-            output_table = self._create_output_table(action, action.role)
+            output_table = self._create_output_table(action, action.role, index)
             if output_table:
                 widgets.extend(output_table)
 
         return widgets
 
-    def _create_non_tool_content(self, action: ActionHistory) -> List[Widget]:
+    def _create_non_tool_content(self, action: ActionHistory, action_index: int) -> List[Widget]:
         """Create content for non-Tool role actions"""
         widgets = []
 
@@ -85,7 +85,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         if action.output:
             if self._is_json_like(action.output):
                 # JSON highlighting
-                json_display = self._create_json_display(action.output)
+                json_display = self._create_json_display(action.output, action_index)
                 widgets.extend(json_display)
             else:
                 # Plain text
@@ -96,7 +96,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
     def _create_sql_widget(self, sql: str) -> Widget:
         return TextArea(sql, read_only=True, language="sql", line_number_start=0, theme="monokai")
 
-    def _create_params_table(self, input_data: dict, action_index: str) -> List[Widget]:
+    def _create_params_table(self, input_data: dict, action_index: int) -> List[Widget]:
         """Create table for parameters"""
         if "arguments" not in input_data:
             return []
@@ -110,7 +110,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 return []
         return self._do_create_params_table(args, action_index)
 
-    def _do_create_params_table(self, args: dict, action_index: str) -> List[Widget]:
+    def _do_create_params_table(self, args: dict, action_index: int) -> List[Widget]:
         result = []
         if "sql" in args and len(args) == 1:
             return self._create_sql_widgets(args, action_index)
@@ -132,7 +132,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             result.extend(self._create_sql_widgets(args, action_index))
         return result
 
-    def _create_sql_widgets(self, input_data: dict, action_index: str) -> List:
+    def _create_sql_widgets(self, input_data: dict, action_index: int) -> List:
         """Create SQL display with syntax highlighting and copy button"""
         widgets = []
 
@@ -141,6 +141,13 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             args = input_data["arguments"]
         else:
             args = input_data
+
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                return [TextArea(args, read_only=True, language="markdown", line_number_start=0, theme="monokai")]
+
         sql_content = args.get("sql") or args.get("query")
 
         if sql_content:
@@ -153,7 +160,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             button_container = Horizontal(
                 Static(""), copy_button, classes="button-container"  # Placeholder, push the button to the right
             )
-            self.sql_dict[action_index] = sql_content
+            self.sql_dict[str(action_index)] = sql_content
             widgets.append(button_container)
 
         return widgets
@@ -161,7 +168,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
     def get_sql(self, action_id) -> str:
         return self.sql_dict.get(action_id, "")
 
-    def _create_output_table(self, action: ActionHistory, role: ActionRole) -> List[Widget]:
+    def _create_output_table(self, action: ActionHistory, role: ActionRole, action_index: int) -> List[Widget]:
         output_data = action.output
         """Create table for output data"""
         if not output_data:
@@ -184,7 +191,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 result.append(TextArea(str(output_data), language="markdown", theme="monokai"))
             return result
         if "sql" in output_data:
-            result.extend(self._create_sql_widgets(output_data))
+            result.extend(self._create_sql_widgets(output_data, action_index))
             return result
 
         # Use raw_output if available
@@ -269,7 +276,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         result.append(table)
         return result
 
-    def _create_json_display(self, data) -> List[Widget]:
+    def _create_json_display(self, data, action_index: int) -> List[Widget]:
         """Create JSON syntax highlighting"""
         try:
             if isinstance(data, str):
@@ -286,7 +293,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             try:
                 output_data = json.loads(output_data)
                 if "sql" in output_data:
-                    return self._create_sql_widgets(json_obj["sql"])
+                    return self._create_sql_widgets(json_obj["sql"], action_index)
                 else:
                     return [
                         TextArea(
@@ -295,12 +302,14 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                     ]
             except Exception:
                 return [TextArea(str(output_data), language="markdown", theme="monokai", line_number_start=0)]
-        if "response" in json_obj:
-            return [TextArea(json_obj["response"], language="markdown", theme="monokai", line_number_start=0)]
-        if "sql" in json_obj:
-            return self._create_sql_widgets(json_obj["sql"])
-        else:
+        result = []
+        if "response" not in json_obj and "sql" not in json_obj:
             return [TextArea(json.dumps(json_obj, indent=2), language="json", theme="monokai", line_number_start=0)]
+        if "response" in json_obj:
+            result.append(TextArea(json_obj["response"], language="markdown", theme="monokai", line_number_start=0))
+        if "sql" in json_obj:
+            result.extend(self._create_sql_widgets(json_obj["sql"], action_index))
+        return result
 
     def _is_json_like(self, data) -> bool:
         """Check if data is JSON-like"""
