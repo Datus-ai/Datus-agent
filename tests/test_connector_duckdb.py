@@ -50,6 +50,7 @@ def test_execute_query(duckdb_connector: DuckdbConnector):
     res = duckdb_connector.execute_query("select * from bank_failures limit 10")
     assert res.success
     assert len(res.sql_return) > 0
+    assert isinstance(res.sql_return[0], dict)
 
     res = duckdb_connector.execute_query("select * from unexist_table")
     assert not res.success

@@ -583,7 +583,9 @@ class SQLAlchemyConnector(BaseSqlConnector):
         self.connect()
         try:
             result = self.connection.execute(text(query_sql))
-            return result.fetchall()
+
+            rows = result.fetchall()
+            return [row._asdict() for row in rows]
         except Exception as e:
             raise self._trans_sqlalchemy_exception(e, query_sql) from e
 
