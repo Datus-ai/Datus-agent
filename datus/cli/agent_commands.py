@@ -118,26 +118,6 @@ class AgentCommands:
             logger.error(f"Agent query error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
 
-    def cmd_darun(self, args: str):
-        """Run a natural language query through the agent."""
-        # ignore args for now
-        try:
-            sql_task = self._gen_sql_task(args)
-            if not sql_task:
-                return
-            # Run the query through the agent
-            result = self.agent.run(sql_task)
-
-            # Display the result
-            if self.agent.workflow.is_complete():
-                self.console.print("[bold green]Query Result:[/]")
-                self.console.print(result)
-            else:
-                self.console.print(f"[bold red]Query is failed. {self.agent.workflow.status}[/]")
-                self.console.print(result)
-        except Exception as e:
-            logger.error(f"Agent query error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     def _gen_sql_task(self, args: str):
         """Generate a SQL task from the user input."""
@@ -346,26 +326,6 @@ class AgentCommands:
         # Run the SQL generation node
         self.run_node(NodeType.TYPE_GENERATE_SQL, args)
 
-    def cmd_run(self, args: str):
-        """Run the last generated SQL."""
-        if not self.workflow:
-            self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
-            self.cmd_dastart()
-
-        # Run the SQL generation node
-        self.run_node(NodeType.TYPE_EXECUTE_SQL, args)
-
-        # if not self.cli.last_sql:
-        #    self.console.print("[bold red]Error:[/] No SQL to run. Generate SQL first.")
-        #    return
-        #
-        # try:
-        #    # Execute the SQL
-        #    self.console.print(f"[dim]Running SQL: {self.cli.last_sql}[/]")
-        #    self.cli._execute_sql(self.cli.last_sql)
-        # except Exception as e:
-        #    logger.error(f"SQL execution error: {str(e)}")
-        #    self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     def cmd_fix(self, args: str):
         """Fix the last SQL query."""
@@ -379,23 +339,6 @@ class AgentCommands:
 
         self.run_node(NodeType.TYPE_FIX, args)
 
-    def cmd_reflect(self, args: str):
-        """Reflect on the last result and improve the query."""
-        if not self.cli.last_result:
-            self.console.print("[bold red]Error:[/] No result to reflect on. Run a query first.")
-            return
-
-        if not self.workflow:
-            self.console.print("[bold yellow]Warning:[/] No active workflow. Starting a new one.")
-            self.cmd_dastart()
-
-        # Run the reflection node
-        node_args = {
-            "sql": self.cli.last_sql,
-            "result": self.cli.last_result,
-            "prompt": args if args else "Reflect on this result",
-        }
-        self.run_node(NodeType.TYPE_REFLECT, node_args)
 
     def cmd_reason(self, args: str):
         """Run the full reasoning node."""

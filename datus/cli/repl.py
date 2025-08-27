@@ -691,10 +691,6 @@ class DatusCLI:
         """Execute a tool command (! prefix)."""
         if cmd in self.commands:
             self.commands[cmd](args)
-            # if cmd == "!darun_screen":
-            #    asyncio.run(self.commands[cmd](args))
-            # else:
-            #    self.commands[cmd](args)
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 
@@ -918,15 +914,6 @@ class DatusCLI:
                 else:
                     self.console.print(f"[bold red]Error:[/] Unexpected result format: {type(result.sql_return)}")
                 return True
-            elif base_cmd == ".show":
-                settings = {"database": self.args.db_path, "Python": sys.version.split()[0]}
-                settings_table = Table(title="Current Settings")
-                settings_table.add_column("Setting")
-                settings_table.add_column("Value")
-                for k, v in settings.items():
-                    settings_table.add_row(k, str(v))
-                self.console.print(settings_table)
-                return True
             elif base_cmd == ".indexes":
                 table_name = args
                 if not table_name:
@@ -1023,19 +1010,15 @@ class DatusCLI:
 
         lines.append("[bold]Tool Commands (! prefix):[/]")
         tool_cmds = [
-            ("!darun <query>", "Run a natural language query through the agentic way"),
-            ("!darun_screen <query>", "Run a query with live workflow status display"),
+            ("!run <query>", "Run a natural language query with live workflow status display"),
             ("!dastart <query>", "Start a new workflow session with manual input"),
             ("!sl", "Schema linking: show list of recommended tables and values"),
             ("!gen", "Generate SQL, optionally with table constraints"),
-            ("!run", "Run the last generated SQL"),
             ("!fix <description>", "Fix the last SQL query"),
-            ("!reason", "Run the full reasoning node to exploring"),
-            ("!reason_stream", "Run SQL reasoning with streaming output"),
-            ("!gen_metrics", "Generate metrics from SQL queries and tables"),
-            ("!gen_metrics_stream", "Generate metrics with streaming output"),
-            ("!gen_semantic_model", "Generate semantic model for data modeling"),
-            ("!gen_semantic_model_stream", "Generate semantic model with streaming output"),
+            ("!reason", "Run SQL reasoning with streaming output"),
+            ("!gen_metrics", "Generate metrics with streaming output"),
+            ("!gen_semantic_model", "Generate semantic model with streaming output"),
+            ("!compare", "Compare SQL results with streaming output"),
             ("!save", "Save the last result to a file"),
             ("!set <context_type>", "Set the context type for the current workflow"),
             ("    context_type: sql, lastsql, schema, schema_values, metrics, task", ""),
