@@ -289,9 +289,17 @@ class AgentCommands:
             else:
                 self.console.print("[bold red]Error:[/] No SQL context available")
         elif isinstance(input, GenerateMetricsInput):
-            # Allow user to modify SQL query and prompt version
+            # Allow user to modify task, sql_query and prompt version
+            task = self.cli._prompt_input("Enter task description", default=input.sql_task.task)
+            input.sql_task.task = task.strip()
+            if not input.sql_task.task.strip():
+                self.console.print("[bold red]Error:[/] Task description is required")
+                return
             sql_query = self.cli._prompt_input("Enter SQL query to generate metrics from", default=input.sql_query)
             input.sql_query = sql_query.strip()
+            if not input.sql_query.strip():
+                self.console.print("[bold red]Error:[/] SQL query is required")
+                return
             prompt_version = self.cli._prompt_input("Enter prompt version", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()
         elif isinstance(input, GenerateSemanticModelInput):

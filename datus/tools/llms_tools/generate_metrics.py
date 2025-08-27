@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from langsmith import traceable
@@ -43,7 +44,7 @@ async def generate_metrics_with_mcp_stream(
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
         database_name=input_data.sql_task.database_name, db_config=db_config
     )
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=os.getenv("MF_MODEL_PATH"))
     mcp_servers = {
         "db_mcp_server": db_mcp_server,
         "metricflow_mcp_server": metricflow_mcp_server,
@@ -81,7 +82,7 @@ def generate_metrics_with_mcp(
         database_name=input_data.sql_task.database_name,
         db_config=db_config,
     )
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=os.getenv("MF_MODEL_PATH"))
 
     instruction = prompt_manager.get_raw_template("generate_metrics_system", input_data.prompt_version)
     max_turns = tool_config.get("max_turns", 30)
