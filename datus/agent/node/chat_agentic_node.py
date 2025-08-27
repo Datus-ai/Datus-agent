@@ -256,17 +256,17 @@ class ChatAgenticNode(AgenticNode):
                 tokens_used=int(tokens_used),
             )
 
-            # Update assistant action with success
-            action_history_manager.update_action_by_id(
-                assistant_action.action_id,
-                status=ActionStatus.SUCCESS,
-                output=result.model_dump(),
-                messages=(
-                    f"Generated response: {response_content[:100]}..."
-                    if len(response_content) > 100
-                    else response_content
-                ),
-            )
+            # # Update assistant action with success
+            # action_history_manager.update_action_by_id(
+            #     assistant_action.action_id,
+            #     status=ActionStatus.SUCCESS,
+            #     output=result.model_dump(),
+            #     messages=(
+            #         f"Generated response: {response_content[:100]}..."
+            #         if len(response_content) > 100
+            #         else response_content
+            #     ),
+            # )
 
             # Add to internal actions list
             self.actions.extend(action_history_manager.get_actions())

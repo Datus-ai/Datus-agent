@@ -3,7 +3,6 @@ import sys
 from typing import List, Optional
 
 import pyperclip
-from textual.app import App
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalGroup, VerticalScroll
 from textual.screen import Screen
@@ -11,7 +10,11 @@ from textual.widget import Widget
 from textual.widgets import Button, Collapsible, DataTable, Footer, Header, Static, TextArea
 
 from datus.cli.action_history_display import BaseActionContentGenerator
+from datus.cli.screen.base_app import BaseApp
 from datus.schemas.action_history import ActionHistory, ActionRole
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 class CollapsibleActionContentGenerator(BaseActionContentGenerator):
@@ -90,7 +93,6 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             else:
                 # Plain text
                 widgets.append(TextArea(str(action.output)))
-
         return widgets
 
     def _create_sql_widget(self, sql: str) -> Widget:
@@ -285,7 +287,8 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 json_obj = data
             else:
                 return [TextArea(str(data), language="markdown", theme="monokai", line_number_start=0)]
-        except Exception:
+        except Exception as e:
+            logger.debug(f"parse json failed, use markdown to show: reason={str(e)}, data={data}")
             return [TextArea(str(data), language="markdown", theme="monokai", line_number_start=0)]
 
         if "raw_output" in json_obj:
@@ -308,7 +311,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         if "response" in json_obj:
             result.append(TextArea(json_obj["response"], language="markdown", theme="monokai", line_number_start=0))
         if "sql" in json_obj:
-            result.extend(self._create_sql_widgets(json_obj["sql"], action_index))
+            result.extend(self._create_sql_widgets(json_obj, action_index))
         return result
 
     def _is_json_like(self, data) -> bool:
@@ -316,11 +319,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         if isinstance(data, (dict, list)):
             return True
         if isinstance(data, str):
-            try:
-                json.loads(data)
-                return True
-            except Exception:
-                return False
+            return data.strip().startswith("[") or data.strip().startswith("{")
         return False
 
     def generate_collapsible_actions(self, actions: List[ActionHistory]) -> List[Widget]:
@@ -328,8 +327,6 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         result = []
 
         for i, action in enumerate(actions):
-            # if action.role == ActionRole.ASSISTANT and action.messages.startswith("Generated response"):
-            #     logger.info(f"$$$$ gen index: {i}")
             result.append(self.create_action_collapsible(action, i))
         return result
 
@@ -403,14 +400,16 @@ class ChatActionScreen(Screen):
     if sys.platform == "darwin":  # macOS
         BINDINGS = [
             Binding("cmd+c", "copy_text", "Copy Selection", priority=True),
-            Binding("escape", "quit", "Quit"),
-            Binding("ctrl+q", "quit", "Quit"),
+            Binding("escape", "exit", "Exit"),
+            Binding("ctrl+q", "exit", "Exit"),
+            Binding("e", "toggle_all", "Toggle All"),
         ]
     else:  # Windows/Linux
         BINDINGS = [
             Binding("ctrl+shift+c", "copy_text", "Selection", priority=True),
-            Binding("escape", "quit", "Quit"),
-            Binding("ctrl+q", "quit", "Quit"),
+            Binding("escape", "exit", "Exit"),
+            Binding("ctrl+q", "exit", "Exit"),
+            Binding("e", "toggle_all", "Toggle All"),
         ]
 
     def __init__(
@@ -440,6 +439,14 @@ class ChatActionScreen(Screen):
                 self._copy_datatable_cell(focused)
             elif isinstance(focused, TextArea):
                 self._copy_textarea_selection(focused)
+
+    def action_toggle_all(self) -> None:
+        collapsible_widgets = self.query(Collapsible)
+        any_expanded = any(not c.collapsed for c in collapsible_widgets)
+
+        new_state = any_expanded
+        for collapsible in collapsible_widgets:
+            collapsible.collapsed = new_state
 
     def _copy_datatable_cell(self, table: DataTable) -> None:
         if table.cursor_row is not None and table.cursor_column is not None:
@@ -526,12 +533,10 @@ class ChatActionScreen(Screen):
         self.app.exit("mode_switch")
 
 
-class ChatApp(App):
+class ChatApp(BaseApp):
     BINDINGS = [
         Binding("escape", "exit", "Exit"),
         Binding("q", "exit", "Exit"),
-        Binding("ctrl+c", "exit", "Exit"),
-        Binding("ctrl+d", "switch_mode", "Switch Mode"),
         Binding("ctrl+q", "exit", "Exit"),
     ]
 
@@ -548,8 +553,3 @@ class ChatApp(App):
     def action_exit(self):
         """Exit application"""
         self.exit()
-
-    async def action_switch_mode(self, mode=None) -> None:
-        """Switch display mode via Ctrl+R"""
-        # Set a flag or call parent CLI to switch mode
-        self.exit("mode_switch")
