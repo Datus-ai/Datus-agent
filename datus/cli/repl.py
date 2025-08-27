@@ -1119,18 +1119,19 @@ class DatusCLI:
         try:
             # Create a session manager directly (don't rely on chat_node)
             from datus.models.session_manager import SessionManager
+
             session_manager = SessionManager()
 
             # Get all session IDs
             session_ids = session_manager.list_sessions()
-            
+
             if not session_ids:
                 self.console.print("[dim]No sessions found.[/]")
                 return
 
             # Get current session ID for highlighting (if chat_node exists)
             current_session_id = None
-            if self.chat_node and hasattr(self.chat_node, 'session_id'):
+            if self.chat_node and hasattr(self.chat_node, "session_id"):
                 current_session_id = self.chat_node.session_id
 
             # Get session info for all sessions first to enable sorting
@@ -1142,18 +1143,19 @@ class DatusCLI:
                 except Exception as e:
                     logger.debug(f"Error getting info for session {session_id}: {e}")
                     sessions_with_info.append((session_id, {"exists": False, "error": str(e)}))
-            
+
             # Sort by last updated timestamp (descending), then by session_id
             def sort_key(item):
                 session_id, info = item
                 if not info.get("exists", False):
                     return (0, session_id)  # Put error sessions at end
-                
+
                 # Use updated_at, latest_message_at, or file_modified as sort key
                 updated_at = info.get("updated_at") or info.get("latest_message_at") or ""
                 if updated_at:
                     try:
                         import datetime
+
                         if "T" in updated_at:
                             dt = datetime.datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
                         else:
@@ -1161,24 +1163,29 @@ class DatusCLI:
                         return (1, dt.timestamp())  # Sort by timestamp (higher = more recent)
                     except (ValueError, TypeError):
                         pass
-                
+
                 # Fallback to file modification time
                 file_modified = info.get("file_modified", 0)
                 return (1, file_modified)
-            
+
             # Sort sessions (most recent first) and limit to top 20
             sessions_with_info.sort(key=sort_key, reverse=True)
             total_sessions = len(sessions_with_info)
             sessions_with_info = sessions_with_info[:20]  # Show only top 20
 
             # Create table to display sessions
-            from rich.table import Table
             import datetime
-            
-            table = Table(title="Available SQLite Sessions (Top 20)" if total_sessions > 20 else "Available SQLite Sessions", show_header=True, header_style="bold magenta")
+
+            from rich.table import Table
+
+            table = Table(
+                title="Available SQLite Sessions (Top 20)" if total_sessions > 20 else "Available SQLite Sessions",
+                show_header=True,
+                header_style="bold magenta",
+            )
             table.add_column("Session ID", style="cyan", no_wrap=True, width=18)
             table.add_column("Messages", justify="right", style="green", width=8)
-            table.add_column("Tokens", justify="right", style="blue", width=8)  
+            table.add_column("Tokens", justify="right", style="blue", width=8)
             table.add_column("Created", style="yellow", width=12)
             table.add_column("Last Updated", style="yellow", width=12)
             table.add_column("Latest Message", style="white", width=50)
@@ -1187,28 +1194,32 @@ class DatusCLI:
             # Helper function to clean user message prefixes
             def clean_user_message(message_content):
                 import re
+
                 if not message_content:
                     return ""
-                
+
                 # Remove common prefix pattern: "Context: database: [db_name]\n\nUser question: "
-                cleaned = re.sub(r"Context:\s*database:\s*\w+\s*\n\nUser question:\s*", "", message_content, flags=re.IGNORECASE)
-                
+                cleaned = re.sub(
+                    r"Context:\s*database:\s*\w+\s*\n\nUser question:\s*", "", message_content, flags=re.IGNORECASE
+                )
+
                 # If nothing was removed, try alternative patterns
                 if cleaned == message_content:
                     # Try more flexible pattern
-                    cleaned = re.sub(r"Context:.*?\n\nUser question:\s*", "", message_content, flags=re.IGNORECASE | re.DOTALL)
-                
+                    cleaned = re.sub(
+                        r"Context:.*?\n\nUser question:\s*", "", message_content, flags=re.IGNORECASE | re.DOTALL
+                    )
+
                 return cleaned.strip()
 
             # Add each session to the table
             for session_id, session_info in sessions_with_info:
                 try:
-                    
                     if session_info.get("exists", False):
                         # Format message count (prefer message_count over item_count if available)
                         msg_count = session_info.get("message_count", session_info.get("item_count", 0))
                         message_count_str = str(msg_count)
-                        
+
                         # Format token count (use actual tokens from database)
                         actual_tokens = session_info.get("total_tokens", 0)
                         if actual_tokens < 1000:
@@ -1217,11 +1228,11 @@ class DatusCLI:
                             tokens_str = f"{actual_tokens/1000:.1f}K"
                         else:
                             tokens_str = f"{actual_tokens/1000000:.1f}M"
-                        
+
                         # Format timestamps
                         created_at = session_info.get("created_at", "Unknown")
                         updated_at = session_info.get("updated_at", session_info.get("latest_message_at", "Unknown"))
-                        
+
                         # Format timestamp for display (just date/time, no microseconds)
                         def format_timestamp(ts_str):
                             if ts_str == "Unknown":
@@ -1235,45 +1246,52 @@ class DatusCLI:
                                 return dt.strftime("%m/%d %H:%M")
                             except (ValueError, TypeError):
                                 return ts_str[:16] if len(ts_str) > 16 else ts_str
-                        
+
                         created_str = format_timestamp(created_at)
                         updated_str = format_timestamp(updated_at)
-                        
+
                         # Format latest user message
                         latest_msg = session_info.get("latest_user_message", "")
                         if latest_msg:
                             # Clean the message prefix and format for display
                             cleaned_msg = clean_user_message(latest_msg)
-                            cleaned_msg = cleaned_msg.strip().replace('\n', ' ').replace('\r', ' ')
+                            cleaned_msg = cleaned_msg.strip().replace("\n", " ").replace("\r", " ")
                             if len(cleaned_msg) > 47:
                                 cleaned_msg = cleaned_msg[:44] + "..."
                             latest_msg = f'"{cleaned_msg}"'
                         else:
                             latest_msg = "[dim]No user messages[/]"
-                        
+
                         # Mark current session
                         status = "[bold green]●[/]" if session_id == current_session_id else "[dim]○[/]"
-                        
-                        table.add_row(session_id, message_count_str, tokens_str, created_str, updated_str, latest_msg, status)
+
+                        table.add_row(
+                            session_id, message_count_str, tokens_str, created_str, updated_str, latest_msg, status
+                        )
                     else:
                         table.add_row(session_id, "?", "?", "?", "?", "?", "[red]Error[/]")
-                        
+
                 except Exception as e:
                     logger.debug(f"Error getting info for session {session_id}: {e}")
                     table.add_row(session_id, "?", "?", "?", "?", "?", "[red]Error[/]")
 
             self.console.print(table)
-            
+
             # Show summary information
             displayed_sessions = len(sessions_with_info)
             if current_session_id:
                 if total_sessions > 20:
-                    self.console.print(f"\n[dim]Showing top {displayed_sessions} of {total_sessions} total sessions • Current: {current_session_id} (●)[/]")
+                    self.console.print(
+                        f"\n[dim]Showing top {displayed_sessions} of {total_sessions} "
+                        f"total sessions • Current: {current_session_id} (●)[/]"
+                    )
                 else:
-                    self.console.print(f"\n[dim]Total: {total_sessions} sessions • Current: {current_session_id} (●)[/]")
+                    self.console.print(
+                        f"\n[dim]Total: {total_sessions} sessions • Current: {current_session_id} (●)[/]"
+                    )
             else:
                 if total_sessions > 20:
-                    self.console.print(f"\n[dim]Showing top {displayed_sessions} of {total_sessions} total sessions • No active session[/]")
+                    self.console.print(f"\n[dim]Showing top {displayed_sessions} of {total_sessions} sessions[/]")
                 else:
                     self.console.print(f"\n[dim]Total: {total_sessions} sessions • No active session[/]")
 

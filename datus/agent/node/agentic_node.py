@@ -230,9 +230,9 @@ class AgenticNode(ABC):
 
         self._session_tokens += tokens_used
         logger.debug(f"Added {tokens_used} tokens to session. Total: {self._session_tokens}")
-        
+
         # Update SQLite session with current token count via model's session manager
-        if self.model and hasattr(self.model, 'session_manager') and self.session_id:
+        if self.model and hasattr(self.model, "session_manager") and self.session_id:
             self.model.session_manager.update_session_tokens(self.session_id, self._session_tokens)
 
     async def _manual_compact(self) -> dict:
