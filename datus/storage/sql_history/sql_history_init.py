@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
@@ -6,10 +6,60 @@ from datus.storage.sql_history.init_utils import exists_sql_history, gen_sql_his
 from datus.storage.sql_history.sql_file_processor import process_sql_files
 from datus.storage.sql_history.store import SqlHistoryRAG
 from datus.tools.llms_tools import LLMTool
-from datus.tools.llms_tools.analyze_sql_history import analyze_sql_history_batch
+from datus.tools.llms_tools.analyze_sql_history import (
+    classify_items_batch,
+    extract_summaries_batch,
+    generate_classification_taxonomy,
+)
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def analyze_sql_history(
+    llm_tool: LLMTool, items: List[Dict[str, Any]], pool_size: int = 4, existing_taxonomy: Dict[str, Any] = None
+) -> List[Dict[str, Any]]:
+    """
+    Analyze SQL history items using LLM interaction process.
+
+    Args:
+        llm_tool: Initialized LLM tool
+        items: List of dict objects containing sql, comment, filepath fields
+        pool_size: Number of threads for parallel processing
+        existing_taxonomy: Optional existing taxonomy for incremental updates
+
+    Returns:
+        List of enriched dict objects with additional summary, domain, layer1, layer2, tags, id fields
+    """
+    logger.info(f"Starting analysis for {len(items)} SQL items")
+
+    # Step 1: Extract summaries in parallel
+    logger.info("Step 1: Extracting summaries...")
+    items_with_summaries = extract_summaries_batch(llm_tool, items, pool_size)
+    for item in items_with_summaries:
+        logger.debug(f"Item with id: {item['id']}")
+        logger.debug(f"Item with comment: {item['comment']}")
+        logger.debug(f"Item with summary: {item['summary']}")
+
+    # Step 2: Generate classification taxonomy
+    logger.info("Step 2: Generating classification taxonomy...")
+    taxonomy = generate_classification_taxonomy(llm_tool, items_with_summaries, existing_taxonomy)
+
+    for domain in taxonomy.get("domains", []):
+        logger.debug(f"Domain: {domain}")
+    for layer1 in taxonomy.get("layer1_categories", []):
+        logger.debug(f"Layer1: {layer1}")
+    for layer2 in taxonomy.get("layer2_categories", []):
+        logger.debug(f"Layer2: {layer2}")
+    for tag in taxonomy.get("common_tags", []):
+        logger.debug(f"Tag: {tag}")
+
+    # Step 3: Classify each item based on taxonomy
+    logger.info("Step 3: Classifying SQL items...")
+    classified_items = classify_items_batch(llm_tool, items_with_summaries, taxonomy, pool_size)
+
+    logger.info(f"Analysis completed for {len(classified_items)} items")
+    return classified_items
 
 
 def init_sql_history(
@@ -79,7 +129,13 @@ def init_sql_history(
         # Analyze with LLM using parallel processing
         model = LLMBaseModel.create_model(global_config)
         llm_tool = LLMTool(model=model)
-        enriched_items = analyze_sql_history_batch(llm_tool, items_to_process, pool_size)
+
+        # Get existing taxonomy for incremental updates
+        existing_taxonomy = None
+        if build_mode == "incremental":
+            existing_taxonomy = storage.sql_history_storage.get_existing_taxonomy()
+
+        enriched_items = analyze_sql_history(llm_tool, items_to_process, pool_size, existing_taxonomy)
 
         # enriched_items are already dict format, can store directly
         storage.store_batch(enriched_items)

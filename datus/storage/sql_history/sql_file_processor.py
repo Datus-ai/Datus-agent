@@ -92,8 +92,8 @@ def validate_sql(sql: str) -> Tuple[bool, str, str]:
     Returns:
         Tuple of (is_valid, cleaned_sql, error_message)
     """
-    # Try MySQL, Spark, Hive dialects with sqlglot
-    dialects_to_try = ["mysql", "spark", "hive"]
+    # Try MySQL, Hive, Spark dialects with sqlglot
+    dialects_to_try = ["mysql", "hive", "spark"]
 
     sqlglot_errors = []
 
@@ -120,7 +120,7 @@ def validate_sql(sql: str) -> Tuple[bool, str, str]:
             # Strip ANSI color codes from error messages
             error_msg = str(e)
             error_msg = re.sub(r"\x1b\[[0-9;]*m", "", error_msg)
-            sqlglot_errors.append(f"{dialect}: {error_msg}")
+            sqlglot_errors.append(f"\n\t{dialect}: {error_msg}")
 
     # All dialects failed
     return False, "", f"SQL validation errors: {'; '.join(sqlglot_errors)}"

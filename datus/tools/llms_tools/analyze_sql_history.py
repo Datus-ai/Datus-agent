@@ -9,38 +9,6 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def analyze_sql_history_three_step(
-    llm_tool: LLMTool, items: List[Dict[str, Any]], pool_size: int = 4
-) -> List[Dict[str, Any]]:
-    """
-    Analyze SQL history items using three-step LLM interaction process.
-
-    Args:
-        llm_tool: Initialized LLM tool
-        items: List of dict objects containing sql, comment, filepath fields
-        pool_size: Number of threads for parallel processing
-
-    Returns:
-        List of enriched dict objects with additional summary, domain, layer1, layer2, tags, id fields
-    """
-    logger.info(f"Starting three-step analysis for {len(items)} SQL items")
-
-    # Step 1: Extract summaries in parallel
-    logger.info("Step 1: Extracting summaries...")
-    items_with_summaries = extract_summaries_batch(llm_tool, items, pool_size)
-
-    # Step 2: Generate classification taxonomy
-    logger.info("Step 2: Generating classification taxonomy...")
-    taxonomy = generate_classification_taxonomy(llm_tool, items_with_summaries)
-
-    # Step 3: Classify each item based on taxonomy
-    logger.info("Step 3: Classifying SQL items...")
-    classified_items = classify_items_batch(llm_tool, items_with_summaries, taxonomy, pool_size)
-
-    logger.info(f"Three-step analysis completed for {len(classified_items)} items")
-    return classified_items
-
-
 def extract_summaries_batch(llm_tool: LLMTool, items: List[Dict[str, Any]], pool_size: int = 4) -> List[Dict[str, Any]]:
     """
     Extract summaries for SQL items using parallel processing.
@@ -98,10 +66,10 @@ def extract_single_summary(llm_tool: LLMTool, item: Dict[str, Any], index: int) 
             comment=item.get("comment", ""),
             sql=item.get("sql", ""),
         )
-        logger.info(f"Prompt of extract_single_summary: {prompt}")
+        logger.debug(f"Prompt of extract_single_summary: {prompt}")
 
         parsed_data = llm_tool.model.generate_with_json_output(prompt)
-        logger.info(f"Parsed data of extract_single_summary: {parsed_data}")
+        logger.debug(f"Parsed data of extract_single_summary: {parsed_data}")
         item["summary"] = parsed_data.get("summary", item.get("comment", ""))
         item["id"] = gen_sql_history_id(item.get("sql", ""), item.get("comment", ""))
 
@@ -115,51 +83,71 @@ def extract_single_summary(llm_tool: LLMTool, item: Dict[str, Any], index: int) 
         return item
 
 
-def generate_classification_taxonomy(llm_tool: LLMTool, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+def generate_classification_taxonomy(
+    llm_tool: LLMTool, items: List[Dict[str, Any]], existing_taxonomy: Dict[str, Any] = None
+) -> Dict[str, Any]:
     """
     Generate classification taxonomy based on all SQL summaries and comments.
 
     Args:
         llm_tool: Initialized LLM tool
         items: List of dict objects with summary and comment fields
+        existing_taxonomy: Optional existing taxonomy for incremental updates
 
     Returns:
         Dict containing the generated taxonomy
     """
-    logger.info("Generating classification taxonomy based on all SQL items")
+    if existing_taxonomy:
+        logger.info(f"Generating incremental taxonomy update based on {len(items)} new SQL items")
+        logger.info(
+            f"Existing taxonomy: {len(existing_taxonomy.get('domains', []))} domains, "
+            f"{len(existing_taxonomy.get('layer1_categories', []))} layer1 categories, "
+            f"{len(existing_taxonomy.get('layer2_categories', []))} layer2 categories, "
+            f"{len(existing_taxonomy.get('common_tags', []))} tags"
+        )
+    else:
+        logger.info("Generating fresh classification taxonomy based on all SQL items")
 
     try:
-        prompt = prompt_manager.render_template(
-            "generate_sql_taxonomy",
-            version="1.0",
-            sql_items=items,
-        )
-        logger.info(f"Prompt of generate_classification_taxonomy: {prompt}")
+        if existing_taxonomy:
+            prompt = prompt_manager.render_template(
+                "generate_sql_taxonomy_incremental",
+                version="1.0",
+                sql_items=items,
+                existing_taxonomy=existing_taxonomy,
+            )
+        else:
+            prompt = prompt_manager.render_template(
+                "generate_sql_taxonomy",
+                version="1.0",
+                sql_items=items,
+            )
+        logger.debug(f"Prompt of generate_classification_taxonomy: {prompt}")
 
         taxonomy = llm_tool.model.generate_with_json_output(prompt)
-        logger.info(f"Parsed data of generate_classification_taxonomy: {taxonomy}")
+        logger.debug(f"Parsed data of generate_classification_taxonomy: {taxonomy}")
 
-        logger.info("Generated taxonomy:")
+        logger.debug("Generated taxonomy:")
 
         # Display domains with their layer1 and layer2 categories
         for domain in taxonomy.get("domains", []):
-            logger.info(f"  {domain.get('name', '')}: {domain.get('description', '')}")
+            logger.debug(f"  {domain.get('name', '')}: {domain.get('description', '')}")
 
             # Display layer1 categories under this domain
             for layer1 in taxonomy.get("layer1_categories", []):
                 if layer1.get("domain", "") == domain.get("name", ""):
-                    logger.info(f"    {layer1.get('name', '')}: {layer1.get('description', '')}")
+                    logger.debug(f"    {layer1.get('name', '')}: {layer1.get('description', '')}")
 
                     # Display layer2 categories under this layer1
                     for layer2 in taxonomy.get("layer2_categories", []):
                         if layer2.get("layer1", "") == layer1.get("name", ""):
-                            logger.info(f"        {layer2.get('name', '')}: {layer2.get('description', '')}")
+                            logger.debug(f"        {layer2.get('name', '')}: {layer2.get('description', '')}")
 
         # Display tags
         tags = [f"{t.get('tag', '')}: {t.get('description', '')}" for t in taxonomy.get("common_tags", [])]
-        logger.info(f"  Tags ({len(tags)}):")
+        logger.debug(f"  Tags ({len(tags)}):")
         for tag in tags:
-            logger.info(f"    {tag}")
+            logger.debug(f"    {tag}")
 
         return taxonomy
 
@@ -242,10 +230,10 @@ def classify_single_item(
             summary=item.get("summary", ""),
             taxonomy=taxonomy,
         )
-        logger.info(f"Prompt of classify_single_item: {prompt}")
+        logger.debug(f"Prompt of classify_single_item: {prompt}")
 
         parsed_data = llm_tool.model.generate_with_json_output(prompt)
-        logger.info(f"Parsed data of classify_single_item: {parsed_data}")
+        logger.debug(f"Parsed data of classify_single_item: {parsed_data}")
 
         item["domain"] = parsed_data.get("domain", "")
         item["layer1"] = parsed_data.get("layer1", "")
@@ -257,70 +245,6 @@ def classify_single_item(
 
     except Exception as e:
         logger.error(f"Item {index}: Failed to classify: {str(e)}")
-        item["domain"] = ""
-        item["layer1"] = ""
-        item["layer2"] = ""
-        item["tags"] = ""
-        return item
-
-
-def analyze_sql_history_batch(
-    llm_tool: LLMTool, items: List[Dict[str, Any]], pool_size: int = 4
-) -> List[Dict[str, Any]]:
-    """
-    Legacy function - now redirects to three-step analysis.
-
-    Args:
-        llm_tool: Initialized LLM tool
-        items: List of dict objects containing sql, comment, filepath fields
-        pool_size: Number of threads for parallel processing
-
-    Returns:
-        List of enriched dict objects with additional summary, domain, layer1, layer2, tags, id fields
-    """
-    logger.info("Using legacy interface - redirecting to three-step analysis")
-    return analyze_sql_history_three_step(llm_tool, items, pool_size)
-
-
-def analyze_single_item(llm_tool: LLMTool, item: Dict[str, Any], index: int) -> Dict[str, Any]:
-    """
-    Legacy function - analyze a single SQL history item using old method.
-
-    Args:
-        llm_tool: Initialized LLM tool
-        item: Dict object containing sql, comment, filepath fields
-        index: Item index for logging
-
-    Returns:
-        Enriched dict object with additional summary, domain, layer1, layer2, tags, id fields
-    """
-    logger.debug(f"Analyzing item {index}: {item.get('filepath', '')}")
-
-    try:
-        prompt = prompt_manager.render_template(
-            "analyze_sql_history",
-            version="1.0",
-            comment=item.get("comment", ""),
-            sql=item.get("sql", ""),
-        )
-
-        parsed_data = llm_tool.model.generate_with_json_output(prompt)
-
-        item["summary"] = parsed_data.get("summary", item.get("comment", ""))
-        item["domain"] = parsed_data.get("domain", "")
-        item["layer1"] = parsed_data.get("layer1", "")
-        item["layer2"] = parsed_data.get("layer2", "")
-        item["tags"] = parsed_data.get("tags", "")
-
-        item["id"] = gen_sql_history_id(item.get("sql", ""), item.get("comment", ""))
-
-        logger.debug(f"Item {index}: Successfully analyzed SQL from {item.get('filepath', '')}")
-        return item
-
-    except Exception as e:
-        logger.error(f"Item {index}: Failed to analyze SQL item: {str(e)}")
-        item["summary"] = item.get("comment", "") if item.get("comment") else "Unable to analyze SQL"
-        item["id"] = gen_sql_history_id(item.get("sql", ""), item.get("comment", ""))
         item["domain"] = ""
         item["layer1"] = ""
         item["layer2"] = ""

@@ -106,6 +106,65 @@ class SqlHistoryStorage(BaseEmbeddingStore):
 
         return search_result
 
+    def get_existing_taxonomy(self) -> Dict[str, Any]:
+        """Get existing taxonomy from stored SQL history items.
+
+        Returns:
+            Dict containing existing domains, layer1_categories, layer2_categories, and common_tags
+        """
+        logger.info("Extracting existing taxonomy from stored SQL history")
+
+        # Ensure table is ready
+        self._ensure_table_ready()
+
+        # Get all existing taxonomy data
+        search_result = self.table.search().select(["domain", "layer1", "layer2", "tags"]).limit(10000).to_list()
+
+        if not search_result:
+            logger.info("No existing taxonomy found in database")
+            return {"domains": [], "layer1_categories": [], "layer2_categories": [], "common_tags": []}
+
+        # Extract unique values
+        domains = set()
+        layer1_categories = set()
+        layer2_categories = set()
+        tags = set()
+
+        for item in search_result:
+            if item.get("domain"):
+                domains.add(item["domain"])
+            if item.get("layer1"):
+                layer1_categories.add((item["layer1"], item.get("domain", "")))
+            if item.get("layer2"):
+                layer2_categories.add((item["layer2"], item.get("layer1", "")))
+            if item.get("tags"):
+                # Split tags by comma if they are stored as comma-separated string
+                item_tags = [tag.strip() for tag in str(item["tags"]).split(",") if tag.strip()]
+                tags.update(item_tags)
+
+        # Format into taxonomy structure
+        taxonomy = {
+            "domains": [{"name": domain, "description": "Existing business domain"} for domain in sorted(domains)],
+            "layer1_categories": [
+                {"name": layer1, "domain": domain, "description": "Existing primary category"}
+                for layer1, domain in sorted(layer1_categories)
+            ],
+            "layer2_categories": [
+                {"name": layer2, "layer1": layer1, "description": "Existing secondary category"}
+                for layer2, layer1 in sorted(layer2_categories)
+            ],
+            "common_tags": [{"tag": tag, "description": "Existing tag"} for tag in sorted(tags)],
+        }
+
+        logger.info(
+            f"Extracted existing taxonomy: {len(taxonomy['domains'])} domains, "
+            f"{len(taxonomy['layer1_categories'])} layer1 categories, "
+            f"{len(taxonomy['layer2_categories'])} layer2 categories, "
+            f"{len(taxonomy['common_tags'])} tags"
+        )
+
+        return taxonomy
+
     def search_by_filepath(self, filepath_pattern: str) -> List[Dict[str, Any]]:
         """Search SQL history by filepath pattern."""
         # Ensure table is ready before direct table access
