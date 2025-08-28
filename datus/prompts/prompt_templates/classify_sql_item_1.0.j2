@@ -1,0 +1,45 @@
+Please classify the following SQL query based on the provided taxonomy.
+
+**SQL Comment:** {{ comment }}
+**SQL Summary:** {{ summary }}
+
+**Available Classification Taxonomy:**
+
+**Domains:**
+{% for domain in taxonomy.domains %}
+- {{ domain.name }}: {{ domain.description }}
+{% endfor %}
+
+**Layer1 Categories:**
+{% for layer1 in taxonomy.layer1_categories %}
+- {{ layer1.name }} ({{ layer1.domain }}): {{ layer1.description }}
+{% endfor %}
+
+**Layer2 Categories:**
+{% for layer2 in taxonomy.layer2_categories %}
+- {{ layer2.name }} ({{ layer2.layer1 }}): {{ layer2.description }}
+{% endfor %}
+
+**Available Tags:**
+{% for tag in taxonomy.common_tags %}
+- {{ tag.tag }}: {{ tag.description }}
+{% endfor %}
+
+Please classify this SQL query in the following JSON format:
+
+{
+    "domain": "selected_domain_name",
+    "layer1": "selected_layer1_category", 
+    "layer2": "selected_layer2_category",
+    "tags": "comma_separated_relevant_tags"
+}
+
+Guidelines:
+- Select exactly ONE domain that best fits the business context
+- Select exactly ONE layer1 category that matches the selected domain
+- Select exactly ONE layer2 category that matches the selected layer1
+- Select 2-5 relevant tags from the available tags list
+- Choose the most specific and accurate classifications possible
+- If no perfect match exists, choose the closest available option
+- Tags should be comma-separated without spaces after commas
+- Keep all values as strings exactly as they appear in the taxonomy
