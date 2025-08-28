@@ -81,7 +81,18 @@ class SQLAlchemyConnector(BaseSqlConnector):
             )
         # Connection-related errors
         if isinstance(e, (OperationalError, InterfaceError)):
-            if any(keyword in error_msg_lower for keyword in ["timeout", "timed out", "connection timeout"]):
+            # Handle transaction rollback errors specifically
+            if any(
+                keyword in error_msg_lower
+                for keyword in ["can't reconnect until invalid transaction is rolled back", "invalid transaction"]
+            ):
+                logger.warning("Detected invalid transaction state, resetting connection")
+                self._force_reset_connection()
+                return DatusException(
+                    ErrorCode.DB_TRANSACTION_FAILED,
+                    message_args=message_args,
+                )
+            elif any(keyword in error_msg_lower for keyword in ["timeout", "timed out", "connection timeout"]):
                 return DatusException(
                     ErrorCode.DB_CONNECTION_TIMEOUT,
                     message_args=message_args,
@@ -203,9 +214,14 @@ class SQLAlchemyConnector(BaseSqlConnector):
     @override
     def connect(self):
         """Establish connection to the database."""
-        if self.engine and self._owns_engine:
+        if self.engine and self.connection and self._owns_engine:
             return
+
         try:
+            # Clean up any existing connection
+            self._safe_close()
+
+            # Create engine based on dialect
             if self.dialect not in (DBType.DUCKDB, DBType.SQLITE):
                 self.engine = create_engine(
                     self.connection_string,
@@ -215,20 +231,22 @@ class SQLAlchemyConnector(BaseSqlConnector):
                     pool_recycle=3600,
                 )
             else:
-                self.engine = create_engine(
-                    self.connection_string,
-                )
+                self.engine = create_engine(self.connection_string)
+
+            # Create connection
             self.connection = self.engine.connect().execution_options(statement_timeout=self.timeout_seconds * 1000)
             self._owns_engine = True
+
         except Exception as e:
+            # Clean up on failure
+            self._force_reset_connection()
             raise self._trans_sqlalchemy_exception(e, sql="", operation="CONNECTION_INITIALIZATION") from e
 
-        if self.engine is None or self.connection is None:
+        if not (self.engine and self.connection):
+            self._force_reset_connection()
             raise DatusException(
                 ErrorCode.DB_CONNECTION_FAILED,
-                message_args={
-                    "error_message": "Engine not established",
-                },
+                message_args={"error_message": "Failed to establish engine and connection"},
             )
 
     @override
@@ -243,6 +261,46 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 self.engine = None
         except Exception as e:
             logger.warning(f"Error closing connection: {str(e)}")
+
+    def reset_connection(self):
+        """Reset the database connection to clear any stuck transaction state."""
+        try:
+            # Force close and dispose of existing connection and engine
+            if self.connection:
+                try:
+                    self.connection.rollback()
+                except Exception:
+                    pass
+                try:
+                    self.connection.close()
+                except Exception:
+                    pass
+                self.connection = None
+
+            if self.engine:
+                try:
+                    self.engine.dispose()
+                except Exception:
+                    pass
+                self.engine = None
+
+            self._owns_engine = False
+            logger.info("Database connection has been reset")
+        except Exception as e:
+            logger.warning(f"Error during connection reset: {str(e)}")
+
+    def _safe_rollback(self, operation_name: str = "operation"):
+        """Safely rollback transaction with error logging."""
+        if self.connection:
+            try:
+                self.connection.rollback()
+            except Exception:
+                logger.warning(f"Failed to rollback transaction after {operation_name} error")
+
+    def _handle_sql_exception(self, e: Exception, sql: str = None, operation: str = "SQL execution"):
+        """Handle SQL exceptions with rollback and proper error mapping."""
+        self._safe_rollback(operation)
+        return self._trans_sqlalchemy_exception(e, sql, operation)
 
     def validate_input(self, input_params: Any):
         """Validate the input parameters before execution."""
@@ -449,13 +507,17 @@ class SQLAlchemyConnector(BaseSqlConnector):
 
     def test_connection(self) -> bool:
         """Test the database connection."""
-        self.connect()
         try:
+            self.connect()
             self._execute_query("SELECT 1")
             return True
-        except DatusException as e:
-            raise e
+        except DatusException:
+            # Reset connection on test failure to clear any invalid transaction state
+            self._safe_close()
+            raise
         except Exception as e:
+            # Reset connection on test failure to clear any invalid transaction state
+            self._safe_close()
             raise DatusException(
                 ErrorCode.DB_CONNECTION_FAILED,
                 message_args={
@@ -463,7 +525,24 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 },
             ) from e
         finally:
+            self._safe_close()
+
+    def _safe_close(self):
+        """Safely close connection, ignoring any errors."""
+        try:
             self.close()
+        except Exception:
+            pass
+
+    def _force_reset_connection(self):
+        """Force reset connection, used internally by exception handlers."""
+        try:
+            self.reset_connection()
+        except Exception:
+            # If reset fails, at least try to clear the references
+            self.connection = None
+            self.engine = None
+            self._owns_engine = False
 
     @override
     def execute_insert(
@@ -583,11 +662,10 @@ class SQLAlchemyConnector(BaseSqlConnector):
         self.connect()
         try:
             result = self.connection.execute(text(query_sql))
-
             rows = result.fetchall()
             return [row._asdict() for row in rows]
         except Exception as e:
-            raise self._trans_sqlalchemy_exception(e, query_sql) from e
+            raise self._handle_sql_exception(e, query_sql, "query execution") from e
 
     def _execute_pandas(self, query_sql: str) -> DataFrame:
         return DataFrame(self._execute_query(query_sql))
@@ -616,7 +694,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
             res = self.connection.execute(text(sql))
             return res.rowcount
         except SQLAlchemyError as e:
-            raise self._trans_sqlalchemy_exception(e, sql, operation) from e
+            raise self._handle_sql_exception(e, sql, operation) from e
 
     def delete(self, sql: str) -> int:
         """Delete the database.
@@ -649,7 +727,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
             for query in queries:
                 results.append(self._execute(query))
         except SQLAlchemyError as e:
-            raise self._trans_sqlalchemy_exception(e, "\n".join(queries)) from e
+            raise self._handle_sql_exception(e, "\n".join(queries), "batch query execution") from e
         return results
 
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
