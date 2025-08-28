@@ -82,9 +82,33 @@ class DatusCLI:
         self.at_completer: AtReferenceCompleter
         self._init_prompt_session()
 
-        # Placeholder - will be initialized after cli_context is created
+        # Last executed SQL and result
+        self.last_sql = None
+        self.last_result = None
+        self.chat_history = []
 
-        # Dictionary of available commands
+        # Action history manager for tracking all CLI operations
+        self.actions = ActionHistoryManager()
+
+        # Persistent chat node for session continuity
+        self.chat_node: ChatAgenticNode | None = None
+
+        # Initialize CLI context for state management
+        from datus.cli.cli_context import CliContext
+
+        self.cli_context = CliContext(
+            current_db_name=getattr(args, "database", ""),
+            current_catalog=getattr(args, "catalog", ""),
+            current_schema=getattr(args, "schema", ""),
+        )
+        self.db_manager = db_manager_instance(self.agent_config.namespaces)
+
+        # Initialize command handlers after cli_context is created
+        self.agent_commands = AgentCommands(self, self.cli_context)
+        self.context_commands = ContextCommands(self)
+        self.metadata_commands = MetadataCommands(self)
+
+        # Dictionary of available commands - created after handlers are initialized
         self.commands = {
             "!run": self.agent_commands.cmd_darun_screen,
             "!sl": self.agent_commands.cmd_sl,
@@ -117,32 +141,6 @@ class DatusCLI:
             ".namespace": self._cmd_switch_namespace,
             ".mcp": self._cmd_mcp,
         }
-
-        # Last executed SQL and result
-        self.last_sql = None
-        self.last_result = None
-        self.chat_history = []
-
-        # Action history manager for tracking all CLI operations
-        self.actions = ActionHistoryManager()
-
-        # Persistent chat node for session continuity
-        self.chat_node: ChatAgenticNode | None = None
-
-        # Initialize CLI context for state management
-        from datus.cli.cli_context import CliContext
-
-        self.cli_context = CliContext(
-            current_db_name=getattr(args, "database", ""),
-            current_catalog=getattr(args, "catalog", ""),
-            current_schema=getattr(args, "schema", ""),
-        )
-        self.db_manager = db_manager_instance(self.agent_config.namespaces)
-
-        # Initialize command handlers after cli_context is created
-        self.agent_commands = AgentCommands(self, self.cli_context)
-        self.context_commands = ContextCommands(self)
-        self.metadata_commands = MetadataCommands(self)
 
         # Start agent initialization in background
         self._async_init_agent()

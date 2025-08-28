@@ -50,8 +50,12 @@ class AgentCommands:
     def create_node_input(self, node_type: str, task_text: str = None) -> BaseInput:
         """Create input for a specific node type with console prompts."""
         # Get or create SQL task
-        sql_task = self._gen_sql_task(task_text or "", use_existing=True)
-        if not sql_task:
+        try:
+            sql_task = self._gen_sql_task(task_text or "", use_existing=True)
+            if not sql_task:
+                return None
+        except ValueError as e:
+            self.console.print(f"[bold red]Error:[/] {str(e)}")
             return None
 
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
