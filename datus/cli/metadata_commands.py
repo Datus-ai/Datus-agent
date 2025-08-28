@@ -3,12 +3,9 @@ Metadata-related CLI commands for database introspection.
 This module handles database, table, and schema listing/switching functionality.
 """
 
-import sys
-from typing import Dict, List
 
 from rich.box import SIMPLE_HEAD
 from rich.panel import Panel
-from rich.syntax import Syntax
 from rich.table import Table
 
 from datus.utils.constants import DBType
@@ -19,7 +16,7 @@ logger = get_logger(__name__)
 
 class MetadataCommands:
     """Handler for metadata-related CLI commands (.databases, .tables, etc.)."""
-    
+
     def __init__(self, cli_instance):
         """Initialize with reference to the main CLI instance."""
         self.cli = cli_instance
@@ -64,7 +61,9 @@ class MetadataCommands:
                 table.add_column("URI")
                 for db_config in result:
                     name = db_config["name"]
-                    table.add_row(name if name != self.cli.current_db_name else f"[bold green]{name}[/]", db_config["uri"])
+                    table.add_row(
+                        name if name != self.cli.current_db_name else f"[bold green]{name}[/]", db_config["uri"]
+                    )
             else:
                 for db_config in result:
                     table.add_row(db_config["name"])
@@ -90,7 +89,9 @@ class MetadataCommands:
         self.cli.db_connector.switch_context(database_name=new_db)
         self.cli.current_db_name = new_db
         if self.cli.agent_config.db_type == DBType.SQLITE or self.cli.agent_config.db_type == DBType.DUCKDB:
-            self.cli.db_connector = self.cli.db_manager.get_conn(self.cli.agent_config.current_namespace, self.cli.current_db_name)
+            self.cli.db_connector = self.cli.db_manager.get_conn(
+                self.cli.agent_config.current_namespace, self.cli.current_db_name
+            )
         self.cli.agent_config._current_database = new_db
         if self.cli.chat_node and (
             self.cli.agent_config.db_type == DBType.SQLITE or self.cli.agent_config.db_type == DBType.DUCKDB
@@ -108,7 +109,9 @@ class MetadataCommands:
         try:
             # For SQLite, query the sqlite_master table
             result = self.cli.db_connector.get_tables(
-                catalog_name=self.cli.current_catalog, database_name=self.cli.current_db_name, schema_name=self.cli.current_schema
+                catalog_name=self.cli.current_catalog,
+                database_name=self.cli.current_db_name,
+                schema_name=self.cli.current_schema,
             )
             self.cli.last_result = result
             if result:
@@ -144,7 +147,9 @@ class MetadataCommands:
         if not DBType.support_schema(dialect):
             self.cli.console.print(f"[bold red]The {dialect} database does not support schema[/]")
             return
-        result = self.cli.db_connector.get_schemas(catalog_name=self.cli.current_catalog, database_name=self.cli.current_db_name)
+        result = self.cli.db_connector.get_schemas(
+            catalog_name=self.cli.current_catalog, database_name=self.cli.current_db_name
+        )
         self.cli.last_result = result
         if result:
             # Display results

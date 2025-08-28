@@ -17,6 +17,8 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.box import SIMPLE_HEAD
+from prompt_toolkit.styles import Style
+from pygments.lexers.sql import SqlLexer
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -80,28 +82,18 @@ class DatusCLI:
         self.at_completer: AtReferenceCompleter
         self._init_prompt_session()
 
-        # Initialize agent commands handler
-        self.agent_commands = AgentCommands(self)
-
-        # Initialize context commands handler
-        self.context_commands = ContextCommands(self)
-
-        # Initialize metadata commands handler
-        self.metadata_commands = MetadataCommands(self)
+        # Placeholder - will be initialized after cli_context is created
 
         # Dictionary of available commands
         self.commands = {
             "!run": self.agent_commands.cmd_darun_screen,
-            "!dastart": self.agent_commands.cmd_dastart,
             "!sl": self.agent_commands.cmd_sl,
             "!gen": self.agent_commands.cmd_gen,
             "!fix": self.agent_commands.cmd_fix,
-            "!daend": self.agent_commands.cmd_daend,
             "!compare": self.agent_commands.cmd_compare_stream,
             "!reason": self.agent_commands.cmd_reason_stream,
             "!gen_metrics": self.agent_commands.cmd_gen_metrics_stream,
             "!gen_semantic_model": self.agent_commands.cmd_gen_semantic_model_stream,
-            "!set": self.agent_commands.cmd_set_context,
             "!save": self.agent_commands.cmd_save,
             "!bash": self._cmd_bash,
             "@catalogs": self.context_commands.cmd_catalogs,
@@ -137,10 +129,20 @@ class DatusCLI:
         # Persistent chat node for session continuity
         self.chat_node: ChatAgenticNode | None = None
 
-        self.current_db_name = getattr(args, "database", "")
-        self.current_catalog = getattr(args, "catalog", "")
-        self.current_schema = getattr(args, "schema", "")
+        # Initialize CLI context for state management
+        from datus.cli.cli_context import CliContext
+
+        self.cli_context = CliContext(
+            current_db_name=getattr(args, "database", ""),
+            current_catalog=getattr(args, "catalog", ""),
+            current_schema=getattr(args, "schema", ""),
+        )
         self.db_manager = db_manager_instance(self.agent_config.namespaces)
+
+        # Initialize command handlers after cli_context is created
+        self.agent_commands = AgentCommands(self, self.cli_context)
+        self.context_commands = ContextCommands(self)
+        self.metadata_commands = MetadataCommands(self)
 
         # Start agent initialization in background
         self._async_init_agent()
@@ -457,10 +459,14 @@ class DatusCLI:
         else:
             self.agent_config.current_namespace = args.strip()
             name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_namespace)
-            self.current_catalog = self.db_connector.catalog_name
-            self.current_db_name = self.db_connector.database_name if not name else name
-            self.current_schema = self.db_connector.schema_name
+            self.cli_context.update_database_context(
+                catalog=self.db_connector.catalog_name,
+                db_name=self.db_connector.database_name if not name else name,
+                schema=self.db_connector.schema_name,
+            )
             self._reset_session()
+            if self.chat_node:
+                self.chat_node.setup_tools()
             self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_namespace}[/]")
 
     def _cmd_switch_database(self, args: str = ""):
@@ -714,9 +720,9 @@ class DatusCLI:
             # Create chat input with current database context
             chat_input = ChatNodeInput(
                 user_message=message,
-                catalog=self.current_catalog if self.current_catalog else None,
-                database=self.current_db_name if self.current_db_name else None,
-                db_schema=self.current_schema if self.current_schema else None,
+                catalog=self.cli_context.current_catalog if self.cli_context.current_catalog else None,
+                database=self.cli_context.current_db_name if self.cli_context.current_db_name else None,
+                db_schema=self.cli_context.current_schema if self.cli_context.current_schema else None,
             )
 
             # Get or create persistent ChatAgenticNode
@@ -1011,7 +1017,6 @@ class DatusCLI:
         lines.append("[bold]Tool Commands (! prefix):[/]")
         tool_cmds = [
             ("!run <query>", "Run a natural language query with live workflow status display"),
-            ("!dastart <query>", "Start a new workflow session with manual input"),
             ("!sl", "Schema linking: show list of recommended tables and values"),
             ("!gen", "Generate SQL, optionally with table constraints"),
             ("!fix <description>", "Fix the last SQL query"),
@@ -1020,10 +1025,7 @@ class DatusCLI:
             ("!gen_semantic_model", "Generate semantic model with streaming output"),
             ("!compare", "Compare SQL results with streaming output"),
             ("!save", "Save the last result to a file"),
-            ("!set <context_type>", "Set the context type for the current workflow"),
-            ("    context_type: sql, lastsql, schema, schema_values, metrics, task", ""),
             ("!bash <command>", "Execute a bash command (limited to safe commands)"),
-            ("!daend", "End the current agent session and save trajectory to file"),
         ]
         for cmd, desc in tool_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
@@ -1373,10 +1375,16 @@ Type '.help' for a list of commands or '.exit' to quit.
         # Display connection info
         if self.db_connector:
             db_info = f"Connected to [bold green]{self.agent_config.db_type}[/]"
-            if self.current_db_name:
-                db_info += f" using database [bold]{self.current_db_name}[/]"
+            if self.cli_context.current_db_name:
+                db_info += f" using database [bold]{self.cli_context.current_db_name}[/]"
 
             self.console.print(db_info)
+
+            # Show CLI context summary
+            context_summary = self.cli_context.get_context_summary()
+            if context_summary != "No context available":
+                self.console.print(f"[dim]Context: {context_summary}[/]")
+
             self.console.print("Type SQL statements or use ! @ . commands to interact.")
         else:
             self.console.print("[yellow]Warning: No database connection initialized.[/]")
@@ -1448,10 +1456,11 @@ Type '.help' for a list of commands or '.exit' to quit.
     def _init_connection(self):
         """Initialize database connection."""
         current_namespace = self.agent_config.current_namespace
-        if not self.current_db_name:
-            self.current_db_name, self.db_connector = self.db_manager.first_conn_with_name(current_namespace)
+        if not self.cli_context.current_db_name:
+            db_name, self.db_connector = self.db_manager.first_conn_with_name(current_namespace)
+            self.cli_context.update_database_context(db_name=db_name)
         else:
-            self.db_connector = self.db_manager.get_conn(current_namespace, self.current_db_name)
+            self.db_connector = self.db_manager.get_conn(current_namespace, self.cli_context.current_db_name)
         if not self.db_connector:
             self.console.print("[bold red]Error:[/] No database connection.")
             return
