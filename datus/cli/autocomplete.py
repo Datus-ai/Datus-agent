@@ -185,6 +185,20 @@ class SQLCompleter(Completer):
             ".help": None,
             ".exit": None,
             ".quit": None,
+            ".clear": None,
+            ".chat_info": None,
+            ".compact": None,
+            ".sessions": None,
+            # temporary commands for sqlite, remove after mcp server is ready
+            ".databases": None,
+            ".database": None,
+            ".tables": None,
+            ".schemas": None,
+            ".schema": None,
+            ".table_schema": None,
+            ".show": None,
+            ".namespace": None,
+            ".mcp": None,
         }
 
     def update_tables(self, tables: Dict[str, List[str]]):
