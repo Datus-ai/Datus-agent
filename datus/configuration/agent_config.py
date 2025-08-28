@@ -183,6 +183,7 @@ class AgentConfig:
                 code=ErrorCode.COMMON_UNSUPPORTED,
                 message_args={"field_name": "namespace", "your_value": value},
             )
+        self._current_database = ""
         self._current_namespace = value
         self.db_type = list(self.namespaces[self._current_namespace].values())[0].type
 

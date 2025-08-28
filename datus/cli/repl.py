@@ -149,32 +149,45 @@ class DatusCLI:
         self._async_init_agent()
         self._init_connection()
 
-    # def _create_custom_key_bindings(self):
-    #     """Create custom key bindings for the REPL."""
-    #     kb = KeyBindings()
-    #
-    #     @kb.add("c-d")
-    #     def _(event):
-    #         """Handle Ctrl+R for mode switching if available."""
-    #         # Check if chat executor is available and mode switch is enabled
-    #         if (
-    #             self.chat_executor
-    #             and hasattr(self.chat_executor, "is_mode_switch_available")
-    #             and self.chat_executor.is_mode_switch_available()
-    #         ):
-    #             # Switch to app display
-    #             success = self.chat_executor.switch_to_app_display()
-    #             if success:
-    #                 # Refresh the prompt after returning from textual
-    #                 event.app.invalidate()
-    #             else:
-    #                 # Show error message if switch failed
-    #                 self.console.print("[yellow]Mode switching is not available at this time[/yellow]")
-    #         else:
-    #             # Show message that Ctrl+R is reserved for mode switching
-    #             self.console.print("[dim]Ctrl+D is reserved for mode switching after chat completion[/dim]")
-    #
-    #     return kb
+    def _create_custom_key_bindings(self):
+        """Create custom key bindings for the REPL."""
+        kb = KeyBindings()
+
+        @kb.add("tab")
+        def _(event):
+            """The Tab key triggers completion only, not navigation."""
+            buffer = event.app.current_buffer
+
+            if buffer.complete_state:
+                # If the menu is already open, close it.
+                buffer.complete_state = None
+                return
+
+            # If the menu is incomplete, trigger completion.
+            buffer.start_completion(select_first=True)
+
+        # @kb.add("c-d")
+        # def _(event):
+        #     """Handle Ctrl+R for mode switching if available."""
+        #     # Check if chat executor is available and mode switch is enabled
+        #     if (
+        #         self.chat_executor
+        #         and hasattr(self.chat_executor, "is_mode_switch_available")
+        #         and self.chat_executor.is_mode_switch_available()
+        #     ):
+        #         # Switch to app display
+        #         success = self.chat_executor.switch_to_app_display()
+        #         if success:
+        #             # Refresh the prompt after returning from textual
+        #             event.app.invalidate()
+        #         else:
+        #             # Show error message if switch failed
+        #             self.console.print("[yellow]Mode switching is not available at this time[/yellow]")
+        #     else:
+        #         # Show message that Ctrl+R is reserved for mode switching
+        #         self.console.print("[dim]Ctrl+D is reserved for mode switching after chat completion[/dim]")
+
+        return kb
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
@@ -188,7 +201,7 @@ class DatusCLI:
             multiline=False,
             # This conflicts with textual.
             # key_bindings=custom_bindings,
-            key_bindings=KeyBindings(),
+            key_bindings=self._create_custom_key_bindings(),
             enable_history_search=True,
             search_ignore_case=True,
             style=merge_styles(
