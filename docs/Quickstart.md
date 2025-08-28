@@ -128,7 +128,7 @@ docker run --name datus \
 --env SNOWFLAKE_ACCOUNT=<your_snowflake_acount>  \
 --env SNOWFLAKE_USERNAME=<your_snowflake_username>  \
 --env SNOWFLAKE_PASSWORD=<your_snowflake_password>  \
--d datus-agent
+-d luochen2025/datus-agent
 ```
 
 -  running benchmark
@@ -364,4 +364,5 @@ metric:
 ```
 
 For more details about metrics: [Metrics](./metrics/metrics.md)
+
 
