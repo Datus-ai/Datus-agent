@@ -71,11 +71,7 @@ class ChatAgenticNode(AgenticNode):
     def setup_tools(self):
         # Only a single database connection is now supported
         db_manager = db_manager_instance(self.agent_config.namespaces)
-        if not self.agent_config._current_database:
-            name, conn = db_manager.first_conn_with_name(self.agent_config.current_namespace)
-            self.agent_config._current_database = name
-        else:
-            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config._current_database)
+        conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
         self.tool_instance = DBFuncTool(conn)
         self.tools = self.tool_instance.available_tools()
 

@@ -7,7 +7,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalGroup, VerticalScroll
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import Button, Collapsible, DataTable, Footer, Header, Static, TextArea
+from textual.widgets import Button, Collapsible, DataTable, Footer, Header, Label, Static, TextArea
 
 from datus.cli.action_history_display import BaseActionContentGenerator
 from datus.cli.screen.base_app import BaseApp
@@ -42,8 +42,11 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 title = action.messages
             return f"{dot} {title}"
 
-    def create_action_collapsible(self, action: ActionHistory, index: int) -> Widget:
+    def create_action_collapsible(self, action: ActionHistory, index: int) -> Optional[Widget]:
         """Create a Collapsible widget for an action"""
+
+        if action.role == ActionRole.ASSISTANT and action.messages == "Generating response with tools...":
+            return None
         title = self.format_collapsible_title(action)
 
         # Create content widgets
@@ -211,29 +214,35 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             function_name = action.input.get("function_name", "unknown")
             if function_name == "read_query":
                 #  original_rows, original_columns, is_compressed, and compressed_data
-                data = data["result"]
-                is_compressed = data.get("is_compressed", False)
-                compressed_data = str(data.get("compressed_data"))
-                if not is_compressed:
-                    result.append(TextArea(compressed_data, language="markdown", theme="monokai"))
-                else:
-                    result.append(
-                        TextArea(
-                            f"""
-                {compressed_data}
+                if data.get("success", 0) == 1:
+                    data = data["result"]
+                    is_compressed = data.get("is_compressed", False)
+                    compressed_data = str(data.get("compressed_data"))
+                    if not is_compressed:
+                        result.append(TextArea(compressed_data, language="markdown", theme="monokai"))
+                    else:
+                        result.append(
+                            TextArea(
+                                f"""
+                    {compressed_data}
 
-                ---
+                    ---
 
-                **Total Rows**: {data.get("original_rows")}
+                    **Total Rows**: {data.get("original_rows")}
 
-                ---
+                    ---
 
-                **Columns**: {', '.join(data.get("original_columns", []))}
-                """,
-                            language="markdown",
-                            theme="monokai",
+                    **Columns**: {', '.join(data.get("original_columns", []))}
+                    """,
+                                language="markdown",
+                                theme="monokai",
+                            )
                         )
-                    )
+                elif data.get("error"):
+                    result.append(Label(f"[bold red]Execute Failed: {data['error']}[/]"))
+                else:
+                    result.append(TextArea(json.dumps(data, indent=2), language="json", theme="monokai"))
+
                 return result
 
         # Extract result items
@@ -327,7 +336,9 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         result = []
 
         for i, action in enumerate(actions):
-            result.append(self.create_action_collapsible(action, i))
+            widget = self.create_action_collapsible(action, i)
+            if widget:
+                result.append(widget)
         return result
 
 

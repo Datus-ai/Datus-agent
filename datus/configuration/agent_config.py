@@ -153,6 +153,21 @@ class AgentConfig:
         self.metric_meta = {k: MetricMeta.filter_kwargs(MetricMeta, v) for k, v in kwargs.get("metrics", {}).items()}
 
     @property
+    def current_database(self):
+        return self._current_database
+
+    @current_database.setter
+    def current_database(self, value):
+        if not value:
+            return
+        if self.db_type == DBType.SQLITE and value not in self.current_db_configs():
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=f"No database configuration named `{value}` found under namespace `{self._current_namespace}`.",
+            )
+        self._current_database = value
+
+    @property
     def current_namespace(self) -> str:
         return self._current_namespace
 

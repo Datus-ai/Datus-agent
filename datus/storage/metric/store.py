@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
 
@@ -117,23 +117,15 @@ class MetricStorage(BaseEmbeddingStore):
         self.table.create_scalar_index("domain_layer1_layer2", replace=True)
         self.create_fts_index(["name", "description", "constraint", "sql_query"])
 
-    def search_all(self, semantic_model_name: str) -> List[Dict[str, Any]]:
+    def search_all(self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None) -> pa.Table:
         """Search all schemas for a given database name."""
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        search_result = self._search_all(
+        return self._search_all(
             where="" if not semantic_model_name else f"semantic_model_name='{semantic_model_name}'",
-            select_fields=["id", "semantic_model_name", "name"],
+            select_fields=select_fields,
         )
-        return [
-            {
-                "id": search_result["id"][i],
-                "semantic_model_name": search_result["semantic_model_name"][i],
-                "name": search_result["name"][i],
-            }
-            for i in range(search_result.num_rows)
-        ]
 
 
 def qualify_name(input_names: List, delimiter: str = "_") -> str:
@@ -162,8 +154,10 @@ class SemanticMetricsRAG:
     def search_all_semantic_models(self, database_name: str) -> List[Dict[str, Any]]:
         return self.semantic_model_storage.search_all(database_name)
 
-    def search_all_metrics(self, database_name: str) -> List[Dict[str, Any]]:
-        return self.metric_storage.search_all(database_name)
+    def search_all_metrics(
+        self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        return self.metric_storage.search_all(semantic_model_name, select_fields=select_fields).to_pylist()
 
     def after_init(self):
         self.semantic_model_storage.create_indices()

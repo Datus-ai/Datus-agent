@@ -2,12 +2,17 @@
 Autocomplete module for Datus CLI.
 Provides SQL keyword, table name, and column name autocompletion.
 """
-
-from typing import Dict, Iterable, List
+from abc import abstractmethod
+from typing import Any, Dict, Iterable, List, Union
 
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
+from pygments.lexers.sql import SqlLexer
+from pygments.styles.default import DefaultStyle
+from pygments.token import Token
 
+from datus.configuration.agent_config import AgentConfig
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -152,6 +157,7 @@ class SQLCompleter(Completer):
 
         # Command completions
         self.commands = self._get_command_completions()
+        self.at_cmds = ["table", "metric"]
 
     def _get_command_completions(self) -> Dict:
         """Get a nested completer for command completions."""
@@ -249,6 +255,9 @@ class SQLCompleter(Completer):
         Returns:
             Iterable of completions
         """
+        text = document.text
+        if text.startswith("/"):
+            return
         text = document.text_before_cursor
         word_before_cursor = document.get_word_before_cursor(WORD=True)
 
@@ -369,3 +378,283 @@ class SQLCompleter(Completer):
             return ""
 
         return words[-2]
+
+
+class CustomSqlLexer(SqlLexer):
+    """Custom lexer extending SqlLexer for @references with space separator."""
+
+    tokens = {
+        "root": [
+            (r"@Table(?:\s[^ \t\n]+)?", Token.AtTables),
+            (r"@Metric(?:\s[^ \t\n]+)?", Token.AtMetrics),
+            (r"@File(?:\s[^ \t\n]+)?", Token.AtFiles),
+        ]
+        + SqlLexer.tokens["root"],
+    }
+
+
+class CustomPygmentsStyle(DefaultStyle):
+    """Custom style for coloring the @ references."""
+
+    styles = {
+        Token.AtTables: "#00CED1 bold",  # pink
+        Token.AtMetrics: "#FFD700 bold",  # Green
+        Token.AtFiles: "ansiblue bold",  # Blue
+    }
+
+
+class DynamicAtReferenceCompleter(Completer):
+    def __init__(self, max_completions=10):
+        self._data: Union[Dict[str, Any], List[str]] = {}
+        self.max_level = 0
+        self.max_completions = max_completions
+
+    def clear(self):
+        self._data = {}
+        self.max_level = 0
+
+    @abstractmethod
+    def load_data(self) -> Union[List[str], Dict[str, Any]]:
+        raise NotImplementedError
+
+    def get_data(self):
+        if not self._data:
+            self._data = self.load_data()
+        return self._data
+
+    def get_completions(self, document, complete_event):
+        """Provide completions for specified type
+
+        Args:
+            document: Current document object
+            complete_event: Completion event
+        """
+        data = self.get_data()
+        rest = document.text
+        separator = "."
+        levels = rest.split(separator)
+        ends_with_sep = rest.endswith(separator)
+
+        if ends_with_sep:
+            prev_levels = levels[:-1]
+            prefix = ""
+            current_level = len(prev_levels) + 1
+        else:
+            prev_levels = levels[:-1]
+            prefix = levels[-1] if levels else ""
+            current_level = len(levels)
+
+        if current_level > self.max_level:
+            return
+        current_dict = data
+        for lvl in prev_levels:
+            current_dict = current_dict.get(lvl, {})
+            if not isinstance(current_dict, (dict, list)):
+                return
+
+        # Handle case where last level is a list
+        prefix_lower = prefix.lower()
+        suggestions = [k for k in current_dict if k.lower().startswith(prefix_lower)]
+        # Smart filtering: show more items when user types more characters
+        if len(prefix) >= 3:
+            # User typed enough characters, can show more options
+            effective_limit = min(self.max_completions + 5, len(suggestions))
+        else:
+            # User typed few characters, limit to avoid overwhelming
+            effective_limit = self.max_completions
+
+        is_last_level = current_level == self.max_level
+        suggestions = sorted(suggestions)[:effective_limit]
+        for s in suggestions:
+            completion_text = s
+
+            # The display text (what user sees in menu)
+            display_text = s
+            if not is_last_level:
+                display_text = f"{s}."
+
+            if is_last_level and isinstance(current_dict, dict) and s in current_dict and current_dict[s]:
+                display_text = f"{display_text}: {current_dict[s]}"
+                if len(display_text) > 20:
+                    display_text = f"{display_text[:20]}..."
+
+            yield Completion(completion_text, display=display_text, start_position=-len(prefix))
+
+
+class TableCompleter(DynamicAtReferenceCompleter):
+    """Dynamic completer specifically for tables and metrics"""
+
+    def __init__(self, agent_config: AgentConfig):
+        super().__init__()
+        self.agent_config = agent_config
+
+    def load_data(self) -> Union[List[str], Dict[str, Any]]:
+        from datus.storage.schema_metadata.store import rag_by_configuration
+
+        storage = rag_by_configuration(self.agent_config)
+        schema_table = storage.search_all_schemas(
+            database_name=self.agent_config.current_database,
+            select_fields=["catalog_name", "database_name", "schema_name", "table_name"],
+        )
+        if schema_table is None or schema_table.num_rows == 0:
+            return []
+
+        schema_data = schema_table.to_pylist()
+
+        if self.agent_config.db_type == DBType.SQLITE:
+            self.max_level = 1
+            return [item["table_name"] for item in schema_data]
+
+        data: Dict[str, Any] = {}
+
+        if DBType.support_catalog(self.agent_config.db_type) and schema_data[0]["catalog_name"]:
+            if DBType.support_database(self.agent_config.db_type):
+                if DBType.support_schema(self.agent_config.db_type):
+                    # catalog -> database -> schema -> table
+                    self.max_level = 4
+                    for item in schema_data:
+                        catalog_name = item["catalog_name"]
+                        if catalog_name not in data:
+                            data[catalog_name] = {}
+                        if item["database_name"] not in data[catalog_name]:
+                            data[catalog_name][item["database_name"]] = {}
+                        if item["schema_name"] not in data[catalog_name][item["database_name"]]:
+                            data[catalog_name][item["database_name"]][item["schema_name"]] = []
+                        data[catalog_name][item["database_name"]][item["schema_name"]].append(item["table_name"])
+                else:
+                    # catalog -> database -> table
+                    self.max_level = 3
+                    for item in schema_data:
+                        catalog_name = item["catalog_name"]
+                        if catalog_name not in data:
+                            data[catalog_name] = {}
+                        if item["database_name"] not in data[catalog_name]:
+                            data[catalog_name][item["database_name"]] = []
+                        data[catalog_name][item["database_name"]].append(item["table_name"])
+            elif DBType.support_schema(self.agent_config.db_type):
+                self.max_level = 3
+                # catalog -> schema -> table
+                for item in schema_data:
+                    catalog_name = item["catalog_name"]
+                    if catalog_name not in data:
+                        data[catalog_name] = {}
+                    if item["schema_name"] not in data[catalog_name]:
+                        data[catalog_name][item["schema_name"]] = []
+                    data[catalog_name][item["schema_name"]].append(item["table_name"])
+
+        if DBType.support_database(self.agent_config.db_type) and schema_data[0]["database_name"]:
+            if DBType.support_schema(self.agent_config.db_type) and schema_data[0]["schema_name"]:
+                self.max_level = 3
+                for item in schema_data:
+                    if item["database_name"] not in data:
+                        data[item["database_name"]] = {}
+                    if item["schema_name"] not in data[item["database_name"]]:
+                        data[item["database_name"]][item["schema_name"]] = []
+                    data[item["database_name"]][item["schema_name"]].append(item["table_name"])
+            else:
+                self.max_level = 2
+                for item in schema_data:
+                    if item["database_name"] not in data:
+                        data[item["database_name"]] = []
+                    data[item["database_name"]].append(item["table_name"])
+            return data
+
+        if DBType.support_schema(self.agent_config.db_type):
+            self.max_level = 2
+            for item in schema_data:
+                if item["schema_name"] not in data:
+                    data[item["schema_name"]] = []
+                data[item["schema_name"]].append(item["table_name"])
+
+        return data
+
+
+class MetricsCompleter(DynamicAtReferenceCompleter):
+    """Dynamic completer specifically for tables and metrics"""
+
+    def __init__(self, agent_config: AgentConfig):
+        super().__init__()
+        self.agent_config = agent_config
+        self.max_level = 4
+
+    def load_data(self) -> Union[List[str], Dict[str, Any]]:
+        from datus.storage.metric.store import rag_by_configuration
+
+        storage = rag_by_configuration(self.agent_config).metric_storage
+        data = storage.search_all(select_fields=["domain", "layer1", "layer2", "name", "description"])
+        from collections import defaultdict
+
+        result = defaultdict(dict)
+        for i in range(data.num_rows):
+            (
+                result.get(data["domain"][i])
+                .get(data["layer1"][i])
+                .get(data["layer2"][i])
+                .put(data["name"][i], data["description"][i])
+            )
+        return result
+
+
+class AtReferenceCompleter(Completer):
+    """Router completer: dispatch to different completers based on type"""
+
+    def __init__(self, agent_config: AgentConfig):
+        # Initialize specialized completers
+        self.table_completer = TableCompleter(agent_config)
+        self.metric_completer = MetricsCompleter(agent_config)
+        from prompt_toolkit.completion import PathCompleter
+
+        self.completer_dict = {
+            "Table": self.table_completer,
+            "Metric": self.metric_completer,
+            "File": PathCompleter(),
+        }
+        self.type_options = {
+            "Table ": "📊 Table",
+            "Metric ": "📈 Metric",
+            "File ": "📁 File",
+        }
+
+    def reload_data(self):
+        self.table_completer.clear()
+        self.table_completer.load_data()
+        self.metric_completer.clear()
+        self.metric_completer.load_data()
+
+    def get_completions(self, document, complete_event) -> Iterable[Completion]:
+        if not document.text.startswith("/"):
+            return
+        text = document.text_before_cursor
+        at_pos = text.rfind("@")
+
+        if at_pos == -1:
+            return
+
+        prefix = text[at_pos:]
+
+        # Limit number of spaces
+        if prefix.count(" ") > 1:
+            return
+
+        if " " not in prefix[1:]:
+            # Complete type
+            type_prefix = prefix[1:]
+            type_prefix = type_prefix.lower()
+            for opt_text, opt_display in self.type_options.items():
+                if opt_text.lower().startswith(type_prefix):
+                    yield Completion(opt_text, start_position=-len(type_prefix), display=opt_display)
+            return
+
+        # Parse type and path
+        type_part, rest = prefix[1:].split(" ", 1) if " " in prefix[1:] else (prefix[1:], "")
+        type_ = type_part.strip()
+        if type_ not in self.completer_dict:
+            return
+
+        # Create path document object
+        from prompt_toolkit.document import Document
+
+        path_document = Document(rest, len(rest))
+
+        # Route to different completers based on type
+        yield from self.completer_dict[type_].get_completions(path_document, complete_event)

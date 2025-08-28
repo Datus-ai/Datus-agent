@@ -168,7 +168,7 @@ class EmbeddingModel:
                 # Method `get_registry` has a multi-threading problem
                 self._model = SentenceTransformerEmbeddings.create(name=self.model_name, device=self.device)
                 # first download
-                self._model.generate_embeddings(["foo"])
+                # self._model.generate_embeddings(["foo"])
                 logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
             except Exception as e:
                 raise DatusException(
