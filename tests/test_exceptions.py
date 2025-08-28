@@ -23,7 +23,6 @@ class TestIntegrationExceptions:
 
             with pytest.raises(DatusException) as exc_info:
                 connector.test_connection()
-            print("$$$", exc_info)
             # SQLite connection errors should be mapped to DB_CONNECTION_FAILED
             assert exc_info.value.code == ErrorCode.DB_CONNECTION_FAILED
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from langsmith import traceable
@@ -39,7 +40,7 @@ async def generate_semantic_model_with_mcp_stream(
         )
 
     # Setup MCP servers
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=os.getenv("MF_MODEL_PATH"))
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
         database_name=input_data.sql_task.database_name, db_config=db_config
     )
@@ -47,6 +48,7 @@ async def generate_semantic_model_with_mcp_stream(
         "filesystem_mcp_server": filesystem_mcp_server,
         "metricflow_mcp_server": metricflow_mcp_server,
     }
+    tool_config["max_turns"] = 20
 
     async for action in base_mcp_stream(
         model=model,
@@ -73,7 +75,7 @@ def generate_semantic_model_with_mcp(
     if not isinstance(input_data, GenerateSemanticModelInput):
         raise ValueError("Input must be a GenerateSemanticModelInput instance")
 
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server()
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=os.getenv("MF_MODEL_PATH"))
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
         database_name=input_data.sql_task.database_name, db_config=db_config
     )

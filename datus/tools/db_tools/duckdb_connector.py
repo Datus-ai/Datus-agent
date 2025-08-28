@@ -37,6 +37,12 @@ class DuckdbConnector(SQLAlchemyConnector):
         return f'"{schema_name}"."{table_name}"' if schema_name else table_name
 
     @override
+    def get_materialized_views(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[str]:
+        return []
+
+    @override
     def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
         sql = "select schema_name from duckdb_schemas()"
         has_where = False

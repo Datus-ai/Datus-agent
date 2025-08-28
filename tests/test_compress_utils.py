@@ -41,6 +41,7 @@ def test_compress_mock():
     result_csv = compressor_csv.compress(sample_data)
     print(f"Original rows: {result_csv['original_rows']}")
     print(f"Original columns: {result_csv['original_columns']}")  # Now shows list of column names
+    assert len(result_csv["original_columns"]) > 0
     print(f"Is compressed: {result_csv['is_compressed']}")
     print(f"Compression type: {result_csv['compression_type']}")
     print(f"Removed columns: {result_csv['removed_columns']}")
@@ -141,3 +142,5 @@ ORDER BY
     assert query_result["is_compressed"]
     assert query_result["original_rows"] > 10
     print(query_result["compressed_data"])
+
+    assert len(query_result["original_columns"]) > 0

@@ -231,17 +231,21 @@ class AgenticNode(ABC):
         self._session_tokens += tokens_used
         logger.debug(f"Added {tokens_used} tokens to session. Total: {self._session_tokens}")
 
-    async def _manual_compact(self) -> bool:
+        # Update SQLite session with current token count via model's session manager
+        if self.model and hasattr(self.model, "session_manager") and self.session_id:
+            self.model.session_manager.update_session_tokens(self.session_id, self._session_tokens)
+
+    async def _manual_compact(self) -> dict:
         """
         Manually compact the session by summarizing conversation history.
         This clears the session and stores summary for next session creation.
 
         Returns:
-            True if compacting was successful, False otherwise
+            Dict with success, summary, and summary_token count
         """
         if not self.model or not self._session:
             logger.warning("Cannot compact: no model or session available")
-            return False
+            return {"success": False, "summary": "", "summary_token": 0}
 
         try:
             logger.info(f"Starting manual compacting for session {self.session_id}")
@@ -264,10 +268,11 @@ class AgenticNode(ABC):
                     prompt=summarization_prompt, session=self._session, max_turns=1, temperature=0.3, max_tokens=2000
                 )
                 summary = result.get("content", "")
-                logger.debug(f"Generated summary: {len(summary)} characters")
+                summary_token = result.get("usage", {}).get("output_tokens", 0)
+                logger.debug(f"Generated summary: {len(summary)} characters, {summary_token} tokens")
             except Exception as e:
                 logger.error(f"Failed to generate summary with LLM: {e}")
-                return False
+                return {"success": False, "summary": "", "summary_token": 0}
 
             # 2. Store summary for next session creation
             self.last_summary = summary
@@ -292,11 +297,11 @@ class AgenticNode(ABC):
                 f"Manual compacting completed. Cleared session: {old_session_id}, "
                 f"Token reset: {old_tokens} -> 0, Summary stored: {len(summary)} chars"
             )
-            return True
+            return {"success": True, "summary": summary, "summary_token": summary_token}
 
         except Exception as e:
             logger.error(f"Manual compacting failed: {e}")
-            return False
+            return {"success": False, "summary": "", "summary_token": 0}
 
     async def _auto_compact(self) -> bool:
         """

@@ -1,6 +1,7 @@
 """Session management wrapper for LLM models using OpenAI Agents Python session approach."""
 
 import os
+import sqlite3
 from typing import Any, Dict, Optional
 
 from agents import SQLiteSession
@@ -8,6 +9,48 @@ from agents import SQLiteSession
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+class ExtendedSQLiteSession(SQLiteSession):
+    """Extended SQLite session that includes total_tokens column in agent_sessions table."""
+
+    def _init_db_for_connection(self, conn: sqlite3.Connection) -> None:
+        """Initialize the database schema with total_tokens column."""
+        # Create sessions table with total_tokens column
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.sessions_table} (
+                session_id TEXT PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                total_tokens INTEGER DEFAULT 0
+            )
+        """
+        )
+
+        # Create messages table (unchanged from parent)
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.messages_table} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                message_data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES {self.sessions_table} (session_id)
+                    ON DELETE CASCADE
+            )
+        """
+        )
+
+        # Create index (unchanged from parent)
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.messages_table}_session_id
+            ON {self.messages_table} (session_id, created_at)
+        """
+        )
+
+        conn.commit()
 
 
 class SessionManager:
@@ -27,9 +70,9 @@ class SessionManager:
         """
         self.session_dir = session_dir or os.path.expanduser("~/.datus/sessions")
         os.makedirs(self.session_dir, exist_ok=True)
-        self._sessions: Dict[str, SQLiteSession] = {}
+        self._sessions: Dict[str, ExtendedSQLiteSession] = {}
 
-    def get_session(self, session_id: str) -> SQLiteSession:
+    def get_session(self, session_id: str) -> ExtendedSQLiteSession:
         """
         Get or create a session with the given ID.
 
@@ -37,17 +80,17 @@ class SessionManager:
             session_id: Unique identifier for the session
 
         Returns:
-            SQLiteSession instance for the given session ID
+            ExtendedSQLiteSession instance for the given session ID
         """
         if session_id not in self._sessions:
             # Create session database path
             db_path = os.path.join(self.session_dir, f"{session_id}.db")
-            self._sessions[session_id] = SQLiteSession(session_id, db_path=db_path)
-            logger.debug(f"Created new session: {session_id} at {db_path}")
+            self._sessions[session_id] = ExtendedSQLiteSession(session_id, db_path=db_path)
+            # logger.debug(f"Created new session: {session_id} at {db_path}")
 
         return self._sessions[session_id]
 
-    def create_session(self, session_id: str) -> SQLiteSession:
+    def create_session(self, session_id: str) -> ExtendedSQLiteSession:
         """
         Create a new session or get existing one.
 
@@ -55,7 +98,7 @@ class SessionManager:
             session_id: Unique identifier for the session
 
         Returns:
-            SQLiteSession instance
+            ExtendedSQLiteSession instance
         """
         return self.get_session(session_id)
 
@@ -112,15 +155,41 @@ class SessionManager:
 
     def session_exists(self, session_id: str) -> bool:
         """
-        Check if a session exists.
+        Check if a session exists and has actual data.
 
         Args:
             session_id: Session ID to check
 
         Returns:
-            True if session exists, False otherwise
+            True if session exists and has data, False otherwise
         """
-        return session_id in self.list_sessions()
+        if session_id not in self.list_sessions():
+            return False
+
+        # Check if the session has actual data (messages or session record)
+        try:
+            import sqlite3
+
+            db_path = os.path.join(self.session_dir, f"{session_id}.db")
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+
+                # Check if session has any messages
+                cursor.execute("SELECT COUNT(*) FROM agent_messages WHERE session_id = ?", (session_id,))
+                message_count = cursor.fetchone()[0]
+
+                if message_count > 0:
+                    return True
+
+                # Check if session has a record in agent_sessions
+                cursor.execute("SELECT COUNT(*) FROM agent_sessions WHERE session_id = ?", (session_id,))
+                session_count = cursor.fetchone()[0]
+
+                return session_count > 0
+
+        except Exception as e:
+            logger.debug(f"Error checking session existence for {session_id}: {e}")
+            return False
 
     def get_session_info(self, session_id: str) -> Dict[str, Any]:
         """
@@ -130,37 +199,122 @@ class SessionManager:
             session_id: Session ID to get info for
 
         Returns:
-            Dictionary with session information
+            Dictionary with session information including timestamps, file size, etc.
         """
         if not self.session_exists(session_id):
             return {"exists": False}
 
-        session = self.get_session(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
 
-        # Handle async get_items() call synchronously
-        import asyncio
-
+        # Get basic file information
+        file_info = {}
         try:
-            # Try to get existing event loop
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If loop is running, we need to run in thread
-                import concurrent.futures
+            if os.path.exists(db_path):
+                stat = os.stat(db_path)
+                file_info = {
+                    "file_size": stat.st_size,
+                    "file_modified": stat.st_mtime,
+                }
+        except Exception as e:
+            logger.debug(f"Could not get file info for {db_path}: {e}")
 
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, session.get_items())
-                    items = future.result()
-            else:
-                items = loop.run_until_complete(session.get_items())
-        except RuntimeError:
-            # No event loop, create new one
-            items = asyncio.run(session.get_items())
+        # Get all session data from database in efficient queries
+        try:
+            import json
+            import sqlite3
+
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+
+                # Get session metadata with COALESCE for backward compatibility
+                cursor.execute(
+                    """
+                    SELECT created_at, updated_at, COALESCE(total_tokens, 0) as total_tokens
+                    FROM agent_sessions
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                )
+                session_row = cursor.fetchone()
+
+                if session_row:
+                    session_metadata = {
+                        "created_at": session_row[0],
+                        "updated_at": session_row[1],
+                        "total_tokens": session_row[2] or 0,
+                    }
+                else:
+                    session_metadata = {"total_tokens": 0}
+
+                # Get message statistics in one query
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) as message_count, MAX(created_at) as latest_message_at
+                    FROM agent_messages
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                )
+                message_stats = cursor.fetchone()
+                if message_stats:
+                    session_metadata.update(
+                        {
+                            "message_count": message_stats[0] or 0,
+                            "item_count": message_stats[0] or 0,  # Same as message_count
+                            "latest_message_at": message_stats[1],
+                        }
+                    )
+
+                # Get latest user message (need to check all messages to find the most recent user message)
+                cursor.execute(
+                    """
+                    SELECT message_data, created_at
+                    FROM agent_messages
+                    WHERE session_id = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (session_id,),
+                )
+                all_messages = cursor.fetchall()
+
+                latest_user_message = None
+                latest_user_message_at = None
+
+                # Find the latest user message by scanning through all messages
+                for message_data, created_at in all_messages:
+                    try:
+                        message_json = json.loads(message_data)
+                        role = message_json.get("role", "")
+
+                        # Find latest user message
+                        if role == "user" and latest_user_message is None:
+                            content = message_json.get("content", "")
+                            latest_user_message = content
+                            latest_user_message_at = created_at
+                            break  # Found the latest user message, no need to continue
+
+                    except (json.JSONDecodeError, TypeError):
+                        # Skip malformed messages
+                        continue
+
+                session_metadata.update(
+                    {
+                        "latest_user_message": latest_user_message,
+                        "latest_user_message_at": latest_user_message_at,
+                    }
+                )
+
+        except Exception as e:
+            logger.debug(f"Could not get session metadata for {session_id}: {e}")
+            # Return basic info even if database query fails
+            session_metadata = {"total_tokens": 0, "message_count": 0, "item_count": 0}
 
         return {
             "exists": True,
             "session_id": session_id,
-            "item_count": len(items),
-            "db_path": os.path.join(self.session_dir, f"{session_id}.db"),
+            "db_path": db_path,
+            **file_info,
+            **session_metadata,
         }
 
     def close_all_sessions(self) -> None:
@@ -170,3 +324,52 @@ class SessionManager:
             # SQLiteSession doesn't have an explicit close method,
             # but removing it from our dict should handle cleanup
             logger.debug(f"Closed session: {session_id}")
+
+    def update_session_tokens(self, session_id: str, total_tokens: int) -> None:
+        """
+        Update the total token count for a session in the SQLite database.
+
+        Args:
+            session_id: Session ID to update
+            total_tokens: Current total token count for the session
+        """
+        if not self.session_exists(session_id):
+            logger.warning(f"Attempted to update tokens for non-existent session: {session_id}")
+            return
+
+        try:
+            import sqlite3
+
+            db_path = os.path.join(self.session_dir, f"{session_id}.db")
+
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+
+                # Check if total_tokens column exists, add it if missing (backward compatibility)
+                cursor.execute("PRAGMA table_info(agent_sessions)")
+                columns = [row[1] for row in cursor.fetchall()]
+
+                if "total_tokens" not in columns:
+                    logger.info(f"Adding total_tokens column to existing session: {session_id}")
+                    cursor.execute("ALTER TABLE agent_sessions ADD COLUMN total_tokens INTEGER DEFAULT 0")
+                    conn.commit()
+
+                # Update the token count in the agent_sessions table
+                cursor.execute(
+                    "UPDATE agent_sessions SET total_tokens = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+                    (total_tokens, session_id),
+                )
+
+                if cursor.rowcount == 0:
+                    # Session doesn't exist in the table, create it
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO agent_sessions (session_id, total_tokens, created_at, updated_at)"
+                        " VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                        (session_id, total_tokens),
+                    )
+
+                conn.commit()
+                logger.debug(f"Updated session {session_id} with {total_tokens} tokens in SQLite")
+
+        except Exception as e:
+            logger.error(f"Failed to update session tokens for {session_id}: {e}")
