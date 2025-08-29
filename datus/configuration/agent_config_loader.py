@@ -5,6 +5,7 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.configuration.node_type import NodeType
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -98,4 +99,6 @@ def load_agent_config(**kwargs) -> AgentConfig:
         override_kwargs = {k: v for k, v in kwargs.items() if k != "config"}
         if override_kwargs:
             agent_config.override_by_args(**override_kwargs)
+    if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
+        agent_config.current_database = list(agent_config.current_db_configs().keys())[0]
     return agent_config

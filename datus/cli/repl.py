@@ -14,8 +14,7 @@ from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.lexers import PygmentsLexer
-from prompt_toolkit.styles import Style
-from pygments.lexers.sql import SqlLexer
+from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.box import SIMPLE_HEAD
 from rich.console import Console
 from rich.markdown import Markdown
@@ -26,7 +25,7 @@ from rich.table import Table
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.cli.agent_commands import AgentCommands
-from datus.cli.autocomplete import SQLCompleter
+from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer
 from datus.cli.context_commands import ContextCommands
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -74,28 +73,9 @@ class DatusCLI:
         history_file = Path(args.history_file)
         history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history = FileHistory(str(history_file))
-
-        # Setup prompt session with custom key bindings
-        # custom_bindings = self._create_custom_key_bindings()
-        self.session = PromptSession(
-            history=self.history,
-            auto_suggest=AutoSuggestFromHistory(),
-            lexer=PygmentsLexer(SqlLexer),
-            completer=SQLCompleter(),
-            multiline=False,
-            # This conflicts with textual.
-            # key_bindings=custom_bindings,
-            key_bindings=KeyBindings(),
-            enable_history_search=True,
-            search_ignore_case=True,
-            style=Style.from_dict(
-                {
-                    "prompt": "ansigreen bold",
-                }
-            ),
-        )
-
         self.agent_config = load_agent_config(**vars(self.args))
+        self.at_completer: AtReferenceCompleter
+        self._init_prompt_session()
 
         # Initialize agent commands handler
         self.agent_commands = AgentCommands(self)
@@ -169,32 +149,93 @@ class DatusCLI:
         self._async_init_agent()
         self._init_connection()
 
-    # def _create_custom_key_bindings(self):
-    #     """Create custom key bindings for the REPL."""
-    #     kb = KeyBindings()
-    #
-    #     @kb.add("c-d")
-    #     def _(event):
-    #         """Handle Ctrl+R for mode switching if available."""
-    #         # Check if chat executor is available and mode switch is enabled
-    #         if (
-    #             self.chat_executor
-    #             and hasattr(self.chat_executor, "is_mode_switch_available")
-    #             and self.chat_executor.is_mode_switch_available()
-    #         ):
-    #             # Switch to app display
-    #             success = self.chat_executor.switch_to_app_display()
-    #             if success:
-    #                 # Refresh the prompt after returning from textual
-    #                 event.app.invalidate()
-    #             else:
-    #                 # Show error message if switch failed
-    #                 self.console.print("[yellow]Mode switching is not available at this time[/yellow]")
-    #         else:
-    #             # Show message that Ctrl+R is reserved for mode switching
-    #             self.console.print("[dim]Ctrl+D is reserved for mode switching after chat completion[/dim]")
-    #
-    #     return kb
+    def _create_custom_key_bindings(self):
+        """Create custom key bindings for the REPL."""
+        kb = KeyBindings()
+
+        @kb.add("tab")
+        def _(event):
+            """The Tab key triggers completion only, not navigation."""
+            buffer = event.app.current_buffer
+
+            if buffer.complete_state:
+                # If the menu is already open, close it.
+                buffer.complete_state = None
+                return
+
+            # If the menu is incomplete, trigger completion.
+            buffer.start_completion(select_first=True)
+
+        # @kb.add("c-d")
+        # def _(event):
+        #     """Handle Ctrl+R for mode switching if available."""
+        #     # Check if chat executor is available and mode switch is enabled
+        #     if (
+        #         self.chat_executor
+        #         and hasattr(self.chat_executor, "is_mode_switch_available")
+        #         and self.chat_executor.is_mode_switch_available()
+        #     ):
+        #         # Switch to app display
+        #         success = self.chat_executor.switch_to_app_display()
+        #         if success:
+        #             # Refresh the prompt after returning from textual
+        #             event.app.invalidate()
+        #         else:
+        #             # Show error message if switch failed
+        #             self.console.print("[yellow]Mode switching is not available at this time[/yellow]")
+        #     else:
+        #         # Show message that Ctrl+R is reserved for mode switching
+        #         self.console.print("[dim]Ctrl+D is reserved for mode switching after chat completion[/dim]")
+
+        return kb
+
+    def _init_prompt_session(self):
+        # Setup prompt session with custom key bindings
+        # custom_bindings = self._create_custom_key_bindings()
+
+        self.session = PromptSession(
+            history=self.history,
+            auto_suggest=AutoSuggestFromHistory(),
+            lexer=PygmentsLexer(CustomSqlLexer),
+            completer=self.create_combined_completer(),
+            multiline=False,
+            # This conflicts with textual.
+            # key_bindings=custom_bindings,
+            key_bindings=self._create_custom_key_bindings(),
+            enable_history_search=True,
+            search_ignore_case=True,
+            style=merge_styles(
+                [
+                    style_from_pygments_cls(CustomPygmentsStyle),
+                    Style.from_dict(
+                        {
+                            "prompt": "ansigreen bold",
+                        }
+                    ),
+                ]
+            ),
+            complete_while_typing=True,
+            mouse_support=True,
+            enable_suspend=False,
+        )
+
+    # Create combined completer
+    def create_combined_completer(self):
+        """Create combined completer: AtReferenceCompleter + SqlCompleter"""
+        from datus.cli.autocomplete import SQLCompleter
+
+        sql_completer = SQLCompleter()
+        self.at_completer = AtReferenceCompleter(self.agent_config)  # Router completer
+
+        # Use merge_completers to combine two completers
+        from prompt_toolkit.completion import merge_completers
+
+        return merge_completers(
+            [
+                self.at_completer,
+                sql_completer,  # SQL keyword completer
+            ]
+        )
 
     def run(self):
         """Run the REPL loop."""
@@ -301,11 +342,18 @@ class DatusCLI:
             self.agent_initializing = False
 
             self.agent_commands.update_agent_reference()
+            self._pre_load_storage()
             # self.console.print("[dim]Agent initialized successfully in background[/]")
         except Exception as e:
             self.console.print(f"[bold red]Error:[/]Failed to initialize agent in background: {str(e)}")
+            logger.error(f"[bold red]Failed to initialize agent in background: {e}")
             self.agent_initializing = False
             self.agent = None
+
+    def _pre_load_storage(self):
+        """Preload rag to avoid unnecessary printing"""
+        if self.at_completer:
+            self.at_completer.reload_data()
 
     def _check_agent_available(self):
         """Check if agent is available, and inform the user if it's still initializing."""
@@ -396,6 +444,13 @@ class DatusCLI:
 
         self.console.print(table)
 
+    def _reset_session(self):
+        if self.chat_node:
+            self.chat_node.setup_tools()
+        if self.at_completer:
+            # Perhaps we should reload the data here.
+            self.at_completer.reload_data()
+
     def _cmd_switch_namespace(self, args: str):
         if args.strip() == "":
             self._cmd_list_namespaces()
@@ -414,8 +469,7 @@ class DatusCLI:
             self.current_catalog = self.db_connector.catalog_name
             self.current_db_name = self.db_connector.database_name if not name else name
             self.current_schema = self.db_connector.schema_name
-            if self.chat_node:
-                self.chat_node.setup_tools()
+            self._reset_session()
             self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_namespace}[/]")
 
     def _cmd_switch_database(self, args: str = ""):
@@ -432,13 +486,11 @@ class DatusCLI:
 
         self.db_connector.switch_context(database_name=new_db)
         self.current_db_name = new_db
+        self.agent_config.current_database = new_db
+
         if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
             self.db_connector = self.db_manager.get_conn(self.agent_config.current_namespace, self.current_db_name)
-        self.agent_config._current_database = new_db
-        if self.chat_node and (
-            self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB
-        ):
-            self.chat_node.setup_tools()
+            self._reset_session()
         self.console.print(f"[bold green]Database switched to: {self.current_db_name}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:

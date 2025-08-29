@@ -114,7 +114,12 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         self.create_fts_index(["database_name", "schema_name", "table_name", self.vector_source_name])
 
     def search_all(
-        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "full"
+        self,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_type: TABLE_TYPE = "full",
+        select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
         """Search all schemas for a given database name."""
         # Ensure table is ready before searching
@@ -126,7 +131,7 @@ class BaseMetadataStorage(BaseEmbeddingStore):
             schema_name=schema_name,
             table_type=table_type,
         )
-        return self._search_all(where=where)
+        return self._search_all(where=where, select_fields=select_fields)
 
 
 class SchemaStorage(BaseMetadataStorage):
@@ -278,18 +283,30 @@ class SchemaWithValueRAG:
         return schema_results, value_results
 
     def search_all_schemas(
-        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "full"
+        self,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_type: TABLE_TYPE = "full",
+        select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
         """Search all schemas for a given database name.
-        :param database_name: The catalog name to search for. If not provided, search all catalogs.
-        :param catalog_name:  The database name to search for. If not provided, search all databases.
-        :param schema_name: The schema name to search for. If not provided, search all schemas.
-        :param table_type: The table type to search for.
+        Args:
+            database_name: The catalog name to search for. If not provided, search all catalogs.
+            catalog_name:  The database name to search for. If not provided, search all databases.
+            schema_name: The schema name to search for. If not provided, search all schemas.
+            table_type: The table type to search for.
+            select_fields: The fields to search for. If not provided, search all fields.
+
         Returns:
             A list of dictionaries containing the schema information.
         """
         return self.schema_store.search_all(
-            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_type=table_type
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            table_type=table_type,
+            select_fields=select_fields,
         )
 
     def search_all_value(
