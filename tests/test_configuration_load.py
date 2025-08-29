@@ -30,10 +30,10 @@ def test_config_exception():
     with pytest.raises(DatusException, match="Missing required field: namespace"):
         agent_config.override_by_args(namespace="")
 
-    with pytest.raises(DatusException, match="Unsupported value abc for benchmark"):
+    with pytest.raises(DatusException, match="Unsupported value `abc` for field `benchmark`"):
         agent_config.override_by_args(namespace="snowflake", benchmark="abc")
 
-    with pytest.raises(DatusException, match="Unsupported value abc for namespace"):
+    with pytest.raises(DatusException, match="Unsupported value `abc` for field `namespace`"):
         agent_config.override_by_args(namespace="abc")
 
 
