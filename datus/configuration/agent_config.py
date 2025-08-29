@@ -10,7 +10,7 @@ from datus.storage.storage_cfg import check_storage_config, save_storage_config
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.path_utils import get_files_from_glob_pattern
+from datus.utils.path_utils import get_file_name, get_files_from_glob_pattern
 
 
 @dataclass
@@ -178,7 +178,7 @@ class AgentConfig:
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
                 message_args={"field_name": "namespace"},
             )
-        if value not in self.namespaces:
+        if value not in self.namespaces or not self.namespaces[value]:
             raise DatusException(
                 code=ErrorCode.COMMON_UNSUPPORTED,
                 message_args={"field_name": "namespace", "your_value": value},
@@ -202,13 +202,19 @@ class AgentConfig:
                             database=item["name"],
                             schema=item.get("schema", ""),
                         )
-                elif "name" in db_config and "uri" in db_config:
-                    self.namespaces[namespace][db_config["name"]] = DbConfig(
+                elif "uri" in db_config:
+                    uri = str(db_config["uri"])
+                    if "name" in db_config:
+                        name = db_config["name"]
+                    else:
+                        name = get_file_name(uri[uri.index(":") + 4 :])
+                    self.namespaces[namespace][name] = DbConfig(
                         type=db_type,
-                        uri=db_config["uri"],
-                        database=db_config["name"],
+                        uri=uri,
+                        database=name,
                         schema=db_config.get("schema", ""),
                     )
+
             else:
                 name = db_config.get("name", namespace)
                 self.namespaces[namespace][name] = DbConfig.filter_kwargs(DbConfig, db_config)

@@ -45,8 +45,16 @@ def get_files_from_glob_pattern(path_pattern: str, dialect: str = DBType.SQLITE)
     for file_path in files:
         path = Path(file_path)
         file_name = path.parts[name_index]
-        if name_index == -1 and "." in file_name:
+        if name_index == -1 and path.suffix:
             file_name = file_name.rsplit(".", 1)[0]
         uri = f"{dialect}:///{path.as_posix()}"
         result.append({"name": file_name, "uri": uri})
     return result
+
+
+def get_file_name(path: str) -> str:
+    path = Path(path)
+    suffix = path.suffix
+    if not suffix:
+        return path.name
+    return path.name[: -len(path.suffix)]

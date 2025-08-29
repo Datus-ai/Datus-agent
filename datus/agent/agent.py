@@ -561,7 +561,6 @@ class Agent:
         """Initialize knowledge base storage components."""
         logger.info("Initializing knowledge base components")
         results = {}
-        self.check_db()
         # Get selected components from args
         selected_components = self.args.components
 
@@ -603,6 +602,7 @@ class Agent:
                 self.metadata_store = rag_by_configuration(self.global_config)
 
                 if not benchmark_platform:
+                    self.check_db()
                     init_local_schema(
                         self.metadata_store,
                         self.global_config,
@@ -623,6 +623,7 @@ class Agent:
                         pool_size=pool_size,
                     )
                 elif benchmark_platform == "bird_dev":
+                    self.check_db()
                     benchmark_path = os.path.expanduser(
                         self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
                     )

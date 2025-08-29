@@ -19,7 +19,7 @@ class ErrorCode(Enum):
     )
     COMMON_FILE_NOT_FOUND = ("100002", "{config_name} file not found: {file_name}")
     COMMON_FIELD_REQUIRED = ("100003", "Missing required field: {field_name}")
-    COMMON_UNSUPPORTED = ("100004", "Unsupported value {your_value} for {field_name}")
+    COMMON_UNSUPPORTED = ("100004", "Unsupported value `{your_value}` for field `{field_name}`")
     COMMON_ENV = ("100005", "The environment variable {env_var} is not set")
     COMMON_CONFIG_ERROR = ("100006", "Configuration error: {config_error}")
     COMMON_MISSING_DEPENDENCY = ("100007", "Missing node dependency")
