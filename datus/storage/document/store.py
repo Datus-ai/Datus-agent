@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import List, Optional
 
 import pandas as pd
 import pyarrow as pa
@@ -30,7 +30,7 @@ class DocumentStore(BaseEmbeddingStore):
                     pa.field("language", pa.string()),
                     pa.field("chunk_text", pa.string()),
                     pa.field(
-                        "embedding",
+                        "vector",
                         pa.list_(pa.float64(), list_size=embedding_model.dim_size),
                     ),
                 ]
@@ -84,11 +84,14 @@ class DocumentStore(BaseEmbeddingStore):
         except Exception as e:
             raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
 
-    def search_similar_documents(self, query_embedding: List[float], top_n: int = 5) -> List[Dict[str, Any]]:
+    def search_similar_documents(
+        self, query_text: str, select_fields: Optional[List[str]] = None, top_n: int = 5
+    ) -> pa.Table:
         """Search for similar documents using vector similarity.
 
         Args:
-            query_embedding: Vector embedding of the query text
+            query_text: Vector embedding of the query text
+            select_fields: List of fields to select
             top_n: Number of similar documents to return
 
         Returns:
@@ -97,21 +100,13 @@ class DocumentStore(BaseEmbeddingStore):
         # Ensure table is ready before searching
         self._ensure_table_ready()
         try:
-            results = (
-                self.table.search(query_embedding)
-                .limit(top_n)
-                .select(["title", "hierarchy", "keywords", "language", "chunk_text", "created_at"])
-                .to_list()
-            )
-            return results
+            return self._search_vector(query_text, top_n=top_n, select_fields=select_fields)
         except Exception as e:
             raise DatusException(
                 ErrorCode.STORAGE_SEARCH_FAILED,
                 message_args={
                     "error_message": str(e),
-                    "query": str(query_embedding)[:50] + "..."
-                    if len(str(query_embedding)) > 50
-                    else str(query_embedding),
+                    "query": query_text[:50] + "..." if len(query_text) > 50 else query_text,
                     "where_clause": "(none)",
                     "top_n": str(top_n),
                 },

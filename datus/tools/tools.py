@@ -23,7 +23,7 @@ class FuncToolResult(BaseModel):
 def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
     """
     Transfer a bound method to a function tool.
-    This method is to solve the problem that `@function_tool` can only be applied to static methods
+    This method is to solve the problem that '@function_tool' can only be applied to static methods
     """
     tool_template = function_tool(bound_method)
 
@@ -33,13 +33,13 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
     if "self" in corrected_schema.get("required", []):
         corrected_schema["required"].remove("self")
 
-    # The invoker MUST be an `async` function.
-    # We define a closure to correctly capture the `bound_method` for each iteration.
+    # The invoker MUST be an 'async' function.
+    # We define a closure to correctly capture the 'bound_method' for each iteration.
     def create_async_invoker(method_to_call: Callable) -> Callable:
         async def final_invoker(tool_ctx, args_str: str) -> dict:
             """
             This is an async wrapper around our synchronous tool method.
-            The agent framework will `await` this coroutine.
+            The agent framework will 'await' this coroutine.
             """
             # The actual work (JSON parsing, method call) is synchronous.
             args_dict = json.loads(args_str)
@@ -127,18 +127,24 @@ class DBFuncTool:
         self, catalog: Optional[str] = "", database: Optional[str] = "", include_sys: bool = False
     ) -> FuncToolResult:
         """
-        List all schemas in the database.
+        List all schemas within a database. Schemas are logical containers that organize tables and other database
+         objects.
+
+        Use this tool when you need to:
+        - Discover what schemas exist in a database
+        - Navigate to specific schemas for table exploration
+        - Find schemas related to specific applications or business areas
 
         Args:
-            catalog: Optional catalog name to filter schemas
-            database: Optional database name to filter schemas
-            include_sys: Whether to include system schemas in the results
+            catalog: Optional catalog name to filter schemas. Leave empty if not specified.
+            database: Optional database name to filter schemas. Leave empty if not specified.
+            include_sys: Whether to include system schemas (default False). Set to True for maintenance tasks.
 
         Returns:
-            dict: A dictionary with the execution result, containing these keys:
-                  - 'success' (int): 1 for success, 0 for failure.
-                  - 'error' (Optional[str]): Error message on failure.
-                  - 'result' (Optional[List[str]]): A list of schema names on success.
+            dict: Schema list containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if operation failed
+                - 'result' (list): List of schema names
         """
         try:
             schemas = self.connector.get_schemas(catalog, database, include_sys=include_sys)
@@ -206,20 +212,26 @@ class DBFuncTool:
         schema_name: Optional[str] = "",
     ) -> FuncToolResult:
         """
-        Get the schema information for a specific table.
+        Get the complete schema information for a specific table, including column definitions, data types,
+         and constraints.
+
+        Use this tool when you need to:
+        - Understand the structure of a specific table
+        - Get column names, data types, and constraints for SQL query writing
+        - Analyze table schema for data modeling or analysis
+        - Verify table structure before running queries
 
         Args:
-            table_name: The name of the table to describe
-            catalog: Optional catalog name
-            database: Optional database name
-            schema_name: Optional schema name
+            table_name: Name of the table to describe
+            catalog: Optional catalog name for precise table identification. Leave empty if not specified.
+            database: Optional database name for precise table identification. Leave empty if not specified.
+            schema_name: Optional schema name for precise table identification. Leave empty if not specified.
 
         Returns:
-        dict: A dictionary representing the execution result with the following keys:
-            - 'success' (int): 1 if the execution was successful, 0 otherwise.
-            - 'error' (Optional[str]): An error message if success is 0, otherwise None.
-            - 'result' (Optional[Any]): The result of the execution. For this function,
-                                        it's a list of dictionaries, each representing a table.
+            dict: Table schema information containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if operation failed
+                - 'result' (list): Detailed table schema including columns, data types, and constraints
         """
         try:
             result = self.connector.get_schema(

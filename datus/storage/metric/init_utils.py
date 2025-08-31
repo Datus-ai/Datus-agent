@@ -10,8 +10,8 @@ def exists_semantic_metrics(storage: SemanticMetricsRAG, build_mode: str = "over
     if build_mode == "incremental":
         for semantic_model in storage.search_all_semantic_models(""):
             all_semantic_models.add(str(semantic_model["id"]))
-        for metric in storage.search_all_metrics("", select_fields=["id", "semantic_model_name", "name"]):
-            all_metrics.add(str(metric["id"]))
+        for metric in storage.search_all_metrics("", select_fields=["id"]):
+            all_metrics.add(str(metric.as_py()))
     return all_semantic_models, all_metrics
 
 

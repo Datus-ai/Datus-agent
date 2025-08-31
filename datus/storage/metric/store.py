@@ -2,9 +2,9 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.search_metrics_node_models import SearchMetricsInput
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
 
@@ -154,10 +154,8 @@ class SemanticMetricsRAG:
     def search_all_semantic_models(self, database_name: str) -> List[Dict[str, Any]]:
         return self.semantic_model_storage.search_all(database_name)
 
-    def search_all_metrics(
-        self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
-        return self.metric_storage.search_all(semantic_model_name, select_fields=select_fields).to_pylist()
+    def search_all_metrics(self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None) -> pa.Table:
+        return self.metric_storage.search_all(semantic_model_name, select_fields=select_fields)
 
     def after_init(self):
         self.semantic_model_storage.create_indices()
@@ -170,14 +168,22 @@ class SemanticMetricsRAG:
         return self.metric_storage.table_size()
 
     def search_hybrid_metrics(
-        self, input_param: SearchMetricsInput, top_n: int = 5, use_rerank: bool = True
+        self,
+        query_text: str,
+        domain: str,
+        layer1: str,
+        layer2: str,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        top_n: int = 5,
+        use_rerank: bool = True,
     ) -> List[Dict[str, Any]]:
-        query_text = input_param.input_text
         semantic_full_name: str = qualify_name(
             [
-                input_param.sql_task.catalog_name,
-                input_param.sql_task.database_name,
-                input_param.sql_task.schema_name,
+                catalog_name,
+                database_name,
+                schema_name,
             ]
         )
 
@@ -187,41 +193,59 @@ class SemanticMetricsRAG:
         logger.info(f"start to search semantic, semantic_where: {semantic_where}, query_text: {query_text}")
         semantic_search_results = self.semantic_model_storage.search(
             query_text,
+            select_fields=["semantic_model_name"],
             top_n=top_n,
             where=semantic_where,
         )
 
         metric_full_name: str = qualify_name(
             [
-                input_param.sql_task.domain,
-                input_param.sql_task.layer1,
-                input_param.sql_task.layer2,
+                domain,
+                layer1,
+                layer2,
             ],
         )
         metric_where = f"domain_layer1_layer2 = '{metric_full_name}'"
         if "%" in metric_where:
             metric_where = f"domain_layer1_layer2 like '{metric_full_name}'"
         logger.info(f"start to search metrics, metric_where: {metric_where}, query_text: {query_text}")
-        metric_search_results = self.metric_storage.search(query_text, top_n=top_n, where=metric_where)
+        metric_search_results = self.metric_storage.search(
+            query_txt=query_text,
+            select_fields=["name", "description", "constraint", "sql_query"],
+            top_n=top_n,
+            where=metric_where,
+        )
 
         # get the intersection result from semantic_results & metric_results
         metric_result = []
         if semantic_search_results and metric_search_results:
             try:
-                semantic_names_set = set(
-                    [result["semantic_model_name"] for result in semantic_search_results.to_pylist()]
-                )
-                for result in metric_search_results.to_pylist():
-                    if result["semantic_model_name"] in semantic_names_set:
-                        filtered_result = {
-                            k: v for k, v in result.items() if k in ["name", "description", "constraint", "sql_query"]
-                        }
-                        metric_result.append(filtered_result)
+                semantic_names_set = semantic_search_results["semantic_model_name"].unique()
+
+                return (
+                    metric_search_results.select(["name", "description", "constraint", "sql_query"]).filter(
+                        pc.is_in(metric_search_results["semantic_model_name"], semantic_names_set)
+                    )
+                ).to_pylist()
             except Exception as e:
                 logger.warning(f"Failed to get the intersection result, exception: {str(e)}")
 
         logger.info(f"Got the metrics result, size: {len(metric_result)}, query_text: {query_text}")
         return metric_result
+
+    def get_metrics_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
+        metric_full_name: str = qualify_name(
+            [
+                domain,
+                layer1,
+                layer2,
+            ],
+        )
+        metric_where = f"domain_layer1_layer2 = '{metric_full_name}' and name = '{name}'"
+        search_result = self.metric_storage._search_all(
+            where=metric_where, select_fields=["name", "description", "constraint", "sql_query"]
+        )
+        return search_result.to_pylist()
 
 
 def rag_by_configuration(agent_config: AgentConfig):

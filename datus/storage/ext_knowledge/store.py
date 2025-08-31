@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import pyarrow as pa
 
@@ -90,7 +90,7 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
         layer1: str = "",
         layer2: str = "",
         top_n: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> pa.Table:
         """Search for similar knowledge entries.
 
         Args:
@@ -127,7 +127,7 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
         domain: str = "",
         layer1: str = "",
         layer2: str = "",
-    ) -> List[Dict[str, Any]]:
+    ) -> pa.Table:
         """Get all knowledge entries with optional filtering.
 
         Args:
@@ -151,21 +151,9 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
 
         where_clause = " AND ".join(where_conditions) if where_conditions else ""
 
-        search_result = self._search_all(
+        return self._search_all(
             where=where_clause, select_fields=["domain", "layer1", "layer2", "terminology", "explanation", "created_at"]
         )
-
-        return [
-            {
-                "domain": search_result["domain"][i],
-                "layer1": search_result["layer1"][i],
-                "layer2": search_result["layer2"][i],
-                "terminology": search_result["terminology"][i],
-                "explanation": search_result["explanation"][i],
-                "created_at": search_result["created_at"][i],
-            }
-            for i in range(search_result.num_rows)
-        ]
 
     def get_domains(self) -> List[str]:
         """Get all unique domains."""

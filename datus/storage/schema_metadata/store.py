@@ -14,7 +14,6 @@ from datus.utils.loggings import get_logger
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-
 logger = get_logger(__name__)
 
 
@@ -191,6 +190,23 @@ class SchemaStorage(BaseMetadataStorage):
                 )
             )
         return pa.concat_tables(result, promote_options="default")
+
+    def get_schema(
+        self, table_name: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> pa.Table:
+        where = _build_where_clause(
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            table_type="full",
+        )
+        where = f"{where} AND table_name = '{table_name}'"
+        return (
+            self.table.search()
+            .where(where=where)
+            .select(["catalog_name", "database_name", "schema_name", "table_name", "table_type", "definition"])
+            .to_arrow()
+        )
 
 
 class SchemaValueStorage(BaseMetadataStorage):

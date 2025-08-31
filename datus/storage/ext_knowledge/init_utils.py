@@ -1,6 +1,7 @@
 from typing import Set
 
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
+from datus.utils.pyarrow_utils import concat_columns_with_cleaning
 
 
 def exists_ext_knowledge(storage: ExtKnowledgeStore, build_mode: str = "overwrite") -> Set[str]:
@@ -20,11 +21,14 @@ def exists_ext_knowledge(storage: ExtKnowledgeStore, build_mode: str = "overwrit
     if build_mode == "incremental":
         # Get all existing knowledge entries to avoid duplicates
         all_knowledge = storage.search_all_knowledge()
-        for knowledge in all_knowledge:
-            knowledge_id = gen_ext_knowledge_id(
-                knowledge["domain"], knowledge["layer1"], knowledge["layer2"], knowledge["terminology"]
-            )
-            existing_knowledge.add(knowledge_id)
+        existing_knowledge = set(
+            concat_columns_with_cleaning(
+                all_knowledge,
+                columns=["domain", "layer1", "layer2", "terminology"],
+                separator="__",
+                replacements={" ": "_", "/": "_"},
+            ).to_pylist()
+        )
 
     return existing_knowledge
 
@@ -47,4 +51,4 @@ def gen_ext_knowledge_id(domain: str, layer1: str, layer2: str, terminology: str
     clean_layer2 = layer2.replace(" ", "_").replace("/", "_")
     clean_terminology = terminology.replace(" ", "_").replace("/", "_")
 
-    return f"{clean_domain}_{clean_layer1}_{clean_layer2}_{clean_terminology}"
+    return f"{clean_domain}__{clean_layer1}__{clean_layer2}__{clean_terminology}"

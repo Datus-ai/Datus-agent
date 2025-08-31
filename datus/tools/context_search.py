@@ -1,0 +1,320 @@
+# -*- coding: utf-8 -*-
+from typing import List
+
+from agents import Tool
+
+from datus.configuration.agent_config import AgentConfig
+from datus.storage.document import DocumentStore
+from datus.storage.ext_knowledge.store import rag_by_configuration as ext_knowledge_by_configuration
+from datus.storage.metric.store import rag_by_configuration as metrics_rag_by_configuration
+from datus.storage.schema_metadata.store import rag_by_configuration as schema_metadata_by_configuration
+from datus.tools.tools import FuncToolResult, trans_to_function_tool
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
+
+class ContextSearchTools:
+    def __init__(self, agent_config: AgentConfig):
+        self.schema_rag = schema_metadata_by_configuration(agent_config)
+        self.metric_rag = metrics_rag_by_configuration(agent_config)
+        self.doc_rag = DocumentStore(agent_config.rag_storage_path())
+        self.ext_knowledge_rag = ext_knowledge_by_configuration(agent_config)
+
+    def available_tools(self) -> List[Tool]:
+        return [
+            trans_to_function_tool(func)
+            for func in (
+                self.search_table_metadata,
+                self.get_table_schema,
+                self.search_metrics,
+                self.search_documents,
+                self.search_external_knowledge,
+                # self.search_historical_sql
+            )
+        ]
+
+    def search_table_metadata(
+        self, query_text: str, catalog_name: str = "", database_name: str = "", schema_name: str = "", top_n=5
+    ) -> FuncToolResult:
+        """
+        Search for database table metadata using natural language queries.
+        This tool helps find relevant tables by searching through table names, schemas (DDL)
+        , and sample data using vector similarity.
+
+        Use this tool when you need to:
+        - Find tables related to a specific business concept or domain
+        - Discover tables containing certain types of data
+        - Locate tables for SQL query development
+        - Understand what tables are available in a database
+
+        Args:
+            query_text: Natural language description of what you're looking for (e.g., "customer data",
+             "sales transactions", "user profiles")
+            catalog_name: Optional catalog name to filter search results. Leave empty if not specified in context.
+            database_name: Optional database name to filter search results. Leave empty if not specified in context.
+            schema_name: Optional schema name to filter search results. Leave empty if not specified in context.
+            top_n: Maximum number of results to return (default 5)
+
+        Returns:
+            dict: Search results containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if search failed
+                - 'result' (dict): Search results with:
+                    - 'metadata' (list): Table information including catalog_name, database_name, schema_name,
+                         table_name, table_type ('table'/'view'/'mv'), definition (DDL), and identifier
+                    - 'sample_data' (list): Sample rows from matching tables with identifier, table_type,
+                         and sample_rows
+        """
+        try:
+            metadata, sample_values = self.schema_rag.search_similar(
+                query_text,
+                catalog_name=catalog_name,
+                database_name=database_name,
+                schema_name=schema_name,
+                table_type="full",
+                top_n=top_n,
+            )
+            result_dict = {"metadata": [], "sample_data": []}
+            if metadata:
+                result_dict["metadata"] = metadata.select(
+                    [
+                        "catalog_name",
+                        "database_name",
+                        "schema_name",
+                        "table_name",
+                        "table_type",
+                        "definition",
+                        "identifier",
+                    ]
+                ).to_pylist()
+
+            if sample_values:
+                result_dict["sample_data"] = sample_values.select(
+                    ["identifier", "table_type", "sample_rows"]
+                ).to_pylist()
+            return FuncToolResult(success=1, error=None, result=result_dict)
+        except Exception as e:
+            return FuncToolResult(success=0, error=str(e))
+
+    def get_table_schema(
+        self, table_name: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> FuncToolResult:
+        """
+        Get the exact schema definition (DDL) for a specific table by name.
+        Use this when you know the exact table name and need its complete structure.
+
+        Use this tool when you:
+        - Need the exact DDL/schema for a known table
+        - Want to understand table structure for SQL query writing
+        - Need column definitions, data types, and constraints
+        - Are working with a specific table identified from search results
+
+        Args:
+            table_name: Exact name of the table to retrieve (supports tables, views, and materialized views)
+            catalog_name: Optional catalog name for precise table identification. Leave empty if not specified.
+            database_name: Optional database name for precise table identification. Leave empty if not specified.
+            schema_name: Optional schema name for precise table identification. Leave empty if not specified.
+
+        Returns:
+            dict: Table schema information containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if retrieval failed
+                - 'result' (list): List of matching table schemas with table_name, table_type, and definition (DDL)
+        """
+        try:
+            tables = self.schema_rag.schema_store.get_schema(
+                catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
+            )
+            result = []
+            for i in range(tables.num_rows):
+                result.append(
+                    {
+                        "table_name": tables["table_name"][i],
+                        "table_type": tables["table_type"][i],
+                        "definition": tables["definition"][i],
+                    }
+                )
+            return FuncToolResult(success=1, error=None, result=result)
+        except Exception as e:
+            logger.error(f"Failed to retrieve schema for table '{table_name}': {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def search_metrics(
+        self,
+        query_text: str,
+        domain: str,
+        layer1: str,
+        layer2: str,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        top_n=5,
+    ) -> FuncToolResult:
+        """
+        Search for business metrics and KPIs using natural language queries.
+        This tool finds relevant metrics by searching through metric definitions, descriptions, and SQL logic.
+
+        Use this tool when you need to:
+        - Find existing metrics related to a business question
+        - Discover KPIs for reporting and analysis
+        - Locate metrics for specific business domains
+        - Understand how certain metrics are calculated
+
+        Args:
+            query_text: Natural language description of the metric you're looking for (e.g., "revenue metrics",
+                "customer engagement", "conversion rates")
+            domain: Business domain to search within (e.g., "sales", "marketing", "finance")
+            layer1: Primary semantic layer for categorization
+            layer2: Secondary semantic layer for fine-grained categorization
+            catalog_name: Optional catalog name to filter metrics. Leave empty if not specified.
+            database_name: Optional database name to filter metrics. Leave empty if not specified.
+            schema_name: Optional schema name to filter metrics. Leave empty if not specified.
+            top_n: Maximum number of results to return (default 5)
+
+        Returns:
+            dict: Metric search results containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if search failed
+                - 'result' (list): List of matching metrics with name, description, constraint, and sql_query
+        """
+        try:
+            metrics = self.metric_rag.search_hybrid_metrics(
+                domain=domain,
+                layer1=layer1,
+                layer2=layer2,
+                query_text=query_text,
+                catalog_name=catalog_name,
+                database_name=database_name,
+                schema_name=schema_name,
+                top_n=top_n,
+            )
+            return FuncToolResult(success=1, error=None, result=metrics)
+        except Exception as e:
+            logger.error(f"Failed to search metrics for table '{query_text}': {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def get_metrics(self, domain: str, layer1: str, layer2: str, metrics_name: str) -> FuncToolResult:
+        """
+        Get the exact definition and SQL implementation for a specific metric by name.
+        Use this when you know the exact metric name and need its complete definition.
+
+        Use this tool when you:
+        - Need the precise SQL calculation for a known metric
+        - Want to understand how a specific KPI is computed
+        - Are implementing or validating metric calculations
+        - Need metric constraints and business rules
+
+        Args:
+            domain: Business domain of the metric (e.g., "sales", "marketing", "finance")
+            layer1: Primary semantic layer for the metric
+            layer2: Secondary semantic layer for the metric
+            metrics_name: Exact name of the metric to retrieve
+
+        Returns:
+            dict: Metric definition containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if retrieval failed
+                - 'result' (dict): Metric details with name, description, constraint, and sql_query
+        """
+        try:
+            result = self.metric_rag.get_metrics(domain=domain, layer1=layer1, layer2=layer2, name=metrics_name)
+            return FuncToolResult(success=1, error=None, result=result)
+        except Exception as e:
+            logger.error(f"Failed to get metric for table '{metrics_name}': {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def search_historical_sql(
+        self, query_text: str, domain: str, layer1: str, layer2: str, top_n: int = 5
+    ) -> FuncToolResult:
+        """
+        Perform a vector search to match historical SQL queries by intent.
+
+        Args:
+            query_text: The natural language query text representing the desired SQL intent.
+            domain: Domain name for the historical SQL intent.
+            layer1: Semantic Layer1 for the historical SQL intent
+            layer2: Semantic Layer2 for the historical SQL intent
+            top_n: The number of top results to return (default 5).
+
+        Returns:
+            dict: A dictionary with keys:
+                - 'success' (int): 1 if the search succeeded, 0 otherwise.
+                - 'error' (str or None): Error message if any.
+                - 'result' (list): On success, a list of matching entries, each containing:
+                    - 'sql'
+                    - 'comment'
+                    - 'tags'
+                    - 'summary'
+                    - 'file_path'
+        """
+        pass
+
+    def search_external_knowledge(
+        self, query_text: str, domain: str, layer1: str, layer2: str, top_n: int = 5
+    ) -> FuncToolResult:
+        """
+        Search for business terminology, domain knowledge, and concept definitions.
+        This tool helps find explanations of business terms, processes, and domain-specific concepts.
+
+        Use this tool when you need to:
+        - Understand business terminology and definitions
+        - Learn about domain-specific concepts and processes
+        - Get context for business rules and requirements
+        - Find explanations of industry-specific terms
+
+        Args:
+            query_text: Natural language query about business terms or concepts (e.g., "customer lifetime value",
+                "churn rate definition", "fiscal year")
+            domain: Business domain to search within (e.g., "finance", "marketing", "operations")
+            layer1: Primary semantic layer for categorization
+            layer2: Secondary semantic layer for fine-grained categorization
+            top_n: Maximum number of results to return (default 5)
+
+        Returns:
+            dict: Knowledge search results containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if search failed
+                - 'result' (list): List of knowledge entries with domain, layer1, layer2, terminology, and explanation
+        """
+        try:
+            results = self.ext_knowledge_rag.search_knowledge(
+                query_text=query_text, domain=domain, layer1=layer1, layer2=layer2, top_n=top_n
+            )
+            return FuncToolResult(success=1, error=None, result=results)
+        except Exception as e:
+            logger.error(f"Failed to search external knowledge for query '{query_text}': {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def search_documents(self, query_text: str, top_n: int = 5) -> FuncToolResult:
+        """
+        Search through project documentation, specifications, and technical documents.
+        This tool helps find relevant information from project docs, requirements, and specifications.
+
+        Use this tool when you need to:
+        - Find specific information in project documentation
+        - Locate requirements and specifications
+        - Search through technical documentation
+        - Get context from project-related documents
+
+        Args:
+            query_text: Natural language query about what you're looking for in documents (e.g., "API specifications",
+                "data pipeline requirements", "system architecture")
+            top_n: Maximum number of document chunks to return (default 5)
+
+        Returns:
+            dict: Document search results containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if search failed
+                - 'result' (list): List of document chunks with title, hierarchy, keywords, language, and chunk_text
+        """
+        try:
+            results = self.doc_rag.search_similar_documents(
+                query_text=query_text,
+                top_n=top_n,
+                select_fields=["title", "hierarchy", "keywords", "language", "chunk_text"],
+            )
+            return FuncToolResult(success=1, error=None, result=results.to_pylist())
+        except Exception as e:
+            logger.error(f"Failed to search documents for query '{query_text}': {str(e)}")
+            return FuncToolResult(success=0, error=str(e))

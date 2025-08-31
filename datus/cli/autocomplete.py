@@ -495,6 +495,14 @@ class DynamicAtReferenceCompleter(Completer):
             yield Completion(completion_text, display=display_text, start_position=-len(prefix))
 
 
+def insert_into_dict(data: Dict, keys: List[str], value: str) -> None:
+    """Helper function to insert values into a nested dictionary based on keys."""
+    temp = data
+    for key in keys[:-1]:
+        temp = temp.setdefault(key, {})
+    temp.setdefault(keys[-1], []).append(value)
+
+
 class TableCompleter(DynamicAtReferenceCompleter):
     """Dynamic completer specifically for tables and metrics"""
 
@@ -513,72 +521,60 @@ class TableCompleter(DynamicAtReferenceCompleter):
         if schema_table is None or schema_table.num_rows == 0:
             return []
 
-        schema_data = schema_table.to_pylist()
+        # Process schema table directly using pyarrow (no conversion to pylist)
+        table_column = schema_table["table_name"]
 
         if self.agent_config.db_type == DBType.SQLITE:
             self.max_level = 1
-            return [item["table_name"] for item in schema_data]
+            return table_column.to_pylist()
+
+        catalog_column = schema_table["catalog_name"]
+        database_column = schema_table["database_name"]
+        schema_column = schema_table["schema_name"]
 
         data: Dict[str, Any] = {}
 
-        if DBType.support_catalog(self.agent_config.db_type) and schema_data[0]["catalog_name"]:
+        if DBType.support_catalog(self.agent_config.db_type) and catalog_column[0].as_py():
             if DBType.support_database(self.agent_config.db_type):
                 if DBType.support_schema(self.agent_config.db_type):
                     # catalog -> database -> schema -> table
                     self.max_level = 4
-                    for item in schema_data:
-                        catalog_name = item["catalog_name"]
-                        if catalog_name not in data:
-                            data[catalog_name] = {}
-                        if item["database_name"] not in data[catalog_name]:
-                            data[catalog_name][item["database_name"]] = {}
-                        if item["schema_name"] not in data[catalog_name][item["database_name"]]:
-                            data[catalog_name][item["database_name"]][item["schema_name"]] = []
-                        data[catalog_name][item["database_name"]][item["schema_name"]].append(item["table_name"])
+                    # Catalog -> Database -> Schema -> Table structure
+                    for catalog, database, schema, table in zip(
+                        catalog_column, database_column, schema_column, table_column
+                    ):
+                        insert_into_dict(data, [catalog.as_py(), database.as_py(), schema.as_py()], table.as_py())
+                    return data
                 else:
                     # catalog -> database -> table
                     self.max_level = 3
-                    for item in schema_data:
-                        catalog_name = item["catalog_name"]
-                        if catalog_name not in data:
-                            data[catalog_name] = {}
-                        if item["database_name"] not in data[catalog_name]:
-                            data[catalog_name][item["database_name"]] = []
-                        data[catalog_name][item["database_name"]].append(item["table_name"])
+                    for catalog, database, table in zip(catalog_column, database_column, table_column):
+                        insert_into_dict(data, [catalog.as_py(), database.as_py()], table.as_py())
+                    return data
             elif DBType.support_schema(self.agent_config.db_type):
                 self.max_level = 3
                 # catalog -> schema -> table
-                for item in schema_data:
-                    catalog_name = item["catalog_name"]
-                    if catalog_name not in data:
-                        data[catalog_name] = {}
-                    if item["schema_name"] not in data[catalog_name]:
-                        data[catalog_name][item["schema_name"]] = []
-                    data[catalog_name][item["schema_name"]].append(item["table_name"])
+                for catalog, schema, table in zip(catalog_column, schema_column, table_column):
+                    insert_into_dict(data, [catalog.as_py(), schema.as_py()], table.as_py())
 
-        if DBType.support_database(self.agent_config.db_type) and schema_data[0]["database_name"]:
-            if DBType.support_schema(self.agent_config.db_type) and schema_data[0]["schema_name"]:
+        if DBType.support_database(self.agent_config.db_type) and database_column[0].as_py():
+            if DBType.support_schema(self.agent_config.db_type) and schema_column[0].as_py():
                 self.max_level = 3
-                for item in schema_data:
-                    if item["database_name"] not in data:
-                        data[item["database_name"]] = {}
-                    if item["schema_name"] not in data[item["database_name"]]:
-                        data[item["database_name"]][item["schema_name"]] = []
-                    data[item["database_name"]][item["schema_name"]].append(item["table_name"])
+                # Database -> Schema -> Table structure
+                for database, schema, table in zip(database_column, schema_column, table_column):
+                    insert_into_dict(data, [database.as_py(), schema.as_py()], table.as_py())
             else:
                 self.max_level = 2
-                for item in schema_data:
-                    if item["database_name"] not in data:
-                        data[item["database_name"]] = []
-                    data[item["database_name"]].append(item["table_name"])
+                # Database -> Table structure
+                for database, table in zip(database_column, table_column):
+                    insert_into_dict(data, [database.as_py()], table.as_py())
             return data
 
         if DBType.support_schema(self.agent_config.db_type):
             self.max_level = 2
-            for item in schema_data:
-                if item["schema_name"] not in data:
-                    data[item["schema_name"]] = []
-                data[item["schema_name"]].append(item["table_name"])
+            # schema -> table
+            for schema, table in zip(schema_column, table_column):
+                insert_into_dict(data, [schema.as_py()], table.as_py())
 
         return data
 

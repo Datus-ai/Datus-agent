@@ -31,7 +31,17 @@ class SearchMetricsTool(BaseTool):
         return self._search_hybrid_metrics(input_param)
 
     def _search_hybrid_metrics(self, input_param: SearchMetricsInput) -> SearchMetricsResult:
-        metric_results = self.store.search_hybrid_metrics(input_param, input_param.top_n_by_rate())
+        sql_task = input_param.sql_task
+        metric_results = self.store.search_hybrid_metrics(
+            query_text=sql_task.query_text,
+            domain=sql_task.domain,
+            layer1=sql_task.layer1,
+            layer2=sql_task.layer2,
+            catalog_name=sql_task.catalog_name,
+            database_name=sql_task.database_name,
+            schema_name=sql_task.schema_name,
+            top_n=input_param.top_n_by_rate(),
+        )
 
         # Convert dictionaries to proper model instances
         metric_list = [Metric.from_dict(metric) for metric in metric_results]
