@@ -842,7 +842,7 @@ class DatusCLI:
     def _show_detail(self, actions: List[ActionHistory]):
         while True:
             choice = self._prompt_input(
-                "Would you like to check the details? yes/no",
+                "Would you like to check the details?",
                 choices=["y", "n"],
                 default="y",
             )

@@ -1,0 +1,233 @@
+import logging
+from typing import Any, Dict, List
+
+import pyarrow as pa
+
+from datus.configuration.agent_config import AgentConfig
+from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
+from datus.storage.embedding_models import get_metric_embedding_model
+
+logger = logging.getLogger(__file__)
+
+
+class SqlHistoryStorage(BaseEmbeddingStore):
+    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
+        """Initialize the SQL history store.
+
+        Args:
+            db_path: Path to the LanceDB database directory
+            embedding_model: Embedding model for vector search
+        """
+        super().__init__(
+            db_path=db_path,
+            table_name="sql_history",
+            embedding_model=embedding_model,
+            schema=pa.schema(
+                [
+                    pa.field("id", pa.string()),
+                    pa.field("sql", pa.string()),
+                    pa.field("comment", pa.string()),
+                    pa.field("summary", pa.string()),
+                    pa.field("filepath", pa.string()),
+                    pa.field("domain", pa.string()),
+                    pa.field("layer1", pa.string()),
+                    pa.field("layer2", pa.string()),
+                    pa.field("tags", pa.string()),
+                    pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
+                ]
+            ),
+            vector_source_name="summary",
+        )
+        self.reranker = None
+
+    def create_indices(self):
+        """Create scalar and full-text search indices."""
+        # Ensure table is ready before creating indices
+        self._ensure_table_ready()
+
+        # Create scalar indices
+        self.table.create_scalar_index("id", replace=True)
+        self.table.create_scalar_index("domain", replace=True)
+        self.table.create_scalar_index("layer1", replace=True)
+        self.table.create_scalar_index("layer2", replace=True)
+        self.table.create_scalar_index("filepath", replace=True)
+
+        # Create full-text search index
+        self.create_fts_index(["sql", "comment", "summary", "tags"])
+
+    def search_all(self, domain: str = "") -> List[Dict[str, Any]]:
+        """Search all SQL history entries for a given domain."""
+        search_result = self._search_all(
+            where="" if not domain else f"domain='{domain}'",
+            select_fields=["id", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags"],
+        )
+        return [
+            {
+                "id": search_result["id"][i],
+                "sql": search_result["sql"][i],
+                "comment": search_result["comment"][i],
+                "summary": search_result["summary"][i],
+                "filepath": search_result["filepath"][i],
+                "domain": search_result["domain"][i],
+                "layer1": search_result["layer1"][i],
+                "layer2": search_result["layer2"][i],
+                "tags": search_result["tags"][i],
+            }
+            for i in range(search_result.num_rows)
+        ]
+
+    def filter_by_id(self, id: str) -> List[Dict[str, Any]]:
+        """Filter SQL history by ID."""
+        # Ensure table is ready before direct table access
+        self._ensure_table_ready()
+
+        search_result = self.table.search().where(f"id = '{id}'").limit(100).to_list()
+        return search_result
+
+    def filter_by_domain_layers(self, domain: str = "", layer1: str = "", layer2: str = "") -> List[Dict[str, Any]]:
+        """Filter SQL history by domain and layers."""
+        # Ensure table is ready before direct table access
+        self._ensure_table_ready()
+
+        where_conditions = []
+        if domain:
+            where_conditions.append(f"domain = '{domain}'")
+        if layer1:
+            where_conditions.append(f"layer1 = '{layer1}'")
+        if layer2:
+            where_conditions.append(f"layer2 = '{layer2}'")
+
+        where_clause = " AND ".join(where_conditions) if where_conditions else ""
+
+        if where_clause:
+            search_result = self.table.search().where(where_clause).limit(1000).to_list()
+        else:
+            search_result = self.table.search().limit(1000).to_list()
+
+        return search_result
+
+    def get_existing_taxonomy(self) -> Dict[str, Any]:
+        """Get existing taxonomy from stored SQL history items.
+
+        Returns:
+            Dict containing existing domains, layer1_categories, layer2_categories, and common_tags
+        """
+        logger.info("Extracting existing taxonomy from stored SQL history")
+
+        # Ensure table is ready
+        self._ensure_table_ready()
+
+        # Get all existing taxonomy data
+        search_result = self.table.search().select(["domain", "layer1", "layer2", "tags"]).limit(10000).to_list()
+
+        if not search_result:
+            logger.info("No existing taxonomy found in database")
+            return {"domains": [], "layer1_categories": [], "layer2_categories": [], "common_tags": []}
+
+        # Extract unique values
+        domains = set()
+        layer1_categories = set()
+        layer2_categories = set()
+        tags = set()
+
+        for item in search_result:
+            if item.get("domain"):
+                domains.add(item["domain"])
+            if item.get("layer1"):
+                layer1_categories.add((item["layer1"], item.get("domain", "")))
+            if item.get("layer2"):
+                layer2_categories.add((item["layer2"], item.get("layer1", "")))
+            if item.get("tags"):
+                # Split tags by comma if they are stored as comma-separated string
+                item_tags = [tag.strip() for tag in str(item["tags"]).split(",") if tag.strip()]
+                tags.update(item_tags)
+
+        # Format into taxonomy structure
+        taxonomy = {
+            "domains": [{"name": domain, "description": "Existing business domain"} for domain in sorted(domains)],
+            "layer1_categories": [
+                {"name": layer1, "domain": domain, "description": "Existing primary category"}
+                for layer1, domain in sorted(layer1_categories)
+            ],
+            "layer2_categories": [
+                {"name": layer2, "layer1": layer1, "description": "Existing secondary category"}
+                for layer2, layer1 in sorted(layer2_categories)
+            ],
+            "common_tags": [{"tag": tag, "description": "Existing tag"} for tag in sorted(tags)],
+        }
+
+        logger.info(
+            f"Extracted existing taxonomy: {len(taxonomy['domains'])} domains, "
+            f"{len(taxonomy['layer1_categories'])} layer1 categories, "
+            f"{len(taxonomy['layer2_categories'])} layer2 categories, "
+            f"{len(taxonomy['common_tags'])} tags"
+        )
+
+        return taxonomy
+
+    def search_by_filepath(self, filepath_pattern: str) -> List[Dict[str, Any]]:
+        """Search SQL history by filepath pattern."""
+        # Ensure table is ready before direct table access
+        self._ensure_table_ready()
+
+        where_clause = f"filepath LIKE '%{filepath_pattern}%'"
+        search_result = self.table.search().where(where_clause).limit(1000).to_list()
+        return search_result
+
+
+class SqlHistoryRAG:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        embedding_model = get_metric_embedding_model()
+        self.sql_history_storage = SqlHistoryStorage(db_path, embedding_model)
+
+    def store_batch(self, sql_history_items: List[Dict[str, Any]]):
+        """Store batch of SQL history items."""
+        logger.info(f"store sql history items: {len(sql_history_items)} items")
+        self.sql_history_storage.store_batch(sql_history_items)
+
+    def search_all_sql_history(self, domain: str) -> List[Dict[str, Any]]:
+        """Search all SQL history items."""
+        return self.sql_history_storage.search_all(domain)
+
+    def after_init(self):
+        """Initialize indices after data loading."""
+        self.sql_history_storage.create_indices()
+
+    def get_sql_history_size(self):
+        """Get total number of SQL history entries."""
+        return self.sql_history_storage.table_size()
+
+    def search_sql_history_by_summary(
+        self, query_text: str, top_n: int = 5, domain: str = "", layer1: str = "", layer2: str = ""
+    ) -> List[Dict[str, Any]]:
+        """Search SQL history by summary using vector search."""
+        where_conditions = []
+        if domain:
+            where_conditions.append(f"domain = '{domain}'")
+        if layer1:
+            where_conditions.append(f"layer1 = '{layer1}'")
+        if layer2:
+            where_conditions.append(f"layer2 = '{layer2}'")
+
+        where_clause = " AND ".join(where_conditions) if where_conditions else ""
+
+        logger.info(f"Searching SQL history by summary: {query_text}, where: {where_clause}")
+        search_results = self.sql_history_storage.search(
+            query_text,
+            top_n=top_n,
+            where=where_clause,
+        )
+
+        if search_results:
+            result_list = search_results.to_pylist()
+            logger.info(f"Found {len(result_list)} SQL history results for query: {query_text}")
+            return result_list
+        else:
+            logger.info(f"No SQL history results found for query: {query_text}")
+            return []
+
+
+def sql_history_rag_by_configuration(agent_config: AgentConfig):
+    """Create SqlHistoryRAG instance from agent configuration."""
+    return SqlHistoryRAG(agent_config.rag_storage_path())

@@ -696,6 +696,28 @@ class Agent:
                     "message": f"ext_knowledge bootstrap completed, "
                     f"knowledge_size={self.ext_knowledge_store.table_size()}",
                 }
+            elif component == "sql_history":
+                sql_history_path = os.path.join(dir_path, "sql_history.lance")
+                if kb_update_strategy == "overwrite":
+                    if os.path.exists(sql_history_path):
+                        shutil.rmtree(sql_history_path)
+                        logger.info(f"Deleted existing directory {sql_history_path}")
+                    self.global_config.save_storage_config("sql_history")
+                else:
+                    self.global_config.check_init_storage_config("sql_history")
+
+                # Initialize SQL history storage
+                from datus.storage.sql_history import SqlHistoryRAG
+                from datus.storage.sql_history.sql_history_init import init_sql_history
+
+                self.sql_history_store = SqlHistoryRAG(dir_path)
+                result = init_sql_history(
+                    self.sql_history_store,
+                    self.args,
+                    self.global_config,
+                    build_mode=kb_update_strategy,
+                )
+                return result
             results[component] = True
 
         # Initialize success story storage (always created)
