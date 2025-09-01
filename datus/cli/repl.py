@@ -5,6 +5,7 @@ This module provides the main interactive shell for the CLI.
 
 import sys
 import threading
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -30,6 +31,7 @@ from datus.cli.context_commands import ContextCommands
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
+from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.constants import DBType
 from datus.utils.exceptions import setup_exception_handler
@@ -63,7 +65,7 @@ class DatusCLI:
         setup_exception_handler(
             console_logger=self.console.print, prefix_wrap_func=lambda x: f"[bold red]{x}[/bold red]"
         )
-        self.db_connector = None
+        self.db_connector: BaseSqlConnector
 
         self.agent = None
         self.agent_initializing = False
@@ -439,7 +441,14 @@ class DatusCLI:
                 if col == "...":
                     row_values.append("...")
                 else:
-                    row_values.append(str(row.get(col)))
+                    row_value = row.get(col)
+                    if isinstance(row_value, datetime):
+                        row_value = row_value.strftime("%Y-%m-%d %H:%M:%S")
+                    elif isinstance(row_value, date):
+                        row_value = row_value.strftime("%Y-%m-%d")
+                    else:
+                        row_value = str(row_value)
+                    row_values.append(row_value)
             table.add_row(*row_values)
 
         self.console.print(table)
@@ -570,7 +579,7 @@ class DatusCLI:
             import time
 
             start_time = time.time()
-            result = self.db_connector.execute_arrow(sql)
+            result = self.db_connector.execute(input_params={"sql_query": sql}, result_format="arrow")
             end_time = time.time()
             exec_time = end_time - start_time
 
@@ -592,7 +601,49 @@ class DatusCLI:
             self.last_result = result
 
             # Display results and update action
-            if result and result.success and hasattr(result.sql_return, "column_names"):
+            if result.success:
+                if not hasattr(result.sql_return, "column_names"):
+                    if result.row_count is not None and result.row_count > 0:
+                        # Update action with success
+                        self.actions.update_action_by_id(
+                            sql_action.action_id,
+                            status=ActionStatus.SUCCESS,
+                            output={
+                                "row_count": result.row_count,
+                                "execution_time": exec_time,
+                                "success": True,
+                            },
+                            messages=f"SQL executed successfully: {result.row_count} rows in {exec_time:.2f}s",
+                        )
+                        self.console.print(f"[dim]Update {result.sql_return} rows in {exec_time:.2f} seconds[/]")
+                    elif result.sql_return:
+                        self.console.print(f"[dim]SQL execution successful in {exec_time:.2f} seconds[/]")
+                        # Update action with success
+                        self.actions.update_action_by_id(
+                            sql_action.action_id,
+                            status=ActionStatus.SUCCESS,
+                            output={
+                                "row_count": 0,
+                                "execution_time": exec_time,
+                                "success": True,
+                            },
+                            messages=f"SQL executed successfully in {exec_time:.2f}s",
+                        )
+                    else:
+                        error_msg = (
+                            f"Query execution failed - received string instead of Arrow data:"
+                            f" {result.error or 'Unknown error'}"
+                        )
+                        self.console.print(f"[bold red]Error:[/] {error_msg}")
+
+                        # Update action with error
+                        self.actions.update_action_by_id(
+                            sql_action.action_id,
+                            status=ActionStatus.FAILED,
+                            output={"error": error_msg, "result_type_error": True},
+                            messages=f"Result format error: {error_msg}",
+                        )
+                    return
                 # Convert Arrow data to list of dictionaries for smart display
                 rows = result.sql_return.to_pylist()
                 self._smart_display_table(data=rows, columns=result.sql_return.column_names)
@@ -622,7 +673,7 @@ class DatusCLI:
                     )
                     self.agent.workflow.context.sql_contexts.append(new_record)
 
-            elif result and not result.success:
+            else:
                 error_msg = result.error or "Unknown SQL error"
                 self.console.print(f"[bold red]SQL Error:[/] {error_msg}")
 
@@ -642,32 +693,6 @@ class DatusCLI:
                         explanation="Manual sql",
                     )
                     self.agent.workflow.context.sql_contexts.append(new_record)
-
-            elif result and isinstance(result.sql_return, str):
-                error_msg = (
-                    f"Query execution failed - received string instead of Arrow data: {result.error or 'Unknown error'}"
-                )
-                self.console.print(f"[bold red]Error:[/] {error_msg}")
-
-                # Update action with error
-                self.actions.update_action_by_id(
-                    sql_action.action_id,
-                    status=ActionStatus.FAILED,
-                    output={"error": error_msg, "result_type_error": True},
-                    messages=f"Result format error: {error_msg}",
-                )
-            else:
-                error_msg = "No valid result from the query."
-                self.console.print(f"[bold red]Error:[/] {error_msg}")
-
-                # Update action with error
-                self.actions.update_action_by_id(
-                    sql_action.action_id,
-                    status=ActionStatus.FAILED,
-                    output={"error": error_msg},
-                    messages=f"No valid result: {error_msg}",
-                )
-
         except Exception as e:
             logger.error(f"SQL execution error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")

@@ -126,12 +126,12 @@ class TestDBTools:
     def test_execute_query_sr(self, starrocks_connector: StarRocksConnector):
         """Test SQL query execution functionality"""
         # Test simple query
-        result = starrocks_connector.do_execute({"sql_query": "SELECT 1"})
+        result = starrocks_connector.execute({"sql_query": "SELECT 1"})
         assert result.success is True
         assert result.row_count > 0
         assert result.error is None
 
-        result = starrocks_connector.do_execute({"sql_query": "SELECT count(*) from part"})
+        result = starrocks_connector.execute({"sql_query": "SELECT count(*) from part"})
         assert result.success is True
         assert result.row_count > 0
         assert result.error is None
@@ -195,14 +195,14 @@ class TestDBTools:
     def test_execute_query(self, snowflake_connector):
         """Test SQL query execution functionality"""
         # Test simple query
-        result = snowflake_connector.do_execute({"sql_query": "SELECT 1"})
+        result = snowflake_connector.execute({"sql_query": "SELECT 1"})
         assert result.success is True
         assert result.row_count > 0
         assert result.error is None
 
     def test_execute_invalid_query(self, snowflake_connector):
         """Test error handling for invalid SQL queries"""
-        result = snowflake_connector.do_execute({"sql_query": "SELECT * FROM non_existent_table"})
+        result = snowflake_connector.execute({"sql_query": "SELECT * FROM non_existent_table"})
         assert result.success is True  # Note: Implementation returns True even for SQL errors
         assert result.error is not None
         assert "non_existent_table" in result.error.lower()

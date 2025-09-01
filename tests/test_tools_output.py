@@ -64,7 +64,7 @@ class TestBirdDevOutput:
                 task_gen_sql = task["gen_sql"]
                 table_names = extract_table_names(task_gen_sql, dialect=DBType.SQLITE)
                 table_schemas, _ = rag_storage.search_tables(db_name, table_names)
-                sql_result = sql_connector.do_execute(ExecuteSQLInput(sql_query=task_gen_sql))
+                sql_result = sql_connector.execute(ExecuteSQLInput(sql_query=task_gen_sql))
                 output_result = tool.execute(
                     input_data=OutputInput(
                         finished=True,
@@ -83,5 +83,5 @@ class TestBirdDevOutput:
                     model=llm_model,
                 )
                 with open(f"{output_dir}/bird_dev_{task['question_id']}_gold.csv", "w") as f:
-                    f.write(sql_connector.do_execute(ExecuteSQLInput(sql_query=task["gold_sql"])).sql_return)
+                    f.write(sql_connector.execute(ExecuteSQLInput(sql_query=task["gold_sql"])).sql_return)
                 print(output_result)

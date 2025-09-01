@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from datus.tools.db_tools import BaseSqlConnector
 from datus.utils.compress_utils import DataCompressor
-from datus.utils.constants import SUPPORT_CATALOG_DIALECTS, SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS
+from datus.utils.constants import SUPPORT_CATALOG_DIALECTS, SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
 
 
 class FuncToolResult(BaseModel):
@@ -244,7 +244,9 @@ class DBFuncTool:
                    is_compressed, and compressed_data.
         """
         try:
-            result = self.connector.execute_query(sql)
+            result = self.connector.execute_query(
+                sql, result_format="arrow" if self.connector.dialect == DBType.SNOWFLAKE else "list"
+            )
             if result.success:
                 data = result.sql_return
                 return FuncToolResult(result=self.compressor.compress(data))

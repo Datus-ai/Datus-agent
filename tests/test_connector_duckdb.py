@@ -47,7 +47,7 @@ def test_get_table_schema(duckdb_connector: DuckdbConnector):
 def test_execute_query(duckdb_connector: DuckdbConnector):
     duckdb_connector.test_connection()
 
-    res = duckdb_connector.execute_query("select * from bank_failures limit 10")
+    res = duckdb_connector.execute_query("select * from bank_failures limit 10", result_format="list")
     assert res.success
     assert len(res.sql_return) > 0
     assert isinstance(res.sql_return[0], dict)

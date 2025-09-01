@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, Union, override
+from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
 
 from pandas import DataFrame
 from pyarrow import DataType, RecordBatch, Table, array, ipc
@@ -17,7 +17,7 @@ from sqlalchemy.exc import (
     TimeoutError,
 )
 
-from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
+from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -317,80 +317,29 @@ class SQLAlchemyConnector(BaseSqlConnector):
             logger.error(f"Failed to execute DDL: {ex.message}")
             return ExecuteSQLResult(success=False, sql_query=sql, error=str(ex))
 
-    def do_execute(
-        self,
-        input_params: Union[ExecuteSQLInput, Dict[str, Any]],
-        result_format: Literal["csv", "arrow", "pandas", "list"] = "csv",
-    ) -> ExecuteSQLResult:
-        if isinstance(input_params, ExecuteSQLInput):
-            sql_query = input_params.sql_query.strip()
-        else:
-            sql_query = input_params["sql_query"].strip()
-        self.connect()
+    def execute_pandas(self, sql: str) -> ExecuteSQLResult:
         try:
-            sql_type = parse_sql_type(sql_query)
-            if sql_type == SQLType.INSERT:
-                return self.execute_insert(sql_query)
-            elif sql_type in (SQLType.UPDATE, SQLType.DELETE):
-                rowcount = self._update(sql_query)
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql_query,
-                    sql_return=str(rowcount),
-                    row_count=rowcount,
-                    result_format=result_format,
-                )
-            else:
-                result_list = self._execute_query(sql_query)
-                result = ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql_query,
-                    row_count=len(result_list),
-                    result_format=result_format,
-                )
-                if result_format == "pandas":
-                    result.sql_return = DataFrame(result_list)
-                if result_format == "csv":
-                    result.sql_return = DataFrame(result_list).to_csv(index=False)
-                elif result_format == "arrow":
-                    result.sql_return = Table.from_pylist(result_list)
-                else:
-                    result.sql_return = result_list
-                return result
-        except Exception as e:
-            logger.error(f"Execute sql error: {str(e)}")
+            df = self._execute_pandas(sql)
             return ExecuteSQLResult(
                 success=True,
-                error=str(e),
-                sql_query=sql_query,
-                sql_return="",
-                row_count=0,
-                result_format=result_format,
-            )
-
-    def execute_pandas(self, query_sql: str) -> ExecuteSQLResult:
-        try:
-            df = self._execute_pandas(query_sql)
-            return ExecuteSQLResult(
-                success=True,
-                sql_query=query_sql,
+                sql_query=sql,
                 sql_return=df,
                 row_count=len(df),
                 result_format="pandas",
             )
         except Exception as e:
-            return ExecuteSQLResult(success=False, error=str(e), sql_query=query_sql)
+            return ExecuteSQLResult(success=False, error=str(e), sql_query=sql)
         # return self.do_execute(ExecuteSQLInput(sql_query=query), "pandas")
 
-    def execute_csv(self, query_sql: str) -> ExecuteSQLResult:
+    def execute_csv(self, sql: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results with csv format."""
         self.connect()
 
         try:
-            df = self._execute_pandas(query_sql)
+            df = self._execute_pandas(sql)
             return ExecuteSQLResult(
                 success=True,
-                sql_query=query_sql,
+                sql_query=sql,
                 sql_return=df.to_csv(index=False),
                 row_count=len(df),
                 result_format="csv",
@@ -398,7 +347,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
         except Exception as e:
             return ExecuteSQLResult(
                 success=False,
-                sql_query=query_sql,
+                sql_query=sql,
                 sql_return="",
                 row_count=0,
                 error=str(e),
@@ -442,13 +391,11 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 result_format="arrow",
             )
 
-    def execute_arrow_iterator(self, query: str, max_rows: int = 100) -> Iterator[Tuple]:
+    def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator[Tuple]:
         """Execute query and return results as tuples in batches."""
         try:
             self.connect()
-            result = self.connection.execute(
-                text(query).execution_options(stream_results=True, max_row_buffer=max_rows)
-            )
+            result = self.connection.execute(text(sql).execution_options(stream_results=True, max_row_buffer=max_rows))
             if result.returns_rows:
                 while True:
                     batch_rows = result.fetchmany(max_rows)
@@ -644,15 +591,26 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 row_count=0,
             )
 
-    def execute_query(self, query_sql: str) -> ExecuteSQLResult:
+    def execute_query(
+        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+    ) -> ExecuteSQLResult:
         try:
             self.connect()
-            result = self._execute_query(query_sql)
+            result = self._execute_query(sql)
+            row_count = len(result)
+            if result_format == "csv":
+                df = DataFrame(result)
+                result = df.to_csv(index=False)
+            elif result_format == "arrow":
+                result = Table.from_pylist(result)
+            elif result_format == "pandas":
+                result = DataFrame(result)
+
             return ExecuteSQLResult(
-                success=True, sql_query=query_sql, sql_return=result, row_count=len(result), result_format="list"
+                success=True, sql_query=sql, sql_return=result, row_count=row_count, result_format=result_format
             )
         except Exception as e:
-            return ExecuteSQLResult(success=False, error=str(e), sql_query=query_sql)
+            return ExecuteSQLResult(success=False, error=str(e), sql_query=sql)
 
     def _execute_query(self, query_sql: str) -> List[Dict[str, Any]]:
         if parse_sql_type(query_sql) in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE, SQLType.CONTENT_SET):
@@ -729,6 +687,16 @@ class SQLAlchemyConnector(BaseSqlConnector):
         except SQLAlchemyError as e:
             raise self._handle_sql_exception(e, "\n".join(queries), "batch query execution") from e
         return results
+
+    @override
+    def execute_content_set(self, sql_query: str) -> ExecuteSQLResult:
+        self.connect()
+        try:
+            self.connection.execute(text(sql_query))
+            return ExecuteSQLResult(success=True, sql_query=sql_query, sql_return="Successful", row_count=0)
+        except Exception as e:
+            ex = self._handle_sql_exception(e, sql_query)
+            return ExecuteSQLResult(success=False, error=str(ex), sql_query=sql_query)
 
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of tables in the database."""

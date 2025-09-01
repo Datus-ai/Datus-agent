@@ -1,15 +1,70 @@
 from typing import Any, Dict, List, Literal, Sequence, Set, override
 
+import pyarrow as pa
 from pandas import DataFrame
 from snowflake.connector import Connect, SnowflakeConnection
-from snowflake.connector.errors import ProgrammingError
+from snowflake.connector.errors import (
+    DatabaseError,
+    DataError,
+    ForbiddenError,
+    IntegrityError,
+    InterfaceError,
+    InternalError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+    RequestTimeoutError,
+    ServiceUnavailableError,
+)
 
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.constants import DBType
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def _handle_snowflake_exception(e: Exception, sql: str = "") -> DatusException:
+    """Handle Snowflake exceptions and map to appropriate Datus ErrorCode."""
+
+    if isinstance(e, ProgrammingError):
+        # SQL syntax errors, invalid queries, etc.
+        # detailed_msg = f"errno:{e.errno}, sqlstate: {e.sqlstate}, message: {e.msg}, query_id: {e.sfqid}"
+        return DatusException(
+            ErrorCode.DB_EXECUTION_SYNTAX_ERROR, message_args={"sql": sql, "error_message": e.raw_msg}
+        )
+
+    elif isinstance(e, (OperationalError, DatabaseError)):
+        # Database operational issues
+        return DatusException(ErrorCode.DB_EXECUTION_ERROR, message_args={"sql": sql, "error_message": e.raw_msg})
+
+    elif isinstance(e, IntegrityError):
+        # Constraint violations, unique key violations, etc.
+        return DatusException(ErrorCode.DB_CONSTRAINT_VIOLATION, message_args={"sql": sql, "error_message": e.raw_msg})
+
+    elif isinstance(e, (RequestTimeoutError, ServiceUnavailableError)):
+        # Timeout and service availability issues
+        return DatusException(ErrorCode.DB_EXECUTION_TIMEOUT, message_args={"sql": sql, "error_message": e.raw_msg})
+
+    elif isinstance(e, (InterfaceError, InternalError)):
+        # Connection and internal errors
+        return DatusException(ErrorCode.DB_CONNECTION_FAILED, message_args={"error_message": e.raw_msg})
+
+    elif isinstance(e, ForbiddenError):
+        # Permission denied errors
+        return DatusException(
+            ErrorCode.DB_PERMISSION_DENIED, message_args={"operation": "query execution", "error_message": e.raw_msg}
+        )
+
+    elif isinstance(e, (DataError, NotSupportedError)):
+        # Data type errors and unsupported operations
+        return DatusException(ErrorCode.DB_EXECUTION_ERROR, message_args={"sql": sql, "error_message": e.raw_msg})
+
+    else:
+        # Generic database failure for unknown exceptions
+        return DatusException(ErrorCode.DB_FAILED, message_args={"error_message": str(e)})
 
 
 class SnowflakeConnector(BaseSqlConnector):
@@ -57,75 +112,20 @@ class SnowflakeConnector(BaseSqlConnector):
     def close(self):
         self.connection.close()
 
-    def do_execute(self, input_params, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"):
-        """Execute SQL query on Snowflake."""
+    def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         try:
             with self.connection.cursor() as cursor:
-                # Set cursor to return dictionary format results
-                cursor.execute(
-                    input_params["sql_query"],
-                    input_params["params"] if "params" in input_params else None,
-                )
-
-                # got columns
-                columns = [desc[0] for desc in cursor.description]
-
-                # got result from cursor
-                if result_format == "arrow":
-                    final_result = cursor.fetch_arrow_all()
-                    # Handle case where arrow result is None
-                    if final_result is None:
-                        row_count = 0
-                    else:
-                        row_count = final_result.num_rows
-                elif result_format == "list":
-                    rows = cursor.fetchall()
-                    final_result = [{columns[i]: value for i, value in enumerate(row)} for row in rows]
-                    row_count = len(rows)
-                elif result_format == "pandas":
-                    rows = cursor.fetch_pandas_all()
-                    final_result = rows
-                    row_count = len(rows)
+                if not schema_name:
+                    if not database_name:
+                        return
+                    sql = f'USE DATABASE "{database_name}"'
                 else:
-                    rows = cursor.fetch_pandas_all()
-                    final_result = rows.to_csv(index=False)
-                    row_count = len(rows)
-
-                return ExecuteSQLResult(
-                    sql_query=input_params["sql_query"],
-                    row_count=row_count,
-                    sql_return=final_result,
-                    success=True,
-                    error=None,
-                    result_format=result_format,
-                )
-        except ProgrammingError as e:
-            return ExecuteSQLResult(
-                sql_query=input_params["sql_query"] if isinstance(input_params, dict) else str(input_params),
-                row_count=0,
-                sql_return="",
-                success=True,  # Continue to execute next step if failed, reflection node will handle it
-                error=f"errno:{e.errno}, sqlstate: {e.sqlstate}, message: {e.msg}, query_id: {e.sfqid}",
-                result_format="csv",
-            )
+                    sql = (
+                        f'USE SCHEMA "{schema_name}"' if not database_name else f'USE "{database_name}"."{schema_name}"'
+                    )
+                cursor.execute(sql)
         except Exception as e:
-            return ExecuteSQLResult(
-                sql_query=input_params["sql_query"] if isinstance(input_params, dict) else str(input_params),
-                row_count=0,
-                sql_return="",
-                success=False,
-                error=f"Unknown error: {str(e)}",
-                result_format="csv",
-            )
-
-    def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
-        with self.connection.cursor() as cursor:
-            if not schema_name:
-                if not database_name:
-                    return
-                cursor.execute(f'USE DATABASE "{database_name}"')
-            else:
-                cursor.execute(f'USE SCHEMA "{database_name}"."{schema_name}"')
+            raise _handle_snowflake_exception(e, sql) from e
 
     @override
     def execute_ddl(self, sql: str) -> ExecuteSQLResult:
@@ -148,21 +148,12 @@ class SnowflakeConnector(BaseSqlConnector):
                     success=True,
                     error=None,
                 )
-        except ProgrammingError as e:
-            return ExecuteSQLResult(
-                sql_query=sql,
-                row_count=0,
-                sql_return="",
-                success=False,
-                error=f"errno:{e.errno}, sqlstate: {e.sqlstate}, message: {e.msg}, query_id: {e.sfqid}",
-            )
         except Exception as e:
+            ex = _handle_snowflake_exception(e, sql)
             return ExecuteSQLResult(
-                sql_query=sql,
-                row_count=0,
-                sql_return="",
                 success=False,
-                error=f"Unknown error: {str(e)}",
+                sql_query=sql,
+                error=str(ex),
             )
 
     @override
@@ -193,24 +184,15 @@ class SnowflakeConnector(BaseSqlConnector):
                     success=True,
                     error=None,
                 )
-        except ProgrammingError as e:
-            return ExecuteSQLResult(
-                sql_query=sql,
-                row_count=0,
-                sql_return="",
-                success=False,
-                error=f"errno:{e.errno}, sqlstate: {e.sqlstate}, message: {e.msg}, query_id: {e.sfqid}",
-            )
         except Exception as e:
+            ex = _handle_snowflake_exception(e, sql)
             return ExecuteSQLResult(
-                sql_query=sql,
-                row_count=0,
-                sql_return="",
                 success=False,
-                error=f"Unknown error: {str(e)}",
+                sql_query=sql,
+                error=str(ex),
             )
 
-    def do_execute_arrow(self, input_params) -> ExecuteSQLResult:
+    def _do_execute_arrow(self, input_params) -> ExecuteSQLResult:
         """Execute SQL query on Snowflake and return results in Apache Arrow format.
 
         Args:
@@ -219,59 +201,35 @@ class SnowflakeConnector(BaseSqlConnector):
         Returns:
             ExecuteSQLResult with sql_return containing Arrow table bytes
         """
-        try:
-            with self.connection.cursor() as cursor:
-                # Enable arrow result format
-                cursor.execute("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT='ARROW'")
+        with self.connection.cursor() as cursor:
+            # Enable arrow result format
+            cursor.execute("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT='ARROW'")
 
-                # Execute the query
-                cursor.execute(
-                    input_params["sql_query"],
-                    input_params["params"] if "params" in input_params else None,
-                )
-
-                # Fetch the Arrow result
-                arrow_table = cursor.fetch_arrow_all()
-
-                # Handle case where arrow_table is None
-                if arrow_table is None:
-                    logger.debug(f"[DEBUG] Arrow table is None for query. Row count from cursor: {cursor.rowcount}")
-                    row_count = 0
-                    # Create an empty arrow table or use None
-                    arrow_table = None
-                else:
-                    row_count = arrow_table.num_rows
-
-                # Keep the Arrow table as is for CLI compatibility
-                return ExecuteSQLResult(
-                    sql_query=input_params["sql_query"],
-                    row_count=row_count,
-                    sql_return=arrow_table,
-                    success=True,
-                    error=None,
-                    result_format="arrow",
-                )
-        except ProgrammingError as e:
-            logger.debug(f"[DEBUG] Snowflake ProgrammingError: errno={e.errno}, sqlstate={e.sqlstate}, msg={e.msg}")
-            return ExecuteSQLResult(
-                sql_query=input_params["sql_query"] if isinstance(input_params, dict) else str(input_params),
-                row_count=0,
-                sql_return="",
-                success=True,  # Continue to execute next step if failed, reflection node will handle it
-                error=f"errno:{e.errno}, sqlstate: {e.sqlstate}, message: {e.msg}, query_id: {e.sfqid}",
-                result_format="arrow",
+            # Execute the query
+            cursor.execute(
+                input_params["sql_query"],
+                input_params["params"] if "params" in input_params else None,
             )
-        except Exception as e:
-            logger.debug(f"[DEBUG] Snowflake General Exception: {type(e).__name__}: {str(e)}")
-            import traceback
 
-            logger.debug(f"[DEBUG] Traceback: {traceback.format_exc()}")
+            # Fetch the Arrow result
+            arrow_table = cursor.fetch_arrow_all(force_return_table=True)
+
+            # Handle case where arrow_table is None
+            if arrow_table is None:
+                logger.debug(f"[DEBUG] Arrow table is None for query. Row count from cursor: {cursor.rowcount}")
+                row_count = 0
+                # Create an empty arrow table or use None
+                arrow_table = None
+            else:
+                row_count = arrow_table.num_rows
+
+            # Keep the Arrow table as is for CLI compatibility
             return ExecuteSQLResult(
-                sql_query=input_params["sql_query"] if isinstance(input_params, dict) else str(input_params),
-                row_count=0,
-                sql_return="",
-                success=False,
-                error=f"Unknown error: {str(e)}",
+                sql_query=input_params["sql_query"],
+                row_count=row_count,
+                sql_return=arrow_table,
+                success=True,
+                error=None,
                 result_format="arrow",
             )
 
@@ -405,25 +363,21 @@ class SnowflakeConnector(BaseSqlConnector):
         return {"SNOWFLAKE", "SNOWFLAKE_SAMPLE_DATA"}
 
     def _sys_schemas(self) -> Set[str]:
-        return {"PUBLIC", "INFORMATION_SCHEMA"}
-
-    def _execute_list(
-        self,
-        sql: str,
-        params: Sequence[Any] | dict[Any, Any] | None = None,
-    ) -> list[tuple] | list[dict]:
-        with self.connection.cursor() as cursor:
-            cursor.execute(sql, params)
-            return cursor.fetchall()
+        return {"INFORMATION_SCHEMA"}
 
     @override
     def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> List[str]:
-        res = self._execute_list(sql="SHOW DATABASES")
-        databases = [it[1] for it in res]
+        res = self._execute_show(sql="SHOW DATABASES", result_format="arrow").sql_return
+        databases = res["name"]
         if not include_sys:
             # Filter out system databases
-            system_dbs = self._sys_databases()
-            databases = [db for db in databases if db.upper() not in system_dbs]
+            system_dbs = pa.array(self._sys_databases(), type=pa.string())
+            import pyarrow.compute as pc
+
+            databases = databases.filter(pc.invert(pc.is_in(databases, system_dbs)))
+            databases = [db.as_py() for db in databases if db.as_py().upper() not in system_dbs]
+        else:
+            databases = databases.to_pylist()
         return databases
 
     @override
@@ -470,16 +424,18 @@ class SnowflakeConnector(BaseSqlConnector):
 
             sql = f"SELECT SCHEMA_NAME FROM {select_table_name}"
             if not include_sys:
-                sql += " WHERE SCHEMA_NAME NOT IN ('PUBLIC', 'INFORMATION_SCHEMA')"
+                sql += " WHERE SCHEMA_NAME NOT IN ('INFORMATION_SCHEMA')"
 
             if database_name:
                 if not include_sys:
                     sql += f" AND CATALOG_NAME='{database_name}'"
                 else:
                     sql += f" WHERE CATALOG_NAME='{database_name}'"
-
-            df = self.execute_query_to_df(sql=sql)
-            return [item for item in df["SCHEMA_NAME"]]
+            try:
+                df = self.execute_query_to_df(sql=sql)
+                return [item for item in df["SCHEMA_NAME"]]
+            except Exception as e:
+                raise _handle_snowflake_exception(e, sql) from e
 
     @override
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
@@ -527,22 +483,73 @@ class SnowflakeConnector(BaseSqlConnector):
             sql = f"SELECT TABLE_SCHEMA, TABLE_NAME FROM {select_table_name} WHERE TABLE_TYPE = 'BASE TABLE'"
             if schema_name:
                 sql += f" AND TABLE_SCHEMA= '{schema_name}'"
-
-            df = self.execute_query_to_df(sql)
-            return [item for item in df["TABLE_NAME"]]
+            try:
+                df = self.execute_query_to_df(sql)
+                return [item for item in df["TABLE_NAME"]]
+            except Exception as e:
+                raise _handle_snowflake_exception(e, sql) from e
 
     def get_type(self) -> str:
         return DBType.SNOWFLAKE
 
     @override
-    def execute_query(self, query_sql: str) -> ExecuteSQLResult:
-        return self.do_execute_arrow({"sql_query": query_sql})
+    def execute_query(
+        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+    ) -> ExecuteSQLResult:
+        if sql.lower().startswith("show"):
+            return self._execute_show(sql, result_format)
+        if result_format == "csv":
+            result = self.execute_csv(sql)
+            return result
+        elif result_format == "pandas":
+            return self.execute_pandas(sql)
+        else:
+            result = self.execute_arrow(sql)
+            if result_format == "arrow":
+                return result
+            if result and result.success:
+                result.sql_return = result.sql_return.to_pylist()
+                result.result_format = result_format
+            return result
 
-    def execute_pandas(self, query_sql: str) -> ExecuteSQLResult:
+    def _execute_show(
+        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+    ) -> ExecuteSQLResult:
+        sql = sql.strip()
         try:
-            df = self.execute_query_to_df(query_sql)
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql)
+                result = cursor.fetchall()
+                col_names = [col[0] for col in cursor.description][:7]
+                row_count = len(result)
+                if result:
+                    columns = list(zip(*[row[:7] for row in result]))
+                    arrow_result = pa.Table.from_arrays([pa.array(col) for col in columns], names=col_names)
+                else:
+                    arrow_result = pa.Table.from_arrays([])
+
+                if result_format == "arrow":
+                    final_result = arrow_result
+                elif result_format == "list":
+                    final_result = arrow_result.to_pylist()
+                else:
+                    df = arrow_result.to_pandas()
+                    final_result = df if result_format == "pandas" else df.to_csv(index=False)
+                return ExecuteSQLResult(
+                    success=True,
+                    result_format=result_format,
+                    sql_return=final_result,
+                    row_count=row_count,
+                )
+        except Exception as e:
+            ex = _handle_snowflake_exception(e, sql)
+            return ExecuteSQLResult(success=False, sql_query=sql, result_format=result_format, error=str(ex))
+
+    def execute_pandas(self, sql: str) -> ExecuteSQLResult:
+        try:
+            df = self.execute_query_to_df(sql)
             return ExecuteSQLResult(
-                sql_query=query_sql,
+                sql_query=sql,
                 row_count=len(df),
                 sql_return=df,
                 success=True,
@@ -550,26 +557,24 @@ class SnowflakeConnector(BaseSqlConnector):
                 result_format="pandas",
             )
         except Exception as e:
-            return ExecuteSQLResult(
-                sql_query=query_sql,
-                row_count=0,
-                sql_return=None,
-                success=False,
-                error=str(e),
-                result_format="pandas",
-            )
+            ex = _handle_snowflake_exception(e, sql)
+            return ExecuteSQLResult(success=False, sql_query=sql, result_format="pandas", error=str(ex))
 
-    def execute_arrow(self, query_sql: str) -> ExecuteSQLResult:
+    def execute_arrow(self, sql: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results in Arrow format.
 
         Args:
-            query_sql: SQL query string to execute
+            sql: SQL query string to execute
 
         Returns:
             ExecuteSQLResult with Arrow data
         """
-        input_params = {"sql_query": query_sql}
-        return self.do_execute_arrow(input_params)
+        input_params = {"sql_query": sql}
+        try:
+            return self._do_execute_arrow(input_params)
+        except Exception as e:
+            ex = _handle_snowflake_exception(e, sql)
+            return ExecuteSQLResult(success=False, sql_query=sql, error=str(ex))
 
     def execute_csv(self, query: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results in CSV format.
@@ -580,8 +585,27 @@ class SnowflakeConnector(BaseSqlConnector):
         Returns:
             ExecuteSQLResult with CSV data
         """
-        input_params = {"sql_query": query}
-        return self.do_execute(input_params, result_format="csv")
+        result = self.execute_pandas(query)
+        result.result_format = "csv"
+        if result.success and result.row_count > 0:
+            result.sql_return = result.sql_return.to_csv(index=False)
+        return result
+
+    @override
+    def execute_content_set(self, sql_query: str) -> ExecuteSQLResult:
+        """Execute a SQL query and return results in Context format."""
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql_query)
+            return ExecuteSQLResult(
+                success=True,
+                sql_query=sql_query,
+                sql_return="Successful",
+                row_count=0,
+            )
+        except Exception as e:
+            ex = _handle_snowflake_exception(e, sql_query)
+            return ExecuteSQLResult(success=False, sql_query=sql_query, error=str(ex))
 
     def execute_queries(self, queries: List[str]) -> List[ExecuteSQLResult]:
         """Execute multiple SQL queries on Snowflake.
@@ -594,8 +618,7 @@ class SnowflakeConnector(BaseSqlConnector):
         """
         results = []
         for sql in queries:
-            input_params = {"sql_query": sql}
-            result = self.do_execute(input_params)
+            result = self.execute_query(sql)
             results.append(result)
         return results
 
@@ -610,8 +633,7 @@ class SnowflakeConnector(BaseSqlConnector):
         """
         results = []
         for sql in queries:
-            input_params = {"sql_query": sql}
-            result = self.do_execute_arrow(input_params)
+            result = self.execute_arrow(sql)
             results.append(result)
         return results
 

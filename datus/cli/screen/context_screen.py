@@ -81,7 +81,6 @@ class WorkloadContextScreen(ContextScreen):
 
                 # Create trees for each context type
                 context_tree = TextualTree("Workflow Context", id="context-tree")
-                self._build_context_tree()
                 yield context_tree
 
             # Right side: Details panel
@@ -90,9 +89,13 @@ class WorkloadContextScreen(ContextScreen):
 
         yield Footer()
 
-    def _build_context_tree(self, tree):
+    async def on_mount(self):
+        self._build_context_tree()
+
+    def _build_context_tree(self):
         """Build the context tree from the context data."""
         # Create main category nodes
+        tree = self.query_one("#context-tree", TextualTree)
         sql_node = tree.root.add("SQL Contexts")
         schema_node = tree.root.add("Table Schemas")
         schema_values_node = tree.root.add("Table Values")

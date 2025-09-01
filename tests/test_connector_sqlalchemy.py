@@ -51,7 +51,7 @@ class TestSQLAlchemyTools:
     def test_do_execute_select(self, sqlalchemy_connector: SQLAlchemyConnector):
         """Test do_execute with SELECT query"""
         input_params = ExecuteSQLInput(sql_query="SELECT * FROM lineorder LIMIT 5")
-        result = sqlalchemy_connector.do_execute(input_params)
+        result = sqlalchemy_connector.execute(input_params)
 
         assert isinstance(result, ExecuteSQLResult)
         assert result.success is True
@@ -63,13 +63,12 @@ class TestSQLAlchemyTools:
     def test_do_execute_insert(self, sqlalchemy_connector: SQLAlchemyConnector):
         """Test do_execute with INSERT query"""
         input_params = ExecuteSQLInput(sql_query="INSERT INTO test_insert_table (name, value) VALUES ('test1', 1)")
-        result = sqlalchemy_connector.do_execute(input_params)
+        result = sqlalchemy_connector.execute(input_params)
 
         assert isinstance(result, ExecuteSQLResult)
         assert result.success is True
         assert result.error is None
         assert result.row_count == 1
-        assert result.result_format == "csv"
         assert result.sql_return == "1"
 
     def test_execute_arrow_select(self, sqlalchemy_connector: SQLAlchemyConnector):
@@ -98,7 +97,7 @@ class TestSQLAlchemyTools:
 
     def test_execute_csv_select(self, sqlalchemy_connector: SQLAlchemyConnector):
         """Test execute_csv with SELECT query"""
-        result = sqlalchemy_connector.do_execute(ExecuteSQLInput(sql_query="SELECT * FROM lineorder LIMIT 5"))
+        result = sqlalchemy_connector.execute(ExecuteSQLInput(sql_query="SELECT * FROM lineorder LIMIT 5"))
 
         assert isinstance(result, ExecuteSQLResult)
         assert result.success is True
@@ -109,7 +108,7 @@ class TestSQLAlchemyTools:
 
     def test_execute_csv_insert(self, sqlalchemy_connector: SQLAlchemyConnector):
         """Test execute_csv with INSERT query"""
-        result = sqlalchemy_connector.do_execute(
+        result = sqlalchemy_connector.execute(
             ExecuteSQLInput(sql_query="INSERT INTO test_insert_table (name, value) VALUES ('test3', 3)")
         )
 
@@ -117,7 +116,6 @@ class TestSQLAlchemyTools:
         assert result.success is True
         assert result.error is None
         assert result.row_count == 1
-        assert result.result_format == "csv"
         assert result.sql_return == "1"
 
     def test_execute_csv_iterator(self, sqlalchemy_connector: SQLAlchemyConnector):
@@ -163,12 +161,12 @@ class TestSQLAlchemyTools:
     def test_error_handling(self, sqlalchemy_connector: SQLAlchemyConnector):
         """Test error handling for invalid queries"""
         # Test invalid SQL
-        result = sqlalchemy_connector.do_execute(ExecuteSQLInput(sql_query="SELECT * FROM nonexistent_table"))
+        result = sqlalchemy_connector.execute(ExecuteSQLInput(sql_query="SELECT * FROM nonexistent_table"))
         logger.debug(f"result: {result.error}")
         assert isinstance(result, ExecuteSQLResult)
         assert result.success is True
         assert result.error is not None
-        assert result.row_count == 0
+        assert result.row_count is None or result.row_count == 0
 
         # Test invalid arrow query
         result = sqlalchemy_connector.execute_arrow("SELECT * FROM nonexistent_table")
@@ -176,17 +174,17 @@ class TestSQLAlchemyTools:
         assert isinstance(result, ExecuteSQLResult)
         assert result.success is False
         assert result.error is not None
-        assert result.row_count == 0
+        assert result.row_count is None or result.row_count == 0
 
         # Test invalid csv query
-        result = sqlalchemy_connector.do_execute(ExecuteSQLInput(sql_query="SELECT * FROM nonexistent_table"))
+        result = sqlalchemy_connector.execute(ExecuteSQLInput(sql_query="SELECT * FROM nonexistent_table"))
         logger.debug(f"result: {result.error}")
         assert isinstance(result, ExecuteSQLResult)
         assert result.success is True
         assert result.error is not None
-        assert result.row_count == 0
+        assert result.row_count is None or result.row_count == 0
 
-        result = sqlalchemy_connector.do_execute(
+        result = sqlalchemy_connector.execute(
             ExecuteSQLInput(
                 sql_query="""select sum(lo_revenue), d_year, p_brand
  from lineorder, dates, part, supplier
@@ -204,4 +202,4 @@ class TestSQLAlchemyTools:
         assert isinstance(result, ExecuteSQLResult)
         assert result.success is True
         assert result.error is not None
-        assert result.row_count == 0
+        assert result.row_count is None or result.row_count == 0

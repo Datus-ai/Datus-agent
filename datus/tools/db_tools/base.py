@@ -4,7 +4,11 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Set, Tuple
 from pyarrow import Table as ArrowTable
 
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
-from datus.utils.sql_utils import metadata_identifier
+from datus.utils.constants import SQLType
+from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import metadata_identifier, parse_sql_type
+
+logger = get_logger(__name__)
 
 
 class BaseSqlConnector(ABC):
@@ -44,7 +48,32 @@ class BaseSqlConnector(ABC):
         self.validate_input(input_params)
         if isinstance(input_params, dict):
             input_params = ExecuteSQLInput(**input_params)
-        return self.do_execute(input_params, result_format)
+        sql_query = input_params.sql_query.strip()
+        try:
+            sql_type = parse_sql_type(sql_query)
+            if sql_type == SQLType.INSERT:
+                result = self.execute_insert(sql_query)
+            elif sql_type in (SQLType.UPDATE, SQLType.DELETE):
+                result = self.execute_update(sql_query)
+            elif sql_type == SQLType.CONTENT_SET:
+                result = self.execute_content_set(sql_query)
+            elif sql_type == SQLType.DDL:
+                result = self.execute_ddl(sql_query)
+            else:
+                result = self.execute_query(sql_query, result_format)
+            # For workflow compatibility
+            result.success = True
+            return result
+        except Exception as e:
+            logger.error(f"Executing SQL query failed: {e}")
+            return ExecuteSQLResult(
+                success=True,
+                error=str(e),
+                sql_query=sql_query,
+                sql_return="",
+                row_count=0,
+                result_format=result_format,
+            )
 
     @abstractmethod
     def execute_insert(self, sql: str) -> ExecuteSQLResult:
@@ -96,24 +125,20 @@ class BaseSqlConnector(ABC):
         if not isinstance(input_params["sql_query"], str):
             raise ValueError("'sql_query' must be a string")
 
+    def execute_arrow(self, sql: str) -> ExecuteSQLResult:
+        raise NotImplementedError
+
     @abstractmethod
-    def do_execute(
-        self, input_params: ExecuteSQLInput, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+    def execute_query(
+        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
     ) -> ExecuteSQLResult:
-        raise NotImplementedError
-
-    def execute_arrow(self, query_sql: str) -> ExecuteSQLResult:
-        raise NotImplementedError
-
-    @abstractmethod
-    def execute_query(self, query_sql: str) -> ExecuteSQLResult:
         """
         The best performing query in the current connector
         """
         raise NotImplementedError
 
     @abstractmethod
-    def execute_pandas(self, query_sql: str) -> ExecuteSQLResult:
+    def execute_pandas(self, sql: str) -> ExecuteSQLResult:
         raise NotImplementedError
 
     @abstractmethod
@@ -121,10 +146,10 @@ class BaseSqlConnector(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def execute_csv(self, query_sql: str) -> ExecuteSQLResult:
+    def execute_csv(self, sql: str) -> ExecuteSQLResult:
         raise NotImplementedError
 
-    def execute_arrow_iterator(self, query: str, max_rows: int = 100) -> Iterator[ArrowTable]:
+    def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator[ArrowTable]:
         raise NotImplementedError
 
     def get_catalogs(self) -> List[str]:
@@ -301,6 +326,10 @@ class BaseSqlConnector(ABC):
             schema_name=schema_name,
             table_name=table_name,
         )
+
+    @abstractmethod
+    def execute_content_set(self, sql_query: str) -> ExecuteSQLResult:
+        raise NotImplementedError
 
 
 def list_to_in_str(prefix: str, values: Optional[List[str]] = None) -> str:
