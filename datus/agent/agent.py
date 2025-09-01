@@ -716,6 +716,7 @@ class Agent:
                     self.args,
                     self.global_config,
                     build_mode=kb_update_strategy,
+                    pool_size=pool_size,
                 )
                 return result
             results[component] = True

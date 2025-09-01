@@ -47,6 +47,7 @@ Comment-SQL     Validation    Metadata    Vector DB
 ```python
 {
     "id": "md5_hash_of_sql_and_comment",
+    "name": "active_users",
     "sql": "SELECT * FROM users WHERE active = 1",
     "comment": "Query active users for analysis",
     "filepath": "/path/to/source.sql",
@@ -90,4 +91,11 @@ python -m datus.main bootstrap-kb \
   --sql_dir /path/to/sql/directory \
   --kb_update_strategy overwrite \
   --debug
+
+# Validate-only mode - process and validate SQL files without LLM analysis or storage
+python -m datus.main bootstrap-kb \
+  --namespace your_namespace \
+  --components sql_history \
+  --sql_dir /path/to/sql/directory \
+  --validate-only
 ```

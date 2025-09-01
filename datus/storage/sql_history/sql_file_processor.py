@@ -10,6 +10,45 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+def remove_outer_parentheses(sql: str) -> str:
+    """
+    Remove unmatched parentheses from the beginning and end of SQL.
+
+    Args:
+        sql: SQL statement string
+
+    Returns:
+        SQL statement with unmatched parentheses removed
+    """
+    if not sql or not sql.strip():
+        return sql
+
+    original_sql = sql
+    sql = sql.strip()
+
+    # Count total parentheses to identify unmatched ones
+    open_count = sql.count("(")
+    close_count = sql.count(")")
+
+    # Remove trailing unmatched closing parentheses
+    while close_count > open_count and sql.endswith(")"):
+        sql = sql[:-1].rstrip()
+        close_count -= 1
+        logger.debug(f"Removed trailing ')': {sql[-50:] if len(sql) > 50 else sql}")
+
+    # Remove leading unmatched opening parentheses
+    while open_count > close_count and sql.startswith("("):
+        sql = sql[1:].lstrip()
+        open_count -= 1
+        logger.debug(f"Removed leading '(': {sql[:50]}...")
+
+    # Only log if we made changes
+    if sql != original_sql.strip():
+        logger.debug("Fixed unmatched parentheses in SQL")
+
+    return sql
+
+
 def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
     """
     Parse a SQL file to extract comment-SQL pairs with line numbers.
@@ -82,6 +121,30 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
     return pairs
 
 
+def preprocess_parameterized_sql(sql: str) -> str:
+    """
+    Preprocess SQL to replace parameter placeholders with dummy values for validation.
+
+    Args:
+        sql: SQL string that may contain parameter placeholders
+
+    Returns:
+        SQL string with parameters replaced by dummy values
+    """
+    import re
+
+    # Replace #parameter# style parameters with dummy values
+    sql = re.sub(r"#\w+#", "'2023-01-01'", sql)
+
+    # Replace other common parameter styles - but be more careful to avoid time formats
+    # Only replace :param if it's not part of a time format (like 04:00:00)
+    sql = re.sub(r"(?<!\d):\w+(?!\d)", "'dummy_value'", sql)  # :param (not preceded/followed by digits)
+    sql = re.sub(r"@\w+\b", "'dummy_value'", sql)  # @param (word boundary)
+    sql = re.sub(r"\$\{\w+\}", "'dummy_value'", sql)  # ${param}
+
+    return sql
+
+
 def validate_sql(sql: str) -> Tuple[bool, str, str]:
     """
     Validate SQL using MySQL, Hive, and Spark dialects.
@@ -92,6 +155,9 @@ def validate_sql(sql: str) -> Tuple[bool, str, str]:
     Returns:
         Tuple of (is_valid, cleaned_sql, error_message)
     """
+    # Preprocess SQL to handle parameter placeholders
+    preprocessed_sql = preprocess_parameterized_sql(sql)
+
     # Try MySQL, Hive, Spark dialects with sqlglot
     dialects_to_try = ["mysql", "hive", "spark"]
 
@@ -99,7 +165,7 @@ def validate_sql(sql: str) -> Tuple[bool, str, str]:
 
     for dialect in dialects_to_try:
         try:
-            parsed = sqlglot.parse(sql, read=dialect)
+            parsed = sqlglot.parse(preprocessed_sql, read=dialect)
             if not parsed or not parsed[0]:
                 continue
 
@@ -112,7 +178,7 @@ def validate_sql(sql: str) -> Tuple[bool, str, str]:
             if not valid_statements:
                 continue
 
-            # Transpile back to get cleaned SQL
+            # Transpile back to get cleaned SQL (use original SQL to preserve parameters)
             cleaned_sql = sqlglot.transpile(sql, read=dialect, pretty=True)[0]
             return True, cleaned_sql, ""
 
@@ -156,7 +222,9 @@ def process_sql_files(sql_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str
             logger.info(f"Extracted {len(pairs)} comment-SQL pairs from {os.path.basename(sql_file)}")
 
             for comment, sql, line_num in pairs:
-                is_valid, cleaned_sql, error_msg = validate_sql(sql)
+                # Remove outer parentheses before validation
+                sql_cleaned_parens = remove_outer_parentheses(sql)
+                is_valid, cleaned_sql, error_msg = validate_sql(sql_cleaned_parens)
 
                 if is_valid:
                     valid_entries.append(
@@ -170,7 +238,7 @@ def process_sql_files(sql_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str
                     invalid_entries.append(
                         {
                             "comment": comment,
-                            "sql": sql,
+                            "sql": sql_cleaned_parens,  # Use the processed SQL
                             "filepath": sql_file,
                             "error": error_msg,
                             "line_number": line_num,

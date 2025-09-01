@@ -25,6 +25,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
             schema=pa.schema(
                 [
                     pa.field("id", pa.string()),
+                    pa.field("name", pa.string()),
                     pa.field("sql", pa.string()),
                     pa.field("comment", pa.string()),
                     pa.field("summary", pa.string()),
@@ -47,23 +48,25 @@ class SqlHistoryStorage(BaseEmbeddingStore):
 
         # Create scalar indices
         self.table.create_scalar_index("id", replace=True)
+        self.table.create_scalar_index("name", replace=True)
         self.table.create_scalar_index("domain", replace=True)
         self.table.create_scalar_index("layer1", replace=True)
         self.table.create_scalar_index("layer2", replace=True)
         self.table.create_scalar_index("filepath", replace=True)
 
         # Create full-text search index
-        self.create_fts_index(["sql", "comment", "summary", "tags"])
+        self.create_fts_index(["sql", "name", "comment", "summary", "tags"])
 
     def search_all(self, domain: str = "") -> List[Dict[str, Any]]:
         """Search all SQL history entries for a given domain."""
         search_result = self._search_all(
             where="" if not domain else f"domain='{domain}'",
-            select_fields=["id", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags"],
+            select_fields=["id", "name", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags"],
         )
         return [
             {
                 "id": search_result["id"][i],
+                "name": search_result["name"][i],
                 "sql": search_result["sql"][i],
                 "comment": search_result["comment"][i],
                 "summary": search_result["summary"][i],
@@ -199,7 +202,7 @@ class SqlHistoryRAG:
         return self.sql_history_storage.table_size()
 
     def search_sql_history_by_summary(
-        self, query_text: str, top_n: int = 5, domain: str = "", layer1: str = "", layer2: str = ""
+        self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
     ) -> List[Dict[str, Any]]:
         """Search SQL history by summary using vector search."""
         where_conditions = []

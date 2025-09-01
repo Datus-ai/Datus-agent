@@ -1,0 +1,24 @@
+Please generate a new unique name for the following SQL query, avoiding the conflicting names provided.
+
+**Comment:** {{ comment }}
+
+**SQL Query:**
+```sql
+{{ sql }}
+```
+
+**Current name:** {{ current_name }}
+
+**Conflicting names to avoid:** {{ conflicting_names }}
+
+Please provide a new name in the following JSON format:
+{
+    "name": "New unique descriptive name for this SQL query (max 20 characters)"
+}
+
+Guidelines:
+- Create a short, memorable identifier (max 20 characters) that captures the essence of the query
+- Must be different from all names in the conflicting list
+- IMPORTANT: Keep the same language as the comment - if the comment is in Chinese, generate name in Chinese; if in English, use English. Do NOT translate between languages
+- Focus on making it descriptive but unique
+- If the comment is empty or unclear, infer the purpose from the SQL structure and table/column names

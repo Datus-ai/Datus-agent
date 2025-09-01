@@ -71,6 +71,7 @@ def extract_single_summary(llm_tool: LLMTool, item: Dict[str, Any], index: int) 
         parsed_data = llm_tool.model.generate_with_json_output(prompt)
         logger.debug(f"Parsed data of extract_single_summary: {parsed_data}")
         item["summary"] = parsed_data.get("summary", item.get("comment", ""))
+        item["name"] = parsed_data.get("name", "")
         item["id"] = gen_sql_history_id(item.get("sql", ""), item.get("comment", ""))
 
         logger.debug(f"Item {index}: Successfully extracted summary")
@@ -79,6 +80,7 @@ def extract_single_summary(llm_tool: LLMTool, item: Dict[str, Any], index: int) 
     except Exception as e:
         logger.error(f"Item {index}: Failed to extract summary: {str(e)}")
         item["summary"] = item.get("comment", "") if item.get("comment") else "Unable to analyze SQL"
+        item["name"] = ""
         item["id"] = gen_sql_history_id(item.get("sql", ""), item.get("comment", ""))
         return item
 

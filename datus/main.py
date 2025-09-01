@@ -143,6 +143,11 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--sql_dir", type=str, help="Directory containing SQL files for sql_history component"
     )
+    bootstrap_parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Only process and validate SQL files, then exit (for sql_history component)",
+    )
 
     # benchmark command
     benchmark_parser = subparsers.add_parser(
