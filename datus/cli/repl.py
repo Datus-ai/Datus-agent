@@ -163,7 +163,7 @@ class DatusCLI:
                 buffer.complete_next()
             else:
                 # If the menu is incomplete, trigger completion.
-                buffer.start_completion(select_first=True)
+                buffer.start_completion(select_first=False)
 
         @kb.add("enter")
         def _(event):
