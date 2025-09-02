@@ -282,10 +282,10 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         elif "result" in data:
             items = data["result"]
         else:
-            result.append(TextArea(json.dumps(data, indent=2), language="json", theme="monokai"))
+            result.append(TextArea(json.dumps(data, indent=2, default=datetime_serializer), language="json", theme="monokai"))
             return result
 
-        if not items:
+        if not items or len(items) == 0:
             result.append(Static("[bold yellow]No Result[/]"))
             return result
         if isinstance(items, dict):
@@ -301,7 +301,12 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 else:
                     result.append(self._build_rich_table_by_list("Sample Data", sample_data))
                 return result
-            result.append(TextArea(json.dumps(items, indent=2), language="json", theme="monokai"))
+            result.append(TextArea(json.dumps(items, indent=2, default=datetime_serializer), language="json", theme="monokai"))
+            return result
+        if not isinstance(items, list):
+            result.append(
+                TextArea(json.dumps(items, indent=2, default=datetime_serializer), language="json", theme="monokai")
+            )
             return result
         if len(items) == 0:
             result.append(Static("[bold yellow]No Result[/]"))
@@ -400,14 +405,30 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         else:
             output_data = json_obj
         result = []
-        other_data = {}
-        for key, value in output_data.items():
-            if key == "sql" or key == "query":
-                result.extend(self._do_create_sql_widget(value, action_index))
-            else:
-                other_data[key] = value
-        if other_data:
-            result.append(self._build_rich_table_by_dict("", other_data, show_header=False))
+        if "response" not in json_obj and "sql" not in json_obj:
+            # For backwards compatibility with old logic, try the other_data approach
+            other_data = {}
+            for key, value in output_data.items():
+                if key == "sql" or key == "query":
+                    result.extend(self._do_create_sql_widget(value, action_index))
+                else:
+                    other_data[key] = value
+            if other_data:
+                result.append(self._build_rich_table_by_dict("", other_data, show_header=False))
+            elif not result:
+                # If no special handling, fall back to JSON display
+                return [
+                    TextArea(
+                        json.dumps(json_obj, indent=2, default=datetime_serializer),
+                        language="json",
+                        theme="monokai",
+                        line_number_start=0,
+                    )
+                ]
+        if "response" in json_obj:
+            result.append(TextArea(json_obj["response"], language="markdown", theme="monokai", line_number_start=0))
+        if "sql" in json_obj:
+            result.extend(self._create_sql_widgets(json_obj, action_index))
         return result
 
     def _is_json_like(self, data) -> bool:
