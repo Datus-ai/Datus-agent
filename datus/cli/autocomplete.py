@@ -644,9 +644,9 @@ class AtReferenceCompleter(Completer):
             "File": PathCompleter(get_paths=get_search_paths),
         }
         self.type_options = {
-            "Table ": "📊 Table",
-            "Metric ": "📈 Metric",
-            "File ": "📁 File",
+            "Table": "📊 Table",
+            "Metric": "📈 Metric",
+            "File": "📁 File",
         }
 
     def reload_data(self):

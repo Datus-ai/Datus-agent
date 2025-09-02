@@ -160,11 +160,23 @@ class DatusCLI:
 
             if buffer.complete_state:
                 # If the menu is already open, close it.
+                buffer.complete_next()
+            else:
+                # If the menu is incomplete, trigger completion.
+                buffer.start_completion(select_first=True)
+
+        @kb.add("enter")
+        def _(event):
+            """Enter key: closes the complementary menu or executes a command"""
+            buffer = event.app.current_buffer
+
+            if buffer.complete_state:
+                # When there is a complementary menu, close the menu but do not apply the complementary
                 buffer.complete_state = None
                 return
 
-            # If the menu is incomplete, trigger completion.
-            buffer.start_completion(select_first=True)
+            # Performs normal Enter behavior when there is no complementary menu
+            buffer.validate_and_handle()
 
         # @kb.add("c-d")
         # def _(event):
@@ -1657,8 +1669,8 @@ Type '.help' for a list of commands or '.exit' to quit.
 
                 # Add choices to prompt text
                 prompt_text = f"{message} ({'/'.join(choices)}): "
-                if default:
-                    prompt_text = f"{message} ({'/'.join(choices)}) ({default}): "
+                # if default:
+                #     prompt_text = f"{message} ({'/'.join(choices)}) ({default}): "
 
             # Use the existing session for consistency but create a temporary one for this input
             from prompt_toolkit.history import InMemoryHistory
