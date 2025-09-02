@@ -61,6 +61,8 @@ class ChatAgenticNode(AgenticNode):
         # Initialize MCP servers based on namespace
         self.mcp_servers = self._setup_mcp_servers(agent_config)
 
+        self.hooks = None
+
         super().__init__(
             tools=[],
             mcp_servers=self.mcp_servers,
@@ -70,13 +72,21 @@ class ChatAgenticNode(AgenticNode):
         self.context_search_tools: ContextSearchTools
         self.setup_tools()
 
-    def setup_tools(self):
+    def setup_tools(self, plan_mode: bool = False):
         # Only a single database connection is now supported
         db_manager = db_manager_instance(self.agent_config.namespaces)
         conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
         self.db_func_tool = DBFuncTool(conn)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         self.tools = self.db_func_tool.available_tools() + self.context_search_tools.available_tools()
+
+        # Add todo tools in plan mode
+        if plan_mode:
+            from datus.tools.plan_tools.plan_tool import PlanTool
+
+            self.plan_tool = PlanTool()
+            plan_tools = self.plan_tool.available_tools()
+            self.tools.extend(plan_tools)
 
     def _setup_mcp_servers(self, agent_config: Optional[AgentConfig] = None) -> Dict[str, MCPServerStdio]:
         """
@@ -206,6 +216,7 @@ class ChatAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
+                hooks=self.hooks,
             ):
                 yield stream_action
 

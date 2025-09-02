@@ -10,6 +10,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import yaml
 from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool
 from agents.exceptions import MaxTurnsExceeded
+from agents.lifecycle import AgentHooks
 from agents.mcp import MCPServerStdio
 from langsmith import traceable
 from langsmith.wrappers import wrap_openai
@@ -420,6 +421,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        hooks: Optional[AgentHooks[Any]] = None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
@@ -443,7 +445,16 @@ class OpenAICompatibleModel(LLMBaseModel):
             action_history_manager = ActionHistoryManager()
 
         async for action in self._generate_with_tools_stream_internal(
-            prompt, mcp_servers, tools, instruction, output_type, max_turns, session, action_history_manager, **kwargs
+            prompt,
+            mcp_servers,
+            tools,
+            instruction,
+            output_type,
+            max_turns,
+            session,
+            action_history_manager,
+            hooks=hooks,
+            **kwargs,
         ):
             yield action
 
@@ -582,6 +593,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         max_turns: int,
         session: Optional[SQLiteSession],
         action_history_manager: ActionHistoryManager,
+        hooks: Optional[AgentHooks[Any]] = None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Internal method for tool streaming execution with error handling."""
@@ -624,6 +636,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 if tools:
                     agent_kwargs["tools"] = tools
 
+                # Add hooks if we have them
+                if hooks:
+                    agent_kwargs["hooks"] = hooks
+
                 agent = Agent(**agent_kwargs)
 
                 try:
@@ -650,7 +666,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                             action = self._process_tool_call_complete(event, action_history_manager)
                         elif item_type == "message_output_item":
                             action = self._process_message_output(event, action_history_manager)
-
                         if action:
                             yield action
 

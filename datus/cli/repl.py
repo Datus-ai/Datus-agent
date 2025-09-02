@@ -74,6 +74,12 @@ class DatusCLI:
         self.at_completer: AtReferenceCompleter
         self._init_prompt_session()
 
+        # Initialize plan mode manager
+        from datus.cli.plan_manager import PlanModeManager
+
+        self.plan_manager = PlanModeManager(self.console)
+        # Set this REPL instance as the executor for plan mode
+        self.plan_manager.set_repl_executor(self)
         # Last executed SQL and result
         self.last_sql = None
         self.last_result = None
@@ -165,6 +171,13 @@ class DatusCLI:
             # Performs normal Enter behavior when there is no complementary menu
             buffer.validate_and_handle()
 
+        @kb.add("s-tab")  # Shift + Tab
+        def _(event):
+            """Toggle Plan Mode on/off"""
+            self.plan_manager.toggle_plan_mode()
+            # Refresh the prompt after mode change
+            event.app.invalidate()
+
         return kb
 
     def _init_prompt_session(self):
@@ -216,7 +229,8 @@ class DatusCLI:
         while True:
             try:
                 # Check if we have a selected catalog path to inject
-                prompt_text = "Datus-sql> "
+                plan_prefix = self.plan_manager.get_prompt_prefix()
+                prompt_text = f"{plan_prefix}Datus-sql> "
                 # TODO use selected_catalog_path
                 # if self.selected_catalog_path:
                 #     # prompt_text = f"Datus-sql> {self.selected_catalog_path}"
@@ -672,7 +686,257 @@ class DatusCLI:
 
     def _execute_chat_command(self, message: str):
         """Execute a chat command (/ prefix) using ChatAgenticNode."""
-        self.chat_commands.execute_chat_command(message)
+        if not message.strip():
+            self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
+            return
+
+        # Check if we're in Plan Mode
+        if self.plan_manager.is_plan_mode:
+            self._execute_plan_chat_command(message)
+        else:
+            self.chat_commands.execute_chat_command(message)
+
+    def _execute_plan_chat_command(self, message: str):
+        """Execute chat command in Plan Mode - unified planning and execution flow"""
+        try:
+            # If in planning mode, start the planning process
+            if self.plan_manager.execution_mode == "planning":
+                self.console.print("[bold green]🔄 Plan Mode: Starting task with planning...[/]")
+
+                # Set up plan mode instruction - focus on planning first
+                plan_instruction = f"""
+You are in PLAN MODE. Your task is to break down the user's request into a structured plan using todo tools.
+
+Available tools for task management:
+- todo_write: Create a todo list with tasks
+- todo_update: Update task status (pending/in_progress/completed/failed)
+- todo_read: Read current todo list
+
+CRITICAL REQUIREMENT: You MUST use the todo_write tool to create the plan.
+
+DO NOT use write_file, do NOT create any markdown files, do NOT create any other files.
+ONLY use todo_write with a list of todo items.
+
+Your approach:
+1. First, analyze the user's request: {message}
+2. Break it down into clear, actionable steps using todo_write
+3. Create a todo list that covers all necessary steps
+4. Do NOT execute the tasks yet - just create the plan
+
+REMEMBER: Use todo_write tool ONLY. No file creation, no write_file.
+
+After creating the todo list, simply state "The plan is ready." Do not provide additional options or instructions.
+
+"""
+
+                # Set up plan mode hooks before execution
+                from datus.cli.plan_manager import PlanModeToolHooks
+
+                # Create a wrapper function that matches PlanModeToolHook's expected signature
+                def prompt_wrapper(message: str, choices: list = None, default: str = "y"):
+                    try:
+                        if choices:
+                            choice_str = "/".join(choices)
+                            prompt_text = f"{message} ({choice_str}) [{default}]: "
+                        else:
+                            prompt_text = f"{message} [{default}]: "
+
+                        result = self.session.prompt(message=prompt_text).strip()
+                        return result if result else default
+                    except (KeyboardInterrupt, EOFError):
+                        return default
+
+                plan_hooks = PlanModeToolHooks(
+                    console=self.console,
+                    prompt_func=prompt_wrapper,
+                    execution_mode="manual",  # Default to manual for planning
+                    plan_manager=self.plan_manager,  # Pass plan manager for memory-based todo list
+                )
+
+                # Execute with normal chat flow and plan mode hooks
+                self.chat_commands.execute_chat_command_with_hooks(
+                    plan_instruction, hooks=plan_hooks, show_details=False, plan_mode=True
+                )
+
+                # Planning and replanning loop
+                while True:
+                    # After planning is complete, try to load the most recent todo list created by AI
+                    self._load_current_plan_after_planning()
+
+                    # After planning is complete, show execution mode prompt
+                    feedback = self.plan_manager.show_execution_mode_prompt()
+
+                    # If user provided feedback for replanning, restart planning with feedback
+                    if feedback:
+                        self.console.print("[blue]Replanning with your feedback...[/]")
+                        # Create new plan instruction with feedback
+                        replan_instruction = f"""Context: database: {self.agent_config.current_namespace}
+
+You are in PLAN MODE. Your task is to break down the user's request into a structured plan using todo tools,
+taking into account the following feedback:
+
+FEEDBACK: {feedback}
+
+Available tools for task management:
+- todo_write: Create a todo list with tasks
+- todo_update: Update task status (pending/in_progress/completed/failed)
+- todo_read: Read current todo list
+
+Your approach:
+1. Consider the feedback provided above
+2. Analyze the original request: {message}
+3. Break it down into clear, actionable steps using todo_write, incorporating the feedback
+4. Create a revised todo list that addresses the concerns raised
+5. Do NOT execute the tasks yet - just create the improved plan
+
+After creating the todo list, tell the user the plan is ready and wait for them to choose execution mode.
+"""
+                        # Execute replanning with the feedback (plan tools needed for plan creation)
+                        self.chat_commands.execute_chat_command_with_hooks(
+                            replan_instruction,
+                            hooks=plan_hooks,
+                            show_details=False,
+                            plan_mode=True,
+                        )
+                        # Continue the loop to show execution mode prompt again
+                        continue
+                    else:
+                        # User accepted the plan or cancelled, exit planning loop
+                        break
+
+                # After user selects execution mode, start actual execution
+                if self.plan_manager.execution_mode in ["auto", "manual"]:
+                    self._start_plan_execution(message)
+
+            else:
+                # Execute tasks based on selected mode
+                self.console.print("[bold green]🚀 Executing tasks...[/]")
+                # TODO: Implement actual task execution
+
+        except Exception as e:
+            logger.error(f"Plan chat error: {str(e)}")
+            self.console.print(f"[bold red]Error:[/] Failed to process planning request: {str(e)}")
+
+    def _start_plan_execution(self, original_message: str):
+        """Start executing the planned tasks"""
+        try:
+            # Ensure we have a todo list created from the planning phase
+            if not self.plan_manager.current_plan:
+                self.console.print(
+                    "[red]❌ No execution plan available. The plan should have been created "
+                    "during the planning phase.[/]"
+                )
+                self.console.print("[dim]This is likely a bug - please try creating a new plan.[/]")
+                return
+
+            # Create execution instruction that will work with the todo tools
+            execution_instruction = f"""Context: database: {self.agent_config.current_namespace}
+
+You are now EXECUTING the planned tasks. Your goal is to complete the original request: {original_message}
+
+Available tools for task management:
+- todo_read: Read current todo list
+- todo_update: Update task status (pending/in_progress/completed/failed)
+- Database tools: For executing SQL queries and database operations
+- Context search tools: For finding relevant information
+
+Your approach:
+1. First, read the current todo list to see what tasks need to be done
+2. Execute each task step by step
+3. Update task status as you complete them
+4. Use database and context tools as needed to fulfill the original request
+5. Provide the final answer to the user's question
+"""
+
+            # Choose execution method based on mode
+            if self.plan_manager.execution_mode == "manual":
+                # Use step-by-step execution with manual confirmation
+                # Ensure execution hook is created for manual confirmation
+                self.plan_manager._create_execution_hook()
+
+                # Execute with step-by-step confirmation
+                self.plan_manager.execute_current_plan()
+            else:
+                # Use agents library for automatic execution
+
+                # Create execution hook based on selected mode
+                execution_hook = None
+                if hasattr(self.plan_manager, "tool_hook") and self.plan_manager.tool_hook:
+                    execution_hook = self.plan_manager.tool_hook
+
+                # Execute with the appropriate hook
+                self.chat_commands.execute_chat_command_with_hooks(
+                    execution_instruction, hooks=execution_hook, show_details=True, plan_mode=True
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to start plan execution: {str(e)}")
+            self.console.print(f"[bold red]Error:[/] Failed to start execution: {str(e)}")
+        finally:
+            # Reset execution state and plan mode
+            from datus.cli.plan_manager import PlanModeState
+
+            self.plan_manager.state = PlanModeState.INACTIVE
+            self.console.print("[dim]Plan mode reset. Ready for new tasks.[/]")
+
+    def _load_current_plan_after_planning(self):
+        """Load the most recent todo list created by AI during planning phase"""
+        try:
+            from datus.tools.plan_tools.plan_tool import PlanTool
+
+            plan_tool = PlanTool()
+
+            # Get all todo lists from storage
+            all_lists_dict = plan_tool.storage.list_all_lists()
+
+            if not all_lists_dict:
+                self.console.print("[yellow]⚠️ No todo lists found after planning[/]")
+                return
+
+            # Find the most recent list
+            most_recent_list = None
+            most_recent_time = None
+
+            for _, todo_list in all_lists_dict.items():
+                if hasattr(todo_list, "created_at") and todo_list.created_at:
+                    list_time = todo_list.created_at
+                    if most_recent_time is None or list_time > most_recent_time:
+                        most_recent_time = list_time
+                        most_recent_list = todo_list
+
+            if most_recent_list:
+                self.plan_manager.current_plan = most_recent_list
+                self.console.print(f"[green]✅ Loaded execution plan with {len(most_recent_list.items)} steps[/]")
+
+                # Display the todo list items
+                self._display_todo_list(most_recent_list)
+
+                logger.info(f"Loaded current plan after planning: {most_recent_list.list_id}")
+            else:
+                self.console.print("[yellow]⚠️ No suitable todo list found[/]")
+
+        except Exception as e:
+            logger.error(f"Error loading current plan after planning: {str(e)}")
+            self.console.print(f"[red]❌ Error loading plan: {str(e)}[/]")
+
+    def _display_todo_list(self, todo_list):
+        """Display the todo list items in a formatted way"""
+        try:
+            self.console.print(f"\n[bold cyan]📋 {todo_list.name or 'Execution Plan'}:[/]")
+            for i, item in enumerate(todo_list.items, 1):
+                self.console.print(f"  {i}. {item.content}")
+        except Exception as e:
+            logger.error(f"Error displaying todo list: {str(e)}")
+            self.console.print(f"[red]❌ Error displaying plan: {str(e)}[/]")
+
+    def _execute_normal_chat_command(self, message: str):
+        """Execute a normal chat command for plan mode execution"""
+        try:
+            # Execute the task content as a normal chat command without showing detail prompt
+            self.chat_commands.execute_chat_command(message, show_details=False)
+        except Exception as e:
+            logger.error(f"Failed to execute task: {str(e)}")
+            raise
 
     def _execute_internal_command(self, cmd: str, args: str):
         """Execute an internal command (. prefix)."""

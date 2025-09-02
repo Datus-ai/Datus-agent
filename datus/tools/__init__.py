@@ -48,7 +48,7 @@ def get_tool(tool_type: str, **kwargs) -> Optional[BaseTool]:
         tool_dir = f"{tool_type}_tools"
 
         # Import the tool directory's __init__ module
-        module = importlib.import_module(f"tools.{tool_dir}")
+        module = importlib.import_module(f"datus.tools.{tool_dir}")
 
         # Check if the tool is declared in __all__
         if not hasattr(module, "__all__"):

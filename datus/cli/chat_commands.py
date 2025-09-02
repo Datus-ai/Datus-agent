@@ -45,7 +45,22 @@ class ChatCommands:
         if self.chat_node:
             self.chat_node.setup_tools()
 
-    def execute_chat_command(self, message: str):
+    def execute_chat_command_with_hooks(
+        self,
+        message: str,
+        hooks=None,
+        show_details: bool = True,
+        plan_mode: bool = False,
+    ):
+        """Execute a chat command with hooks support for plan mode."""
+        # Set hooks in chat node
+        if self.chat_node and hooks:
+            self.chat_node.hooks = hooks
+
+        # Call regular execute_chat_command
+        return self.execute_chat_command(message, show_details=show_details, plan_mode=plan_mode)
+
+    def execute_chat_command(self, message: str, show_details: bool = True, plan_mode: bool = False):
         """Execute a chat command (/ prefix) using ChatAgenticNode."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
@@ -72,14 +87,18 @@ class ChatCommands:
                     agent_config=self.cli.agent_config,
                 )
             else:
-                # Show session info for existing session
-                session_info = self.chat_node.get_session_info()
-                if session_info["session_id"]:
-                    session_display = (
-                        f"[dim]Using existing session: {session_info['session_id']} "
-                        f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
-                    )
-                    self.console.print(session_display)
+                # Show session info for existing session (if not in plan mode)
+                if not plan_mode:
+                    session_info = self.chat_node.get_session_info()
+                    if session_info["session_id"]:
+                        session_display = (
+                            f"[dim]Using existing session: {session_info['session_id']} "
+                            f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+                        )
+                        self.console.print(session_display)
+
+            # Setup tools with plan mode if needed
+            self.chat_node.setup_tools(plan_mode=plan_mode)
 
             # Display streaming execution
             self.console.print("[bold green]Processing chat request...[/]")
@@ -154,7 +173,8 @@ class ChatCommands:
                     if clean_output:
                         self._display_markdown_response(clean_output)
 
-                    self._show_detail(incremental_actions)
+                    if show_details:
+                        self._show_detail(incremental_actions)
 
             # Add all actions from chat to our main action history
             self.cli.actions.actions.extend(incremental_actions)

@@ -1,6 +1,7 @@
 import json
 import sys
 import textwrap
+from datetime import datetime
 from typing import List, Optional
 
 import pyperclip
@@ -19,6 +20,13 @@ from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def datetime_serializer(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
 class CollapsibleActionContentGenerator(BaseActionContentGenerator):
@@ -202,7 +210,11 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 return result
         if not isinstance(output_data, dict):
             if isinstance(output_data, list):
-                result.append(TextArea(json.dumps(output_data, indent=2), language="json", theme="monokai"))
+                result.append(
+                    TextArea(
+                        json.dumps(output_data, indent=2, default=datetime_serializer), language="json", theme="monokai"
+                    )
+                )
             else:
                 result.append(TextArea(str(output_data), language="markdown", theme="monokai"))
             return result
@@ -297,7 +309,9 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         # Create table
         first_item = items[0]
         if not isinstance(first_item, dict):
-            return [TextArea(json.dumps(items, indent=2), language="json", theme="monokai")]
+            return [
+                TextArea(json.dumps(items, indent=2, default=datetime_serializer), language="json", theme="monokai")
+            ]
 
         table = (
             self._build_table_by_list(table_name="", data=items)
