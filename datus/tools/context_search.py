@@ -8,6 +8,7 @@ from datus.storage.document import DocumentStore
 from datus.storage.ext_knowledge.store import rag_by_configuration as ext_knowledge_by_configuration
 from datus.storage.metric.store import rag_by_configuration as metrics_rag_by_configuration
 from datus.storage.schema_metadata.store import rag_by_configuration as schema_metadata_by_configuration
+from datus.storage.sql_history.store import sql_history_rag_by_configuration
 from datus.tools.tools import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -20,17 +21,17 @@ class ContextSearchTools:
         self.metric_rag = metrics_rag_by_configuration(agent_config)
         self.doc_rag = DocumentStore(agent_config.rag_storage_path())
         self.ext_knowledge_rag = ext_knowledge_by_configuration(agent_config)
+        self.sql_history_store = sql_history_rag_by_configuration(agent_config)
 
     def available_tools(self) -> List[Tool]:
         return [
             trans_to_function_tool(func)
             for func in (
                 self.search_table_metadata,
-                self.get_table_schema,
                 self.search_metrics,
                 self.search_documents,
                 self.search_external_knowledge,
-                # self.search_historical_sql
+                self.search_historical_sql,
             )
         ]
 
@@ -97,49 +98,6 @@ class ContextSearchTools:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
-    def get_table_schema(
-        self, table_name: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
-    ) -> FuncToolResult:
-        """
-        Get the exact schema definition (DDL) for a specific table by name.
-        Use this when you know the exact table name and need its complete structure.
-
-        Use this tool when you:
-        - Need the exact DDL/schema for a known table
-        - Want to understand table structure for SQL query writing
-        - Need column definitions, data types, and constraints
-        - Are working with a specific table identified from search results
-
-        Args:
-            table_name: Exact name of the table to retrieve (supports tables, views, and materialized views)
-            catalog_name: Optional catalog name for precise table identification. Leave empty if not specified.
-            database_name: Optional database name for precise table identification. Leave empty if not specified.
-            schema_name: Optional schema name for precise table identification. Leave empty if not specified.
-
-        Returns:
-            dict: Table schema information containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if retrieval failed
-                - 'result' (list): List of matching table schemas with table_name, table_type, and definition (DDL)
-        """
-        try:
-            tables = self.schema_rag.schema_store.get_schema(
-                catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
-            )
-            result = []
-            for i in range(tables.num_rows):
-                result.append(
-                    {
-                        "table_name": tables["table_name"][i],
-                        "table_type": tables["table_type"][i],
-                        "definition": tables["definition"][i],
-                    }
-                )
-            return FuncToolResult(success=1, error=None, result=result)
-        except Exception as e:
-            logger.error(f"Failed to retrieve schema for table '{table_name}': {str(e)}")
-            return FuncToolResult(success=0, error=str(e))
-
     def search_metrics(
         self,
         query_text: str,
@@ -194,38 +152,8 @@ class ContextSearchTools:
             logger.error(f"Failed to search metrics for table '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def get_metrics(self, domain: str, layer1: str, layer2: str, metrics_name: str) -> FuncToolResult:
-        """
-        Get the exact definition and SQL implementation for a specific metric by name.
-        Use this when you know the exact metric name and need its complete definition.
-
-        Use this tool when you:
-        - Need the precise SQL calculation for a known metric
-        - Want to understand how a specific KPI is computed
-        - Are implementing or validating metric calculations
-        - Need metric constraints and business rules
-
-        Args:
-            domain: Business domain of the metric (e.g., "sales", "marketing", "finance")
-            layer1: Primary semantic layer for the metric
-            layer2: Secondary semantic layer for the metric
-            metrics_name: Exact name of the metric to retrieve
-
-        Returns:
-            dict: Metric definition containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if retrieval failed
-                - 'result' (dict): Metric details with name, description, constraint, and sql_query
-        """
-        try:
-            result = self.metric_rag.get_metrics(domain=domain, layer1=layer1, layer2=layer2, name=metrics_name)
-            return FuncToolResult(success=1, error=None, result=result)
-        except Exception as e:
-            logger.error(f"Failed to get metric for table '{metrics_name}': {str(e)}")
-            return FuncToolResult(success=0, error=str(e))
-
     def search_historical_sql(
-        self, query_text: str, domain: str, layer1: str, layer2: str, top_n: int = 5
+        self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
     ) -> FuncToolResult:
         """
         Perform a vector search to match historical SQL queries by intent.
@@ -248,10 +176,17 @@ class ContextSearchTools:
                     - 'summary'
                     - 'file_path'
         """
-        pass
+        try:
+            result = self.sql_history_store.search_sql_history_by_summary(
+                query_text=query_text, domain=domain, layer1=layer1, layer2=layer2, top_n=top_n
+            )
+            return FuncToolResult(success=1, error=None, result=result)
+        except Exception as e:
+            logger.error(f"Failed to search historical SQL for `{query_text}`: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
 
     def search_external_knowledge(
-        self, query_text: str, domain: str, layer1: str, layer2: str, top_n: int = 5
+        self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
     ) -> FuncToolResult:
         """
         Search for business terminology, domain knowledge, and concept definitions.
@@ -278,10 +213,10 @@ class ContextSearchTools:
                 - 'result' (list): List of knowledge entries with domain, layer1, layer2, terminology, and explanation
         """
         try:
-            results = self.ext_knowledge_rag.search_knowledge(
+            result = self.ext_knowledge_rag.search_knowledge(
                 query_text=query_text, domain=domain, layer1=layer1, layer2=layer2, top_n=top_n
             )
-            return FuncToolResult(success=1, error=None, result=results)
+            return FuncToolResult(success=1, error=None, result=result.to_pylist())
         except Exception as e:
             logger.error(f"Failed to search external knowledge for query '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))

@@ -13,6 +13,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
+from datus.tools.context_search import ContextSearchTools
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.mcp_server import MCPServer
 from datus.tools.tools import DBFuncTool
@@ -65,15 +66,17 @@ class ChatAgenticNode(AgenticNode):
             mcp_servers=self.mcp_servers,
             agent_config=agent_config,
         )
-
+        self.db_func_tool: DBFuncTool
+        self.context_search_tools: ContextSearchTools
         self.setup_tools()
 
     def setup_tools(self):
         # Only a single database connection is now supported
         db_manager = db_manager_instance(self.agent_config.namespaces)
         conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-        self.tool_instance = DBFuncTool(conn)
-        self.tools = self.tool_instance.available_tools()
+        self.db_func_tool = DBFuncTool(conn)
+        self.context_search_tools = ContextSearchTools(self.agent_config)
+        self.tools = self.db_func_tool.available_tools() + self.context_search_tools.available_tools()
 
     def _setup_mcp_servers(self, agent_config: Optional[AgentConfig] = None) -> Dict[str, MCPServerStdio]:
         """
