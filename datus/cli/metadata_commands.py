@@ -62,7 +62,8 @@ class MetadataCommands:
                 for db_config in result:
                     name = db_config["name"]
                     table.add_row(
-                        name if name != self.cli.cli_context.current_db_name else f"[bold green]{name}[/]", db_config["uri"]
+                        name if name != self.cli.cli_context.current_db_name else f"[bold green]{name}[/]",
+                        db_config["uri"],
                     )
             else:
                 for db_config in result:
@@ -183,7 +184,9 @@ class MetadataCommands:
             self.cli.console.print("[yellow]You need to give the name of the schema you want to switch to[/]")
             return
         self.cli.db_connector.switch_context(
-            catalog_name=self.cli.cli_context.current_catalog, database_name=self.cli.cli_context.current_db_name, schema_name=schema_name
+            catalog_name=self.cli.cli_context.current_catalog,
+            database_name=self.cli.cli_context.current_db_name,
+            schema_name=schema_name,
         )
         self.cli.console.print(f"[bold green]Schema switched to: {self.cli.cli_context.current_db_name}[/]")
         self.cli.cli_context.current_schema = schema_name
@@ -290,7 +293,7 @@ class MetadataCommands:
                     for idx in indexes:
                         # Handle both dict and tuple formats
                         if isinstance(idx, dict):
-                            index_name = idx.get('name', str(idx))
+                            index_name = idx.get("name", str(idx))
                         elif isinstance(idx, (list, tuple)) and len(idx) > 0:
                             index_name = idx[0]
                         else:
@@ -302,8 +305,10 @@ class MetadataCommands:
             else:
                 # For other database types, use information schema or equivalent
                 # This is a placeholder for future database type support
-                self.cli.console.print(f"[yellow]Index listing not yet supported for {self.cli.db_connector.get_type()}[/]")
-                
+                self.cli.console.print(
+                    f"[yellow]Index listing not yet supported for {self.cli.db_connector.get_type()}[/]"
+                )
+
         except Exception as e:
             logger.error(f"Index listing error: {str(e)}")
             self.cli.console.print(f"[bold red]Error:[/] {str(e)}")

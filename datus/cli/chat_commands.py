@@ -24,6 +24,7 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+
 class ChatCommands:
     """Handles all chat-related commands and functionality."""
 
@@ -129,6 +130,7 @@ class ChatCommands:
                         # No SQL, no extracted_output: try to parse raw_output from response string
                         try:
                             import ast
+
                             response_dict = ast.literal_eval(response)
                             clean_output = (
                                 response_dict.get("raw_output", response)
@@ -202,6 +204,7 @@ class ChatCommands:
                 # Try pyperclip first
                 try:
                     import pyperclip
+
                     pyperclip.copy(sql)
                     copied_indicator = " (copied)"
                 except ImportError:
@@ -366,7 +369,7 @@ class ChatCommands:
             result = asyncio.run(run_compact())
 
             if result["success"]:
-                self.console.print(f"[green]✓ Session compacted successfully![/]")
+                self.console.print("[green]✓ Session compacted successfully![/]")
                 self.console.print(f"  New Token Count: {result.get('new_token_count', 'N/A')}")
                 self.console.print(f"  Tokens Saved: {result.get('tokens_saved', 'N/A')}")
                 self.console.print(f"  Compression Ratio: {result.get('compression_ratio', 'N/A')}")
@@ -411,9 +414,7 @@ class ChatCommands:
                     sessions_with_info.append(session_data)
 
             # Sort by last_updated (most recent first)
-            sessions_with_info.sort(
-                key=lambda x: x.get("last_updated", x.get("created_at", "")), reverse=True
-            )
+            sessions_with_info.sort(key=lambda x: x.get("last_updated", x.get("created_at", "")), reverse=True)
 
             # Create a table to display sessions
             table = Table(title="Chat Sessions", show_header=True, header_style="bold blue")
@@ -439,7 +440,7 @@ class ChatCommands:
             self.console.print(table)
 
             if current_session_id:
-                self.console.print(f"\n[dim]→ indicates current active session[/]")
+                self.console.print("\n[dim]→ indicates current active session[/]")
 
         except Exception as e:
             logger.error(f"Error listing sessions: {e}")

@@ -5,11 +5,7 @@ This module provides context-related commands for the Datus CLI.
 
 from typing import TYPE_CHECKING
 
-from rich.table import Table
-from rich.tree import Tree
-
 from datus.utils.loggings import get_logger
-from datus.utils.rich_util import dict_to_tree
 
 if TYPE_CHECKING:
     from datus.cli import DatusCLI

@@ -18,6 +18,7 @@ from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.console import Console
 from rich.table import Table
+
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer
 from datus.cli.chat_commands import ChatCommands
@@ -472,7 +473,9 @@ class DatusCLI:
         self.agent_config.current_database = new_db
 
         if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
-            self.db_connector = self.db_manager.get_conn(self.agent_config.current_namespace, self.cli_context.current_db_name)
+            self.db_connector = self.db_manager.get_conn(
+                self.agent_config.current_namespace, self.cli_context.current_db_name
+            )
             self._reset_session()
         self.console.print(f"[bold green]Database switched to: {self.cli_context.current_db_name}[/]")
 
@@ -705,7 +708,6 @@ class DatusCLI:
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 
-
     def _wait_for_agent_available(self, max_attempts=5, delay=1):
         """Wait for the agent to become available, with timeout."""
         if self._check_agent_available():
@@ -839,7 +841,6 @@ class DatusCLI:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
         help_text = "\n".join(lines)
         self.console.print(help_text)
-
 
     def _cmd_exit(self, args: str):
         """Exit the CLI."""
