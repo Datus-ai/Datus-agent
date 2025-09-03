@@ -625,24 +625,8 @@ class AtReferenceCompleter(Completer):
         if not workspace_root and hasattr(agent_config, "storage") and hasattr(agent_config.storage, "workspace_root"):
             workspace_root = agent_config.storage.workspace_root
 
-        def get_search_paths():
-            paths = []
-            # import os
-            # paths = [os.getcwd()]
-            if workspace_root:
-                paths.insert(0, workspace_root)
-            return paths
-
-        # Get workspace_root from chat node configuration or storage configuration
-        workspace_root = None
-        if hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
-            chat_node = agent_config.nodes["chat"]
-            if hasattr(chat_node, "input") and chat_node.input and hasattr(chat_node.input, "workspace_root"):
-                workspace_root = chat_node.input.workspace_root
-
-        # Also check storage configuration for workspace_root
-        if not workspace_root and hasattr(agent_config, "storage") and hasattr(agent_config.storage, "workspace_root"):
-            workspace_root = agent_config.storage.workspace_root
+        if not workspace_root:
+            workspace_root = "."
 
         def get_search_paths():
             paths = []
