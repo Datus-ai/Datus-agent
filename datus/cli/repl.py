@@ -29,6 +29,7 @@ from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer
+from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
 from datus.cli.metadata_commands import MetadataCommands
 from datus.configuration.agent_config_loader import load_agent_config
@@ -42,7 +43,6 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-
 class CommandType(Enum):
     """Type of command entered by the user."""
 
@@ -52,7 +52,6 @@ class CommandType(Enum):
     CHAT = "chat"  # /command (chat)
     INTERNAL = "internal"  # .command (CLI control)
     EXIT = "exit"  # exit/quit command
-
 
 class DatusCLI:
     """Main REPL for the Datus CLI application."""
@@ -85,13 +84,9 @@ class DatusCLI:
         # Last executed SQL and result
         self.last_sql = None
         self.last_result = None
-        self.chat_history = []
 
         # Action history manager for tracking all CLI operations
         self.actions = ActionHistoryManager()
-
-        # Persistent chat node for session continuity
-        self.chat_node: ChatAgenticNode | None = None
 
         # Initialize CLI context for state management
         from datus.cli.cli_context import CliContext
@@ -105,6 +100,7 @@ class DatusCLI:
 
         # Initialize command handlers after cli_context is created
         self.agent_commands = AgentCommands(self, self.cli_context)
+        self.chat_commands = ChatCommands(self)
         self.context_commands = ContextCommands(self)
         self.metadata_commands = MetadataCommands(self)
 
@@ -128,10 +124,10 @@ class DatusCLI:
             ".help": self._cmd_help,
             ".exit": self._cmd_exit,
             ".quit": self._cmd_exit,
-            ".clear": self._cmd_clear_chat,
-            ".chat_info": self._cmd_chat_info,
-            ".compact": self._cmd_compact,
-            ".sessions": self._cmd_list_sessions,
+            ".clear": self.chat_commands.cmd_clear_chat,
+            ".chat_info": self.chat_commands.cmd_chat_info,
+            ".compact": self.chat_commands.cmd_compact,
+            ".sessions": self.chat_commands.cmd_list_sessions,
             ".databases": self.metadata_commands.cmd_list_databases,
             ".database": self.metadata_commands.cmd_switch_database,
             ".tables": self.metadata_commands.cmd_tables,
@@ -436,8 +432,7 @@ class DatusCLI:
         self.console.print(table)
 
     def _reset_session(self):
-        if self.chat_node:
-            self.chat_node.setup_tools()
+        self.chat_commands.update_chat_node_tools()
         if self.at_completer:
             # Perhaps we should reload the data here.
             self.at_completer.reload_data()
@@ -463,8 +458,7 @@ class DatusCLI:
                 schema=self.db_connector.schema_name,
             )
             self._reset_session()
-            if self.chat_node:
-                self.chat_node.setup_tools()
+            self.chat_commands.update_chat_node_tools()
             self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_namespace}[/]")
 
     def _cmd_switch_database(self, args: str = ""):
@@ -707,161 +701,7 @@ class DatusCLI:
 
     def _execute_chat_command(self, message: str):
         """Execute a chat command (/ prefix) using ChatAgenticNode."""
-        if not message.strip():
-            self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
-            return
-
-        try:
-            # Import here to avoid circular imports
-            from datus.schemas.chat_agentic_node_models import ChatNodeInput
-
-            # Create chat input with current database context
-            chat_input = ChatNodeInput(
-                user_message=message,
-                catalog=self.cli_context.current_catalog if self.cli_context.current_catalog else None,
-                database=self.cli_context.current_db_name if self.cli_context.current_db_name else None,
-                db_schema=self.cli_context.current_schema if self.cli_context.current_schema else None,
-            )
-
-            # Get or create persistent ChatAgenticNode
-            if self.chat_node is None:
-                self.console.print("[dim]Creating new chat session...[/]")
-                self.chat_node = ChatAgenticNode(
-                    namespace=self.agent_config.current_namespace,
-                    agent_config=self.agent_config,
-                )
-            else:
-                # Show session info for existing session
-                session_info = self.chat_node.get_session_info()
-                if session_info["session_id"]:
-                    session_display = (
-                        f"[dim]Using existing session: {session_info['session_id']} "
-                        f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
-                    )
-                    self.console.print(session_display)
-
-            # Display streaming execution
-            self.console.print("[bold green]Processing chat request...[/]")
-
-            # Initialize action history display for incremental actions only
-            action_display = ActionHistoryDisplay(self.console)
-            incremental_actions = []
-
-            # Run streaming execution with real-time display
-            import asyncio
-
-            # Create a live display like the !reason command (shows only new actions)
-            with action_display.display_streaming_actions(incremental_actions):
-                # Run the async streaming method
-                async def run_chat_stream():
-                    async for action in self.chat_node.execute_stream(chat_input, self.actions):
-                        incremental_actions.append(action)
-                        # Add delay to make the streaming visible
-                        await asyncio.sleep(0.5)
-
-                # Execute the streaming chat
-                asyncio.run(run_chat_stream())
-
-            # Display final response from the last successful action
-            if incremental_actions:
-                final_action = incremental_actions[-1]
-
-                if (
-                    final_action.output
-                    and isinstance(final_action.output, dict)
-                    and final_action.status == ActionStatus.SUCCESS
-                ):
-                    # Parse response to extract clean SQL and output
-                    sql = None
-                    clean_output = None
-
-                    logger.debug(f"DEBUG: final_action.output: {final_action.output}")
-
-                    # First check if SQL and response are directly available
-                    sql = final_action.output.get("sql")
-                    response = final_action.output.get("response")
-
-                    # Try to extract SQL and output from the string response
-                    extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
-                    sql = sql or extracted_sql
-                    # Determine clean_output based on sql and extracted_output
-                    clean_output = None
-
-                    if sql:
-                        # Has SQL: use extracted_output or fallback to response
-                        clean_output = extracted_output or response
-                    elif isinstance(extracted_output, dict):
-                        # No SQL, extracted_output is dict: get raw_output from dict
-                        clean_output = extracted_output.get("raw_output", str(extracted_output))
-                    else:
-                        # No SQL, no extracted_output: try to parse raw_output from response string
-                        try:
-                            import ast
-
-                            response_dict = ast.literal_eval(response)
-                            clean_output = (
-                                response_dict.get("raw_output", response)
-                                if isinstance(response_dict, dict)
-                                else response
-                            )
-                        except (ValueError, SyntaxError):
-                            clean_output = response
-
-                    # Display using simple, focused methods
-                    if sql:
-                        self._display_sql_with_copy(sql)
-
-                    if clean_output:
-                        self._display_markdown_response(clean_output)
-
-                    self._show_detail(incremental_actions)
-
-            # Add all actions from chat to our main action history
-            self.actions.actions.extend(incremental_actions)
-
-            # Update chat history for potential context in future interactions
-            self.chat_history.append(
-                {
-                    "user": message,
-                    "response": (
-                        incremental_actions[-1].output.get("response", "")
-                        if incremental_actions and incremental_actions[-1].output
-                        else ""
-                    ),
-                    "actions": len(incremental_actions),
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Chat error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] Failed to process chat request: {str(e)}")
-
-            # Add error action to history
-            error_action = ActionHistory.create_action(
-                role=ActionRole.USER,
-                action_type="chat_error",
-                messages=f"Chat command failed: {str(e)}",
-                input_data={"message": message},
-                status=ActionStatus.FAILED,
-            )
-            self.actions.add_action(error_action)
-
-    def _show_detail(self, actions: List[ActionHistory]):
-        while True:
-            choice = self._prompt_input(
-                "Would you like to check the details?",
-                choices=["y", "n"],
-                default="y",
-            )
-            # modify the node input
-            if choice == "y":
-                from datus.cli.screen.action_display_app import ChatApp
-
-                app = ChatApp(actions)
-                app.run()
-                break
-            else:
-                return
+        self.chat_commands.execute_chat_command(message)
 
     def _execute_internal_command(self, cmd: str, args: str):
         """Execute an internal command (. prefix)."""
@@ -1095,261 +935,6 @@ class DatusCLI:
                 logger.warning(f"Database connection closed failed, reason:{e}")
         sys.exit(0)
 
-    def _cmd_clear_chat(self, args: str):
-        """Clear the console screen and chat session."""
-        # Clear the console screen using Rich
-        self.console.clear()
-
-        # Clear the chat session
-        if self.chat_node:
-            self.chat_node.delete_session()
-            self.console.print("[green]Console and chat session cleared.[/]")
-        else:
-            self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
-        self.chat_node = None
-
-    def _cmd_chat_info(self, args: str):
-        """Display information about the current chat session."""
-        if self.chat_node:
-            session_info = self.chat_node.get_session_info()
-            if session_info["session_id"]:
-                self.console.print("[bold green]Chat Session Info:[/]")
-                self.console.print(f"  Session ID: {session_info['session_id']}")
-                self.console.print(f"  Active: {session_info['active']}")
-                self.console.print(f"  Token Count: {session_info['token_count']}")
-                self.console.print(f"  Action Count: {session_info['action_count']}")
-                self.console.print(f"  Context Usage Ratio: {session_info['context_usage_ratio']:.2%}")
-                self.console.print(f"  Context Remaining: {session_info['context_remaining']}")
-                self.console.print(f"  Context Length: {session_info['context_length']}")
-            else:
-                self.console.print("[yellow]No active session, you can use / to start a new one[/]")
-        else:
-            self.console.print("[yellow]No active chat session.[/]")
-
-    def _cmd_compact(self, args: str):
-        """Manually compact the chat session by summarizing conversation history."""
-        if not self.chat_node:
-            self.console.print("[yellow]No active chat session to compact.[/]")
-            return
-
-        session_info = self.chat_node.get_session_info()
-        if not session_info["session_id"]:
-            self.console.print("[yellow]No active chat session to compact.[/]")
-            return
-
-        try:
-            # Display session info before compacting
-            self.console.print("[bold blue]Compacting Chat Session...[/]")
-            self.console.print(f"  Current Session ID: {session_info['session_id']}")
-            self.console.print(f"  Current Token Count: {session_info['token_count']}")
-            self.console.print(f"  Current Action Count: {session_info['action_count']}")
-
-            # Call the manual compact method asynchronously
-            import asyncio
-
-            async def run_compact():
-                return await self.chat_node._manual_compact()
-
-            # Run the compact operation
-            result = asyncio.run(run_compact())
-
-            if result["success"]:
-                self.console.print("[bold green]✓ Chat session compacted successfully![/]")
-                self.console.print(f"[dim]Summary ({result['summary_token']} tokens):[/]")
-                # Display full summary
-                self.console.print(f"[italic]{result['summary']}[/]")
-            else:
-                self.console.print("[bold red]✗ Failed to compact chat session.[/]")
-
-        except Exception as e:
-            logger.error(f"Compact command error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] Failed to compact session: {str(e)}")
-
-    def _cmd_list_sessions(self, args: str = ""):
-        """List all stored SQLite sessions with detailed information."""
-        try:
-            # Create a session manager directly (don't rely on chat_node)
-            from datus.models.session_manager import SessionManager
-
-            session_manager = SessionManager()
-
-            # Get all session IDs
-            session_ids = session_manager.list_sessions()
-
-            if not session_ids:
-                self.console.print("[dim]No sessions found.[/]")
-                return
-
-            # Get current session ID for highlighting (if chat_node exists)
-            current_session_id = None
-            if self.chat_node and hasattr(self.chat_node, "session_id"):
-                current_session_id = self.chat_node.session_id
-
-            # Get session info for all sessions first to enable sorting
-            sessions_with_info = []
-            for session_id in session_ids:
-                try:
-                    session_info = session_manager.get_session_info(session_id)
-                    sessions_with_info.append((session_id, session_info))
-                except Exception as e:
-                    logger.debug(f"Error getting info for session {session_id}: {e}")
-                    sessions_with_info.append((session_id, {"exists": False, "error": str(e)}))
-
-            # Sort by last updated timestamp (descending), then by session_id
-            def sort_key(item):
-                session_id, info = item
-                if not info.get("exists", False):
-                    return (0, session_id)  # Put error sessions at end
-
-                # Use updated_at, latest_message_at, or file_modified as sort key
-                updated_at = info.get("updated_at") or info.get("latest_message_at") or ""
-                if updated_at:
-                    try:
-                        import datetime
-
-                        if "T" in updated_at:
-                            dt = datetime.datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
-                        else:
-                            dt = datetime.datetime.fromisoformat(updated_at)
-                        return (1, dt.timestamp())  # Sort by timestamp (higher = more recent)
-                    except (ValueError, TypeError):
-                        pass
-
-                # Fallback to file modification time
-                file_modified = info.get("file_modified", 0)
-                return (1, file_modified)
-
-            # Sort sessions (most recent first) and limit to top 20
-            sessions_with_info.sort(key=sort_key, reverse=True)
-            total_sessions = len(sessions_with_info)
-            sessions_with_info = sessions_with_info[:20]  # Show only top 20
-
-            # Create table to display sessions
-            import datetime
-
-            from rich.table import Table
-
-            table = Table(
-                title="Available SQLite Sessions (Top 20)" if total_sessions > 20 else "Available SQLite Sessions",
-                show_header=True,
-                header_style="bold magenta",
-            )
-            table.add_column("Session ID", style="cyan", no_wrap=True, width=18)
-            table.add_column("Messages", justify="right", style="green", width=8)
-            table.add_column("Tokens", justify="right", style="blue", width=8)
-            table.add_column("Created", style="yellow", width=12)
-            table.add_column("Last Updated", style="yellow", width=12)
-            table.add_column("Latest Message", style="white", width=50)
-            table.add_column("Status", justify="center", width=6)
-
-            # Helper function to clean user message prefixes
-            def clean_user_message(message_content):
-                import re
-
-                if not message_content:
-                    return ""
-
-                # Remove common prefix pattern: "Context: database: [db_name]\n\nUser question: "
-                cleaned = re.sub(
-                    r"Context:\s*database:\s*\w+\s*\n\nUser question:\s*", "", message_content, flags=re.IGNORECASE
-                )
-
-                # If nothing was removed, try alternative patterns
-                if cleaned == message_content:
-                    # Try more flexible pattern
-                    cleaned = re.sub(
-                        r"Context:.*?\n\nUser question:\s*", "", message_content, flags=re.IGNORECASE | re.DOTALL
-                    )
-
-                return cleaned.strip()
-
-            # Add each session to the table
-            for session_id, session_info in sessions_with_info:
-                try:
-                    if session_info.get("exists", False):
-                        # Format message count (prefer message_count over item_count if available)
-                        msg_count = session_info.get("message_count", session_info.get("item_count", 0))
-                        message_count_str = str(msg_count)
-
-                        # Format token count (use actual tokens from database)
-                        actual_tokens = session_info.get("total_tokens", 0)
-                        if actual_tokens < 1000:
-                            tokens_str = str(actual_tokens)
-                        elif actual_tokens < 1000000:
-                            tokens_str = f"{actual_tokens/1000:.1f}K"
-                        else:
-                            tokens_str = f"{actual_tokens/1000000:.1f}M"
-
-                        # Format timestamps
-                        created_at = session_info.get("created_at", "Unknown")
-                        updated_at = session_info.get("updated_at", session_info.get("latest_message_at", "Unknown"))
-
-                        # Format timestamp for display (just date/time, no microseconds)
-                        def format_timestamp(ts_str):
-                            if ts_str == "Unknown":
-                                return ts_str
-                            try:
-                                # Parse ISO format and show as local time
-                                if "T" in ts_str:
-                                    dt = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                                else:
-                                    dt = datetime.datetime.fromisoformat(ts_str)
-                                return dt.strftime("%m/%d %H:%M")
-                            except (ValueError, TypeError):
-                                return ts_str[:16] if len(ts_str) > 16 else ts_str
-
-                        created_str = format_timestamp(created_at)
-                        updated_str = format_timestamp(updated_at)
-
-                        # Format latest user message
-                        latest_msg = session_info.get("latest_user_message", "")
-                        if latest_msg:
-                            # Clean the message prefix and format for display
-                            cleaned_msg = clean_user_message(latest_msg)
-                            cleaned_msg = cleaned_msg.strip().replace("\n", " ").replace("\r", " ")
-                            if len(cleaned_msg) > 47:
-                                cleaned_msg = cleaned_msg[:44] + "..."
-                            latest_msg = f'"{cleaned_msg}"'
-                        else:
-                            latest_msg = "[dim]No user messages[/]"
-
-                        # Mark current session
-                        status = "[bold green]●[/]" if session_id == current_session_id else "[dim]○[/]"
-
-                        table.add_row(
-                            session_id, message_count_str, tokens_str, created_str, updated_str, latest_msg, status
-                        )
-                    else:
-                        table.add_row(session_id, "?", "?", "?", "?", "?", "[red]Error[/]")
-
-                except Exception as e:
-                    logger.debug(f"Error getting info for session {session_id}: {e}")
-                    table.add_row(session_id, "?", "?", "?", "?", "?", "[red]Error[/]")
-
-            self.console.print(table)
-
-            # Show summary information
-            displayed_sessions = len(sessions_with_info)
-            if current_session_id:
-                if total_sessions > 20:
-                    self.console.print(
-                        f"\n[dim]Showing top {displayed_sessions} of {total_sessions} "
-                        f"total sessions • Current: {current_session_id} (●)[/]"
-                    )
-                else:
-                    self.console.print(
-                        f"\n[dim]Total: {total_sessions} sessions • Current: {current_session_id} (●)[/]"
-                    )
-            else:
-                if total_sessions > 20:
-                    self.console.print(f"\n[dim]Showing top {displayed_sessions} of {total_sessions} sessions[/]")
-                else:
-                    self.console.print(f"\n[dim]Total: {total_sessions} sessions • No active session[/]")
-
-        except Exception as e:
-            logger.error(f"List sessions command error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] Failed to list sessions: {str(e)}")
-
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:
             return
@@ -1472,139 +1057,3 @@ Type '.help' for a list of commands or '.exit' to quit.
             self.console.print(f"[bold red]Connection Error:[/] {str(e)}")
             raise
 
-    def _display_sql_with_copy(self, sql: str):
-        """
-        Display SQL in a formatted panel with automatic clipboard copy functionality.
-
-        Args:
-            sql: SQL query string to display and copy
-        """
-        try:
-            # Store SQL for reference
-            self.last_sql = sql
-
-            # Try to copy to clipboard
-            copied_indicator = ""
-            try:
-                # Try pyperclip first
-                try:
-                    import pyperclip
-
-                    pyperclip.copy(sql)
-                    copied_indicator = " (copied)"
-                except ImportError:
-                    # Fallback to system clipboard commands
-                    import platform
-                    import subprocess
-
-                    system = platform.system()
-                    if system == "Darwin":  # macOS
-                        subprocess.run("pbcopy", input=sql.encode(), check=True)
-                        copied_indicator = " (copied)"
-                    elif system == "Linux":
-                        # Try xclip or xsel
-                        try:
-                            subprocess.run(["xclip", "-selection", "clipboard"], input=sql.encode(), check=True)
-                            copied_indicator = " (copied)"
-                        except FileNotFoundError:
-                            try:
-                                subprocess.run(["xsel", "--clipboard", "--input"], input=sql.encode(), check=True)
-                                copied_indicator = " (copied)"
-                            except FileNotFoundError:
-                                pass  # No clipboard tool available
-                    elif system == "Windows":
-                        subprocess.run("clip", input=sql.encode(), shell=True, check=True)
-                        copied_indicator = " (copied)"
-            except Exception as e:
-                logger.debug(f"Failed to copy SQL to clipboard: {e}")
-                # If clipboard fails, don't show the indicator
-
-            # Display SQL in a beautiful syntax-highlighted panel
-            sql_syntax = Syntax(sql, "sql", theme="default", line_numbers=False)
-            sql_panel = Panel(
-                sql_syntax,
-                title=f"Generated SQL{copied_indicator}",
-                title_align="left",
-                border_style="cyan",
-                padding=(1, 2),
-            )
-
-            self.console.print()  # Add spacing
-            self.console.print(sql_panel)
-
-        except Exception as e:
-            logger.error(f"Error displaying SQL: {e}")
-            # Fallback to simple display
-            self.console.print(f"\n[bold cyan]Generated SQL:[/]\n```sql\n{sql}\n```")
-
-    def _display_markdown_response(self, response: str):
-        """
-        Display clean response content as formatted markdown.
-
-        Args:
-            response: Clean response text to display as markdown
-        """
-        try:
-            # Display as markdown with proper formatting
-            markdown_content = Markdown(response)
-            self.console.print()  # Add spacing
-            self.console.print(markdown_content)
-
-        except Exception as e:
-            logger.error(f"Error displaying markdown: {e}")
-            # Fallback to plain text display
-            self.console.print(f"\n[bold blue]Assistant:[/] {response}")
-
-    def _extract_sql_and_output_from_content(self, content: str) -> tuple[Optional[str], Optional[str]]:
-        """
-        Extract SQL and output from content string that might contain JSON or debug format.
-
-        Args:
-            content: Content string to parse
-
-        Returns:
-            Tuple of (sql_string, output_string) - both can be None if not found
-        """
-        try:
-            import json
-            import re
-
-            # Try to extract JSON from various patterns
-            # Pattern 1: json\n{...} format
-            json_match = re.search(r"json\s*\n\s*({.*?})\s*$", content, re.DOTALL)
-            if json_match:
-                try:
-                    json_content = json.loads(json_match.group(1))
-                    sql = json_content.get("sql")
-                    output = json_content.get("output") or json_content.get("raw_output")
-                    if output:
-                        output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
-                    return sql, output
-                except json.JSONDecodeError:
-                    pass
-
-            # Pattern 2: Direct JSON in content
-            try:
-                # Handle escaped quotes in the JSON string
-                unescaped_content = content.replace("\\'", "'").replace('\\"', '"')
-                json_content = json.loads(unescaped_content)
-                logger.debug(f"DEBUG: Successfully parsed JSON: {json_content}")
-                sql = json_content.get("sql")
-                output = json_content.get("output") or json_content.get("raw_output")
-                logger.debug(f"DEBUG: Extracted sql={sql}, output={output} (type: {type(output)})")
-                if output and isinstance(output, str):
-                    output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
-                return sql, output
-            except json.JSONDecodeError as e:
-                logger.debug(f"DEBUG: JSON decode failed for content: {content[:100]}... Error: {e}")
-
-            # Pattern 3: Look for SQL code blocks
-            sql_pattern = r"```sql\s*(.*?)\s*```"
-            sql_matches = re.findall(sql_pattern, content, re.DOTALL | re.IGNORECASE)
-            sql = sql_matches[0].strip() if sql_matches else None
-
-            return sql, None
-
-        except Exception as e:
-            logger.warning(f"Failed to extract SQL and output from content: {e}")
-            return None, None
