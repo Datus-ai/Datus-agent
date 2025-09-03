@@ -43,6 +43,7 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+
 class CommandType(Enum):
     """Type of command entered by the user."""
 
@@ -52,6 +53,7 @@ class CommandType(Enum):
     CHAT = "chat"  # /command (chat)
     INTERNAL = "internal"  # .command (CLI control)
     EXIT = "exit"  # exit/quit command
+
 
 class DatusCLI:
     """Main REPL for the Datus CLI application."""
@@ -110,20 +112,17 @@ class DatusCLI:
             "!sl": self.agent_commands.cmd_sl,
             "!gen": self.agent_commands.cmd_gen,
             "!fix": self.agent_commands.cmd_fix,
-            "!compare": self.agent_commands.cmd_compare_stream,
-            "!reason": self.agent_commands.cmd_reason_stream,
-            "!gen_metrics": self.agent_commands.cmd_gen_metrics_stream,
-            "!gen_semantic_model": self.agent_commands.cmd_gen_semantic_model_stream,
             "!save": self.agent_commands.cmd_save,
             "!bash": self._cmd_bash,
+            # to be deprecated when sub agent is read
+            "!reason": self.agent_commands.cmd_reason_stream,
+            "!compare": self.agent_commands.cmd_compare_stream,
+            "!gen_metrics": self.agent_commands.cmd_gen_metrics_stream,
+            "!gen_semantic_model": self.agent_commands.cmd_gen_semantic_model_stream,
+            # catalog commands
             "@catalogs": self.context_commands.cmd_catalogs,
-            "@tables": self.context_commands.cmd_tables,
             "@metrics": self.context_commands.cmd_metrics,
-            "@context": self.context_commands.cmd_context,
-            "@screen": self.context_commands.cmd_context_screen,
-            ".help": self._cmd_help,
-            ".exit": self._cmd_exit,
-            ".quit": self._cmd_exit,
+            # interal commands
             ".clear": self.chat_commands.cmd_clear_chat,
             ".chat_info": self.chat_commands.cmd_chat_info,
             ".compact": self.chat_commands.cmd_compact,
@@ -136,6 +135,9 @@ class DatusCLI:
             ".table_schema": self.metadata_commands.cmd_table_schema,
             ".namespace": self._cmd_switch_namespace,
             ".mcp": self._cmd_mcp,
+            ".help": self._cmd_help,
+            ".exit": self._cmd_exit,
+            ".quit": self._cmd_exit,
         }
 
         # Start agent initialization in background
@@ -858,12 +860,13 @@ class DatusCLI:
             ("!sl", "Schema linking: show list of recommended tables and values"),
             ("!gen", "Generate SQL, optionally with table constraints"),
             ("!fix <description>", "Fix the last SQL query"),
-            ("!reason", "Run SQL reasoning with streaming output"),
             ("!gen_metrics", "Generate metrics with streaming output"),
             ("!gen_semantic_model", "Generate semantic model with streaming output"),
-            ("!compare", "Compare SQL results with streaming output"),
             ("!save", "Save the last result to a file"),
             ("!bash <command>", "Execute a bash command (limited to safe commands)"),
+            # remove this when sub agent is ready
+            # ("!reason", "Run SQL reasoning with streaming output"),
+            # ("!compare", "Compare SQL results with streaming output"),
         ]
         for cmd, desc in tool_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
@@ -872,10 +875,7 @@ class DatusCLI:
         lines.append("[bold]Context Commands (@ prefix):[/]")
         context_cmds = [
             ("@catalogs", "Display database catalogs"),
-            ("@tables table_name", "Display table details"),
             ("@metrics", "Display metrics"),
-            ("@context [type]", "Display the current context in the terminal"),
-            ("@screen [type]", "Display the current context in an interactive screen"),
         ]
         for cmd, desc in context_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
@@ -1056,4 +1056,3 @@ Type '.help' for a list of commands or '.exit' to quit.
         except Exception as e:
             self.console.print(f"[bold red]Connection Error:[/] {str(e)}")
             raise
-
