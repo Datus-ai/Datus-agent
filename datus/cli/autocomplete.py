@@ -2,12 +2,10 @@
 Autocomplete module for Datus CLI.
 Provides SQL keyword, table name, and column name autocompletion.
 """
-import os
 from abc import abstractmethod
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Union
 
-from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
 from pygments.lexers.sql import SqlLexer
 from pygments.styles.default import DefaultStyle
@@ -611,39 +609,6 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         return result
 
 
-class RecursivePathCompleter(Completer):
-    """Recursive path completer, constrained to a given base_dir."""
-
-    def __init__(self, base_dir: str, max_results=20, follow_symlinks=False):
-        self.base_dir = Path(os.path.expanduser(base_dir)).resolve()
-        self.max_results = max_results
-        self.follow_symlinks = follow_symlinks
-
-    def get_completions(self, document, complete_event):
-        text = document.text_before_cursor
-        text = os.path.expanduser(text)
-
-        # 用户输入的关键字
-        last_seg = text
-
-        # 遍历 base_dir 下的所有文件
-        count = 0
-        try:
-            for p in self.base_dir.rglob("*"):
-                if p.is_symlink() and not self.follow_symlinks:
-                    continue
-                full = p.as_posix()
-                if last_seg.lower() in full.lower():
-                    insertion = full[len(str(self.base_dir)) + 1 :]  # 相对路径
-                    start_position = -len(last_seg)
-                    yield Completion(insertion, start_position=start_position, display=full)
-                    count += 1
-                    if count >= self.max_results:
-                        break
-        except PermissionError:
-            return
-
-
 class AtReferenceCompleter(Completer):
     """Router completer: dispatch to different completers based on type"""
 
@@ -662,12 +627,19 @@ class AtReferenceCompleter(Completer):
         # Also check storage configuration for workspace_root
         if not workspace_root and hasattr(agent_config, "storage") and hasattr(agent_config.storage, "workspace_root"):
             workspace_root = agent_config.storage.workspace_root
-        if not workspace_root:
-            workspace_root = "."
+
+        def get_search_paths():
+            paths = []
+            # import os
+            # paths = [os.getcwd()]
+            if workspace_root:
+                paths.insert(0, workspace_root)
+            return paths
+
         self.completer_dict = {
             "Table": self.table_completer,
             "Metric": self.metric_completer,
-            "File": RecursivePathCompleter(workspace_root),
+            "File": PathCompleter(get_paths=get_search_paths),
         }
         self.type_options = {
             "Table": "📊 Table",

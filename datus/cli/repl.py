@@ -172,47 +172,22 @@ class DatusCLI:
 
             if buffer.complete_state:
                 # When there is a complementary menu, close the menu but do not apply the complementary
-                buffer.complete_state = None
+                buffer.apply_completion(buffer.complete_state.current_completion)
                 return
 
             # Performs normal Enter behavior when there is no complementary menu
             buffer.validate_and_handle()
 
-        # @kb.add("c-d")
-        # def _(event):
-        #     """Handle Ctrl+R for mode switching if available."""
-        #     # Check if chat executor is available and mode switch is enabled
-        #     if (
-        #         self.chat_executor
-        #         and hasattr(self.chat_executor, "is_mode_switch_available")
-        #         and self.chat_executor.is_mode_switch_available()
-        #     ):
-        #         # Switch to app display
-        #         success = self.chat_executor.switch_to_app_display()
-        #         if success:
-        #             # Refresh the prompt after returning from textual
-        #             event.app.invalidate()
-        #         else:
-        #             # Show error message if switch failed
-        #             self.console.print("[yellow]Mode switching is not available at this time[/yellow]")
-        #     else:
-        #         # Show message that Ctrl+R is reserved for mode switching
-        #         self.console.print("[dim]Ctrl+D is reserved for mode switching after chat completion[/dim]")
-
         return kb
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
-        # custom_bindings = self._create_custom_key_bindings()
-
         self.session = PromptSession(
             history=self.history,
             auto_suggest=AutoSuggestFromHistory(),
             lexer=PygmentsLexer(CustomSqlLexer),
             completer=self.create_combined_completer(),
             multiline=False,
-            # This conflicts with textual.
-            # key_bindings=custom_bindings,
             key_bindings=self._create_custom_key_bindings(),
             enable_history_search=True,
             search_ignore_case=True,
