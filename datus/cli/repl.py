@@ -16,17 +16,8 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
-from rich.box import SIMPLE_HEAD
-from prompt_toolkit.styles import Style
-from pygments.lexers.sql import SqlLexer
 from rich.console import Console
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.syntax import Syntax
 from rich.table import Table
-
-from datus.agent.node.chat_agentic_node import ChatAgenticNode
-from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer
 from datus.cli.chat_commands import ChatCommands
@@ -133,6 +124,7 @@ class DatusCLI:
             ".schemas": self.metadata_commands.cmd_schemas,
             ".schema": self.metadata_commands.cmd_switch_schema,
             ".table_schema": self.metadata_commands.cmd_table_schema,
+            ".indexes": self.metadata_commands.cmd_indexes,
             ".namespace": self._cmd_switch_namespace,
             ".mcp": self._cmd_mcp,
             ".help": self._cmd_help,
@@ -469,20 +461,20 @@ class DatusCLI:
             self.console.print("[bold red]Error:[/] Database name is required")
             self._cmd_list_databases()
             return
-        if new_db == self.current_db_name:
+        if new_db == self.cli_context.current_db_name:
             self.console.print(
                 f"[yellow]It's now under the database [bold]{new_db}[/] and doesn't need to be switched[/]"
             )
             return
 
         self.db_connector.switch_context(database_name=new_db)
-        self.current_db_name = new_db
+        self.cli_context.current_db_name = new_db
         self.agent_config.current_database = new_db
 
         if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
-            self.db_connector = self.db_manager.get_conn(self.agent_config.current_namespace, self.current_db_name)
+            self.db_connector = self.db_manager.get_conn(self.agent_config.current_namespace, self.cli_context.current_db_name)
             self._reset_session()
-        self.console.print(f"[bold green]Database switched to: {self.current_db_name}[/]")
+        self.console.print(f"[bold green]Database switched to: {self.cli_context.current_db_name}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """
@@ -710,88 +702,9 @@ class DatusCLI:
         logger.debug(f"Executing internal command: '{cmd}' with args: '{args}'")
         if cmd in self.commands:
             self.commands[cmd](args)
-        elif self.db_connector.get_type() == DBType.SQLITE:
-            self._execute_sqlite_internal_command(cmd, args)
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 
-    def _execute_sqlite_internal_command(self, cmd: str, args: str):
-        """Execute an internal command for SQLite."""
-        base_cmd = cmd
-
-        try:
-            if base_cmd == ".schema":
-                table_name = args
-                if table_name:
-                    # Execute SQL and check if there was an error
-                    sql = f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table_name}'"
-                    result = self.db_connector.execute_arrow(sql)
-                else:
-                    sql = "SELECT sql FROM sqlite_master WHERE type='table'"
-                    result = self.db_connector.execute_arrow(sql)
-
-                # Check if result is None or failed
-                if result is None or not result.success:
-                    error_msg = result.error if result and hasattr(result, "error") else "Query failed"
-                    self.console.print(f"[bold red]Error:[/] {error_msg}")
-                    return True
-
-                # Check if sql_return is an Arrow table
-                if hasattr(result.sql_return, "to_pylist"):
-                    schemas = result.sql_return.to_pylist()
-                    if schemas:
-                        for schema in schemas:
-                            # Handle both tuple/list and dict formats
-                            sql_text = None
-                            if isinstance(schema, (list, tuple)) and len(schema) > 0:
-                                sql_text = schema[0]
-                            elif isinstance(schema, dict) and "sql" in schema:
-                                sql_text = schema["sql"]
-                            elif hasattr(schema, "sql"):
-                                sql_text = schema.sql
-
-                            if sql_text:
-                                self.console.print(Syntax(sql_text, "sql", theme="default"))
-                    else:
-                        if table_name:
-                            self.console.print(f"[yellow]Table '{table_name}' not found[/]")
-                        else:
-                            self.console.print("[yellow]No table schemas found[/]")
-                else:
-                    self.console.print(f"[bold red]Error:[/] Unexpected result format: {type(result.sql_return)}")
-                return True
-            elif base_cmd == ".indexes":
-                table_name = args
-                if not table_name:
-                    self.console.print("[bold red]Error:[/] Table name required")
-                    return True
-
-                # Execute SQL directly and check result
-                sql = f"SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='{table_name}'"
-                result = self.db_connector.execute_arrow(sql)
-
-                # Check if result is None or failed
-                if result is None or not result.success:
-                    self.console.print("[bold red]Error:[/] Query failed")
-                    return True
-
-                indexes = result.sql_return.to_pylist()
-                if indexes:
-                    index_table = Table(title=f"Indexes for {table_name}")
-                    index_table.add_column("Index Name")
-                    for idx in indexes:
-                        index_table.add_row(idx[0])
-                    self.console.print(index_table)
-                else:
-                    self.console.print(f"[yellow]Table {table_name} has no indexes[/]")
-                return True
-            else:
-                self.console.print(f"[bold red]未知命令:[/] {cmd}")
-                return True
-        except Exception as e:
-            logger.error(f"Internal command error: {e}", exc_info=True)
-            self.console.print(f"[bold red]Command execution error:[/] {e}")
-            return True
 
     def _wait_for_agent_available(self, max_attempts=5, delay=1):
         """Wait for the agent to become available, with timeout."""
@@ -900,7 +813,9 @@ class DatusCLI:
             (".databases", "List all databases"),
             (".database database_name", "Switch current database"),
             (".tables", "List all tables"),
-            (".schemas table_name", "Show schema information"),
+            (".schemas", "List all schemas or show detailed schema information"),
+            (".schema schema_name", "Switch current schema"),
+            (".indexes table_name", "Show indexes for a table"),
             (".namespace namespace", "Switch current namespace"),
             (".mcp", "Manage MCP (Model Configuration Protocol) servers"),
             ("     .mcp list", "List all MCP servers"),
@@ -924,6 +839,7 @@ class DatusCLI:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
         help_text = "\n".join(lines)
         self.console.print(help_text)
+
 
     def _cmd_exit(self, args: str):
         """Exit the CLI."""

@@ -41,8 +41,8 @@ class ContextCommands:
                 title="Database Catalogs",
                 data={
                     "db_type": self.cli.agent_config.db_type,
-                    "catalog_name": self.cli.current_catalog,
-                    "database_name": self.cli.current_db_name,
+                    "catalog_name": self.cli.cli_context.current_catalog,
+                    "database_name": self.cli.cli_context.current_db_name,
                     "db_connector": self.cli.db_connector,
                 },
                 inject_callback=self.cli.catalogs_callback,
