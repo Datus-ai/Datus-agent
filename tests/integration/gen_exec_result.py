@@ -130,7 +130,7 @@ def save_results_to_csv(results, output_path):
     else:
         # Handle error cases
         if results.error:
-            error_df = pd.DataFrame([["error", results["error"]]], columns=["status", "message"])
+            error_df = pd.DataFrame([["error", results.error]], columns=["status", "message"])
         else:
             # there are columns but no data, pandas dataframe will ignore header when comparing,
             # so column names don't matter
@@ -219,12 +219,12 @@ def main():
                     results = sql_connector.execute_arrow(task_data["sql"])
                     output_path = os.path.join(gold_dir, f"{task_id}.csv")
 
-                    if results["success"]:
-                        print(f"Task {task_id} completed, returned {len(results['results'])} rows")
+                    if results.success:
+                        print(f"Task {task_id} completed, returned {results.row_count} rows")
                         save_results_to_csv(results, output_path)
 
                     else:
-                        print(f"Task {task_id} failed: {results['error']}")
+                        print(f"Task {task_id} failed: {results.error}")
 
                 except Exception as e:
                     print(f"Task {task_id} processing failed: {e}")
