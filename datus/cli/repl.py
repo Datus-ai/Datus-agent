@@ -190,8 +190,6 @@ class DatusCLI:
                 ]
             ),
             complete_while_typing=True,
-            mouse_support=True,
-            enable_suspend=False,
         )
 
     # Create combined completer
@@ -221,11 +219,11 @@ class DatusCLI:
                 # Check if we have a selected catalog path to inject
                 prompt_text = "Datus-sql> "
                 # TODO use selected_catalog_path
-                if self.selected_catalog_path:
-                    # prompt_text = f"Datus-sql> {self.selected_catalog_path}"
-                    selected_path = self.selected_catalog_path
-                    self.console.print(f"Selected catalog: {selected_path}")
-                    self.selected_catalog_path = None
+                # if self.selected_catalog_path:
+                #     # prompt_text = f"Datus-sql> {self.selected_catalog_path}"
+                #     selected_path = self.selected_catalog_path
+                #     self.console.print(f"Selected catalog: {selected_path}")
+                #     self.selected_catalog_path = None
 
                 # Get user input
                 user_input = self.session.prompt(

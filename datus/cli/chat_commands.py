@@ -171,21 +171,17 @@ class ChatCommands:
 
     def _show_detail(self, actions: List[ActionHistory]):
         """Show detailed action information with user confirmation."""
-        while True:
-            choice = self.cli._prompt_input(
-                "Would you like to check the details?",
-                choices=["y", "n"],
-                default="y",
-            )
-            # modify the node input
-            if choice == "y":
-                from datus.cli.screen.action_display_app import ChatApp
+        choice = self.cli._prompt_input(
+            "Would you like to check the details?",
+            choices=["y", "n"],
+            default="y",
+        )
+        # modify the node input
+        if choice == "y":
+            from datus.cli.screen.action_display_app import ChatApp
 
-                app = ChatApp(actions)
-                app.run()
-                break
-            else:
-                return
+            app = ChatApp(actions)
+            app.run()
 
     def _display_sql_with_copy(self, sql: str):
         """
