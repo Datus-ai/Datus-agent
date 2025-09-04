@@ -1,8 +1,11 @@
 import json
 import sys
+import textwrap
 from typing import List, Optional
 
 import pyperclip
+from rich.syntax import Syntax
+from rich.table import Table
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalGroup, VerticalScroll
 from textual.screen import Screen
@@ -12,6 +15,7 @@ from textual.widgets import Button, Collapsible, DataTable, Footer, Header, Labe
 from datus.cli.action_history_display import BaseActionContentGenerator
 from datus.cli.screen.base_app import BaseApp
 from datus.schemas.action_history import ActionHistory, ActionRole
+from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -56,7 +60,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             content_widgets.extend(self._create_tool_content(action, index))
         elif action.role == ActionRole.USER:
             start = action.messages.index(":")
-            content_widgets.append(TextArea(f"{title}:\n{action.messages[start + 2:]}", read_only=True))
+            content_widgets.append(TextArea(f"{action.messages[start + 2:]}", read_only=True))
         else:
             content_widgets.extend(self._create_non_tool_content(action, index))
 
@@ -98,9 +102,6 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 widgets.append(TextArea(str(action.output)))
         return widgets
 
-    def _create_sql_widget(self, sql: str) -> Widget:
-        return TextArea(sql, read_only=True, language="sql", line_number_start=0, theme="monokai")
-
     def _create_params_table(self, input_data: dict, action_index: int) -> List[Widget]:
         """Create table for parameters"""
         if "arguments" not in input_data:
@@ -120,7 +121,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         if "sql" in args and len(args) == 1:
             return self._create_sql_widgets(args, action_index)
         result.append(Static("[bold]Parameters[/bold]", classes="section-title"))
-        table = DataTable(show_header=True, name="Parameters")
+        table = DataTable(show_header=True, name="Parameters", show_row_labels=False)
         table.add_column("Parameter")
         table.add_column("Value")
         has_sql = False
@@ -139,7 +140,6 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
 
     def _create_sql_widgets(self, input_data: dict, action_index: int) -> List:
         """Create SQL display with syntax highlighting and copy button"""
-        widgets = []
 
         # Look for SQL in arguments
         if "arguments" in input_data and isinstance(input_data["arguments"], dict):
@@ -149,25 +149,30 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
 
         if isinstance(args, str):
             try:
-                args = json.loads(args)
+                json_obj = llm_result2json(args)
+                if not args:
+                    return [TextArea(args, read_only=True, language="markdown", line_number_start=0, theme="monokai")]
             except Exception:
                 return [TextArea(args, read_only=True, language="markdown", line_number_start=0, theme="monokai")]
+        else:
+            json_obj = args
 
-        sql_content = args.get("sql") or args.get("query")
+        sql_content = json_obj.get("sql") or json_obj.get("query")
+        return self._do_create_sql_widget(sql_content, action_index)
 
-        if sql_content:
-            # SQL syntax highlighting
-
-            sql_widget = TextArea(sql_content, read_only=True, language="sql", line_number_start=0, theme="monokai")
-            widgets.append(sql_widget)
-            # Copy button
-            copy_button = Button("📋copy", id=f"copy_sql_{action_index}")
-            button_container = Horizontal(
-                Static(""), copy_button, classes="button-container"  # Placeholder, push the button to the right
-            )
-            self.sql_dict[str(action_index)] = sql_content
-            widgets.append(button_container)
-
+    def _do_create_sql_widget(self, sql_content: str, action_index: int) -> List[Widget]:
+        if not sql_content:
+            return []
+        widgets = []
+        sql_widget = TextArea(sql_content, read_only=True, language="sql", line_number_start=0, theme="monokai")
+        widgets.append(sql_widget)
+        # Copy button
+        copy_button = Button("📋copy", id=f"copy_sql_{action_index}")
+        button_container = Horizontal(
+            Static(""), copy_button, classes="button-container"  # Placeholder, push the button to the right
+        )
+        self.sql_dict[str(action_index)] = sql_content
+        widgets.append(button_container)
         return widgets
 
     def get_sql(self, action_id) -> str:
@@ -183,7 +188,13 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         # Normalize output_data to dict format
         if isinstance(output_data, str):
             try:
-                output_data = json.loads(output_data)
+                output_data = llm_result2json(output_data)
+                if not output_data:
+                    return [
+                        TextArea(
+                            action.output, read_only=True, language="markdown", line_number_start=0, theme="monokai"
+                        )
+                    ]
             except Exception:
                 result.append(
                     TextArea(output_data, read_only=True, language="markdown", line_number_start=0, theme="monokai")
@@ -210,43 +221,45 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 result.append(TextArea(data, language="markdown", theme="monokai"))
                 return result
 
+        function_name = str(action.input.get("function_name", "unknown"))
         if role == ActionRole.TOOL:
-            function_name = action.input.get("function_name", "unknown")
+            if "success" in data:
+                if data["success"] == 0:
+                    if "error" in data:
+                        result.append(Label(f"[bold red]Execute Failed: {data['error']}[/]"))
+                    else:
+                        result.append(TextArea(json.dumps(data, indent=2), language="json", theme="monokai"))
+                    return result
             if function_name == "read_query":
                 #  original_rows, original_columns, is_compressed, and compressed_data
-                if data.get("success", 0) == 1:
-                    data = data["result"]
-                    is_compressed = data.get("is_compressed", False)
-                    compressed_data = str(data.get("compressed_data"))
-                    if not is_compressed:
-                        result.append(TextArea(compressed_data, language="markdown", theme="monokai"))
-                    else:
-                        result.append(
-                            TextArea(
-                                f"""
-                    {compressed_data}
-
-                    ---
-
-                    **Total Rows**: {data.get("original_rows")}
-
-                    ---
-
-                    **Columns**: {', '.join(data.get("original_columns", []))}
-                    """,
-                                language="markdown",
-                                theme="monokai",
-                            )
-                        )
-                elif data.get("error"):
-                    result.append(Label(f"[bold red]Execute Failed: {data['error']}[/]"))
+                data = data["result"]
+                is_compressed = data.get("is_compressed", False)
+                compressed_data = str(data.get("compressed_data"))
+                if not is_compressed:
+                    result.append(TextArea(compressed_data, language="markdown", theme="monokai"))
                 else:
-                    result.append(TextArea(json.dumps(data, indent=2), language="json", theme="monokai"))
+                    result.append(
+                        TextArea(
+                            textwrap.dedent(
+                                f"""
+                {compressed_data}
 
+                ---
+
+                **Total Rows**: {data.get("original_rows")}
+
+                ---
+
+                **Columns**: {', '.join(data.get("original_columns", []))}
+                """
+                            ),
+                            language="markdown",
+                            theme="monokai",
+                        )
+                    )
                 return result
 
         # Extract result items
-        items = None
         if "text" in data and isinstance(data["text"], str):
             try:
                 cleaned_text = data["text"].replace("'", '"').replace("None", "null")
@@ -254,44 +267,102 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             except Exception:
                 result.append(TextArea(data["text"], language="markdown", theme="monokai"))
                 return result
-        elif "result" in data and isinstance(data["result"], list):
+        elif "result" in data:
             items = data["result"]
-
-        if not items or len(items) == 0:
+        else:
             result.append(TextArea(json.dumps(data, indent=2), language="json", theme="monokai"))
             return result
-        if not isinstance(items, list):
+
+        if not items:
+            result.append(Static("[bold yellow]No Result[/]"))
+            return result
+        if isinstance(items, dict):
+            if function_name == "search_table_metadata":
+                metadata = items.get("metadata", [])
+                if not metadata:
+                    result.append(Static("[bold]Table metadata not found[/bold]"))
+                else:
+                    result.append(self._build_rich_table_by_list("Table Metadata", metadata))
+                sample_data = items.get("sample_data", [])
+                if not sample_data:
+                    result.append(Static("[bold]Sample rows not found[/bold]"))
+                else:
+                    result.append(self._build_rich_table_by_list("Sample Data", sample_data))
+                return result
             result.append(TextArea(json.dumps(items, indent=2), language="json", theme="monokai"))
             return result
-
+        if len(items) == 0:
+            result.append(Static("[bold yellow]No Result[/]"))
+            return result
         # Create table
         first_item = items[0]
         if not isinstance(first_item, dict):
             return [TextArea(json.dumps(items, indent=2), language="json", theme="monokai")]
 
-        table = DataTable(show_header=True, name="Output")
+        table = (
+            self._build_table_by_list(table_name="", data=items)
+            if not function_name.startswith("search_")
+            else self._build_rich_table_by_list(table_name="", data=items)
+        )
+        result.append(table)
+        return result
+
+    def _build_table_by_list(self, table_name: str, data: List[dict], show_header: bool = True) -> Widget:
+        first_item = data[0]
+        table = DataTable(show_header=show_header, name=table_name, show_row_labels=False)
 
         # Add columns
         for key in first_item.keys():
             table.add_column(str(key).title())
-
-        # Add rows (limit to 10)
-        # max_rows = min(len(items), 10)
-        for item in items:
+        for item in data:
             if isinstance(item, dict):
                 row_values = []
                 for key in first_item.keys():
                     value = item.get(key, "")
                     row_values.append(str(value))
                 table.add_row(*row_values)
-        result.append(table)
-        return result
+        return table
+
+    def _build_rich_table_by_list(self, table_name: str, data: List[dict], show_header: bool = True) -> Widget:
+        first_item = data[0]
+
+        table = Table(
+            *first_item.keys(),
+            title=table_name,
+            show_header=show_header,
+            highlight=True,
+        )
+        for item in data:
+            if isinstance(item, dict):
+                row_values = []
+                for key in first_item.keys():
+                    value = item.get(key, "")
+                    if key == "definition" or "sql" in key:
+                        row_values.append(Syntax(str(value), "sql", theme="monokai", word_wrap=True))
+                    else:
+                        row_values.append(str(value))
+                table.add_row(*row_values)
+        return Static(table)
+
+    def _build_rich_table_by_dict(self, table_name: str, data: dict, show_header: bool = False) -> Widget:
+        table = Table(
+            *["Key", "Value"],
+            title=table_name,
+            show_header=show_header,
+            highlight=True,
+        )
+        for k, v in data.items():
+            table.add_row(str(k), str(v))
+
+        return Static(table)
 
     def _create_json_display(self, data, action_index: int) -> List[Widget]:
         """Create JSON syntax highlighting"""
         try:
             if isinstance(data, str):
-                json_obj = json.loads(data)
+                json_obj = llm_result2json(data)
+                if not json_obj:
+                    return [TextArea(str(data), language="markdown", theme="monokai", line_number_start=0)]
             elif isinstance(data, dict) or isinstance(data, list):
                 json_obj = data
             else:
@@ -299,28 +370,30 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         except Exception as e:
             logger.debug(f"parse json failed, use markdown to show: reason={str(e)}, data={data}")
             return [TextArea(str(data), language="markdown", theme="monokai", line_number_start=0)]
-
         if "raw_output" in json_obj:
             output_data = json_obj["raw_output"]
             try:
-                output_data = json.loads(output_data)
-                if "sql" in output_data:
-                    return self._create_sql_widgets(json_obj["sql"], action_index)
-                else:
+                output_data = llm_result2json(output_data)
+                if not output_data:
                     return [
-                        TextArea(
-                            json.dumps(output_data, indent=2), language="json", theme="monokai", line_number_start=0
-                        )
+                        TextArea(str(json_obj["raw_output"]), language="markdown", theme="monokai", line_number_start=0)
                     ]
-            except Exception:
-                return [TextArea(str(output_data), language="markdown", theme="monokai", line_number_start=0)]
+            except Exception as e:
+                logger.debug(f"parse json failed, use markdown to show: reason={str(e)}, data={output_data}")
+                return [
+                    TextArea(str(json_obj["raw_output"]), language="markdown", theme="monokai", line_number_start=0)
+                ]
+        else:
+            output_data = json_obj
         result = []
-        if "response" not in json_obj and "sql" not in json_obj:
-            return [TextArea(json.dumps(json_obj, indent=2), language="json", theme="monokai", line_number_start=0)]
-        if "response" in json_obj:
-            result.append(TextArea(json_obj["response"], language="markdown", theme="monokai", line_number_start=0))
-        if "sql" in json_obj:
-            result.extend(self._create_sql_widgets(json_obj, action_index))
+        other_data = {}
+        for key, value in output_data.items():
+            if key == "sql" or key == "query":
+                result.extend(self._do_create_sql_widget(value, action_index))
+            else:
+                other_data[key] = value
+        if other_data:
+            result.append(self._build_rich_table_by_dict("", other_data, show_header=False))
         return result
 
     def _is_json_like(self, data) -> bool:
@@ -328,7 +401,8 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         if isinstance(data, (dict, list)):
             return True
         if isinstance(data, str):
-            return data.strip().startswith("[") or data.strip().startswith("{")
+            data = data.strip()
+            return data.startswith("[") or data.startswith("{") or data.startswith("```json")
         return False
 
     def generate_collapsible_actions(self, actions: List[ActionHistory]) -> List[Widget]:
@@ -406,12 +480,24 @@ class ChatActionScreen(Screen):
     TextArea {
         border: round $primary;
     }
+
+    DataTable {
+        height: auto;
+    }
+
+    DataTable > .datatable--cursor {
+        height: auto;
+    }
+
+    DataTable .datatable--row {
+        height: auto;
+        min-height: 1;
+    }
     """
     # Define different key bindings based on operating system
     if sys.platform == "darwin":  # macOS
         BINDINGS = [
-            Binding("cmd+c", "copy_text", "Copy Selection", priority=True),
-            Binding("escape", "exit", "Exit"),
+            Binding("meta+c", "copy_text", "Copy Selection", priority=True),
             Binding("ctrl+q", "exit", "Exit"),
             Binding("e", "toggle_all", "Toggle All"),
         ]
@@ -419,7 +505,6 @@ class ChatActionScreen(Screen):
         BINDINGS = [
             Binding("ctrl+shift+c", "copy_text", "Selection", priority=True),
             Binding("escape", "exit", "Exit"),
-            Binding("ctrl+q", "exit", "Exit"),
             Binding("e", "toggle_all", "Toggle All"),
         ]
 
@@ -548,7 +633,6 @@ class ChatApp(BaseApp):
     BINDINGS = [
         Binding("escape", "exit", "Exit"),
         Binding("q", "exit", "Exit"),
-        Binding("ctrl+q", "exit", "Exit"),
     ]
 
     def __init__(self, actions_list: List[ActionHistory], **kwargs):

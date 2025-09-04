@@ -336,6 +336,12 @@ class ActionContentGenerator(BaseActionContentGenerator):
             except Exception:
                 return "✓ Completed (preview unavailable)"
         items = None
+        if "success" in data and not data["success"]:
+            if "error" in data:
+                error = data["error"] if len(data["error"]) <= 20 else data["error"][:20] + "..."
+                return f"✗ Failed:({error})"
+            return "✗ Failed"
+
         # Parse data.text for counting items or showing text preview
         if "text" in data and isinstance(data["text"], str):
             text_content = data["text"]
@@ -348,9 +354,8 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 if self.enable_truncation and len(text_content) > 50:
                     return f"{text_content[:50]}..."
                 return text_content
-        elif "result" in data and isinstance(data["result"], list):
+        elif "result" in data:
             items = data["result"]
-
         if items and isinstance(items, list):
             count = len(items)
             # Return appropriate label based on function name
@@ -358,11 +363,22 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 return f"✓ {count} tables"
             elif function_name in ["describe_table"]:
                 return f"✓ {count} columns"
-            elif function_name in ["read_query", "query"]:
-                return f"✓ {count} rows"
             else:
                 return f"✓ {count} items"
-
+        if function_name in ["read_query", "query"] and "original_rows" in items:
+            return f"✓ {items['original_rows']} rows"
+        if function_name == "search_table_metadata":
+            row_desc = "0 tables " if "metadata" not in items else f"{len(items['metadata'])} tables"
+            sample_desc = "0 sample rows " if "sample_data" not in items else f"{len(items['sample_data'])} sample rows"
+            return f"✓ {row_desc} and {sample_desc}"
+        if function_name == "search_metrics":
+            return f"✓ {len(items)} metrics"
+        if function_name == "search_historical_sql":
+            return f"✓ {len(items)} historical SQLs"
+        if function_name == "search_external_knowledge":
+            return f"✓ {len(items)} extensions of knowledge"
+        if function_name == "search_documents":
+            return f"✓ {len(items)} documents"
         # Generic fallback
         if "success" in output_data:
             return "✓ Success" if output_data["success"] else "✗ Failed"
