@@ -19,11 +19,11 @@ agent:
     base_path: ~/.datus/data #rag storage base path, meta data path is 'data/datus_db_{namespace}'
 
   # benchmark configuration
-  benchmark:
-    bird_dev: # this is namespace of benchmark
-      benchmark_path: benchmark/bird/dev_20240627
-    spider2:
-      benchmark_path: benchmark/spider2/spider2-snow
+  # benchmark:
+  #   bird_dev: # this is namespace of benchmark
+  #     benchmark_path: benchmark/bird/dev_20240627
+  #   spider2:
+  #     benchmark_path: benchmark/spider2/spider2-snow
 
   namespace:
     spidersnow:
@@ -32,9 +32,9 @@ agent:
       account: ${SNOWFLAKE_ACCOUNT}  
       warehouse: ${SNOWFLAKE_WAREHOUSE}
       password: ${SNOWFLAKE_PASSWORD}
-    bird_sqlite:
-      type: sqlite
-      path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
+    # bird_sqlite:
+    #  type: sqlite
+    #  path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
     local_duckdb:
       type: duckdb
       name: demo

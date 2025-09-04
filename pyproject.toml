@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.1.5a1" # this is a alpha version, use for testing only
+version = "0.1.12-rc1" # this is a alpha version, use for testing only
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -101,6 +101,7 @@ exclude = ["tests*", "benchmark*", "docs*"]
 [tool.setuptools.package-data]
 "*" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt", "*.pyc", "*.j2"]
 "datus" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt"]
+"conf" = ["*.yml.*"]
 "datus.prompts" = ["*.txt", "*.md", "*.j2"]
 "datus.prompts.prompt_templates" = ["*.j2"]
 
