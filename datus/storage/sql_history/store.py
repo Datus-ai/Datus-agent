@@ -223,7 +223,9 @@ class SqlHistoryRAG:
         )
 
         if search_results:
-            result_list = search_results.to_pylist()
+            result_list = search_results.select(
+                ["name", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags"]
+            ).to_pylist()
             logger.info(f"Found {len(result_list)} SQL history results for query: {query_text}")
             return result_list
         else:

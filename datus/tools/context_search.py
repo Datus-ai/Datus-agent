@@ -49,12 +49,16 @@ class ContextSearchTools:
         - Locate tables for SQL query development
         - Understand what tables are available in a database
 
+        **Application Guidance**: Analyze results: 1. If table matches (via definition/sample_data), use it. 2.
+        If partitioned (e.g., date-based in definition), explore correct partition via DBTools. 3. If no match,
+        then use DBTools for broader exploration.
+
         Args:
             query_text: Natural language description of what you're looking for (e.g., "customer data",
              "sales transactions", "user profiles")
-            catalog_name: Optional catalog name to filter search results. Leave empty if not specified in context.
-            database_name: Optional database name to filter search results. Leave empty if not specified in context.
-            schema_name: Optional schema name to filter search results. Leave empty if not specified in context.
+            catalog_name: Optional catalog name to filter search results.
+            database_name: Optional database name to filter search results.
+            schema_name: Optional schema name to filter search results.
             top_n: Maximum number of results to return (default 5)
 
         Returns:
@@ -92,7 +96,11 @@ class ContextSearchTools:
 
             if sample_values:
                 result_dict["sample_data"] = sample_values.select(
-                    ["identifier", "table_type", "sample_rows"]
+                    [
+                        "identifier",
+                        "table_type",
+                        "sample_rows",
+                    ]
                 ).to_pylist()
             return FuncToolResult(success=1, error=None, result=result_dict)
         except Exception as e:
@@ -101,9 +109,9 @@ class ContextSearchTools:
     def search_metrics(
         self,
         query_text: str,
-        domain: str,
-        layer1: str,
-        layer2: str,
+        domain: str = "",
+        layer1: str = "",
+        layer2: str = "",
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
@@ -119,15 +127,20 @@ class ContextSearchTools:
         - Locate metrics for specific business domains
         - Understand how certain metrics are calculated
 
+        **Application Guidance**: If results are found, MUST prioritize reusing the 'sql_query' directly or with minimal
+         adjustments (e.g., add date filters). Integrate 'constraint' as mandatory filters in SQL.
+         Example: If metric is "revenue" with sql_query="SELECT SUM(sales) FROM orders" and
+         constraint="WHERE date > '2020'", use or adjust to "SELECT SUM(sales) FROM orders WHERE date > '2023'".
+
         Args:
             query_text: Natural language description of the metric you're looking for (e.g., "revenue metrics",
                 "customer engagement", "conversion rates")
-            domain: Business domain to search within (e.g., "sales", "marketing", "finance")
-            layer1: Primary semantic layer for categorization
-            layer2: Secondary semantic layer for fine-grained categorization
-            catalog_name: Optional catalog name to filter metrics. Leave empty if not specified.
-            database_name: Optional database name to filter metrics. Leave empty if not specified.
-            schema_name: Optional schema name to filter metrics. Leave empty if not specified.
+            domain: Business domain to search within (e.g., "sales", "marketing", "finance").
+            layer1: Primary semantic layer for categorization.
+            layer2: Secondary semantic layer for fine-grained categorization.
+            catalog_name: Optional catalog name to filter metrics.
+            database_name: Optional database name to filter metrics.
+            schema_name: Optional schema name to filter metrics.
             top_n: Maximum number of results to return (default 5)
 
         Returns:
@@ -158,11 +171,16 @@ class ContextSearchTools:
         """
         Perform a vector search to match historical SQL queries by intent.
 
+        **Application Guidance**: If matches are found, MUST reuse the 'sql' directly if it aligns perfectly, or adjust
+        minimally (e.g., change table names or add conditions). Avoid generating new SQL.
+        Example: If historical SQL is "SELECT * FROM users WHERE active=1" for "active users", reuse or adjust to
+        "SELECT * FROM users WHERE active=1 AND join_date > '2023'".
+
         Args:
             query_text: The natural language query text representing the desired SQL intent.
-            domain: Domain name for the historical SQL intent.
-            layer1: Semantic Layer1 for the historical SQL intent
-            layer2: Semantic Layer2 for the historical SQL intent
+            domain: Domain name for the historical SQL intent. Leave empty if not specified in context.
+            layer1: Semantic Layer1 for the historical SQL intent. Leave empty if not specified in context.
+            layer2: Semantic Layer2 for the historical SQL intent. Leave empty if not specified in context.
             top_n: The number of top results to return (default 5).
 
         Returns:
@@ -201,9 +219,10 @@ class ContextSearchTools:
         Args:
             query_text: Natural language query about business terms or concepts (e.g., "customer lifetime value",
                 "churn rate definition", "fiscal year")
-            domain: Business domain to search within (e.g., "finance", "marketing", "operations")
-            layer1: Primary semantic layer for categorization
-            layer2: Secondary semantic layer for fine-grained categorization
+            domain: Business domain to search within (e.g., "finance", "marketing", "operations").
+                Leave empty if not specified in context.
+            layer1: Primary semantic layer for categorization. Leave empty if not specified in context.
+            layer2: Secondary semantic layer for fine-grained categorization. Leave empty if not specified in context.
             top_n: Maximum number of results to return (default 5)
 
         Returns:
@@ -216,7 +235,13 @@ class ContextSearchTools:
             result = self.ext_knowledge_rag.search_knowledge(
                 query_text=query_text, domain=domain, layer1=layer1, layer2=layer2, top_n=top_n
             )
-            return FuncToolResult(success=1, error=None, result=result.to_pylist())
+            return FuncToolResult(
+                success=1,
+                error=None,
+                result=result.select(
+                    ["domain", "layer1", "layer2", "terminology", "explanation", "created_at"]
+                ).to_pylist(),
+            )
         except Exception as e:
             logger.error(f"Failed to search external knowledge for query '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))
