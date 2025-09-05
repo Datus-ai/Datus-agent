@@ -87,12 +87,18 @@ class ContextSearchTools:
                         "table_type",
                         "definition",
                         "identifier",
+                        "_distance",
                     ]
                 ).to_pylist()
 
             if sample_values:
                 result_dict["sample_data"] = sample_values.select(
-                    ["identifier", "table_type", "sample_rows"]
+                    [
+                        "identifier",
+                        "table_type",
+                        "sample_rows",
+                        "_distance",
+                    ]
                 ).to_pylist()
             return FuncToolResult(success=1, error=None, result=result_dict)
         except Exception as e:
@@ -101,9 +107,9 @@ class ContextSearchTools:
     def search_metrics(
         self,
         query_text: str,
-        domain: str,
-        layer1: str,
-        layer2: str,
+        domain: str = "",
+        layer1: str = "",
+        layer2: str = "",
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
@@ -122,9 +128,10 @@ class ContextSearchTools:
         Args:
             query_text: Natural language description of the metric you're looking for (e.g., "revenue metrics",
                 "customer engagement", "conversion rates")
-            domain: Business domain to search within (e.g., "sales", "marketing", "finance")
-            layer1: Primary semantic layer for categorization
-            layer2: Secondary semantic layer for fine-grained categorization
+            domain: Business domain to search within (e.g., "sales", "marketing", "finance").
+                Leave empty if not specified in context.
+            layer1: Primary semantic layer for categorization. Leave empty if not specified in context.
+            layer2: Secondary semantic layer for fine-grained categorization. Leave empty if not specified in context.
             catalog_name: Optional catalog name to filter metrics. Leave empty if not specified.
             database_name: Optional database name to filter metrics. Leave empty if not specified.
             schema_name: Optional schema name to filter metrics. Leave empty if not specified.
@@ -160,9 +167,9 @@ class ContextSearchTools:
 
         Args:
             query_text: The natural language query text representing the desired SQL intent.
-            domain: Domain name for the historical SQL intent.
-            layer1: Semantic Layer1 for the historical SQL intent
-            layer2: Semantic Layer2 for the historical SQL intent
+            domain: Domain name for the historical SQL intent. Leave empty if not specified in context.
+            layer1: Semantic Layer1 for the historical SQL intent. Leave empty if not specified in context.
+            layer2: Semantic Layer2 for the historical SQL intent. Leave empty if not specified in context.
             top_n: The number of top results to return (default 5).
 
         Returns:
@@ -201,9 +208,10 @@ class ContextSearchTools:
         Args:
             query_text: Natural language query about business terms or concepts (e.g., "customer lifetime value",
                 "churn rate definition", "fiscal year")
-            domain: Business domain to search within (e.g., "finance", "marketing", "operations")
-            layer1: Primary semantic layer for categorization
-            layer2: Secondary semantic layer for fine-grained categorization
+            domain: Business domain to search within (e.g., "finance", "marketing", "operations").
+                Leave empty if not specified in context.
+            layer1: Primary semantic layer for categorization. Leave empty if not specified in context.
+            layer2: Secondary semantic layer for fine-grained categorization. Leave empty if not specified in context.
             top_n: Maximum number of results to return (default 5)
 
         Returns:
@@ -216,7 +224,11 @@ class ContextSearchTools:
             result = self.ext_knowledge_rag.search_knowledge(
                 query_text=query_text, domain=domain, layer1=layer1, layer2=layer2, top_n=top_n
             )
-            return FuncToolResult(success=1, error=None, result=result.to_pylist())
+            return FuncToolResult(
+                success=1,
+                error=None,
+                result=result.select.to_pylist(),
+            )
         except Exception as e:
             logger.error(f"Failed to search external knowledge for query '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))

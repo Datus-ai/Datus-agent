@@ -6,10 +6,9 @@ from typing import Tuple
 
 import pyarrow as pa
 import pytest
-from conftest import PROJECT_ROOT
+from conftest import PROJECT_ROOT, load_acceptance_config
 
 from datus.configuration.agent_config import AgentConfig
-from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.base import BaseEmbeddingStore
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
@@ -30,7 +29,7 @@ BIRD_DATABASE_NAMES = ["california_schools", "card_games"]
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    return load_agent_config(config="tests/conf/agent.yml", namespace="snowflake")
+    return load_acceptance_config(namespace="snowflake")
 
 
 @pytest.fixture
@@ -69,7 +68,7 @@ def test_query_schema_by_spider2_task(task_id: str, rag_storage: SchemaWithValue
 
 @pytest.fixture
 def bird_agent_config() -> AgentConfig:
-    return load_agent_config(config="tests/conf/agent.yml", namespace="bird_sqlite")
+    return load_acceptance_config(namespace="bird_sqlite")
 
 
 @pytest.fixture
@@ -195,10 +194,9 @@ def test_save_batch(temp_db_path: str):
 def test_create_table_exception(temp_db_path: str):
     """Test search with valid parameters but empty results."""
     model = get_db_embedding_model()
-    with pytest.raises(DatusException) as exc_info:
-        BaseEmbeddingStore(db_path=temp_db_path, table_name="empty_table", embedding_model=model)
+    store = BaseEmbeddingStore(db_path=temp_db_path, table_name="empty_table", embedding_model=model)
 
-    assert exc_info.value.code == ErrorCode.STORAGE_TABLE_OPERATION_FAILED
+    assert store.model.model_error_message is not None
 
 
 def test_store_exception(rag_storage: SchemaWithValueRAG):

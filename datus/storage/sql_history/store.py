@@ -220,6 +220,7 @@ class SqlHistoryRAG:
             query_text,
             top_n=top_n,
             where=where_clause,
+            select_fields=["name", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags"],
         )
 
         if search_results:
