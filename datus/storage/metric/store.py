@@ -223,7 +223,7 @@ class SemanticMetricsRAG:
                 semantic_names_set = semantic_search_results["semantic_model_name"].unique()
 
                 return (
-                    metric_search_results.filter(
+                    metric_search_results.select(["name", "description", "constraint", "sql_query"]).filter(
                         pc.is_in(metric_search_results["semantic_model_name"], semantic_names_set)
                     )
                 ).to_pylist()
