@@ -154,7 +154,7 @@ def reasoning_sql_with_mcp(
                 db_path = db_config.uri.replace("sqlite:///", "")
             else:
                 db_path = db_config.uri
-            db_path = str(Path(db_path).expanduser())
+            db_path = str(Path(db_path).expanduser().resolve())
         mcp_server = MCPServer.create_sqlite_mcp_server(db_path=db_path)
     else:
         mcp_server = MCPServer.get_db_mcp_server(db_config)
