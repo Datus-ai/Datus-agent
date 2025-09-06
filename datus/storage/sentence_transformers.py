@@ -79,6 +79,7 @@ class SentenceTransformerEmbeddings(TextEmbeddingFunction):
             list(texts),
             convert_to_numpy=True,
             normalize_embeddings=self.normalize,
+            show_progress_bar=False,
         ).tolist()
 
     @weak_lru(maxsize=1)
