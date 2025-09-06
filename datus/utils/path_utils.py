@@ -4,6 +4,9 @@ from pathlib import Path
 from typing import Dict, List
 
 from datus.utils.constants import DBType
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 def has_glob_pattern(path: str) -> bool:
@@ -58,3 +61,49 @@ def get_file_name(path: str) -> str:
     if not suffix:
         return path.name
     return path.name[: -len(path.suffix)]
+
+
+def get_file_fuzzy_matches(text: str, path: str = ".", max_matches: int = 5) -> List[str]:
+    """Get fuzzy matches for files.
+
+    Args:
+        text: Text to match
+        path: Root path to search from
+        max_matches: Maximum number of matches to return
+
+    Returns:
+        List of relative file paths that match
+    """
+    results = []
+
+    root_path = Path(path)
+    if not root_path.exists():
+        return results
+
+    # Use recursive glob pattern to search all subdirectories
+    patterns = [
+        f"*{text}*",  # Files in current directory
+        f"**/*{text}*",  # Files in any subdirectory containing text
+        f"*{text}*/**/*",  # Files in subdirectories of folders containing text
+    ]
+
+    seen_files = set()  # To avoid duplicates
+
+    for pattern in patterns:
+        try:
+            for file_path in root_path.glob(pattern):
+                if file_path.is_file():
+                    relative_path = str(file_path.relative_to(root_path))
+
+                    # Check if text matches (case-insensitive)
+                    if text.lower() in relative_path.lower() and relative_path not in seen_files:
+                        results.append(relative_path)
+                        seen_files.add(relative_path)
+
+                        if len(results) >= max_matches:
+                            return results
+        except Exception as e:
+            logger.debug(f"Error with pattern {pattern}: {e}")
+            continue
+
+    return results
