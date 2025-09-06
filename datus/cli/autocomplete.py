@@ -2,9 +2,9 @@
 Autocomplete module for Datus CLI.
 Provides SQL keyword, table name, and column name autocompletion.
 """
-
+import re
 from abc import abstractmethod
-from typing import Any, Dict, Iterable, List, Union
+from typing import Any, Dict, Iterable, List, Tuple, Union
 
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
@@ -13,6 +13,7 @@ from pygments.styles.default import DefaultStyle
 from pygments.token import Token
 
 from datus.configuration.agent_config import AgentConfig
+from datus.schemas.node_models import HistoricalSql, Metric, TableSchema
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.path_utils import get_file_fuzzy_matches
@@ -424,7 +425,7 @@ class CustomPygmentsStyle(DefaultStyle):
 class DynamicAtReferenceCompleter(Completer):
     def __init__(self, max_completions=10):
         self._data: Union[Dict[str, Any], List[str]] = {}
-        self.full_dict: Dict[str, Any] = {}
+        self.flatten_data: Dict[str, Any] = {}
         self.max_level = 0
         self.max_completions = max_completions
 
@@ -437,7 +438,7 @@ class DynamicAtReferenceCompleter(Completer):
         if not text:
             return []
         result = []
-        for k in self.full_dict.keys():
+        for k in self.flatten_data.keys():
             if text in k:
                 result.append(k)
                 if len(result) == 5:
@@ -546,9 +547,10 @@ class TableCompleter(DynamicAtReferenceCompleter):
             for table, definition, table_type in zip(
                 table_column, schema_table["definition"], schema_table["table_type"]
             ):
-                self.full_dict[table.as_py()] = {
-                    "table_type": table_type,
-                    "definition": definition,
+                self.flatten_data[table.as_py()] = {
+                    "table_name": table.as_py(),
+                    "table_type": table_type.as_py(),
+                    "definition": definition.as_py(),
                 }
             return table_column.to_pylist()
 
@@ -573,7 +575,11 @@ class TableCompleter(DynamicAtReferenceCompleter):
                         schema_table["table_type"],
                     ):
                         insert_into_dict(data, [catalog.as_py(), database.as_py(), schema.as_py()], table.as_py())
-                        self.full_dict[f"{catalog}.{database}.{schema}.{table}"] = {
+                        self.flatten_data[f"{catalog}.{database}.{schema}.{table}"] = {
+                            "catalog_name": catalog.as_py(),
+                            "database_name": database.as_py(),
+                            "schema_name": schema.as_py(),
+                            "table_name": table.as_py(),
                             "table_type": table_type,
                             "definition": definition.as_py(),
                         }
@@ -592,7 +598,10 @@ class TableCompleter(DynamicAtReferenceCompleter):
                         schema_column["definition"],
                     ):
                         insert_into_dict(data, [catalog.as_py(), database.as_py()], table.as_py())
-                        self.full_dict[f"{catalog}.{database}.{table}"] = {
+                        self.flatten_data[f"{catalog}.{database}.{table}"] = {
+                            "catalog_name": catalog.as_py(),
+                            "database_name": database.as_py(),
+                            "table_name": table.as_py(),
                             "table_type": table_type,
                             "definition": definition.as_py(),
                         }
@@ -604,8 +613,11 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     catalog_column, schema_column, table_column, schema_table["definition"], schema_table["table_type"]
                 ):
                     insert_into_dict(data, [catalog.as_py(), schema.as_py()], table.as_py())
-                    self.full_dict[f"{catalog}.{schema}.{table}"] = {
-                        "table_type": table_type,
+                    self.flatten_data[f"{catalog}.{schema}.{table}"] = {
+                        "catalog_name": catalog.as_py(),
+                        "schema_name": schema.as_py(),
+                        "table_name": table.as_py(),
+                        "table_type": table_type.as_py(),
                         "definition": definition.as_py(),
                     }
 
@@ -617,7 +629,10 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     database_column, schema_column, table_column, schema_table["definition"], schema_table["definition"]
                 ):
                     insert_into_dict(data, [database.as_py(), schema.as_py()], table.as_py())
-                    self.full_dict[f"{database}.{schema}.{table}"] = {
+                    self.flatten_data[f"{database}.{schema}.{table}"] = {
+                        "database_name": database.as_py(),
+                        "schema_name": schema.as_py(),
+                        "table_name": table.as_py(),
                         "table_type": table_type,
                         "definition": definition.as_py(),
                     }
@@ -628,7 +643,9 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     database_column, table_column, schema_table["definition"], schema_table["table_type"]
                 ):
                     insert_into_dict(data, [database.as_py()], table.as_py())
-                    self.full_dict[f"{database}.{table}"] = {
+                    self.flatten_data[f"{database}.{table}"] = {
+                        "database_name": database.as_py(),
+                        "table_name": table.as_py(),
                         "table_type": table_type,
                         "definition": definition.as_py(),
                     }
@@ -641,7 +658,9 @@ class TableCompleter(DynamicAtReferenceCompleter):
                 schema_column, table_column, schema_table["definition"], schema_table["table_type"]
             ):
                 insert_into_dict(data, [schema.as_py()], table.as_py())
-                self.full_dict[f"{schema}.{table}"] = {
+                self.flatten_data[f"{schema}.{table}"] = {
+                    "schema_name": schema.as_py(),
+                    "table_name": table.as_py(),
                     "table_type": table_type,
                     "definition": definition.as_py(),
                 }
@@ -669,7 +688,9 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         from datus.storage.metric.store import rag_by_configuration
 
         storage = rag_by_configuration(self.agent_config).metric_storage
-        data = storage.search_all(select_fields=["domain", "layer1", "layer2", "name", "description"])
+        data = storage.search_all(
+            select_fields=["domain", "layer1", "layer2", "name", "description", "constraint", "sql_query"]
+        )
 
         result = {}
         for i in range(data.num_rows):
@@ -678,9 +699,11 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
             layer2 = data["layer2"][i].as_py().replace(" ", "_")
             name = data["name"][i].as_py().replace(" ", "_")
             insert_into_dict_with_dict(result, [domain, layer1, layer2], name, data["description"][i])
-            self.full_dict[f"{domain}.{layer1}.{layer2}.{name}"] = {
-                "constraint": data["constraint"][i],
-                "sql_query": data["sql_query"][i],
+            self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
+                "name": name.as_py(),
+                "description": data["description"][i].as_py(),
+                "constraint": data["constraint"][i].as_py(),
+                "sql_query": data["sql_query"][i].as_py(),
             }
         return result
 
@@ -705,7 +728,8 @@ class SqlHistoryCompleter(DynamicAtReferenceCompleter):
 
             insert_into_dict_with_dict(result, [domain, layer1, layer2], name, item["summary"])
 
-            self.full_dict[f"{domain}.{layer1}.{layer2}.{name}"] = {
+            self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
+                "name": name,
                 "comment": item["comment"],
                 "summary": item["summary"],
                 "tags": item["tags"],
@@ -719,6 +743,7 @@ class AtReferenceCompleter(Completer):
 
     def __init__(self, agent_config: AgentConfig):
         # Initialize specialized completers
+        self.parser = AtReferenceParser()
         self.table_completer = TableCompleter(agent_config)
         self.metric_completer = MetricsCompleter(agent_config)
         self.sql_completer = SqlHistoryCompleter(agent_config)
@@ -750,16 +775,18 @@ class AtReferenceCompleter(Completer):
 
         self.completer_dict = {
             "Table": self.table_completer,
-            "Metric": self.metric_completer,
+            "Metrics": self.metric_completer,
             "SqlHistory": self.sql_completer,
             "File": self.file_completer,
         }
         self.type_options = {
             "Table": "📊 Table",
-            "Metric": "📈 Metric",
+            "Metrics": "📈 Metrics",
             "SqlHistory": "💻 SqlHistory",
             "File": "📁 File",
         }
+
+        self.at_parser = AtReferenceParser()
 
     def reload_data(self):
         self.table_completer.clear()
@@ -768,6 +795,29 @@ class AtReferenceCompleter(Completer):
         self.metric_completer.load_data()
         self.sql_completer.clear()
         self.sql_completer.load_data()
+
+    def parse_at_context(self, user_input: str) -> Tuple[List[TableSchema], List[Metric], List[HistoricalSql]]:
+        user_input = user_input.strip()
+        if not user_input:
+            return ([], [], [])
+        parse_result = self.at_parser.parse_input(user_input)
+        tables = []
+        metrics = []
+        sqls = []
+        if parse_result["tables"]:
+            for key in parse_result["tables"]:
+                if key in self.table_completer.flatten_data:
+                    tables.append(TableSchema.from_dict(self.table_completer.flatten_data[key]))
+
+        if parse_result["metrics"]:
+            for key in parse_result["metrics"]:
+                if key in self.metric_completer.flatten_data:
+                    metrics.append(Metric.from_dict(self.metric_completer.flatten_data[key]))
+        if parse_result["sqls"]:
+            for key in parse_result["sqls"]:
+                if key in self.sql_completer.flatten_data:
+                    sqls.append(HistoricalSql.from_dict(self.sql_completer.flatten_data[key]))
+        return (tables, metrics, sqls)
 
     def get_completions(self, document, complete_event) -> Iterable[Completion]:
         if not document.text.startswith("/"):
@@ -809,7 +859,7 @@ class AtReferenceCompleter(Completer):
                 for match in metric_matches[:5]:
                     display = f"📈 {match}"
                     yield Completion(
-                        f"@Metric {match}", start_position=-len(prefix), display=display, style="class:fuzzy"
+                        f"@Metrics {match}", start_position=-len(prefix), display=display, style="class:fuzzy"
                     )
 
                 for match in sql_matches[:5]:
@@ -848,3 +898,49 @@ class AtReferenceCompleter(Completer):
 
         # Route to different completers based on type
         yield from self.completer_dict[type_].get_completions(path_document, complete_event)
+
+
+class AtReferenceParser:
+    """
+    Independent parser for extracting @Table, @Metrics, and @SqlHistory references from text.
+    This parser only extracts the reference paths, not the actual data.
+    """
+
+    def __init__(self):
+        """Initialize the parser with regex patterns."""
+        # Regular expressions for matching different types of references
+        self.patterns = {
+            "Table": re.compile(r"@Table\s+([^\s]+)", re.IGNORECASE),
+            "Metrics": re.compile(r"@Metrics\s+([^\s]+)", re.IGNORECASE),
+            "Sqls": re.compile(r"@SqlHistory\s+([^\s]+)", re.IGNORECASE),
+        }
+
+    def parse_input(self, text: str) -> Dict[str, List[str]]:
+        """
+        Parse text and extract all @reference paths.
+
+        Args:
+            text: Input text containing @references
+
+        Returns:
+            Dictionary with keys 'tables', 'metrics', 'sql_history', 'files',
+            each containing a list of extracted paths
+        """
+        results = {"tables": [], "metrics": [], "sqls": []}
+
+        # Extract Table references
+        for match in self.patterns["Table"].finditer(text):
+            path = match.group(1)
+            results["tables"].append(path)
+
+        # Extract Metric references
+        for match in self.patterns["Metrics"].finditer(text):
+            path = match.group(1)
+            results["metrics"].append(path)
+
+        # Extract SqlHistory references
+        for match in self.patterns["Sqls"].finditer(text):
+            path = match.group(1)
+            results["sqls"].append(path)
+
+        return results

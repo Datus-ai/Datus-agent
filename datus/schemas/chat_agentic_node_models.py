@@ -10,6 +10,7 @@ from typing import Optional
 from pydantic import Field
 
 from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.node_models import HistoricalSql, Metric, TableSchema
 
 
 class ChatNodeInput(BaseInput):
@@ -23,6 +24,10 @@ class ChatNodeInput(BaseInput):
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")
     max_turns: int = Field(default=30, description="Maximum conversation turns per interaction")
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
+    prompt_version: str = Field(default="1.0", description="Version for prompt")
+    schemas: Optional[list[TableSchema]] = Field(default=None, description="Schemas to use")
+    metrics: Optional[list[Metric]] = Field(default=None, description="Metrics to use")
+    historical_sql: Optional[list[HistoricalSql]] = Field(default=None, description="Metrics to use")
 
     class Config:
         populate_by_name = True

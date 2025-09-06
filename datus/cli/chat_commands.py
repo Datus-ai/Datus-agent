@@ -9,7 +9,7 @@ import json
 import platform
 import re
 import subprocess
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -22,13 +22,16 @@ from datus.schemas.action_history import ActionHistory, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.utils.loggings import get_logger
 
+if TYPE_CHECKING:
+    from datus.cli.repl import DatusCLI
+
 logger = get_logger(__name__)
 
 
 class ChatCommands:
     """Handles all chat-related commands and functionality."""
 
-    def __init__(self, cli_instance):
+    def __init__(self, cli_instance: "DatusCLI"):
         """Initialize with reference to the CLI instance for shared resources."""
         self.cli = cli_instance
         self.console = cli_instance.console
@@ -49,14 +52,18 @@ class ChatCommands:
             return
 
         try:
+            at_tables, at_metrics, at_sqls = self.cli.at_completer.parse_at_context(message)
+
             # Create chat input with current database context
             chat_input = ChatNodeInput(
                 user_message=message,
                 catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
                 database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
                 db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                schemas=at_tables,
+                metrics=at_metrics,
+                historical_sql=at_sqls,
             )
-
             # Get or create persistent ChatAgenticNode
             if self.chat_node is None:
                 self.console.print("[dim]Creating new chat session...[/]")

@@ -165,7 +165,7 @@ class ChatAgenticNode(AgenticNode):
                     context_parts.append(f"database: {user_input.database}")
                 if user_input.db_schema:
                     context_parts.append(f"schema: {user_input.db_schema}")
-
+                # TODO add tables, metrics and historical_sqls
                 enhanced_message = f"Context: {', '.join(context_parts)}\n\nUser question: {user_input.user_message}"
 
             # Execute with streaming
