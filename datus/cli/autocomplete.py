@@ -434,12 +434,12 @@ class DynamicAtReferenceCompleter(Completer):
         self.max_level = 0
 
     def fuzzy_match(self, text: str) -> List[str]:
-        text = text.strip()
+        text = text.strip().lower()
         if not text:
             return []
         result = []
         for k in self.flatten_data.keys():
-            if text in k:
+            if text in k.lower():
                 result.append(k)
                 if len(result) == 5:
                     break
@@ -448,6 +448,9 @@ class DynamicAtReferenceCompleter(Completer):
     @abstractmethod
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
         raise NotImplementedError
+
+    def reload_data(self):
+        self._data = self.load_data()
 
     def get_data(self):
         if not self._data:
@@ -475,7 +478,6 @@ class DynamicAtReferenceCompleter(Completer):
             prev_levels = levels[:-1]
             prefix = levels[-1] if levels else ""
             current_level = len(levels)
-
         if current_level > self.max_level:
             return
         current_dict = data
@@ -483,7 +485,6 @@ class DynamicAtReferenceCompleter(Completer):
             current_dict = current_dict.get(lvl, {})
             if not isinstance(current_dict, (dict, list)):
                 return
-
         # Handle case where last level is a list
         prefix_lower = prefix.lower()
         suggestions = [k for k in current_dict if k.lower().startswith(prefix_lower)]
@@ -712,9 +713,10 @@ class SqlHistoryCompleter(DynamicAtReferenceCompleter):
     def __init__(self, agent_config: AgentConfig):
         super().__init__()
         self.agent_config = agent_config
-        self.max_level = 4
 
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
+        self.max_level = 4
+
         from datus.storage.sql_history.store import sql_history_rag_by_configuration
 
         storage = sql_history_rag_by_configuration(self.agent_config)
@@ -789,12 +791,9 @@ class AtReferenceCompleter(Completer):
         self.at_parser = AtReferenceParser()
 
     def reload_data(self):
-        self.table_completer.clear()
-        self.table_completer.load_data()
-        self.metric_completer.clear()
-        self.metric_completer.load_data()
-        self.sql_completer.clear()
-        self.sql_completer.load_data()
+        self.table_completer.reload_data()
+        self.metric_completer.reload_data()
+        self.sql_completer.reload_data()
 
     def parse_at_context(self, user_input: str) -> Tuple[List[TableSchema], List[Metric], List[HistoricalSql]]:
         user_input = user_input.strip()
@@ -844,7 +843,6 @@ class AtReferenceCompleter(Completer):
                 metric_matches = self.metric_completer.fuzzy_match(type_prefix)
                 sql_matches = self.sql_completer.fuzzy_match(type_prefix)
                 file_matches = get_file_fuzzy_matches(type_prefix, path=self.workspace_root, max_matches=5)
-
                 # Yield fuzzy match results first
                 for match in table_matches[:5]:
                     # Extract the actual path from the match string
@@ -895,7 +893,6 @@ class AtReferenceCompleter(Completer):
         from prompt_toolkit.document import Document
 
         path_document = Document(rest, len(rest))
-
         # Route to different completers based on type
         yield from self.completer_dict[type_].get_completions(path_document, complete_event)
 

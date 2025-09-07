@@ -3,6 +3,7 @@ Metadata-related CLI commands for database introspection.
 This module handles database, table, and schema listing/switching functionality.
 """
 
+from typing import TYPE_CHECKING
 
 from rich.box import SIMPLE_HEAD
 from rich.panel import Panel
@@ -11,13 +12,16 @@ from rich.table import Table
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
+if TYPE_CHECKING:
+    from datus.cli.repl import DatusCLI
+
 logger = get_logger(__name__)
 
 
 class MetadataCommands:
     """Handler for metadata-related CLI commands (.databases, .tables, etc.)."""
 
-    def __init__(self, cli_instance):
+    def __init__(self, cli_instance: "DatusCLI"):
         """Initialize with reference to the main CLI instance."""
         self.cli = cli_instance
 
@@ -88,11 +92,13 @@ class MetadataCommands:
             return
 
         self.cli.db_connector.switch_context(database_name=new_db)
+        self.cli.agent_config.current_database = new_db
         self.cli.cli_context.current_db_name = new_db
         if self.cli.agent_config.db_type == DBType.SQLITE or self.cli.agent_config.db_type == DBType.DUCKDB:
             self.cli.db_connector = self.cli.db_manager.get_conn(
                 self.cli.agent_config.current_namespace, self.cli.cli_context.current_db_name
             )
+            self.cli.reset_session()
         self.cli.agent_config._current_database = new_db
         if self.cli.agent_config.db_type == DBType.SQLITE or self.cli.agent_config.db_type == DBType.DUCKDB:
             self.cli.chat_commands.update_chat_node_tools()
