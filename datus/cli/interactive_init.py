@@ -5,7 +5,7 @@ Interactive initialization command for Datus Agent.
 This module provides an interactive CLI for setting up the basic configuration
 without requiring users to manually write conf/agent.yml files.
 """
-
+import os.path
 import sys
 from getpass import getpass
 from pathlib import Path
@@ -25,20 +25,25 @@ class InteractiveInit:
     """Interactive initialization wizard for Datus Agent."""
 
     def __init__(self):
-        self.config = {
-            "agent": {
-                "target": "",
-                "models": {},
-                "namespace": {},
-                "storage": {"base_path": "data"},
-                "nodes": {
-                    "schema_linking": {"matching_rate": "fast"},
-                    "generate_sql": {"prompt_version": "1.0"},
-                    "reflect": {"prompt_version": "2.1"},
-                    "date_parser": {"language": "en"},
-                },
+        try:
+            with open("conf/agent.yml.qs", "r", encoding="utf-8") as file:
+                self.config = yaml.safe_load(file)
+        except Exception:
+            console.print("[yellow]Unable to load sample configuration file, using default configuration[/]")
+            self.config = {
+                "agent": {
+                    "target": "",
+                    "models": {},
+                    "namespace": {},
+                    "storage": {"base_path": "data"},
+                    "nodes": {
+                        "schema_linking": {"matching_rate": "fast"},
+                        "generate_sql": {"prompt_version": "1.0"},
+                        "reflect": {"prompt_version": "2.1"},
+                        "date_parser": {"language": "en"},
+                    },
+                }
             }
-        }
         self.workspace_path = ""
         self.namespace_name = ""
 
@@ -103,6 +108,9 @@ class InteractiveInit:
 
             # Step 5: Summary and save configuration first
             console.print("[bold yellow][5/5] Configuration Summary[/bold yellow]")
+
+            self._copy_demo_duckdb()
+
             self._display_summary()
 
             self._display_completion()
@@ -505,6 +513,11 @@ class InteractiveInit:
         except Exception as e:
             logger.error(f"SQL history initialization failed: {e}")
             return 0
+
+    def _copy_demo_duckdb(self):
+        import shutil
+
+        shutil.copyfile(src="tests/duckdb-demo.duckdb", dst=os.path.expanduser("~/.datus/duckdb-demo.duckdb"))
 
 
 def main():
