@@ -212,14 +212,16 @@ class DBFuncTool:
         schema_name: Optional[str] = "",
     ) -> FuncToolResult:
         """
-        Get the complete schema information for a specific table, including column definitions, data types,
-         and constraints.
+        Get the complete schema information for a specific table, including column definitions, data types, and
+         constraints.
 
         Use this tool when you need to:
         - Understand the structure of a specific table
         - Get column names, data types, and constraints for SQL query writing
         - Analyze table schema for data modeling or analysis
         - Verify table structure before running queries
+
+        **IMPORTANT**: Only use AFTER search_table_metadata if no match or for partitioned tables.
 
         Args:
             table_name: Name of the table to describe
