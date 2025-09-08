@@ -14,6 +14,7 @@ if __package__ is None:
 
 from datus import __version__
 from datus.agent.agent import Agent
+from datus.cli.interactive_init import InteractiveInit
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.node_models import SqlTask
 from datus.utils.exceptions import setup_exception_handler
@@ -45,6 +46,14 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Create subparsers for different commands, inheriting global options
     subparsers = parser.add_subparsers(dest="action", help="Action to perform")
+
+    # init command
+    subparsers.add_parser(
+        "init",
+        help="Interactive setup wizard for basic configuration",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
     # probe-llm command
     probe_parser = subparsers.add_parser(
@@ -309,6 +318,11 @@ def main():
     setup_exception_handler()
     os.makedirs(getattr(args, "output_dir", "output"), exist_ok=True)
     os.makedirs("save", exist_ok=True)
+
+    # Handle init command separately as it doesn't require existing configuration
+    if args.action == "init":
+        init = InteractiveInit()
+        return init.run()
 
     # Load agent configuration
     agent_config = load_agent_config(**vars(args))
