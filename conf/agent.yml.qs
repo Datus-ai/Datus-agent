@@ -38,7 +38,7 @@ agent:
     local_duckdb:
       type: duckdb
       name: demo
-      uri: ./tests/duckdb-demo.duckdb
+      uri: ~/.datus/duckdb-demo.duckdb
 
   nodes:
     schema_linking:
