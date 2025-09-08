@@ -100,5 +100,6 @@ def load_agent_config(**kwargs) -> AgentConfig:
         if override_kwargs:
             agent_config.override_by_args(**override_kwargs)
     if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
-        agent_config.current_database = list(agent_config.current_db_configs().keys())[0]
+        current_configs = agent_config.current_db_configs()
+        agent_config.current_database = current_configs[list(current_configs.keys())[0]].database
     return agent_config

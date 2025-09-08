@@ -5,10 +5,10 @@ Interactive initialization command for Datus Agent.
 This module provides an interactive CLI for setting up the basic configuration
 without requiring users to manually write conf/agent.yml files.
 """
-import os.path
 import sys
 from getpass import getpass
 from pathlib import Path
+from typing import Optional
 
 import yaml
 from rich.console import Console
@@ -16,6 +16,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from datus.utils.loggings import get_logger
+from datus.utils.resource_utils import copy_data_file, read_data_file_text
 
 logger = get_logger(__name__)
 console = Console()
@@ -24,10 +25,10 @@ console = Console()
 class InteractiveInit:
     """Interactive initialization wizard for Datus Agent."""
 
-    def __init__(self):
+    def __init__(self, user_home: Optional[str] = None):
         try:
-            with open("conf/agent.yml.qs", "r", encoding="utf-8") as file:
-                self.config = yaml.safe_load(file)
+            text = read_data_file_text(resource_path="conf/agent.yml.qs", encoding="utf-8")
+            self.config = yaml.safe_load(text)
         except Exception:
             console.print("[yellow]Unable to load sample configuration file, using default configuration[/]")
             self.config = {
@@ -46,11 +47,26 @@ class InteractiveInit:
             }
         self.workspace_path = ""
         self.namespace_name = ""
+        self.user_home = user_home if user_home else Path.home()
+        self.datus_dir = self.user_home / ".datus"
+        self.data_dir = self.datus_dir / "data"
+        self.conf_dir = self.datus_dir / "conf"
+        self.template_dir = self.datus_dir / "template"
+        self.sample_dir = self.datus_dir / "sample"
+
+    def _init_dirs(self):
+        for dir_name in (self.datus_dir, self.data_dir, self.conf_dir, self.template_dir, self.sample_dir):
+            dir_name.mkdir(parents=True, exist_ok=True)
 
     def run(self) -> int:
         """Main entry point for the interactive initialization."""
         # Check if configuration file already exists
-        config_path = Path.home() / ".datus" / "conf" / "agent.yml"
+        self._init_dirs()
+
+        self._copy_files()
+
+        config_path = self.conf_dir / "agent.yml"
+
         if config_path.exists():
             console.print(f"\n[yellow]⚠️  Configuration file already exists at {config_path}[/yellow]")
             if not Confirm.ask("Do you want to overwrite the existing configuration?", default=False):
@@ -108,8 +124,6 @@ class InteractiveInit:
 
             # Step 5: Summary and save configuration first
             console.print("[bold yellow][5/5] Configuration Summary[/bold yellow]")
-
-            self._copy_demo_duckdb()
 
             self._display_summary()
 
@@ -514,10 +528,13 @@ class InteractiveInit:
             logger.error(f"SQL history initialization failed: {e}")
             return 0
 
-    def _copy_demo_duckdb(self):
-        import shutil
+    def _copy_files(self):
+        copy_data_file(
+            resource_path="tests/duckdb-demo.duckdb",
+            target_dir=self.sample_dir,
+        )
 
-        shutil.copyfile(src="tests/duckdb-demo.duckdb", dst=os.path.expanduser("~/.datus/duckdb-demo.duckdb"))
+        copy_data_file(resource_path="prompts/prompt_template", target_dir=self.template_dir)
 
 
 def main():
