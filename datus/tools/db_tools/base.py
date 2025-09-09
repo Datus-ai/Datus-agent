@@ -50,7 +50,7 @@ class BaseSqlConnector(ABC):
             input_params = ExecuteSQLInput(**input_params)
         sql_query = input_params.sql_query.strip()
         try:
-            sql_type = parse_sql_type(sql_query)
+            sql_type = parse_sql_type(sql_query, self.dialect)
             if sql_type == SQLType.INSERT:
                 result = self.execute_insert(sql_query)
             elif sql_type in (SQLType.UPDATE, SQLType.DELETE):
