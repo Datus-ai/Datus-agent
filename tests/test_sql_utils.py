@@ -1,6 +1,6 @@
-from datus.utils.constants import DBType
+from datus.utils.constants import DBType, SQLType
 from datus.utils.json_utils import llm_result2json
-from datus.utils.sql_utils import extract_table_names, parse_metadata, parse_table_name_parts
+from datus.utils.sql_utils import extract_table_names, parse_metadata, parse_sql_type, parse_table_name_parts
 
 SQL = """create or replace TABLE GT.GT2.VARIANTS (
     "reference_name" VARCHAR(16777216),
@@ -550,3 +550,20 @@ def test_parse_full_tables():
     assert table_meta["table_name"] == "abc"
     assert table_meta["database_name"] == "TEST_DB"
     assert table_meta["catalog_name"] == ""
+
+
+def test_parse_sql_type():
+    sql = """---Basic statistics and correlation
+SELECT
+    COUNT(*) as total_records,
+    MIN(time) as start_time,
+    MAX(time) as end_time,
+    AVG(gold) as avg_gold,
+    AVG(bitcoin) as avg_bitcoin,
+    STDDEV(gold) as std_gold,
+    STDDEV(bitcoin) as std_bitcoin,
+    CORR(gold, bitcoin) as correlation,
+    COVAR_POP(gold, bitcoin) as covariance,
+    POWER(CORR(gold, bitcoin), 2) as r_squared
+FROM gold_vs_bitcoin"""
+    assert parse_sql_type(sql, dialect=DBType.DUCKDB) == SQLType.SELECT

@@ -613,7 +613,12 @@ class SQLAlchemyConnector(BaseSqlConnector):
             return ExecuteSQLResult(success=False, error=str(e), sql_query=sql)
 
     def _execute_query(self, query_sql: str) -> List[Dict[str, Any]]:
-        if parse_sql_type(query_sql) in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE, SQLType.CONTENT_SET):
+        if parse_sql_type(query_sql, self.dialect) in (
+            SQLType.INSERT,
+            SQLType.UPDATE,
+            SQLType.DELETE,
+            SQLType.CONTENT_SET,
+        ):
             raise DatusException(
                 ErrorCode.DB_EXECUTION_ERROR, message="Only supports normal queries and metadata queries."
             )
