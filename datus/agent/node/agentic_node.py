@@ -134,10 +134,7 @@ class AgenticNode(ABC):
             version = self.agent_config.prompt_version
 
         root_path = "."
-        if (
-            self.agent_config
-            and hasattr(self.agent_config, "workspace_root")
-        ):
+        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
             root_path = self.agent_config.workspace_root
 
         # Construct template name: {template_name}_system_{version}
