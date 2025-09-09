@@ -275,12 +275,12 @@ class InteractiveInit:
         """Step 3: Configure workspace directory."""
         console.print("[bold yellow][3/5] Configure Workspace Root (your sql files located here)[/bold yellow]")
 
-        default_workspace = str(Path.home() / ".datus" / "workspace")
+        default_workspace = str(self.user_home / ".datus" / "workspace")
         self.workspace_path = Prompt.ask("- Workspace path", default=default_workspace)
 
         # Store workspace path in storage configuration
         self.config["agent"]["storage"]["workspace_root"] = self.workspace_path
-        self.config["agent"]["storage"]["base_path"] = str(Path.home() / ".datus" / "data")
+        self.config["agent"]["storage"]["base_path"] = str(self.user_home / ".datus" / "data")
 
         # Create workspace directory
         try:
