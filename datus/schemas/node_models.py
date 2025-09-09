@@ -116,6 +116,12 @@ class TableSchema(BaseTableSchema):
         return f"{full_name}: {schema_text}"
 
     @classmethod
+    def list_to_prompt(cls, schemas: List[TableSchema], dialect: str = "snowflake") -> str:
+        if not schemas:
+            return ""
+        return "\n".join([schema.to_prompt(dialect) for schema in schemas])
+
+    @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> TableSchema:
         """Create TableSchema instance from dictionary."""
         return cls(
