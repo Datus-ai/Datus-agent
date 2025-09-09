@@ -481,10 +481,8 @@ class MCPServer:
                             "list_directory",
                         ]
                     )
-                    
+
                     cls._filesystem_mcp_server = SilentMCPServerStdio(
-                        params=mcp_server_params,
-                        client_session_timeout_seconds=30,
-                        tool_filter=tool_filter
+                        params=mcp_server_params, client_session_timeout_seconds=30, tool_filter=tool_filter
                     )
         return cls._filesystem_mcp_server
