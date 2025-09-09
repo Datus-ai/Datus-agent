@@ -157,6 +157,7 @@ class ChatAgenticNode(AgenticNode):
 
             # Add database context to user message if provided
             enhanced_message = user_input.user_message
+            enhanced_parts = []
             if user_input.catalog or user_input.database or user_input.db_schema:
                 context_parts = []
                 if user_input.catalog:
@@ -165,8 +166,20 @@ class ChatAgenticNode(AgenticNode):
                     context_parts.append(f"database: {user_input.database}")
                 if user_input.db_schema:
                     context_parts.append(f"schema: {user_input.db_schema}")
+                context_part_str = f'Context: {", ".join(context_parts)}'
+                enhanced_parts.append(context_part_str)
+            # if user_input.schemas:
+            #     enhanced_parts.append(f"Table Schemas: \n{TableSchema.list_to_prompt(user_input.schemas)}")
+            # if user_input.metrics:
+            #     enhanced_parts.append(f"Metrics: \n{json.dumps([item.model_dump() for item in user_input.metrics])}")
+            #
+            # if user_input.historical_sql:
+            #     enhanced_parts.append(
+            #         f"Historical SQL: \n{json.dumps([item.model_dump() for item in user_input.historical_sql])}"
+            #     )
 
-                enhanced_message = f"Context: {', '.join(context_parts)}\n\nUser question: {user_input.user_message}"
+            if enhanced_parts:
+                enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {user_input.user_message}"
 
             # Execute with streaming
             response_content = ""

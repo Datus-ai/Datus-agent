@@ -29,7 +29,6 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.utils.constants import DBType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
 
@@ -424,7 +423,7 @@ class DatusCLI:
 
         self.console.print(table)
 
-    def _reset_session(self):
+    def reset_session(self):
         self.chat_commands.update_chat_node_tools()
         if self.at_completer:
             # Perhaps we should reload the data here.
@@ -450,32 +449,9 @@ class DatusCLI:
                 db_name=self.db_connector.database_name if not name else name,
                 schema=self.db_connector.schema_name,
             )
-            self._reset_session()
+            self.reset_session()
             self.chat_commands.update_chat_node_tools()
             self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_namespace}[/]")
-
-    def _cmd_switch_database(self, args: str = ""):
-        new_db = args.strip()
-        if not new_db:
-            self.console.print("[bold red]Error:[/] Database name is required")
-            self._cmd_list_databases()
-            return
-        if new_db == self.cli_context.current_db_name:
-            self.console.print(
-                f"[yellow]It's now under the database [bold]{new_db}[/] and doesn't need to be switched[/]"
-            )
-            return
-
-        self.db_connector.switch_context(database_name=new_db)
-        self.cli_context.current_db_name = new_db
-        self.agent_config.current_database = new_db
-
-        if self.agent_config.db_type == DBType.SQLITE or self.agent_config.db_type == DBType.DUCKDB:
-            self.db_connector = self.db_manager.get_conn(
-                self.agent_config.current_namespace, self.cli_context.current_db_name
-            )
-            self._reset_session()
-        self.console.print(f"[bold green]Database switched to: {self.cli_context.current_db_name}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """

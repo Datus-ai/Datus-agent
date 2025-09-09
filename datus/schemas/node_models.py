@@ -116,10 +116,16 @@ class TableSchema(BaseTableSchema):
         return f"{full_name}: {schema_text}"
 
     @classmethod
+    def list_to_prompt(cls, schemas: List[TableSchema], dialect: str = "snowflake") -> str:
+        if not schemas:
+            return ""
+        return "\n".join([schema.to_prompt(dialect) for schema in schemas])
+
+    @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> TableSchema:
         """Create TableSchema instance from dictionary."""
         return cls(
-            identifier=data["identifier"],
+            identifier=data.get("identifier", ""),
             catalog_name=data["catalog_name"],
             table_name=data["table_name"],
             database_name=data["database_name"],
@@ -317,6 +323,24 @@ class Metric(BaseModel):
             description=data.get("description", ""),
             constraint=data.get("constraint", ""),
             sql_query=data.get("sql_query", ""),
+        )
+
+
+class HistoricalSql(BaseModel):
+    name: str = Field(..., description="Name of the historical SQL table")
+    sql: str = Field(..., description="SQL query of the historical table")
+    comment: str = Field(default="", description="Comment of the historical SQL table")
+    summary: str = Field(default="", description="Summary of the historical SQL table")
+    tags: str = Field(default="", description="Tags of the historical SQL table")
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> HistoricalSql:
+        return cls(
+            name=data.get("name", ""),
+            sql=data.get("sql", ""),
+            comment=data.get("comment", ""),
+            summary=data.get("summary", ""),
+            tags=data.get("tags", ""),
         )
 
 

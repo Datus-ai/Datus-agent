@@ -65,16 +65,16 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         )
         return [
             {
-                "id": search_result["id"][i],
-                "name": search_result["name"][i],
-                "sql": search_result["sql"][i],
-                "comment": search_result["comment"][i],
-                "summary": search_result["summary"][i],
-                "filepath": search_result["filepath"][i],
-                "domain": search_result["domain"][i],
-                "layer1": search_result["layer1"][i],
-                "layer2": search_result["layer2"][i],
-                "tags": search_result["tags"][i],
+                "id": search_result["id"][i].as_py(),
+                "name": search_result["name"][i].as_py(),
+                "sql": search_result["sql"][i].as_py(),
+                "comment": search_result["comment"][i].as_py(),
+                "summary": search_result["summary"][i].as_py(),
+                "filepath": search_result["filepath"][i].as_py(),
+                "domain": search_result["domain"][i].as_py(),
+                "layer1": search_result["layer1"][i].as_py(),
+                "layer2": search_result["layer2"][i].as_py(),
+                "tags": search_result["tags"][i].as_py(),
             }
             for i in range(search_result.num_rows)
         ]
@@ -121,28 +121,31 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         self._ensure_table_ready()
 
         # Get all existing taxonomy data
-        search_result = self.table.search().select(["domain", "layer1", "layer2", "tags"]).limit(10000).to_list()
+        search_result = self._search_all(select_fields=["domain", "layer1", "layer2", "tags"])
 
-        if not search_result:
+        if not search_result or search_result.num_rows <= 0:
             logger.info("No existing taxonomy found in database")
             return {"domains": [], "layer1_categories": [], "layer2_categories": [], "common_tags": []}
 
         # Extract unique values
-        domains = set()
         layer1_categories = set()
         layer2_categories = set()
         tags = set()
+        domain_column = search_result["domain"]
+        layer1_column = search_result["layer1"]
+        layer2_column = search_result["layer2"]
+        tags_column = search_result["tags"]
+        domains = set(domain_column.unique().to_pylist())
+        for i in range(search_result.num_rows):
+            layer1 = layer1_column[i].as_py()
+            if layer1:
+                layer1_categories.add((layer1, domain_column[i].as_py() or ""))
 
-        for item in search_result:
-            if item.get("domain"):
-                domains.add(item["domain"])
-            if item.get("layer1"):
-                layer1_categories.add((item["layer1"], item.get("domain", "")))
-            if item.get("layer2"):
-                layer2_categories.add((item["layer2"], item.get("layer1", "")))
-            if item.get("tags"):
+            if layer2 := layer2_column[i].as_py():
+                layer2_categories.add((layer2, layer1 or ""))
+            if tags := tags_column[i].as_py():
                 # Split tags by comma if they are stored as comma-separated string
-                item_tags = [tag.strip() for tag in str(item["tags"]).split(",") if tag.strip()]
+                item_tags = [tag.strip() for tag in str(tags).split(",") if tag.strip()]
                 tags.update(item_tags)
 
         # Format into taxonomy structure

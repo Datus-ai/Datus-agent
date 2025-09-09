@@ -2,9 +2,9 @@
 Autocomplete module for Datus CLI.
 Provides SQL keyword, table name, and column name autocompletion.
 """
-
+import re
 from abc import abstractmethod
-from typing import Any, Dict, Iterable, List, Union
+from typing import Any, Dict, Iterable, List, Tuple, Union
 
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
@@ -13,8 +13,10 @@ from pygments.styles.default import DefaultStyle
 from pygments.token import Token
 
 from datus.configuration.agent_config import AgentConfig
+from datus.schemas.node_models import HistoricalSql, Metric, TableSchema
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
+from datus.utils.path_utils import get_file_fuzzy_matches
 
 logger = get_logger(__name__)
 
@@ -402,6 +404,7 @@ class CustomSqlLexer(SqlLexer):
         "root": [
             (r"@Table(?:\s[^ \t\n]+)?", Token.AtTables),
             (r"@Metric(?:\s[^ \t\n]+)?", Token.AtMetrics),
+            (r"@SqlHistory(?:\s[^ \t\n]+)?", Token.AtSqlHistory),
             (r"@File(?:\s[^ \t\n]+)?", Token.AtFiles),
         ]
         + SqlLexer.tokens["root"],
@@ -412,8 +415,9 @@ class CustomPygmentsStyle(DefaultStyle):
     """Custom style for coloring the @ references."""
 
     styles = {
-        Token.AtTables: "#00CED1 bold",  # pink
-        Token.AtMetrics: "#FFD700 bold",  # Green
+        Token.AtTables: "#00CED1 bold",  # Pink
+        Token.AtMetrics: "#FFD700 bold",  # Gold
+        Token.AtSqlHistory: "#32CD32 bold",  # Green
         Token.AtFiles: "ansiblue bold",  # Blue
     }
 
@@ -421,6 +425,7 @@ class CustomPygmentsStyle(DefaultStyle):
 class DynamicAtReferenceCompleter(Completer):
     def __init__(self, max_completions=10):
         self._data: Union[Dict[str, Any], List[str]] = {}
+        self.flatten_data: Dict[str, Any] = {}
         self.max_level = 0
         self.max_completions = max_completions
 
@@ -428,9 +433,24 @@ class DynamicAtReferenceCompleter(Completer):
         self._data = {}
         self.max_level = 0
 
+    def fuzzy_match(self, text: str) -> List[str]:
+        text = text.strip().lower()
+        if not text:
+            return []
+        result = []
+        for k in self.flatten_data.keys():
+            if text in k.lower():
+                result.append(k)
+                if len(result) == 5:
+                    break
+        return result
+
     @abstractmethod
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
         raise NotImplementedError
+
+    def reload_data(self):
+        self._data = self.load_data()
 
     def get_data(self):
         if not self._data:
@@ -458,7 +478,6 @@ class DynamicAtReferenceCompleter(Completer):
             prev_levels = levels[:-1]
             prefix = levels[-1] if levels else ""
             current_level = len(levels)
-
         if current_level > self.max_level:
             return
         current_dict = data
@@ -466,7 +485,6 @@ class DynamicAtReferenceCompleter(Completer):
             current_dict = current_dict.get(lvl, {})
             if not isinstance(current_dict, (dict, list)):
                 return
-
         # Handle case where last level is a list
         prefix_lower = prefix.lower()
         suggestions = [k for k in current_dict if k.lower().startswith(prefix_lower)]
@@ -490,8 +508,8 @@ class DynamicAtReferenceCompleter(Completer):
 
             if is_last_level and isinstance(current_dict, dict) and s in current_dict and current_dict[s]:
                 display_text = f"{display_text}: {current_dict[s]}"
-                if len(display_text) > 20:
-                    display_text = f"{display_text[:20]}..."
+                if len(display_text) > 30:
+                    display_text = f"{display_text[:30]}..."
 
             yield Completion(completion_text, display=display_text, start_position=-len(prefix))
 
@@ -517,7 +535,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
         storage = rag_by_configuration(self.agent_config)
         schema_table = storage.search_all_schemas(
             database_name=self.agent_config.current_database,
-            select_fields=["catalog_name", "database_name", "schema_name", "table_name"],
+            select_fields=["catalog_name", "database_name", "schema_name", "table_name", "table_type", "definition"],
         )
         if schema_table is None or schema_table.num_rows == 0:
             return []
@@ -527,6 +545,14 @@ class TableCompleter(DynamicAtReferenceCompleter):
 
         if self.agent_config.db_type == DBType.SQLITE:
             self.max_level = 1
+            for table, definition, table_type in zip(
+                table_column, schema_table["definition"], schema_table["table_type"]
+            ):
+                self.flatten_data[table.as_py()] = {
+                    "table_name": table.as_py(),
+                    "table_type": table_type.as_py(),
+                    "definition": definition.as_py(),
+                }
             return table_column.to_pylist()
 
         catalog_column = schema_table["catalog_name"]
@@ -541,43 +567,114 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     # catalog -> database -> schema -> table
                     self.max_level = 4
                     # Catalog -> Database -> Schema -> Table structure
-                    for catalog, database, schema, table in zip(
-                        catalog_column, database_column, schema_column, table_column
+                    for catalog, database, schema, table, definition, table_type in zip(
+                        catalog_column,
+                        database_column,
+                        schema_column,
+                        table_column,
+                        schema_table["definition"],
+                        schema_table["table_type"],
                     ):
                         insert_into_dict(data, [catalog.as_py(), database.as_py(), schema.as_py()], table.as_py())
+                        self.flatten_data[f"{catalog}.{database}.{schema}.{table}"] = {
+                            "catalog_name": catalog.as_py(),
+                            "database_name": database.as_py(),
+                            "schema_name": schema.as_py(),
+                            "table_name": table.as_py(),
+                            "table_type": table_type,
+                            "definition": definition.as_py(),
+                        }
                     return data
                 else:
                     # catalog -> database -> table
                     self.max_level = 3
-                    for catalog, database, table in zip(catalog_column, database_column, table_column):
+                    for catalog, database, table, definition, table_type in (
+                        zip(
+                            catalog_column,
+                            database_column,
+                            table_column,
+                            schema_table["definition"],
+                            schema_table["table_type"],
+                        ),
+                        schema_column["definition"],
+                    ):
                         insert_into_dict(data, [catalog.as_py(), database.as_py()], table.as_py())
+                        self.flatten_data[f"{catalog}.{database}.{table}"] = {
+                            "catalog_name": catalog.as_py(),
+                            "database_name": database.as_py(),
+                            "table_name": table.as_py(),
+                            "table_type": table_type,
+                            "definition": definition.as_py(),
+                        }
                     return data
             elif DBType.support_schema(self.agent_config.db_type):
                 self.max_level = 3
                 # catalog -> schema -> table
-                for catalog, schema, table in zip(catalog_column, schema_column, table_column):
+                for catalog, schema, table, definition, table_type in zip(
+                    catalog_column, schema_column, table_column, schema_table["definition"], schema_table["table_type"]
+                ):
                     insert_into_dict(data, [catalog.as_py(), schema.as_py()], table.as_py())
+                    self.flatten_data[f"{catalog}.{schema}.{table}"] = {
+                        "catalog_name": catalog.as_py(),
+                        "schema_name": schema.as_py(),
+                        "table_name": table.as_py(),
+                        "table_type": table_type.as_py(),
+                        "definition": definition.as_py(),
+                    }
 
         if DBType.support_database(self.agent_config.db_type) and database_column[0].as_py():
             if DBType.support_schema(self.agent_config.db_type) and schema_column[0].as_py():
                 self.max_level = 3
                 # Database -> Schema -> Table structure
-                for database, schema, table in zip(database_column, schema_column, table_column):
+                for database, schema, table, definition, table_type in zip(
+                    database_column, schema_column, table_column, schema_table["definition"], schema_table["definition"]
+                ):
                     insert_into_dict(data, [database.as_py(), schema.as_py()], table.as_py())
+                    self.flatten_data[f"{database}.{schema}.{table}"] = {
+                        "database_name": database.as_py(),
+                        "schema_name": schema.as_py(),
+                        "table_name": table.as_py(),
+                        "table_type": table_type,
+                        "definition": definition.as_py(),
+                    }
             else:
                 self.max_level = 2
                 # Database -> Table structure
-                for database, table in zip(database_column, table_column):
+                for database, table, definition, table_type in zip(
+                    database_column, table_column, schema_table["definition"], schema_table["table_type"]
+                ):
                     insert_into_dict(data, [database.as_py()], table.as_py())
+                    self.flatten_data[f"{database}.{table}"] = {
+                        "database_name": database.as_py(),
+                        "table_name": table.as_py(),
+                        "table_type": table_type,
+                        "definition": definition.as_py(),
+                    }
             return data
 
         if DBType.support_schema(self.agent_config.db_type):
             self.max_level = 2
             # schema -> table
-            for schema, table in zip(schema_column, table_column):
+            for schema, table, definition, table_type in zip(
+                schema_column, table_column, schema_table["definition"], schema_table["table_type"]
+            ):
                 insert_into_dict(data, [schema.as_py()], table.as_py())
+                self.flatten_data[f"{schema}.{table}"] = {
+                    "schema_name": schema.as_py(),
+                    "table_name": table.as_py(),
+                    "table_type": table_type,
+                    "definition": definition.as_py(),
+                }
 
         return data
+
+
+def insert_into_dict_with_dict(data: Dict, keys: List[str], key: str, value: str) -> None:
+    """Helper function to insert values into a nested dictionary based on keys."""
+    temp = data
+    for key in keys[:-1]:
+        temp = temp.setdefault(key, {})
+    temp.setdefault(keys[-1], {})[key] = value
 
 
 class MetricsCompleter(DynamicAtReferenceCompleter):
@@ -592,17 +689,54 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         from datus.storage.metric.store import rag_by_configuration
 
         storage = rag_by_configuration(self.agent_config).metric_storage
-        data = storage.search_all(select_fields=["domain", "layer1", "layer2", "name", "description"])
-        from collections import defaultdict
+        data = storage.search_all(
+            select_fields=["domain", "layer1", "layer2", "name", "description", "constraint", "sql_query"]
+        )
 
-        result = defaultdict(dict)
+        result = {}
         for i in range(data.num_rows):
-            (
-                result.get(data["domain"][i])
-                .get(data["layer1"][i])
-                .get(data["layer2"][i])
-                .put(data["name"][i], data["description"][i])
-            )
+            domain = data["domain"][i].as_py().replace(" ", "_")
+            layer1 = data["layer1"][i].as_py().replace(" ", "_")
+            layer2 = data["layer2"][i].as_py().replace(" ", "_")
+            name = data["name"][i].as_py().replace(" ", "_")
+            insert_into_dict_with_dict(result, [domain, layer1, layer2], name, data["description"][i])
+            self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
+                "name": name.as_py(),
+                "description": data["description"][i].as_py(),
+                "constraint": data["constraint"][i].as_py(),
+                "sql_query": data["sql_query"][i].as_py(),
+            }
+        return result
+
+
+class SqlHistoryCompleter(DynamicAtReferenceCompleter):
+    def __init__(self, agent_config: AgentConfig):
+        super().__init__()
+        self.agent_config = agent_config
+
+    def load_data(self) -> Union[List[str], Dict[str, Any]]:
+        self.max_level = 4
+
+        from datus.storage.sql_history.store import sql_history_rag_by_configuration
+
+        storage = sql_history_rag_by_configuration(self.agent_config)
+        search_data = storage.search_all_sql_history(domain="")
+        result = {}
+        for item in search_data:
+            domain = item["domain"].replace(" ", "_")
+            layer1 = item["layer1"].replace(" ", "_")
+            layer2 = item["layer2"].replace(" ", "_")
+            name = item["name"].replace(" ", "_")
+
+            insert_into_dict_with_dict(result, [domain, layer1, layer2], name, item["summary"])
+
+            self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
+                "name": name,
+                "comment": item["comment"],
+                "summary": item["summary"],
+                "tags": item["tags"],
+                "sql": item["sql"],
+            }
         return result
 
 
@@ -611,8 +745,10 @@ class AtReferenceCompleter(Completer):
 
     def __init__(self, agent_config: AgentConfig):
         # Initialize specialized completers
+        self.parser = AtReferenceParser()
         self.table_completer = TableCompleter(agent_config)
         self.metric_completer = MetricsCompleter(agent_config)
+        self.sql_completer = SqlHistoryCompleter(agent_config)
 
         # Get workspace_root from chat node configuration or storage configuration
         workspace_root = None
@@ -627,6 +763,7 @@ class AtReferenceCompleter(Completer):
 
         if not workspace_root:
             workspace_root = "."
+        self.workspace_root = workspace_root
 
         def get_search_paths():
             paths = []
@@ -636,22 +773,50 @@ class AtReferenceCompleter(Completer):
                 paths.insert(0, workspace_root)
             return paths
 
+        self.file_completer = PathCompleter(get_paths=get_search_paths)
+
         self.completer_dict = {
             "Table": self.table_completer,
-            "Metric": self.metric_completer,
-            "File": PathCompleter(get_paths=get_search_paths),
+            "Metrics": self.metric_completer,
+            "SqlHistory": self.sql_completer,
+            "File": self.file_completer,
         }
         self.type_options = {
             "Table": "📊 Table",
-            "Metric": "📈 Metric",
+            "Metrics": "📈 Metrics",
+            "SqlHistory": "💻 SqlHistory",
             "File": "📁 File",
         }
 
+        self.at_parser = AtReferenceParser()
+
     def reload_data(self):
-        self.table_completer.clear()
-        self.table_completer.load_data()
-        self.metric_completer.clear()
-        self.metric_completer.load_data()
+        self.table_completer.reload_data()
+        self.metric_completer.reload_data()
+        self.sql_completer.reload_data()
+
+    def parse_at_context(self, user_input: str) -> Tuple[List[TableSchema], List[Metric], List[HistoricalSql]]:
+        user_input = user_input.strip()
+        if not user_input:
+            return ([], [], [])
+        parse_result = self.at_parser.parse_input(user_input)
+        tables = []
+        metrics = []
+        sqls = []
+        if parse_result["tables"]:
+            for key in parse_result["tables"]:
+                if key in self.table_completer.flatten_data:
+                    tables.append(TableSchema.from_dict(self.table_completer.flatten_data[key]))
+
+        if parse_result["metrics"]:
+            for key in parse_result["metrics"]:
+                if key in self.metric_completer.flatten_data:
+                    metrics.append(Metric.from_dict(self.metric_completer.flatten_data[key]))
+        if parse_result["sqls"]:
+            for key in parse_result["sqls"]:
+                if key in self.sql_completer.flatten_data:
+                    sqls.append(HistoricalSql.from_dict(self.sql_completer.flatten_data[key]))
+        return (tables, metrics, sqls)
 
     def get_completions(self, document, complete_event) -> Iterable[Completion]:
         if not document.text.startswith("/"):
@@ -669,12 +834,53 @@ class AtReferenceCompleter(Completer):
             return
 
         if " " not in prefix[1:]:
-            # Complete type
+            # User is typing after @ without space, do fuzzy matching
             type_prefix = prefix[1:]
-            type_prefix = type_prefix.lower()
+
+            if type_prefix:  # Only do fuzzy matching if there's text after @
+                # Get fuzzy matches from each completer (max 5 each)
+                table_matches = self.table_completer.fuzzy_match(type_prefix)
+                metric_matches = self.metric_completer.fuzzy_match(type_prefix)
+                sql_matches = self.sql_completer.fuzzy_match(type_prefix)
+                file_matches = get_file_fuzzy_matches(type_prefix, path=self.workspace_root, max_matches=5)
+                # Yield fuzzy match results first
+                for match in table_matches[:5]:
+                    # Extract the actual path from the match string
+                    display = f"📊 {match}"
+                    yield Completion(
+                        f"@Table {match}",  # Remove the @ from completion
+                        start_position=-len(prefix),
+                        display=display,
+                        style="class:fuzzy",
+                    )
+
+                for match in metric_matches[:5]:
+                    display = f"📈 {match}"
+                    yield Completion(
+                        f"@Metrics {match}", start_position=-len(prefix), display=display, style="class:fuzzy"
+                    )
+
+                for match in sql_matches[:5]:
+                    display = f"💻 {match}"
+                    yield Completion(
+                        f"@SqlHistory {match}", start_position=-len(prefix), display=display, style="class:fuzzy"
+                    )
+
+                for file_path in file_matches:
+                    yield Completion(
+                        f"@File {file_path}",  # Remove @ from completion
+                        start_position=-len(prefix),
+                        display=f"📁 {file_path}",
+                        style="class:fuzzy",
+                    )
+
+            # Then yield type options that match
+            type_prefix_lower = type_prefix.lower()
             for opt_text, opt_display in self.type_options.items():
-                if opt_text.lower().startswith(type_prefix):
-                    yield Completion(opt_text, start_position=-len(type_prefix), display=opt_display)
+                if opt_text.lower().startswith(type_prefix_lower):
+                    yield Completion(
+                        opt_text, start_position=-len(type_prefix), display=opt_display, style="class:type"
+                    )
             return
 
         # Parse type and path
@@ -687,6 +893,51 @@ class AtReferenceCompleter(Completer):
         from prompt_toolkit.document import Document
 
         path_document = Document(rest, len(rest))
-
         # Route to different completers based on type
         yield from self.completer_dict[type_].get_completions(path_document, complete_event)
+
+
+class AtReferenceParser:
+    """
+    Independent parser for extracting @Table, @Metrics, and @SqlHistory references from text.
+    This parser only extracts the reference paths, not the actual data.
+    """
+
+    def __init__(self):
+        """Initialize the parser with regex patterns."""
+        # Regular expressions for matching different types of references
+        self.patterns = {
+            "Table": re.compile(r"@Table\s+([^\s]+)", re.IGNORECASE),
+            "Metrics": re.compile(r"@Metrics\s+([^\s]+)", re.IGNORECASE),
+            "Sqls": re.compile(r"@SqlHistory\s+([^\s]+)", re.IGNORECASE),
+        }
+
+    def parse_input(self, text: str) -> Dict[str, List[str]]:
+        """
+        Parse text and extract all @reference paths.
+
+        Args:
+            text: Input text containing @references
+
+        Returns:
+            Dictionary with keys 'tables', 'metrics', 'sql_history', 'files',
+            each containing a list of extracted paths
+        """
+        results = {"tables": [], "metrics": [], "sqls": []}
+
+        # Extract Table references
+        for match in self.patterns["Table"].finditer(text):
+            path = match.group(1)
+            results["tables"].append(path)
+
+        # Extract Metric references
+        for match in self.patterns["Metrics"].finditer(text):
+            path = match.group(1)
+            results["metrics"].append(path)
+
+        # Extract SqlHistory references
+        for match in self.patterns["Sqls"].finditer(text):
+            path = match.group(1)
+            results["sqls"].append(path)
+
+        return results
