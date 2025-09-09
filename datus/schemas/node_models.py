@@ -126,12 +126,12 @@ class TableSchema(BaseTableSchema):
         """Create TableSchema instance from dictionary."""
         return cls(
             identifier=data.get("identifier", ""),
-            catalog_name=data["catalog_name"],
+            catalog_name=data.get("catalog_name", ""),
             table_name=data["table_name"],
-            database_name=data["database_name"],
-            schema_name=data["schema_name"],
+            database_name=data.get("database_name", ""),
+            schema_name=data.get("schema_name", ""),
             definition=data["definition"],
-            table_type=data["table_type"],
+            table_type=data.get("table_type", "table"),
         )
 
     @classmethod
@@ -273,11 +273,11 @@ class TableValue(BaseTableSchema):
     def from_dict(cls, data: Dict[str, Any]) -> TableValue:
         """Create TableValue instance from dictionary."""
         return cls(
-            identifier=data["identifier"],
-            catalog_name=data["catalog_name"],
+            identifier=data.get("identifier", ""),
+            catalog_name=data.get("catalog_name", ""),
             table_name=data["table_name"],
-            database_name=data["database_name"],
-            schema_name=data["schema_name"],
+            database_name=data.get("database_name", ""),
+            schema_name=data.get("schema_name", ""),
             table_values=data["table_values"] if "table_values" in data else data["sample_rows"],
             table_type=data["table_type"],
         )
