@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 
 from agents import Agent, RunContextWrapper, Usage
-from agents.mcp import MCPServerStdio, MCPServerStdioParams
+from agents.mcp import MCPServerStdio, MCPServerStdioParams, create_static_tool_filter
 
 from datus.configuration.agent_config import DbConfig
 from datus.utils.constants import DBType
@@ -470,7 +470,19 @@ class MCPServer:
                             },
                         )
 
+                    # Create tool filter for filesystem operations
+                    tool_filter = create_static_tool_filter(
+                        allowed_tool_names=[
+                            "read_text_file",
+                            "read_multiple_files",
+                            "write_file",
+                            "edit_file",
+                            "search_files",
+                            "list_directory",
+                        ]
+                    )
+
                     cls._filesystem_mcp_server = SilentMCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=30
+                        params=mcp_server_params, client_session_timeout_seconds=30, tool_filter=tool_filter
                     )
         return cls._filesystem_mcp_server

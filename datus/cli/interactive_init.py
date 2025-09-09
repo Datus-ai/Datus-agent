@@ -26,6 +26,14 @@ class InteractiveInit:
     """Interactive initialization wizard for Datus Agent."""
 
     def __init__(self, user_home: Optional[str] = None):
+        self.workspace_path = ""
+        self.namespace_name = ""
+        self.user_home = user_home if user_home else Path.home()
+        self.datus_dir = self.user_home / ".datus"
+        self.data_dir = self.datus_dir / "data"
+        self.conf_dir = self.datus_dir / "conf"
+        self.template_dir = self.datus_dir / "template"
+        self.sample_dir = self.datus_dir / "sample"
         try:
             text = read_data_file_text(resource_path="conf/agent.yml.qs", encoding="utf-8")
             self.config = yaml.safe_load(text)
@@ -45,14 +53,6 @@ class InteractiveInit:
                     },
                 }
             }
-        self.workspace_path = ""
-        self.namespace_name = ""
-        self.user_home = user_home if user_home else Path.home()
-        self.datus_dir = self.user_home / ".datus"
-        self.data_dir = self.datus_dir / "data"
-        self.conf_dir = self.datus_dir / "conf"
-        self.template_dir = self.datus_dir / "template"
-        self.sample_dir = self.datus_dir / "sample"
 
     def _init_dirs(self):
         for dir_name in (self.datus_dir, self.data_dir, self.conf_dir, self.template_dir, self.sample_dir):
@@ -273,13 +273,14 @@ class InteractiveInit:
 
     def _configure_workspace(self) -> bool:
         """Step 3: Configure workspace directory."""
-        console.print("[bold yellow][3/5] Configure Workspace Root[/bold yellow]")
+        console.print("[bold yellow][3/5] Configure Workspace Root (your sql files located here)[/bold yellow]")
 
-        default_workspace = str(Path.home() / ".datus" / "workspace")
+        default_workspace = str(self.user_home / ".datus" / "workspace")
         self.workspace_path = Prompt.ask("- Workspace path", default=default_workspace)
 
         # Store workspace path in storage configuration
-        self.config["agent"]["storage"]["base_path"] = self.workspace_path
+        self.config["agent"]["storage"]["workspace_root"] = self.workspace_path
+        self.config["agent"]["storage"]["base_path"] = str(self.user_home / ".datus" / "data")
 
         # Create workspace directory
         try:
@@ -498,9 +499,28 @@ class InteractiveInit:
     def _initialize_metadata(self) -> bool:
         """Initialize metadata knowledge base."""
         try:
+            logger.info(
+                f"Metadata initialization...{self.namespace_name},  {self.config['agent']['storage']['base_path']}"
+            )
             args = self._create_bootstrap_args(["metadata"])
             agent = self._create_agent_with_config(args)
             result = agent.bootstrap_kb()
+            # Log detailed results
+            if isinstance(result, dict) and "message" in result:
+                logger.info(f"Metadata bootstrap completed: {result['message']}")
+            else:
+                logger.info(f"Metadata bootstrap result: {result}")
+
+            # Try to get table counts after bootstrap
+            try:
+                if hasattr(agent, "metadata_store") and agent.metadata_store:
+                    schema_size = agent.metadata_store.get_schema_size()
+                    value_size = agent.metadata_store.get_value_size()
+                    logger.info(f"Bootstrap success: {schema_size} tables processed, {value_size} sample records")
+                    console.print(f"  → Processed {schema_size} tables with {value_size} sample records")
+            except Exception as count_e:
+                logger.debug(f"Could not get table counts: {count_e}")
+
             return result is not False
 
         except Exception as e:
@@ -510,6 +530,7 @@ class InteractiveInit:
     def _initialize_sql_history(self, sql_dir: str) -> int:
         """Initialize SQL history from specified directory."""
         try:
+            logger.info(f"SQL history initialization...{self.namespace_name}, dir:{sql_dir}")
             # Count SQL files first
             sql_files = list(Path(sql_dir).rglob("*.sql"))
             if not sql_files:
@@ -518,6 +539,17 @@ class InteractiveInit:
             args = self._create_bootstrap_args(["sql_history"], sql_dir=sql_dir, validate_only=False)
             agent = self._create_agent_with_config(args)
             result = agent.bootstrap_kb()
+
+            # Log detailed results
+            if isinstance(result, dict):
+                if "message" in result:
+                    logger.info(f"SQL history bootstrap completed: {result['message']}")
+                if "processed_count" in result:
+                    logger.info(f"Bootstrap success: {result['processed_count']} SQL files processed")
+                elif "sql_count" in result:
+                    logger.info(f"Bootstrap success: {result['sql_count']} SQL files processed")
+            else:
+                logger.info(f"SQL history bootstrap result: {result}")
 
             if result is not False:
                 return len(sql_files)
