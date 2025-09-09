@@ -499,7 +499,9 @@ class InteractiveInit:
     def _initialize_metadata(self) -> bool:
         """Initialize metadata knowledge base."""
         try:
-            logger.info(f"Metadata initialization...{self.namespace_name},  {self.config['agent']['storage']['base_path']}")
+            logger.info(
+                f"Metadata initialization...{self.namespace_name},  {self.config['agent']['storage']['base_path']}"
+            )
             args = self._create_bootstrap_args(["metadata"])
             agent = self._create_agent_with_config(args)
             result = agent.bootstrap_kb()
@@ -528,7 +530,7 @@ class InteractiveInit:
     def _initialize_sql_history(self, sql_dir: str) -> int:
         """Initialize SQL history from specified directory."""
         try:
-            logger.info(f"SQL history initialization...{self.namespace_name}, dir:{sql_dir}}")
+            logger.info(f"SQL history initialization...{self.namespace_name}, dir:{sql_dir}")
             # Count SQL files first
             sql_files = list(Path(sql_dir).rglob("*.sql"))
             if not sql_files:
@@ -552,7 +554,7 @@ class InteractiveInit:
             if result is not False:
                 return len(sql_files)
             else:
-                 return 0
+                return 0
 
         except Exception as e:
             logger.error(f"SQL history initialization failed: {e}")

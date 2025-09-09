@@ -93,12 +93,10 @@ class ChatAgenticNode(AgenticNode):
             import os
 
             root_path = "."
-            if agent_config and hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
-                chat_node_config = agent_config.nodes["chat"]
-                if chat_node_config.input and hasattr(chat_node_config.input, "workspace_root"):
-                    workspace_root = chat_node_config.input.workspace_root
-                    if workspace_root is not None:
-                        root_path = workspace_root
+            if agent_config and hasattr(agent_config, "storage") and hasattr(agent_config.storage, "workspace_root"):
+                workspace_root = agent_config.storage.workspace_root
+                if workspace_root is not None:
+                    root_path = workspace_root
 
             # Handle relative vs absolute paths
             if root_path and os.path.isabs(root_path):
@@ -108,8 +106,9 @@ class ChatAgenticNode(AgenticNode):
 
             filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
             if filesystem_server:
+                # Add filesystem server first
                 mcp_servers["filesystem"] = filesystem_server
-                logger.info(f"Added filesystem MCP server with path: {filesystem_path}")
+                logger.info(f"Added filesystem MCP server at path: {filesystem_path}")
             else:
                 logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
 
@@ -152,8 +151,8 @@ class ChatAgenticNode(AgenticNode):
             # Get or create session and any available summary
             session, conversation_summary = self._get_or_create_session()
 
-            # Get system instruction from template, passing summary if available
-            system_instruction = self._get_system_prompt(conversation_summary)
+            # Get system instruction from template, passing summary and prompt version if available
+            system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)
 
             # Add database context to user message if provided
             enhanced_message = user_input.user_message

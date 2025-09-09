@@ -110,7 +110,9 @@ class AgenticNode(ABC):
 
         return template_name.lower()
 
-    def _get_system_prompt(self, conversation_summary: Optional[str] = None) -> str:
+    def _get_system_prompt(
+        self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
+    ) -> str:
         """
         Get the system prompt for this agentic node using PromptManager.
 
@@ -118,6 +120,7 @@ class AgenticNode(ABC):
 
         Args:
             conversation_summary: Optional summary from previous conversation compact
+            prompt_version: Optional prompt version to use, overrides agent config version
 
         Returns:
             System prompt string loaded from the template
@@ -125,16 +128,18 @@ class AgenticNode(ABC):
         Raises:
             DatusException: If template is not found
         """
-        # Get prompt version from agent config or use default
-        version = None
-        if self.agent_config and hasattr(self.agent_config, "prompt_version"):
+        # Get prompt version from parameter, fallback to agent config, then use default
+        version = prompt_version
+        if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
             version = self.agent_config.prompt_version
 
-        root_path = "~/.datus/sqls"
-        if self.agent_config and hasattr(self.agent_config, "nodes") and "chat" in self.agent_config.nodes:
-            chat_node_config = self.agent_config.nodes["chat"]
-            if chat_node_config.input and hasattr(chat_node_config.input, "workspace_root"):
-                root_path = chat_node_config.input.workspace_root
+        root_path = "~/.datus/workspace"
+        if (
+            self.agent_config
+            and hasattr(self.agent_config, "storage")
+            and hasattr(self.agent_config.storage, "workspace_root")
+        ):
+            root_path = self.agent_config.storage.workspace_root
 
         # Construct template name: {template_name}_system_{version}
         template_name = f"{self.get_node_name()}_system"

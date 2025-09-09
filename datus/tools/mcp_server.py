@@ -471,6 +471,15 @@ class MCPServer:
                         )
 
                     cls._filesystem_mcp_server = SilentMCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=30
+                        params=mcp_server_params,
+                        client_session_timeout_seconds=30,
+                        allowed_tool_names=[
+                            "read_text_file",
+                            "read_multiple_files",
+                            "write_file",
+                            "edit_file",
+                            "search_files",
+                            "list_directory",
+                        ],
                     )
         return cls._filesystem_mcp_server
