@@ -93,8 +93,8 @@ class ChatAgenticNode(AgenticNode):
             import os
 
             root_path = "."
-            if agent_config and hasattr(agent_config, "storage") and hasattr(agent_config.storage, "workspace_root"):
-                workspace_root = agent_config.storage.workspace_root
+            if agent_config and hasattr(agent_config, "workspace_root"):
+                workspace_root = agent_config.workspace_root
                 if workspace_root is not None:
                     root_path = workspace_root
 

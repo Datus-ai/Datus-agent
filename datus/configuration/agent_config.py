@@ -302,6 +302,7 @@ class AgentConfig:
         self.storage_configs = init_embedding_models(
             storage_config, openai_configs=self.models, default_openai_config=self.active_model()
         )
+        self.workspace_root = storage_config.get("workspace_root")
 
     def override_by_args(self, **kwargs):
         if kwargs.get("storage_path", ""):

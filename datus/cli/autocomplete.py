@@ -758,8 +758,8 @@ class AtReferenceCompleter(Completer):
                 workspace_root = chat_node.input.workspace_root
 
         # Also check storage configuration for workspace_root
-        if not workspace_root and hasattr(agent_config, "storage") and hasattr(agent_config.storage, "workspace_root"):
-            workspace_root = agent_config.storage.workspace_root
+        if not workspace_root and hasattr(agent_config, "workspace_root"):
+            workspace_root = agent_config.workspace_root
 
         if not workspace_root:
             workspace_root = "."
