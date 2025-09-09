@@ -2,6 +2,7 @@ import re
 from typing import Any, Dict, List
 
 import sqlglot
+from sqlglot import expressions
 from sqlglot.expressions import CTE, Table
 
 from datus.utils.constants import DBType, SQLType
@@ -310,7 +311,7 @@ def parse_table_names_parts(full_table_names: List[str], dialect: str = DBType.S
     return [parse_table_name_parts(table_name, dialect) for table_name in full_table_names]
 
 
-def parse_sql_type(sql: str) -> SQLType:
+def parse_sql_type(sql: str, dialect: str) -> SQLType:
     """
     Determines the type of an SQL statement based on its first keyword.
 
@@ -320,28 +321,37 @@ def parse_sql_type(sql: str) -> SQLType:
 
     Args:
         sql: The SQL query string.
+        dialect: SQL dialect to determine parsing logic
 
     Returns:
         The determined SQLType enum member.
     """
     if not sql or not isinstance(sql, str):
         return SQLType.CONTENT_SET
-
     # Normalize the query for parsing by stripping whitespace and getting the first word.
     normalized_sql = sql.strip().lower()
-    first_word = normalized_sql.split()[0] if normalized_sql else ""
 
-    if first_word in ("select", "with"):
+    parsed_expression = sqlglot.parse_one(normalized_sql, dialect=parse_dialect(dialect))
+    if isinstance(parsed_expression, expressions.Select):
         return SQLType.SELECT
-    elif first_word == "insert":
+    elif isinstance(parsed_expression, expressions.Insert):
         return SQLType.INSERT
-    elif first_word == "update":
+    elif isinstance(parsed_expression, expressions.Update):
         return SQLType.UPDATE
-    elif first_word == "delete":
+    elif isinstance(parsed_expression, expressions.Delete):
         return SQLType.DELETE
-    elif first_word in ("create", "alter", "drop", "truncate", "rename"):
+    elif isinstance(
+        parsed_expression,
+        (
+            expressions.Create,
+            expressions.Alter,
+            expressions.Drop,
+            expressions.TruncateTable,
+            expressions.RenameColumn,
+        ),
+    ):
         return SQLType.DDL
-    elif first_word in ("show", "describe", "desc", "explain", "pragma"):
+    elif isinstance(parsed_expression, (expressions.Show, expressions.Describe, expressions.Pragma)):
         return SQLType.METADATA_SHOW
     else:
         return SQLType.CONTENT_SET
