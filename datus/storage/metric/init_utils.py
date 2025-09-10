@@ -11,7 +11,7 @@ def exists_semantic_metrics(storage: SemanticMetricsRAG, build_mode: str = "over
         for semantic_model in storage.search_all_semantic_models(""):
             all_semantic_models.add(str(semantic_model["id"]))
         for metric in storage.search_all_metrics("", select_fields=["id"]):
-            all_metrics.add(str(metric.as_py()))
+            all_metrics.add(str(metric["id"]))
     return all_semantic_models, all_metrics
 
 

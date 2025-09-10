@@ -156,8 +156,19 @@ class SemanticMetricsRAG:
     def search_all_semantic_models(self, database_name: str) -> List[Dict[str, Any]]:
         return self.semantic_model_storage.search_all(database_name)
 
-    def search_all_metrics(self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None) -> pa.Table:
-        return self.metric_storage.search_all(semantic_model_name, select_fields=select_fields)
+    def search_all_metrics(
+        self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        search_result = self.metric_storage.search_all(semantic_model_name, select_fields=select_fields)
+        if select_fields:
+            # Only return selected fields
+            return [{field: search_result[field][i] for field in select_fields} for i in range(search_result.num_rows)]
+        else:
+            # Return all fields
+            return [
+                {field: search_result[field][i] for field in search_result.column_names}
+                for i in range(search_result.num_rows)
+            ]
 
     def after_init(self):
         self.semantic_model_storage.create_indices()
