@@ -88,13 +88,16 @@ def process_line(
     if not semantic_model_result.success:
         logger.error(f"Failed to generate semantic model for {row['question']}: {semantic_model_result.error}")
         return
+    current_metric_meta = agent_config.current_metric_meta(args.metric_meta)
     semantic_model = gen_semantic_model(
         semantic_model_result.semantic_model_file,
         sql_task.database_name,
         semantic_model_result.table_name,
         sql_task.schema_name,
         sql_task.catalog_name,
-        args.domain,
+        current_metric_meta.domain,
+        current_metric_meta.layer1,
+        current_metric_meta.layer2,
     )
     logger.debug(f"semantic model: {semantic_model}")
     if not semantic_model:
@@ -117,7 +120,6 @@ def process_line(
         logger.error(f"Failed to generate metrics for {row['question']}: {metric_result.error}")
         return
 
-    current_metric_meta = agent_config.current_metric_meta(args.metric_meta)
     metrics = gen_metrics(
         semantic_model.get("semantic_model_name", ""),
         metric_result.sql_queries,
@@ -138,6 +140,8 @@ def gen_semantic_model(
     schema_name: str,
     catalog_name: str,
     domain: str,
+    layer1: str,
+    layer2: str,
 ):
     if not os.path.exists(semantic_model_file):
         logger.error(f"semantic model file {semantic_model_file} not found")
@@ -149,7 +153,15 @@ def gen_semantic_model(
             content = doc.get("data_source", {}) or doc.get("semantic_model", {})
             if content:
                 return _build_semantic_model_dict(
-                    catalog_name, database_name, schema_name, table_name, domain, semantic_model_file, content
+                    catalog_name,
+                    database_name,
+                    schema_name,
+                    table_name,
+                    domain,
+                    layer1,
+                    layer2,
+                    semantic_model_file,
+                    content,
                 )
     return {}
 
@@ -260,12 +272,15 @@ def process_semantic_yaml_file(
         current_db_config = agent_config.current_db_config()
 
         # Generate semantic model from data_source
+        current_metric_meta = agent_config.current_metric_meta(args.metric_meta)
         semantic_model = gen_semantic_model_from_data_source(
             data_source,
             current_db_config.database,
             current_db_config.schema,
             current_db_config.catalog,
-            args.domain,
+            current_metric_meta.domain,
+            current_metric_meta.layer1,
+            current_metric_meta.layer2,
             yaml_file_path,
         )
 
@@ -279,7 +294,6 @@ def process_semantic_yaml_file(
         )
 
         # Process metrics
-        current_metric_meta = agent_config.current_metric_meta(args.metric_meta)
 
         for metric_doc in metrics_list:
             metric_dict = gen_metric_from_yaml(
@@ -299,6 +313,8 @@ def _build_semantic_model_dict(
     schema_name: str,
     table_name: str,
     domain: str,
+    layer1: str,
+    layer2: str,
     semantic_file_path: str,
     content: dict,
 ):
@@ -311,6 +327,8 @@ def _build_semantic_model_dict(
         "table_name": table_name,
         "catalog_database_schema": f"{catalog_name}_{database_name}_{schema_name}",
         "domain": domain,
+        "layer1": layer1,
+        "layer2": layer2,
         "semantic_file_path": semantic_file_path,
         "semantic_model_name": content.get("name", ""),
         "semantic_model_desc": content.get("description", ""),
@@ -327,11 +345,13 @@ def gen_semantic_model_from_data_source(
     schema_name: str,
     catalog_name: str,
     domain: str,
+    layer1: str,
+    layer2: str,
     yaml_file_path: str,
 ):
     table_name = data_source.get("name", "")
     return _build_semantic_model_dict(
-        catalog_name, database_name, schema_name, table_name, domain, yaml_file_path, data_source
+        catalog_name, database_name, schema_name, table_name, domain, layer1, layer2, yaml_file_path, data_source
     )
 
 

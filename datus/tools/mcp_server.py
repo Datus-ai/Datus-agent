@@ -392,9 +392,20 @@ class MCPServer:
                         "MF_VERBOSE": os.getenv("MF_VERBOSE", "false"),
                     }
                     if db_config.type in (DBType.DUCKDB, DBType.SQLITE):
-                        env_settings["MF_DWH_SCHEMA"] = db_config.schema
+                        env_settings["MF_DWH_SCHEMA"] = db_config.schema or "default_schema"
                         env_settings["MF_DWH_DIALECT"] = db_config.type
-                        env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
+                        # Handle sqlite:// URI format properly
+                        if db_config.uri.startswith(f"{db_config.type}://"):
+                            # Handle both sqlite:///path (3 slashes) and sqlite:////path (4 slashes)
+                            uri_prefix = f"{db_config.type}://"
+                            file_path = db_config.uri[len(uri_prefix) :]
+                            # For 4-slash format (sqlite:////path), remove one leading slash
+                            if file_path.startswith("//"):
+                                file_path = file_path[1:]
+                            # file_path should now be /absolute/path for both 3 and 4 slash formats
+                            env_settings["MF_DWH_DB"] = str(Path(file_path).expanduser())
+                        else:
+                            env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
                     elif db_config.type == DBType.STARROCKS:
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
                         env_settings["MF_DWH_DIALECT"] = DBType.MYSQL
