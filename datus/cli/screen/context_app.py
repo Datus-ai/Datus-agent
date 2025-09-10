@@ -3,7 +3,8 @@ from typing import Dict
 
 from .base_app import BaseApp
 from .catalogs_screen import CatalogsScreen
-from .context_screen import CatalogScreen, MetricsScreen, TableScreen, WorkloadContextScreen
+from .context_screen import CatalogScreen, TableScreen, WorkloadContextScreen
+from .metrics_screen import MetricsScreen
 
 
 class ScreenType(str, Enum):
@@ -75,7 +76,7 @@ def show_table_screen(title: str, data: Dict, inject_callback=None):
     app.run()
 
 
-def show_metrics_screen(title: str, data: Dict):
+def show_metrics_screen(title: str, data: Dict, inject_callback=None):
     """
     Show a metrics screen.
 
@@ -83,7 +84,7 @@ def show_metrics_screen(title: str, data: Dict):
         title: Title of the screen
         data: Metrics data to display
     """
-    app = ContextApp(ScreenType.METRICS, title, data)
+    app = ContextApp(ScreenType.METRICS, title, data, inject_callback)
     app.run()
 
 
