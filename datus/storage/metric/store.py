@@ -63,16 +63,25 @@ class SemanticModelStorage(BaseEmbeddingStore):
 
         search_result = self._search_all(
             where="" if not database_name else f"database_name='{database_name}'",
-            select_fields=["id", "catalog_database_schema", "semantic_model_name"],
+            select_fields=None,  # 不限制字段，返回所有字段
         )
-        return [
-            {
-                "id": search_result["id"][i],
-                "catalog_database_schema": search_result["catalog_database_schema"][i],
-                "semantic_model_name": search_result["semantic_model_name"][i],
-            }
-            for i in range(search_result.num_rows)
-        ]
+
+        # 获取所有字段名
+        field_names = search_result.schema.names
+
+        result = []
+        for i in range(search_result.num_rows):
+            row_dict = {}
+            for field_name in field_names:
+                value = search_result[field_name][i]
+                # 处理PyArrow值
+                if hasattr(value, "as_py"):
+                    row_dict[field_name] = value.as_py()
+                else:
+                    row_dict[field_name] = value
+            result.append(row_dict)
+
+        return result
 
     def filter_by_id(self, id: str) -> List[Dict[str, Any]]:
         # Ensure table is ready before direct table access
@@ -122,10 +131,38 @@ class MetricStorage(BaseEmbeddingStore):
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        return self._search_all(
-            where="" if not semantic_model_name else f"semantic_model_name='{semantic_model_name}'",
-            select_fields=select_fields,
-        )
+        # 构建 where 条件
+        where_clause = "" if not semantic_model_name else f"semantic_model_name='{semantic_model_name}'"
+
+        # 使用更直接的方式查询数据
+        if where_clause:
+            try:
+                result = self.table.to_lance().to_table(filter=where_clause)
+            except Exception as e:
+                logger.warning(f"Failed to filter table with clause '{where_clause}': {e}")
+                result = self.table.to_arrow()
+        else:
+            result = self.table.to_arrow()
+
+        # 如果结果为空或无效，返回空表但保持正确的schema
+        if result is None:
+            result = pa.Table.from_pylist([], schema=self._schema)
+
+        # 应用字段选择
+        if select_fields:
+            # 确保请求的字段存在于表中
+            available_fields = [field for field in select_fields if field in result.column_names]
+            if available_fields:
+                result = result.select(available_fields)
+            else:
+                # 如果没有可用字段，至少保留表结构
+                result = result.select([])  # 返回空列但保持行数
+
+        # 移除向量列（如果存在）
+        if self.vector_column_name in result.column_names:
+            result = result.drop([self.vector_column_name])
+
+        return result
 
 
 def qualify_name(input_names: List, delimiter: str = "_") -> str:
