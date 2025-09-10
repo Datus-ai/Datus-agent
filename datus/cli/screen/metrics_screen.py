@@ -22,17 +22,14 @@ class MetricsScreen(ContextScreen):
         /* Main layout containers */
         #tree-container {
             height: 100%;
-            width: 50%;
             background: $surface;
         }
 
         #details-container {
             height: 100%;
-            width: 50%;
             background: $surface-lighten-1;
             overflow-y: auto;
             overflow-x: hidden;
-            padding: 0;
         }
 
         #details-panel {
@@ -41,7 +38,6 @@ class MetricsScreen(ContextScreen):
             overflow-y: auto;
             overflow-x: auto;
             padding: 1;
-            box-sizing: border-box;
         }
 
         /* Tree styling */
@@ -93,9 +89,8 @@ class MetricsScreen(ContextScreen):
         Binding("right", "expand_node", "Expand", show=False),
         Binding("left", "collapse_node", "Collapse", show=False),
         Binding("enter", "load_details", "Load Details", show=False),
-        Binding("f1", "show_navigation_help", "Help"),
-        Binding("f2", "exit_with_selection", "Select"),
-        Binding("escape", "exit_without_selection", "Exit", show=False),
+        Binding("f2", "show_navigation_help", "Help"),
+        Binding("escape", "exit_screen", "Exit", show=False),
     ]
 
     def __init__(self, title: str, context_data: Dict, inject_callback=None):
@@ -112,22 +107,22 @@ class MetricsScreen(ContextScreen):
         yield Header(show_clock=True, name="Metrics")
 
         with Horizontal():
+            # Left side: Metrics tree
             with Vertical(id="tree-container"):
                 yield TextualTree(label="Metrics Catalog", id="metrics-tree")
 
+            # Right side: Details panel
             with Vertical(id="details-container"):
-                yield Static("Select a semantic model or metric to view details", id="details-panel")
+                yield Static("Select a node and press Enter to view details", id="details-panel")
 
         yield Footer()
 
     def on_mount(self) -> None:
+        """Called when the screen is mounted."""
         self._build_metrics_tree()
 
     def _build_metrics_tree(self) -> None:
-        """Build metrics tree from storage data.
-
-        构建指标目录树，按照 domain -> layer1 -> layer2 -> semantic_model -> metrics 的层级结构组织。
-        """
+        """Build metrics tree from storage data."""
         try:
             tree = self.query_one("#metrics-tree", TextualTree)
             tree.root.expand()
@@ -136,27 +131,10 @@ class MetricsScreen(ContextScreen):
                 self.query_one("#details-panel", Static).update("[red]Error:[/] No semantic model storage available")
                 return
 
-            # Get all semantic models
             semantic_models = self.semantic_model_storage.search_all("")
 
-            # 如果没有数据，显示明确的提示
-            if not semantic_models:
-                tree.root.add_leaf("📂 No semantic models found in storage", data={"type": "empty_info"})
-                self.query_one("#details-panel", Static).update("No semantic models found in the storage.")
-                return
-
-            # Group by domain -> layer1 -> layer2 -> semantic_model
             grouped_models = self._group_semantic_models(semantic_models)
 
-            # 如果分组后没有数据，显示原始数据结构
-            if not grouped_models:
-                tree.root.add_leaf("📂 Error in data grouping", data={"type": "grouping_error"})
-                self.query_one("#details-panel", Static).update(
-                    f"Found {len(semantic_models)} models but failed to group them."
-                )
-                return
-
-            # Build tree structure
             for domain, layer1_groups in grouped_models.items():
                 domain_node = tree.root.add(f"📁 {domain}", data={"type": "domain", "name": domain})
 
@@ -168,9 +146,9 @@ class MetricsScreen(ContextScreen):
 
                         # Add semantic model nodes
                         for model in models:
-                            model_name = model.get("semantic_model_name", "Unknown Model")
                             model_node = layer2_node.add(
-                                f"📊 {model_name}", data={"type": "semantic_model", "semantic_model_data": model}
+                                f"📊 {model['semantic_model_name']}",
+                                data={"type": "semantic_model", "semantic_model_data": model},
                             )
 
                             # Add metrics loading placeholder
@@ -178,58 +156,20 @@ class MetricsScreen(ContextScreen):
 
         except Exception as e:
             logger.error(f"Failed to build metrics tree: {str(e)}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
             self.query_one("#details-panel", Static).update(f"[red]Error:[/] Failed to build metrics tree: {str(e)}")
 
     def _group_semantic_models(self, semantic_models: List[Dict]) -> Dict:
         """Group semantic models by domain -> layer1 -> layer2."""
         grouped = {}
 
-        # 首先获取所有不同的 domain, layer1, layer2 组合
-        if self.metric_storage:
-            try:
-                # 获取所有 metrics 数据以提取分层结构
-                metrics_table = self.metric_storage.search_all(
-                    select_fields=["domain", "layer1", "layer2", "semantic_model_name"]
-                )
-
-                # 创建一个字典来映射 semantic_model 到其分层结构
-                semantic_model_hierarchy = {}
-                if metrics_table and metrics_table.num_rows > 0:
-                    domains = metrics_table["domain"].to_pylist()
-                    layers1 = metrics_table["layer1"].to_pylist()
-                    layers2 = metrics_table["layer2"].to_pylist()
-                    semantic_names = metrics_table["semantic_model_name"].to_pylist()
-
-                    for i in range(len(domains)):
-                        semantic_name = semantic_names[i]
-                        # 为每个 semantic_model_name 保留其分层信息
-                        if semantic_name not in semantic_model_hierarchy:
-                            semantic_model_hierarchy[semantic_name] = {
-                                "domain": domains[i] or "unknown_domain",
-                                "layer1": layers1[i] or "default_layer1",
-                                "layer2": layers2[i] or "default_layer2",
-                            }
-            except Exception as e:
-                logger.error(f"Failed to fetch hierarchy from metrics: {str(e)}")
-                semantic_model_hierarchy = {}
-
         for model in semantic_models:
-            semantic_model_name = model.get("semantic_model_name", "Unknown Model")
+            domain = model.get("domain", "unknown")
+            catalog_db_schema = model.get("catalog_database_schema", "")
 
-            # 尝试从 metrics 中获取分层信息
-            hierarchy_info = semantic_model_hierarchy.get(semantic_model_name, {})
+            parts = catalog_db_schema.split("_") if catalog_db_schema else []
+            layer1 = parts[0] if len(parts) > 0 else "default"
+            layer2 = parts[1] if len(parts) > 1 else "default"
 
-            # 获取 domain，如果没有则使用默认值
-            domain = hierarchy_info.get("domain") or model.get("domain") or "unknown_domain"
-
-            # 解析分层结构
-            layer1 = hierarchy_info.get("layer1") or "default_layer1"
-            layer2 = hierarchy_info.get("layer2") or "default_layer2"
-
-            # 确保字典结构存在
             if domain not in grouped:
                 grouped[domain] = {}
             if layer1 not in grouped[domain]:
@@ -246,16 +186,15 @@ class MetricsScreen(ContextScreen):
         node = event.node
         self.selected_data = node.data or {}
         self.update_path_display(node)
-        self.action_load_details()  # 自动加载详情
 
     def on_tree_node_highlighted(self, event: TextualTree.NodeHighlighted) -> None:
         """Handle tree node highlighting."""
         node = event.node
         self.selected_data = node.data or {}
         self.update_path_display(node)
-        self.action_load_details()  # 自动加载详情
 
     def update_path_display(self, node: TreeNode) -> None:
+        """Update the header with the current path."""
         path_parts = []
         current = node
 
@@ -267,8 +206,7 @@ class MetricsScreen(ContextScreen):
                 name = semantic_data.get("semantic_model_name", "")
             if not name and current.data.get("type") == "metric":
                 metric_data = current.data.get("metric_data", {})
-                # 使用正确的字段名 'name' 而不是 'metric_name'
-                name = metric_data.get("name", "")
+                name = metric_data.get("metric_name", "")
 
             if name:
                 path_parts.insert(0, name)
@@ -285,6 +223,7 @@ class MetricsScreen(ContextScreen):
             header._name = "Metrics"
 
     def on_tree_node_expanded(self, event: TextualTree.NodeExpanded) -> None:
+        """Handle tree node expansion for lazy loading metrics."""
         node = event.node
         if not node.data:
             return
@@ -331,31 +270,11 @@ class MetricsScreen(ContextScreen):
                 model_node.add_leaf("❌ Metrics storage not available", data={"type": "error"})
                 return
 
-            # 明确指定需要的字段，确保返回所有需要的数据
-            required_fields = ["name", "description", "constraint", "sql_query", "semantic_model_name"]
-            metrics_table = self.metric_storage.search_all(semantic_model_name, select_fields=required_fields)
-
-            # 转换 PyArrow Table 为字典列表
-            metrics = []
-            if metrics_table and metrics_table.num_rows > 0:
-                # 获取所有字段名
-                field_names = metrics_table.schema.names
-                for i in range(metrics_table.num_rows):
-                    row_dict = {}
-                    for field_name in field_names:
-                        value = metrics_table[field_name][i]
-                        # 处理PyArrow值
-                        if hasattr(value, "as_py"):
-                            row_dict[field_name] = value.as_py()
-                        else:
-                            row_dict[field_name] = value
-                    metrics.append(row_dict)
+            metrics = self.metric_storage.search_all(semantic_model_name)
 
             # Add metric nodes
             for metric in metrics:
-                # 使用正确的字段名 'name' 而不是 'metric_name'
-                metric_name = metric.get("name", "Unknown Metric")
-                model_node.add_leaf(f"• {metric_name}", data={"type": "metric", "metric_data": metric})
+                model_node.add_leaf(f"• {metric['metric_name']}", data={"type": "metric", "metric_data": metric})
 
             # If no metrics found
             if not metrics:
@@ -363,12 +282,32 @@ class MetricsScreen(ContextScreen):
 
         except Exception as e:
             logger.error(f"Failed to load metrics for {semantic_model_name}: {str(e)}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
             model_node.add_leaf("❌ Error loading metrics", data={"type": "error"})
 
+    def action_load_details(self) -> None:
+        """Load details when Enter is pressed."""
+        tree = self.query_one("#metrics-tree", TextualTree)
+        if tree.cursor_node is None:
+            return
+
+        node = tree.cursor_node
+        node_data = node.data
+
+        if not node_data:
+            return
+
+        node_type = node_data.get("type")
+        details_panel = self.query_one("#details-panel", Static)
+
+        if node_type == "semantic_model":
+            self._show_semantic_model_details(node_data.get("semantic_model_data", {}), details_panel)
+        elif node_type == "metric":
+            self._show_metric_details(node_data.get("metric_data", {}), details_panel)
+        else:
+            details_panel.update("Select a semantic model or metric and press Enter to view details")
+
     def _show_semantic_model_details(self, semantic_model_data: Dict, details_panel: Static) -> None:
+        """Show semantic model details."""
         try:
             import json
 
@@ -414,71 +353,43 @@ class MetricsScreen(ContextScreen):
     def _show_metric_details(self, metric_data: Dict, details_panel: Static) -> None:
         """Show metric details."""
         try:
-            # 调试信息
-            logger.debug(f"Metric data received: {metric_data}")
-
             content = "[bold cyan]📈 Metric Details[/bold cyan]\n\n"
-
-            # 检查并显示字段值
-            name = metric_data.get("name", "N/A")
-            description = metric_data.get("description", "N/A")
-            sql_query = metric_data.get("sql_query", "N/A")
-
-            content += f"[bold]Name:[/] {name}\n"
-            content += f"[bold]Description:[/] {description}\n"
-            content += f"[bold]Type:[/] {metric_data.get('constraint', 'N/A')}\n\n"
+            content += f"[bold]Name:[/] {metric_data.get('metric_name', 'N/A')}\n"
+            content += f"[bold]Description:[/] {metric_data.get('metric_value', 'N/A')}\n"
+            content += f"[bold]Type:[/] {metric_data.get('metric_type', 'N/A')}\n\n"
             content += "[bold]SQL Query:[/]\n"
-            content += sql_query
+            content += metric_data.get("metric_sql_query", "N/A")
 
             details_panel.update(content)
         except Exception as e:
             logger.error(f"Failed to show metric details: {str(e)}")
-            logger.error(f"Metric data: {metric_data}")
             details_panel.update(f"[red]Error:[/] Failed to load metric details: {str(e)}")
 
-    def action_load_details(self) -> None:
-        details_panel = self.query_one("#details-panel", Static)
-
-        if not self.selected_data:
-            details_panel.update("Select a semantic model or metric to view details")
-            return
-
-        node_type = self.selected_data.get("type")
-
-        if node_type == "semantic_model":
-            semantic_model_data = self.selected_data.get("semantic_model_data", {})
-            self._show_semantic_model_details(semantic_model_data, details_panel)
-        elif node_type == "metric":
-            metric_data = self.selected_data.get("metric_data", {})
-            self._show_metric_details(metric_data, details_panel)
-        else:
-            details_panel.update("Select a semantic model or metric to view details")
-
     def action_cursor_down(self) -> None:
+        """Move cursor down."""
         tree = self.query_one("#metrics-tree", TextualTree)
         tree.action_cursor_down()
 
     def action_cursor_up(self) -> None:
+        """Move cursor up."""
         tree = self.query_one("#metrics-tree", TextualTree)
         tree.action_cursor_up()
 
     def action_expand_node(self) -> None:
+        """Expand the current node."""
         tree = self.query_one("#metrics-tree", TextualTree)
         if tree.cursor_node is not None:
             tree.cursor_node.expand()
 
     def action_collapse_node(self) -> None:
+        """Collapse the current node."""
         tree = self.query_one("#metrics-tree", TextualTree)
         if tree.cursor_node is not None:
             tree.cursor_node.collapse()
 
     def action_exit_screen(self) -> None:
         """Exit the screen."""
-        if len(self.app.screen_stack) > 1:
-            self.app.pop_screen()
-        else:
-            # 如果是最后一个屏幕，正常退出应用
-            self.app.exit()
+        self.app.pop_screen()
 
     def action_show_navigation_help(self) -> None:
         """Show navigation help."""
@@ -488,19 +399,6 @@ class MetricsScreen(ContextScreen):
             self.app.pop_screen()
         else:
             self.app.push_screen(NavigationHelpScreen())
-
-    def action_exit_with_selection(self) -> None:
-        """Exit screen and send selected data to CLI."""
-        if self.selected_data and self.inject_callback:
-            # 可以根据需要传递适当的数据
-            self.inject_callback(self.current_path, self.selected_data)
-        self.app.exit()
-
-    def action_exit_without_selection(self) -> None:
-        """Exit screen without selection."""
-        self.selected_data = {}
-        self.current_path = ""
-        self.app.exit()
 
 
 class NavigationHelpScreen(ModalScreen):
@@ -518,8 +416,7 @@ class NavigationHelpScreen(ModalScreen):
                 "• ← - Collapse current node\n\n"
                 "## Other Keys:\n"
                 "• Enter - Load details for selected node\n"
-                "• F1 - Toggle this help\n"
-                "• F2 - Select\n"
+                "• F2 - Toggle this help\n"
                 "• Esc - Exit screen\n\n"
                 "Press any key to close this help.",
                 id="navigation-help-content",
