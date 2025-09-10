@@ -16,7 +16,6 @@ class ScreenType(str, Enum):
     WORKFLOW_CONTEXT = "workflow_context"
     CATALOGS = "catalogs"
 
-
 class ContextApp(BaseApp):
     """App for displaying context screens."""
 
@@ -76,7 +75,7 @@ def show_table_screen(title: str, data: Dict, inject_callback=None):
     app.run()
 
 
-def show_metrics_screen(title: str, data: Dict, inject_callback=None):
+def show_metrics_screen(title: str, data: Dict,inject_callback=None):
     """
     Show a metrics screen.
 

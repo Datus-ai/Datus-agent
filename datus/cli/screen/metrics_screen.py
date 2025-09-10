@@ -1,15 +1,14 @@
 from typing import Dict, List
-
 from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
-from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Static
-from textual.widgets import Tree as TextualTree
+from textual.widgets import Header, Footer, Static, Tree as TextualTree
 from textual.widgets._tree import TreeNode
+from textual.containers import Horizontal, Vertical
+from textual.binding import Binding
+from textual.screen import ModalScreen
+from textual.containers import Container
 
 from datus.cli.screen.context_screen import ContextScreen
-from datus.storage.metric.store import MetricStorage, SemanticModelStorage
+from datus.storage.metric.store import SemanticModelStorage, MetricStorage
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -131,10 +130,13 @@ class MetricsScreen(ContextScreen):
                 self.query_one("#details-panel", Static).update("[red]Error:[/] No semantic model storage available")
                 return
 
+            # Get all semantic models
             semantic_models = self.semantic_model_storage.search_all("")
 
+            # Group by domain -> layer1 -> layer2 -> semantic_model
             grouped_models = self._group_semantic_models(semantic_models)
 
+            # Build tree structure
             for domain, layer1_groups in grouped_models.items():
                 domain_node = tree.root.add(f"📁 {domain}", data={"type": "domain", "name": domain})
 
@@ -148,7 +150,10 @@ class MetricsScreen(ContextScreen):
                         for model in models:
                             model_node = layer2_node.add(
                                 f"📊 {model['semantic_model_name']}",
-                                data={"type": "semantic_model", "semantic_model_data": model},
+                                data={
+                                    "type": "semantic_model",
+                                    "semantic_model_data": model
+                                }
                             )
 
                             # Add metrics loading placeholder
@@ -166,6 +171,7 @@ class MetricsScreen(ContextScreen):
             domain = model.get("domain", "unknown")
             catalog_db_schema = model.get("catalog_database_schema", "")
 
+            # Parse catalog_database_schema to get layer1 and layer2
             parts = catalog_db_schema.split("_") if catalog_db_schema else []
             layer1 = parts[0] if len(parts) > 0 else "default"
             layer2 = parts[1] if len(parts) > 1 else "default"
@@ -199,7 +205,7 @@ class MetricsScreen(ContextScreen):
         current = node
 
         # Build path from current node up to root
-        while current and hasattr(current, "data") and current.data:
+        while current and hasattr(current, 'data') and current.data:
             name = str(current.data.get("name", ""))
             if not name and current.data.get("type") == "semantic_model":
                 semantic_data = current.data.get("semantic_model_data", {})
@@ -231,9 +237,8 @@ class MetricsScreen(ContextScreen):
         node_type = node.data.get("type")
 
         # Handle loading placeholders
-        loading_children = [
-            child for child in node.children if child.data and child.data.get("type") == "loading_metrics"
-        ]
+        loading_children = [child for child in node.children if
+                            child.data and child.data.get("type") == "loading_metrics"]
         for loading_child in loading_children:
             loading_child.remove()
 
@@ -274,7 +279,13 @@ class MetricsScreen(ContextScreen):
 
             # Add metric nodes
             for metric in metrics:
-                model_node.add_leaf(f"• {metric['metric_name']}", data={"type": "metric", "metric_data": metric})
+                model_node.add_leaf(
+                    f"• {metric['metric_name']}",
+                    data={
+                        "type": "metric",
+                        "metric_data": metric
+                    }
+                )
 
             # If no metrics found
             if not metrics:
@@ -323,7 +334,7 @@ class MetricsScreen(ContextScreen):
             # Show identifiers
             content += "[bold]Identifiers:[/]\n"
             try:
-                identifiers = json.loads(semantic_model_data.get("identifiers", "[]"))
+                identifiers = json.loads(semantic_model_data.get('identifiers', '[]'))
                 for identifier in identifiers:
                     content += f"  - {identifier.get('name', 'N/A')}: {identifier.get('type', 'N/A')}\n"
             except Exception:
@@ -331,7 +342,7 @@ class MetricsScreen(ContextScreen):
 
             content += "\n[bold]Dimensions:[/]\n"
             try:
-                dimensions = json.loads(semantic_model_data.get("dimensions", "[]"))
+                dimensions = json.loads(semantic_model_data.get('dimensions', '[]'))
                 for dimension in dimensions:
                     content += f"  - {dimension.get('name', 'N/A')}: {dimension.get('type', 'N/A')}\n"
             except Exception:
@@ -339,7 +350,7 @@ class MetricsScreen(ContextScreen):
 
             content += "\n[bold]Measures:[/]\n"
             try:
-                measures = json.loads(semantic_model_data.get("measures", "[]"))
+                measures = json.loads(semantic_model_data.get('measures', '[]'))
                 for measure in measures:
                     content += f"  - {measure.get('name', 'N/A')}: {measure.get('agg', 'N/A')}\n"
             except Exception:
@@ -358,7 +369,7 @@ class MetricsScreen(ContextScreen):
             content += f"[bold]Description:[/] {metric_data.get('metric_value', 'N/A')}\n"
             content += f"[bold]Type:[/] {metric_data.get('metric_type', 'N/A')}\n\n"
             content += "[bold]SQL Query:[/]\n"
-            content += metric_data.get("metric_sql_query", "N/A")
+            content += metric_data.get('metric_sql_query', 'N/A')
 
             details_panel.update(content)
         except Exception as e:
