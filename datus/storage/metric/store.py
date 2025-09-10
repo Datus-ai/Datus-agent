@@ -31,6 +31,8 @@ class SemanticModelStorage(BaseEmbeddingStore):
                     pa.field("table_name", pa.string()),
                     pa.field("catalog_database_schema", pa.string()),
                     pa.field("domain", pa.string()),
+                    pa.field("layer1", pa.string()),
+                    pa.field("layer2", pa.string()),
                     pa.field("semantic_file_path", pa.string()),
                     pa.field("semantic_model_name", pa.string()),
                     pa.field("semantic_model_desc", pa.string()),
