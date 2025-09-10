@@ -37,7 +37,15 @@ Please classify this SQL query in the following JSON format:
     "tags": "comma_separated_relevant_tags"
 }
 
-Guidelines:
+**CRITICAL FORMATTING RULES - MUST FOLLOW EXACTLY:**
+1. **NO SPACES ALLOWED**: All domain, layer1, layer2 values MUST use underscores instead of spaces
+2. **TRANSFORM NAMES**: Convert any spaces in taxonomy names to underscores in your output
+   - Example: "customer management" → "customer_management"
+   - Example: "data analysis" → "data_analysis"
+   - Example: "user reports" → "user_reports"
+3. **VALIDATION**: Your output values must contain NO spaces - only lowercase letters, numbers, and underscores
+
+**Classification Guidelines:**
 - **IMPORTANT: Follow the hierarchical structure strictly**
 - Step 1: Select exactly ONE domain that best fits the business context
 - Step 2: Select exactly ONE layer1 category that belongs to your chosen domain
@@ -47,4 +55,4 @@ Guidelines:
 - Choose the most specific and accurate classifications possible
 - If no perfect match exists, choose the closest available option within the correct hierarchy
 - Tags should be comma-separated without spaces after commas
-- Keep all values as strings exactly as they appear in the taxonomy
+- **FINAL CHECK**: Before submitting, verify that domain, layer1, and layer2 values contain NO spaces

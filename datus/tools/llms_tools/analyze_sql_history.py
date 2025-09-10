@@ -129,6 +129,23 @@ def generate_classification_taxonomy(
         taxonomy = llm_tool.model.generate_with_json_output(prompt)
         logger.debug(f"Parsed data of generate_classification_taxonomy: {taxonomy}")
 
+        # Normalize names to ensure no spaces
+        for domain in taxonomy.get("domains", []):
+            if "name" in domain:
+                domain["name"] = domain["name"].replace(" ", "_").lower()
+
+        for layer1 in taxonomy.get("layer1_categories", []):
+            if "name" in layer1:
+                layer1["name"] = layer1["name"].replace(" ", "_").lower()
+            if "domain" in layer1:
+                layer1["domain"] = layer1["domain"].replace(" ", "_").lower()
+
+        for layer2 in taxonomy.get("layer2_categories", []):
+            if "name" in layer2:
+                layer2["name"] = layer2["name"].replace(" ", "_").lower()
+            if "layer1" in layer2:
+                layer2["layer1"] = layer2["layer1"].replace(" ", "_").lower()
+
         logger.debug("Generated taxonomy:")
 
         # Display domains with their layer1 and layer2 categories
@@ -237,9 +254,9 @@ def classify_single_item(
         parsed_data = llm_tool.model.generate_with_json_output(prompt)
         logger.debug(f"Parsed data of classify_single_item: {parsed_data}")
 
-        item["domain"] = parsed_data.get("domain", "")
-        item["layer1"] = parsed_data.get("layer1", "")
-        item["layer2"] = parsed_data.get("layer2", "")
+        item["domain"] = parsed_data.get("domain", "").replace(" ", "_").lower()
+        item["layer1"] = parsed_data.get("layer1", "").replace(" ", "_").lower()
+        item["layer2"] = parsed_data.get("layer2", "").replace(" ", "_").lower()
         item["tags"] = parsed_data.get("tags", "")
 
         logger.debug(f"Item {index}: Successfully classified")
