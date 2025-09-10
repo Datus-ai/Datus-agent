@@ -63,7 +63,7 @@ Metric Standardization
 
 ```bash
 # Check existing metrics
-@metrics
+@subject
 
 # Generate new metrics from analysis
 !gen_metrics_stream

@@ -2,16 +2,15 @@ from enum import Enum
 from typing import Dict
 
 from .base_app import BaseApp
-from .catalogs_screen import CatalogsScreen
-from .context_screen import CatalogScreen, MetricsScreen, TableScreen, WorkloadContextScreen
+from .catalog_screen import CatalogScreen
+from .context_screen import WorkloadContextScreen
+from .subject_screen import SubjectScreen
 
 
 class ScreenType(str, Enum):
     """Enum for screen types."""
 
-    CATALOG = "catalog"
-    TABLE = "table"
-    METRICS = "metrics"
+    SUBJECT = "subject"
     WORKFLOW_CONTEXT = "workflow_context"
     CATALOGS = "catalogs"
 
@@ -37,45 +36,15 @@ class ContextApp(BaseApp):
 
     def on_mount(self):
         """Mount the appropriate screen based on type."""
-        if self.screen_type == ScreenType.CATALOG:
-            self.push_screen(CatalogScreen(self.title, self.data, self.inject_callback))
-        elif self.screen_type == ScreenType.TABLE:
-            self.push_screen(TableScreen(self.title, self.data, self.inject_callback))
-        elif self.screen_type == ScreenType.METRICS:
-            self.push_screen(MetricsScreen(self.title, self.data, self.inject_callback))
+        if self.screen_type == ScreenType.SUBJECT:
+            self.push_screen(SubjectScreen(self.title, self.data, self.inject_callback))
         elif self.screen_type == ScreenType.WORKFLOW_CONTEXT:
             self.push_screen(WorkloadContextScreen(self.title, self.data, self.inject_callback))
         elif self.screen_type == ScreenType.CATALOGS:
-            self.push_screen(CatalogsScreen(self.title, self.data, self.inject_callback))
+            self.push_screen(CatalogScreen(self.title, self.data, self.inject_callback))
 
 
-def show_catalog_screen(title: str, data: Dict, inject_callback=None):
-    """
-    Show a catalog screen.
-
-    Args:
-        title: Title of the screen
-        data: Catalog data to display
-        inject_callback: Callback for injecting data into the workflow
-    """
-    app = ContextApp(ScreenType.CATALOG, title, data, inject_callback)
-    app.run()
-
-
-def show_table_screen(title: str, data: Dict, inject_callback=None):
-    """
-    Show a table screen.
-
-    Args:
-        title: Title of the screen
-        data: Table data to display
-        inject_callback: Callback for injecting data into the workflow
-    """
-    app = ContextApp(ScreenType.TABLE, title, data, inject_callback)
-    app.run()
-
-
-def show_metrics_screen(title: str, data: Dict):
+def show_subject_screen(title: str, data: Dict):
     """
     Show a metrics screen.
 
@@ -83,19 +52,8 @@ def show_metrics_screen(title: str, data: Dict):
         title: Title of the screen
         data: Metrics data to display
     """
-    app = ContextApp(ScreenType.METRICS, title, data)
+    app = ContextApp(ScreenType.SUBJECT, title, data)
     app.run()
-
-
-# Define run_in_process at module level so it can be pickled for multiprocessing
-# def run_in_process(context_type, title, data):
-#    try:
-#        app = ContextApp(context_type, title, data)
-#        app.run()
-#    except Exception as e:
-#        import traceback
-#        traceback.print_exc()
-#        print(f"Error in Textual app: {e}")
 
 
 def show_workflow_context_screen(title: str, data: Dict, run_new_loop=True):
