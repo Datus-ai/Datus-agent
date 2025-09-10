@@ -694,10 +694,10 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
 
         result = {}
         for i in range(data.num_rows):
-            domain = data["domain"][i].as_py().replace(" ", "_")
-            layer1 = data["layer1"][i].as_py().replace(" ", "_")
-            layer2 = data["layer2"][i].as_py().replace(" ", "_")
-            name = data["name"][i].as_py().replace(" ", "_")
+            domain = data["domain"][i].as_py()
+            layer1 = data["layer1"][i].as_py()
+            layer2 = data["layer2"][i].as_py()
+            name = data["name"][i].as_py()
             insert_into_dict_with_dict(result, [domain, layer1, layer2], name, data["description"][i])
             self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
                 "name": name,
@@ -722,10 +722,10 @@ class SqlHistoryCompleter(DynamicAtReferenceCompleter):
         search_data = storage.search_all_sql_history(domain="")
         result = {}
         for item in search_data:
-            domain = item["domain"].replace(" ", "_")
-            layer1 = item["layer1"].replace(" ", "_")
-            layer2 = item["layer2"].replace(" ", "_")
-            name = item["name"].replace(" ", "_")
+            domain = item["domain"]
+            layer1 = item["layer1"]
+            layer2 = item["layer2"]
+            name = item["name"]
 
             insert_into_dict_with_dict(result, [domain, layer1, layer2], name, item["summary"])
 
