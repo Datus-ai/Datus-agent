@@ -19,7 +19,7 @@ Please analyze all the SQL queries above and generate a comprehensive taxonomy i
     ],
     "layer1_categories": [
         {
-            "name": "category_name", 
+            "name": "category_name",
             "description": "Brief description of this primary functional category",
             "domain": "associated_domain_name",
             "examples": ["example1", "example2"]
@@ -28,7 +28,7 @@ Please analyze all the SQL queries above and generate a comprehensive taxonomy i
     "layer2_categories": [
         {
             "name": "subcategory_name",
-            "description": "Brief description of this secondary category", 
+            "description": "Brief description of this secondary category",
             "layer1": "parent_layer1_category",
             "examples": ["example1", "example2"]
         }
@@ -52,3 +52,9 @@ Guidelines:
 - Ensure categories are mutually exclusive but tags can overlap
 - Make names concise but descriptive (2-4 words max)
 - Include realistic examples for each category/tag
+- **CRITICAL FORMATTING REQUIREMENT**: ALL domain/layer1/layer2 name fields MUST use underscores instead of spaces
+  - Example: "customer_orders" NOT "customer orders"
+  - Example: "data_analysis" NOT "data analysis"
+  - Example: "user_management" NOT "user management"
+  - **VALIDATION**: Every name field must contain NO spaces - only lowercase letters, numbers, and underscores
+  - **FINAL CHECK**: Before submitting, verify ALL name fields follow this format

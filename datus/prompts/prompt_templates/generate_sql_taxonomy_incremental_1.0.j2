@@ -44,7 +44,7 @@ Please analyze the new SQL queries above and generate an updated taxonomy in the
     ],
     "layer1_categories": [
         {
-            "name": "category_name", 
+            "name": "category_name",
             "description": "Brief description of this primary functional category",
             "domain": "associated_domain_name",
             "examples": ["example1", "example2"]
@@ -53,7 +53,7 @@ Please analyze the new SQL queries above and generate an updated taxonomy in the
     "layer2_categories": [
         {
             "name": "subcategory_name",
-            "description": "Brief description of this secondary category", 
+            "description": "Brief description of this secondary category",
             "layer1": "parent_layer1_category",
             "examples": ["example1", "example2"]
         }
@@ -77,3 +77,9 @@ Guidelines for incremental updates:
 - Merge similar concepts rather than creating duplicates
 - Ensure the final taxonomy comprehensively covers both existing and new SQL items
 - Include realistic examples for any newly created categories/tags
+ - **CRITICAL NAME FORMATTING**:
+   - For ANY newly created domain/layer1/layer2 names: MUST use underscores instead of spaces
+   - Examples: "customer_orders" NOT "customer orders", "data_analysis" NOT "data analysis"
+   - For existing categories: preserve names exactly as-is (do NOT change existing names)
+   - **VALIDATION**: All new category names must contain NO spaces - only lowercase letters, numbers, and underscores
+   - **FINAL CHECK**: Verify all newly created names follow underscore format
