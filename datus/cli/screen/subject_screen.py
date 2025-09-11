@@ -540,7 +540,6 @@ class SubjectScreen(ContextScreen):
         """Load semantic data into the tree structure."""
         tree = self.query_one("#semantic-tree", TextualTree)
         query_semantic_data = self.rag.search_all_semantic_models(self.database_name)
-        logger.info(f"$$$ {query_semantic_data}")
         semantic_data = {}
         for item in query_semantic_data:
             domain = item["domain"]

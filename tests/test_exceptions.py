@@ -52,7 +52,7 @@ class TestIntegrationExceptions:
 
         result = connector.execute_query("SELEC * FROM test_table")
         assert not result.success
-        assert ErrorCode.DB_EXECUTION_ERROR.code in result.error
+        assert ErrorCode.DB_EXECUTION_SYNTAX_ERROR.code in result.error
 
     def test_sqlite_primary_key_violation(self):
         """Test actual primary key violation."""

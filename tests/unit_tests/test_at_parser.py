@@ -14,7 +14,6 @@ def test_parse(parser: AtReferenceParser):
         "@Table postHistory @Table users"
     )
     parse_result = parser.parse_input(user_input)
-    print("$$$", parse_result)
     assert parse_result["tables"]
 
     assert len(parse_result["tables"]) == 2

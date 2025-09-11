@@ -139,6 +139,7 @@ class DatusException(Exception):
         *args: object,
     ):
         self.code = code
+        self.message_args = message_args or {}
         self.message = self.build_msg(message, message_args)
         super().__init__(self.message, *args)
 
