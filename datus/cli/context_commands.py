@@ -10,6 +10,7 @@ from rich.tree import Tree
 
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
+
 if TYPE_CHECKING:
     from datus.cli import DatusCLI
 
@@ -194,10 +195,7 @@ class ContextCommands:
             # 显示交互式指标屏幕
             show_metrics_screen(
                 title="Metrics Catalog",
-                data={
-                    "semantic_model_storage": rag.semantic_model_storage,
-                    "metric_storage": rag.metric_storage
-                }
+                data={"semantic_model_storage": rag.semantic_model_storage, "metric_storage": rag.metric_storage},
             )
 
         except Exception as e:

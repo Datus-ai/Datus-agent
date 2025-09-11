@@ -128,34 +128,13 @@ class MetricStorage(BaseEmbeddingStore):
 
     def search_all(self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None) -> pa.Table:
         """Search all schemas for a given database name."""
-
+        # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        where_clause = "" if not semantic_model_name else f"semantic_model_name='{semantic_model_name}'"
-
-        if where_clause:
-            try:
-                result = self.table.to_lance().to_table(filter=where_clause)
-            except Exception as e:
-                logger.warning(f"Failed to filter table with clause '{where_clause}': {e}")
-                result = self.table.to_arrow()
-        else:
-            result = self.table.to_arrow()
-
-        if result is None:
-            result = pa.Table.from_pylist([], schema=self._schema)
-
-        if select_fields:
-            available_fields = [field for field in select_fields if field in result.column_names]
-            if available_fields:
-                result = result.select(available_fields)
-            else:
-                result = result.select([])
-
-        if self.vector_column_name in result.column_names:
-            result = result.drop([self.vector_column_name])
-
-        return result
+        return self._search_all(
+            where="" if not semantic_model_name else f"semantic_model_name='{semantic_model_name}'",
+            select_fields=select_fields,
+        )
 
 
 def qualify_name(input_names: List, delimiter: str = "_") -> str:
