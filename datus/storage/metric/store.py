@@ -58,23 +58,25 @@ class SemanticModelStorage(BaseEmbeddingStore):
         self.table.create_scalar_index("catalog_database_schema", replace=True)
         self.table.create_scalar_index("table_name", replace=True)
         self.table.create_scalar_index("domain", replace=True)
+        self.table.create_scalar_index("layer1", replace=True)
+        self.table.create_scalar_index("layer2", replace=True)
         self.create_fts_index(["semantic_model_name", "semantic_model_desc", "identifiers", "dimensions", "measures"])
 
-    def search_all(self, database_name: str = "") -> List[Dict[str, Any]]:
+    def search_all(self, database_name: str = "", selected_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Search all schemas for a given database name."""
 
         search_result = self._search_all(
             where="" if not database_name else f"database_name='{database_name}'",
-            select_fields=["id", "catalog_database_schema", "semantic_model_name"],
+            select_fields=selected_fields,
         )
-        return [
-            {
-                "id": search_result["id"][i],
-                "catalog_database_schema": search_result["catalog_database_schema"][i],
-                "semantic_model_name": search_result["semantic_model_name"][i],
-            }
-            for i in range(search_result.num_rows)
-        ]
+        if not selected_fields:
+            return search_result.to_pylist()
+        result = []
+        for i in range(search_result.num_rows):
+            d = {}
+            for k in selected_fields:
+                d[k] = search_result[k][i]
+        return result
 
     def filter_by_id(self, id: str) -> List[Dict[str, Any]]:
         # Ensure table is ready before direct table access
@@ -153,8 +155,10 @@ class SemanticMetricsRAG:
         self.semantic_model_storage.store_batch(semantic_models)
         self.metric_storage.store_batch(metrics)
 
-    def search_all_semantic_models(self, database_name: str) -> List[Dict[str, Any]]:
-        return self.semantic_model_storage.search_all(database_name)
+    def search_all_semantic_models(
+        self, database_name: str, selected_fields: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        return self.semantic_model_storage.search_all(database_name, selected_fields=selected_fields)
 
     def search_all_metrics(
         self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None
@@ -259,6 +263,34 @@ class SemanticMetricsRAG:
             where=metric_where, select_fields=["name", "description", "constraint", "sql_query"]
         )
         return search_result.to_pylist()
+
+    def get_metrics(
+        self,
+        domain: str = "default",
+        layer1: str = "default",
+        layer2: str = "default",
+        semantic_model_name: str = "",
+        selected_fields: Optional[List[str]] = None,
+        return_distance: bool = False,
+    ) -> List[Dict[str, Any]]:
+        metric_full_name: str = qualify_name(
+            [
+                domain,
+                layer1,
+                layer2,
+            ],
+        )
+        query_result = self.metric_storage._search_all(
+            f"domain_layer1_layer2 = '{metric_full_name}' and semantic_model_name = '{semantic_model_name}'",
+            select_fields=selected_fields,
+        )
+        if return_distance:
+            return query_result.to_pylist()
+        else:
+            columns = query_result.column_names
+            if "_distance" in columns:
+                return query_result.remove_column(columns.index("_distance")).to_pylist()
+            return query_result.to_pylist()
 
 
 def rag_by_configuration(agent_config: AgentConfig):

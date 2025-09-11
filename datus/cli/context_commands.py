@@ -5,6 +5,8 @@ This module provides context-related commands for the Datus CLI.
 
 from typing import TYPE_CHECKING
 
+from datus.cli.screen import show_subject_screen
+from datus.storage.metric.store import rag_by_configuration
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -21,7 +23,7 @@ class ContextCommands:
         self.cli = cli
         self.console = cli.console
 
-    def cmd_catalogs(self, args: str):
+    def cmd_catalog(self, args: str):
         """Display database catalogs using Textual tree interface."""
         try:
             # Import here to avoid circular imports
@@ -48,6 +50,12 @@ class ContextCommands:
             logger.error(f"Catalog display error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] Failed to display catalog: {str(e)}")
 
-    def cmd_metrics(self, args: str):
+    def cmd_subject(self, args: str):
         """Display metrics."""
-        self.console.print("[yellow]Feature not implemented in MVP.[/]")
+        show_subject_screen(
+            title="Subject",
+            data={
+                "rag": rag_by_configuration(self.cli.agent_config),
+                "database_name": self.cli.cli_context.current_db_name,
+            },
+        )

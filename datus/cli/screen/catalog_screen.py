@@ -7,7 +7,6 @@ from textual import events, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
-from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Label, Static
 from textual.widgets import Tree as TextualTree
@@ -44,7 +43,7 @@ def _fetch_schema_with_cache(
         return []
 
 
-class CatalogsScreen(ContextScreen):
+class CatalogScreen(ContextScreen):
     """Screen for displaying database catalogs."""
 
     CSS = """
@@ -191,13 +190,6 @@ class CatalogsScreen(ContextScreen):
         self.loading_nodes = set()  # Track which nodes are currently loading
         self._current_loading_task = None  # Track current async task
         self.timeout_seconds = context_data.get("timeout_seconds", 30)  # Default 30 seconds timeout
-
-    class SelectPathMessage(Message):
-        """Message sent when a path is selected."""
-
-        def __init__(self, path: str):
-            self.path = path
-            super().__init__()
 
     def compose(self) -> ComposeResult:
         """Compose the layout of the screen."""
@@ -481,17 +473,13 @@ class CatalogsScreen(ContextScreen):
         column_count: int,
     ) -> str:
         """Build properties display content efficiently."""
-        return "\n".join(
-            [
-                "[bold cyan]📋 Table Properties[/bold cyan]",
-                f"[bold]Full Name:[/] [yellow]{full_name}[/yellow]",
-                f"[bold]Catalog:[/] [green]{catalog_name or 'N/A'}[/green]",
-                f"[bold]Database:[/] [green]{database_name or 'N/A'}[/green]",
-                f"[bold]Schema:[/] [green]{schema_name or 'N/A'}[/green]",
-                f"[bold]Table:[/] [yellow]{table_name}[/yellow]",
-                f"[bold]Total Columns:[/] [magenta]{column_count}[/magenta]",
-            ]
-        )
+        return f"""[bold cyan]📋 Table Properties[/bold cyan]
+[bold]Full Name:[/] [yellow]{full_name}[/yellow]
+[bold]Catalog:[/] [green]{catalog_name or 'N/A'}[/green]
+[bold]Database:[/] [green]{database_name or 'N/A'}[/green]
+[bold]Schema:[/] [green]{schema_name or 'N/A'}[/green]
+[bold]Table:[/] [yellow]{table_name}[/yellow]
+[bold]Total Columns:[/] [magenta]{column_count}[/magenta]"""
 
     def _create_optimized_table(self, table_schema: list, full_name: str) -> Table:
         """Create optimized Rich table with performance considerations."""
@@ -655,10 +643,6 @@ class CatalogsScreen(ContextScreen):
 
         # Trigger reload
         node.expand()
-
-    def on_tree_node_collapsed(self, event: TextualTree.NodeCollapsed) -> None:
-        """Handle tree node collapse - minimal cleanup for performance."""
-        # Skip aggressive cleanup to maintain performance
 
     def _load_databases_lazy(self, tree: TextualTree) -> None:
         """Lazy load databases for MySQL, PostgreSQL, DuckDB, etc."""

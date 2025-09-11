@@ -36,7 +36,7 @@ Enter external knowledge (optional) ():
 
 2. Table Exploration:
 ```sql
-@tables
+.tables
 ```
 
 3. schema linking
@@ -185,11 +185,10 @@ Tool commands are used for AI-powered SQL generation and workflow execution:
 
 Context commands help explore database metadata:
 
-| Command                | Description                |
-|------------------------|----------------------------|
-| `@catalogs`            | Display database catalogs   |
-| `@tables table_name`   | Display table details       |
-| `@metrics`             | Display metrics             |
+| Command              | Description                          |
+|----------------------|--------------------------------------|
+| `@catalog`           | Display database catalogs            |
+| `@subject`           | Display semantic models  and metrics |
 
 ### 3. Chat Commands (/)
 
@@ -237,5 +236,5 @@ Internal commands for CLI control:
 ## Tips
 
 1. Use `!sl` to get table recommendations before writing complex queries
-2. Use `@catalogs` to explore database structure
+2. Use `@catalog` to explore database structure
 3. Save successful queries and result with `!save` for future reference or result comparsion

@@ -111,8 +111,8 @@ class DatusCLI:
             "!gen_metrics": self.agent_commands.cmd_gen_metrics_stream,
             "!gen_semantic_model": self.agent_commands.cmd_gen_semantic_model_stream,
             # catalog commands
-            "@catalogs": self.context_commands.cmd_catalogs,
-            "@metrics": self.context_commands.cmd_metrics,
+            "@catalog": self.context_commands.cmd_catalog,
+            "@subject": self.context_commands.cmd_subject,
             # interal commands
             ".clear": self.chat_commands.cmd_clear_chat,
             ".chat_info": self.chat_commands.cmd_chat_info,
@@ -763,8 +763,8 @@ class DatusCLI:
 
         lines.append("[bold]Context Commands (@ prefix):[/]")
         context_cmds = [
-            ("@catalogs", "Display database catalogs"),
-            ("@metrics", "Display metrics"),
+            ("@catalog", "Display database catalog"),
+            ("@subject", "Display Semantic Model, Metrics etc."),
         ]
         for cmd, desc in context_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")

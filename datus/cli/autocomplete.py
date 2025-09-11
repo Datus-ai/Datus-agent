@@ -181,9 +181,8 @@ class SQLCompleter(Completer):
             "!daend": None,
             # Context commands
             "@": None,
-            "@catalogs": None,
-            "@tables": None,
-            "@metrics": None,
+            "@catalog": None,
+            "@subject": None,
             # Internal commands
             ".help": None,
             ".exit": None,
@@ -403,7 +402,7 @@ class CustomSqlLexer(SqlLexer):
     tokens = {
         "root": [
             (r"@Table(?:\s[^ \t\n]+)?", Token.AtTables),
-            (r"@Metric(?:\s[^ \t\n]+)?", Token.AtMetrics),
+            (r"@Metrics(?:\s[^ \t\n]+)?", Token.AtMetrics),
             (r"@SqlHistory(?:\s[^ \t\n]+)?", Token.AtSqlHistory),
             (r"@File(?:\s[^ \t\n]+)?", Token.AtFiles),
         ]
@@ -669,12 +668,12 @@ class TableCompleter(DynamicAtReferenceCompleter):
         return data
 
 
-def insert_into_dict_with_dict(data: Dict, keys: List[str], key: str, value: str) -> None:
+def insert_into_dict_with_dict(data: Dict, keys: List[str], leaf_key: str, value: str) -> None:
     """Helper function to insert values into a nested dictionary based on keys."""
     temp = data
     for key in keys[:-1]:
         temp = temp.setdefault(key, {})
-    temp.setdefault(keys[-1], {})[key] = value
+    temp.setdefault(keys[-1], {})[leaf_key] = value
 
 
 class MetricsCompleter(DynamicAtReferenceCompleter):
@@ -695,13 +694,13 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
 
         result = {}
         for i in range(data.num_rows):
-            domain = data["domain"][i].as_py().replace(" ", "_")
-            layer1 = data["layer1"][i].as_py().replace(" ", "_")
-            layer2 = data["layer2"][i].as_py().replace(" ", "_")
-            name = data["name"][i].as_py().replace(" ", "_")
+            domain = data["domain"][i].as_py()
+            layer1 = data["layer1"][i].as_py()
+            layer2 = data["layer2"][i].as_py()
+            name = data["name"][i].as_py()
             insert_into_dict_with_dict(result, [domain, layer1, layer2], name, data["description"][i])
             self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
-                "name": name.as_py(),
+                "name": name,
                 "description": data["description"][i].as_py(),
                 "constraint": data["constraint"][i].as_py(),
                 "sql_query": data["sql_query"][i].as_py(),
@@ -723,10 +722,10 @@ class SqlHistoryCompleter(DynamicAtReferenceCompleter):
         search_data = storage.search_all_sql_history(domain="")
         result = {}
         for item in search_data:
-            domain = item["domain"].replace(" ", "_")
-            layer1 = item["layer1"].replace(" ", "_")
-            layer2 = item["layer2"].replace(" ", "_")
-            name = item["name"].replace(" ", "_")
+            domain = item["domain"]
+            layer1 = item["layer1"]
+            layer2 = item["layer2"]
+            name = item["name"]
 
             insert_into_dict_with_dict(result, [domain, layer1, layer2], name, item["summary"])
 
