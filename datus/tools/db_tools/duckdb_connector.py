@@ -233,6 +233,7 @@ class DuckdbConnector(SQLAlchemyConnector):
     ) -> List[Dict[str, str]]:
         if not table_name:
             return []
+        database_name = database_name or self.database_name
         schema_name = schema_name or self.schema_name or "main"
         full_name = self.full_name(database_name=database_name, schema_name=schema_name, table_name=table_name)
         if table_name:
