@@ -233,12 +233,15 @@ class DuckdbConnector(SQLAlchemyConnector):
     ) -> List[Dict[str, str]]:
         if not table_name:
             return []
+        schema_name = schema_name or self.schema_name or "main"
         full_name = self.full_name(database_name=database_name, schema_name=schema_name, table_name=table_name)
         if table_name:
             sql = f"PRAGMA table_info('{full_name}')"
             try:
                 return self._execute_pandas(sql).to_dict(orient="records")
             except Exception as e:
+                if isinstance(e, DatusException):
+                    raise e
                 raise DatusException(
                     ErrorCode.DB_QUERY_METADATA_FAILED,
                     message_args={"error_message": str(e), "sql": sql},
