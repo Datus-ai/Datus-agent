@@ -1,3 +1,5 @@
+from typing import Dict, List
+
 from datus.utils.loggings import get_logger
 
 from .prompt_manager import prompt_manager
@@ -13,7 +15,7 @@ def get_compare_prompt(
     sql_error: str = "",
     expectation: str = "",
     prompt_version: str = "1.0",
-) -> str:
+) -> List[Dict[str, str]]:
     """Generate comparison prompt for MCP streaming."""
 
     system_content = prompt_manager.get_raw_template("compare_sql_system_mcp", version=prompt_version)

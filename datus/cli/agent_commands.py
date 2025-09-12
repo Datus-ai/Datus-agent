@@ -333,6 +333,7 @@ class AgentCommands:
                     node_type="start",
                     input_data=sql_task.id,
                     agent_config=self.cli.agent_config,
+                    tools=workflow.tools,
                 )
             )
 
@@ -618,6 +619,7 @@ class AgentCommands:
                 node_type=node_type.lower(),
                 input_data=node_args,
                 agent_config=self.cli.agent_config,
+                tools=workflow.tools,
             )
 
             # 2. Setup input for the node
@@ -781,6 +783,7 @@ class AgentCommands:
                 node_type=node_type.lower(),
                 input_data=node_args,
                 agent_config=self.cli.agent_config,
+                tools=workflow.tools,
             )
 
             # Setup input for the node

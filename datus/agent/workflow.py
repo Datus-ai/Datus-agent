@@ -45,9 +45,9 @@ class Workflow:
         self.completion_time = None
 
         self.context = Context()
-
         self.llms = {}
         self._global_config = agent_config
+        self._init_tools()
 
     @property
     def global_config(self) -> AgentConfig:
@@ -268,6 +268,7 @@ class Workflow:
                     node_type=node_data.get("type"),
                     input_data=node_data.get("input"),
                     agent_config=self.global_config,
+                    tools=self.tools,
                 )
                 position = suggestion.get("position")
                 self.add_node(node, position)
@@ -461,7 +462,8 @@ class Workflow:
             The loaded Workflow instance
         """
         import yaml
-        from schemas.node_models import SqlTask
+
+        from datus.schemas.node_models import SqlTask
 
         from .node import Node
 
@@ -499,3 +501,10 @@ class Workflow:
         workflow.context = Context.from_dict(workflow_data["context"])
 
         return workflow
+
+    def _init_tools(self):
+        # self.db_tool_instance = db_function_tool_instance(self._global_config)
+        # self.tools = self.db_tool_instance.available_tools()
+        from datus.tools.tools import db_function_tools
+
+        self.tools = db_function_tools(self._global_config)

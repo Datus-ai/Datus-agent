@@ -5,7 +5,7 @@ import json
 import time
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import yaml
 from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool
@@ -113,7 +113,6 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._async_client = None
 
         # Context for tracing ToDo: replace it with Context object
-        self.workflow = None
         self.current_node = None
 
         # Cache for model info
@@ -364,7 +363,7 @@ class OpenAICompatibleModel(LLMBaseModel):
     @traceable(name="openai_compatible_tools", run_type="chain")
     async def generate_with_tools(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         instruction: str = "",
@@ -412,7 +411,7 @@ class OpenAICompatibleModel(LLMBaseModel):
     @traceable(name="openai_compatible_tools_stream", run_type="chain")
     async def generate_with_tools_stream(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         tools: Optional[List[Any]] = None,
         instruction: str = "",
@@ -449,7 +448,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
     async def _generate_with_tools_internal(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         mcp_servers: Optional[Dict[str, MCPServerStdio]],
         tools: Optional[List[Tool]],
         instruction: str,
@@ -492,7 +491,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 # Only add tools if we have them
                 if tools:
-                    agent_kwargs["tools"] = list(tools.values())
+                    agent_kwargs["tools"] = tools
 
                 agent = Agent(**agent_kwargs)
                 try:
@@ -574,7 +573,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
     async def _generate_with_tools_stream_internal(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         mcp_servers: Optional[Dict[str, MCPServerStdio]],
         tools: Optional[List[Tool]],
         instruction: str,
@@ -956,7 +955,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         Count tokens in prompt. Default implementation uses character approximation.
         Override in subclasses for model-specific tokenization.
         """
-        return len(prompt) // 4
+        return len(str(prompt)) // 4
 
     def _save_llm_trace(self, prompt: Any, response_content: str, reasoning_content: Any = None):
         """Save LLM input/output trace to YAML file if tracing is enabled.
@@ -1041,56 +1040,3 @@ class OpenAICompatibleModel(LLMBaseModel):
         except Exception as e:
             logger.error(f"Failed to save LLM trace: {str(e)}")
             # Don't re-raise to avoid breaking the main execution flow
-
-    # ToDo: delete it later
-    # Backward compatibility methods (with deprecation warnings)
-    async def generate_with_mcp(
-        self,
-        prompt: str,
-        mcp_servers: Dict[str, MCPServerStdio],
-        instruction: str,
-        output_type: type = str,
-        max_turns: int = 10,
-        **kwargs,
-    ) -> Dict:
-        logger.warn(
-            "generate_with_mcp is deprecated. Use generate_with_tools instead.", DeprecationWarning, stacklevel=2
-        )
-        return await self._generate_with_tools_internal(
-            prompt,
-            mcp_servers,
-            None,  # no regular tools for backward compatibility
-            instruction,
-            output_type,
-            max_turns,
-            **kwargs,  # session will be passed here if provided, otherwise defaults to None
-        )
-
-    async def generate_with_mcp_stream(
-        self,
-        prompt: str,
-        mcp_servers: Dict[str, MCPServerStdio],
-        instruction: str,
-        output_type: type = str,
-        max_turns: int = 10,
-        action_history_manager: Optional[ActionHistoryManager] = None,
-        **kwargs,
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """
-        Deprecated: Use generate_with_tools_stream instead.
-        """
-        logger.warn(
-            "generate_with_mcp_stream is deprecated. Use generate_with_tools_stream instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        async for action in self.generate_with_tools_stream(
-            prompt,
-            mcp_servers=mcp_servers,
-            instruction=instruction,
-            output_type=output_type,
-            max_turns=max_turns,
-            action_history_manager=action_history_manager,
-            **kwargs,
-        ):
-            yield action

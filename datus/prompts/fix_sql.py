@@ -1,4 +1,6 @@
 # flake8：noqa
+from typing import Dict, List
+
 from datus.schemas.node_models import TableSchema
 from datus.utils.loggings import get_logger
 
@@ -13,7 +15,7 @@ def fix_sql_prompt(
     sql_context: str = "",
     schemas: list[TableSchema] = None,
     docs: list[str] = None,
-) -> str:
+) -> List[Dict[str, str]]:
     if schemas is None:
         schemas = []
     if docs is None:

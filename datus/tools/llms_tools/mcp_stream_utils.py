@@ -1,13 +1,11 @@
-from typing import Any, AsyncGenerator, Callable, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
+from agents import Tool
 from langsmith import traceable
 
-from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
-from datus.tools.mcp_server import MCPServer
-from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -17,11 +15,11 @@ logger = get_logger(__name__)
 async def base_mcp_stream(
     model: LLMBaseModel,
     input_data: Any,
-    db_config: DbConfig,
     tool_config: Dict[str, Any],
     mcp_servers: Dict[str, Any],
-    prompt_generator: Callable,
+    prompt: Union[str, List[dict[str, str]]],
     instruction_template: str,
+    tools: Optional[List[Tool]] = None,
     action_history_manager: Optional[ActionHistoryManager] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
     """Base MCP streaming function that yields only function call actions.
@@ -29,10 +27,10 @@ async def base_mcp_stream(
     Args:
         model: LLM model instance
         input_data: Input data for the operation
-        db_config: Database configuration
+        tools: database function tools
         tool_config: Tool configuration, which tools do you want to use, and max_truns
         mcp_servers: Dictionary of MCP servers
-        prompt_generator: Function to generate prompt
+        prompt: prompt
         instruction_template: Template name for instruction
         action_history_manager: Optional action history manager
 
@@ -46,32 +44,13 @@ async def base_mcp_stream(
         # Get instruction and generate prompt
         instruction = prompt_manager.get_raw_template(instruction_template, input_data.prompt_version)
         max_turns = tool_config.get("max_turns", 10)
-        prompt = prompt_generator(input_data, db_config)
-
-        # Ensure each stream uses its own SQLite MCP server instance to avoid premature shutdown
-        if db_config.type == DBType.SQLITE:
-            # Replace singleton server with a dedicated instance if possible
-            db_path = None
-            if db_config and db_config.uri:
-                from pathlib import Path
-
-                if db_config.uri.startswith("sqlite///") or db_config.uri.startswith("sqlite:///"):
-                    db_path = db_config.uri.replace("sqlite:///", "")
-                else:
-                    db_path = db_config.uri
-                db_path = str(Path(db_path).expanduser())
-            # Identify key and rebuild mapping
-            keys = list(mcp_servers.keys())
-            if keys:
-                key0 = keys[0]
-                mcp_servers = {key0: MCPServer.create_sqlite_mcp_server(db_path=db_path or "./sqlite_mcp_server.db")}
 
         logger.info(f"Starting MCP stream with {len(mcp_servers)} servers, max_turns={max_turns}")
         logger.debug(f"MCP servers: {list(mcp_servers.keys())}")
-
         # Stream function calls only
-        async for action in model.generate_with_mcp_stream(
+        async for action in model.generate_with_tools_stream(
             prompt=prompt,
+            tools=tools,
             mcp_servers=mcp_servers,
             instruction=instruction,
             output_type=str,

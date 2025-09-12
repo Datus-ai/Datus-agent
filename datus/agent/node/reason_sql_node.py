@@ -108,6 +108,7 @@ class ReasonSQLNode(Node):
             node_type="generate_sql",
             input_data=None,
             agent_config=self.agent_config,
+            tools=workflow.tools,
         )
 
         # Create SQL execution node
@@ -117,6 +118,7 @@ class ReasonSQLNode(Node):
             node_type="execute_sql",
             input_data=None,
             agent_config=self.agent_config,
+            tools=workflow.tools,
         )
 
         # Add new nodes to workflow
@@ -164,13 +166,11 @@ class ReasonSQLNode(Node):
             setup_action.end_time = datetime.now()
 
             # Stream the reasoning process
-            # Get resolved database config for MCP server
-            db_config = self.agent_config.current_db_config(self.input.sql_task.database_name)
 
             async for action in reasoning_sql_with_mcp_stream(
                 model=self.model,
                 input_data=self.input,
-                db_config=db_config,
+                tools=self.tools,
                 tool_config={"max_turns": self.input.max_turns},
                 action_history_manager=action_history_manager,
             ):
@@ -187,9 +187,7 @@ class ReasonSQLNode(Node):
         """
         try:
             tool = LLMTool(self.model)
-            # TODO: pass the mcp_server to tools, don't repeat init the mcp server
-            db_config = self.agent_config.current_db_config(self.input.sql_task.database_name)
-            result = tool.reasoning_sql(self.input, db_config)
+            result = tool.reasoning_sql(self.input, self.tools)
             logger.debug(
                 f"_reason_sql got result from tool: type={type(result)}, success={getattr(result, 'success', 'N/A')}"
             )

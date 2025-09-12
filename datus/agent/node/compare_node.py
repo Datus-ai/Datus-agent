@@ -110,7 +110,7 @@ class CompareNode(Node):
             async for action in compare_sql_with_mcp_stream(
                 model=self.model,
                 input_data=self.input,
-                db_config=self.agent_config.current_db_config(db_name=self.input.sql_task.database_name),
+                tools=self.tools,
                 tool_config={"max_turns": 10},
                 action_history_manager=action_history_manager,
             ):

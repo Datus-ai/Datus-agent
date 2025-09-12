@@ -154,6 +154,7 @@ class ReflectNode(Node):
                     node_type=node_type,
                     input_data=None,
                     agent_config=workflow._global_config,
+                    tools=workflow.tools,
                 )
                 workflow.add_node(new_node, current_position + 1)
                 nodes_added.insert(0, new_node.id)

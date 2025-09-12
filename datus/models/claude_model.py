@@ -5,7 +5,7 @@ import os
 import re
 import uuid
 from datetime import date, datetime
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import anthropic
 import httpx
@@ -239,7 +239,7 @@ class ClaudeModel(LLMBaseModel):
 
     async def generate_with_tools(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         tools: Optional[List[Any]] = None,
         instruction: str = "",
@@ -266,7 +266,7 @@ class ClaudeModel(LLMBaseModel):
 
     async def generate_with_tools_stream(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         tools: Optional[List[Any]] = None,
         instruction: str = "",
@@ -293,7 +293,7 @@ class ClaudeModel(LLMBaseModel):
 
     async def generate_with_mcp(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         mcp_servers: Dict[str, MCPServerStdio],
         instruction: str,
         output_type: dict,
@@ -471,7 +471,7 @@ class ClaudeModel(LLMBaseModel):
 
     async def generate_with_mcp_stream(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         mcp_servers: Dict[str, MCPServerStdio],
         instruction: str,
         output_type: dict,
@@ -615,7 +615,7 @@ class ClaudeModel(LLMBaseModel):
 
     async def _generate_with_mcp_session(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         mcp_servers: Dict[str, MCPServerStdio],
         instruction: str,
         output_type: type,

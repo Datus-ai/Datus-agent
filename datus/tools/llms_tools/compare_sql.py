@@ -1,6 +1,7 @@
 import json
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
+from agents import Tool
 from langsmith import traceable
 
 from datus.configuration.agent_config import DbConfig
@@ -9,35 +10,35 @@ from datus.prompts.compare_sql import compare_sql_prompt
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.compare_node_models import CompareInput, CompareResult
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
-from datus.tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 
+def generate_compare_prompt(input_data: CompareInput):
+    """Generate comparison prompt with database context."""
+    sql_result = input_data.sql_context.sql_return if hasattr(input_data.sql_context, "sql_return") else ""
+    sql_error = input_data.sql_context.sql_error if hasattr(input_data.sql_context, "sql_error") else ""
+
+    return compare_sql_prompt(
+        sql_task=input_data.sql_task,
+        prompt_version=input_data.prompt_version,
+        sql_query=input_data.sql_context.sql_query,
+        sql_explanation=input_data.sql_context.explanation,
+        sql_result=sql_result,
+        sql_error=sql_error,
+        expectation=input_data.expectation,
+    )
+
+
 @traceable
-def compare_sql(model: LLMBaseModel, input_data: CompareInput) -> CompareResult:
+def compare_sql(model: LLMBaseModel, input_data) -> CompareResult:
     """Compare SQL query with expectation using the provided model."""
     if not isinstance(input_data, CompareInput):
         raise ValueError("Input must be a CompareInput instance")
 
     try:
-        sql_query = input_data.sql_context.sql_query
-        sql_explanation = input_data.sql_context.explanation
-        sql_result = input_data.sql_context.sql_return if hasattr(input_data.sql_context, "sql_return") else ""
-        sql_error = input_data.sql_context.sql_error if hasattr(input_data.sql_context, "sql_error") else ""
-
-        # Format the prompt with all context
-        prompt = compare_sql_prompt(
-            sql_task=input_data.sql_task,
-            prompt_version=input_data.prompt_version,
-            sql_query=sql_query,
-            sql_explanation=sql_explanation,
-            sql_result=sql_result,
-            sql_error=sql_error,
-            expectation=input_data.expectation,
-        )
-
+        prompt = generate_compare_prompt(input_data)
         logger.debug(f"Compare SQL prompt: {type(model)}, {prompt}")
 
         # Generate comparison using the provided model
@@ -81,6 +82,7 @@ async def compare_sql_with_mcp_stream(
     input_data: CompareInput,
     db_config: DbConfig,
     tool_config: Dict[str, Any],
+    tools: Optional[List[Tool]] = None,
     action_history_manager: Optional[ActionHistoryManager] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
     """Compare SQL query with expectation using MCP streaming support."""
@@ -88,37 +90,18 @@ async def compare_sql_with_mcp_stream(
         logger.error(f"Input type error: expected CompareInput, got {type(input_data)}")
         raise ValueError(f"Input must be a CompareInput instance, got {type(input_data)}")
 
-    def generate_compare_prompt(input_data, db_config):
-        """Generate comparison prompt with database context."""
-        sql_query = input_data.sql_context.sql_query
-        sql_explanation = input_data.sql_context.explanation
-        sql_result = input_data.sql_context.sql_return if hasattr(input_data.sql_context, "sql_return") else ""
-        sql_error = input_data.sql_context.sql_error if hasattr(input_data.sql_context, "sql_error") else ""
-
-        return compare_sql_prompt(
-            sql_task=input_data.sql_task,
-            prompt_version=input_data.prompt_version,
-            sql_query=sql_query,
-            sql_explanation=sql_explanation,
-            sql_result=sql_result,
-            sql_error=sql_error,
-            expectation=input_data.expectation,
-        )
-
     # Setup MCP servers
-    db_mcp_server = MCPServer.get_db_mcp_server(db_config)
-    mcp_servers = {input_data.sql_task.database_name: db_mcp_server}
 
     tool_config["max_turns"] = 30
 
     async for action in base_mcp_stream(
         model=model,
         input_data=input_data,
-        db_config=db_config,
         tool_config=tool_config,
-        mcp_servers=mcp_servers,
-        prompt_generator=generate_compare_prompt,
+        prompt=generate_compare_prompt(input_data=input_data),
+        mcp_servers={},
         instruction_template="compare_sql_system_mcp",
+        tools=tools,
         action_history_manager=action_history_manager,
     ):
         yield action

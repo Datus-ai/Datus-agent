@@ -126,7 +126,7 @@ class TestDeepSeekModel:
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
         try:
-            result = await self.model.generate_with_mcp(
+            result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
                 mcp_servers={"sqlite": mcp_server},
@@ -170,7 +170,7 @@ class TestDeepSeekModel:
 
         try:
             action_count = 0
-            async for action in self.model.generate_with_mcp_stream(
+            async for action in self.model.generate_with_tools_stream(
                 prompt=question,
                 output_type=str,
                 mcp_servers={"sqlite": mcp_server},
@@ -236,7 +236,7 @@ class TestDeepSeekModel:
         for i, scenario in enumerate(test_scenarios):
             question = f"database_type='sqlite' task='{scenario['task']}'"
 
-            result = await self.model.generate_with_mcp(
+            result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
                 mcp_servers={"sqlite": mcp_server},
@@ -282,7 +282,7 @@ class TestDeepSeekModel:
             action_count = 0
             total_content_length = 0
 
-            async for action in self.model.generate_with_mcp_stream(
+            async for action in self.model.generate_with_tools_stream(
                 prompt=question,
                 output_type=str,
                 mcp_servers={"sqlite": mcp_server},
@@ -396,7 +396,7 @@ class TestDeepSeekModel:
         question1 = "database_type='sqlite' task='Describe the customer table structure'"
         action_count1 = 0
 
-        async for action in self.model.generate_with_mcp_stream(
+        async for action in self.model.generate_with_tools_stream(
             prompt=question1,
             output_type=str,
             mcp_servers={"sqlite": mcp_server},
@@ -413,7 +413,7 @@ class TestDeepSeekModel:
         question2 = "database_type='sqlite' task='Show a sample of 3 rows from the customer table'"
         action_count2 = 0
 
-        async for action in self.model.generate_with_mcp_stream(
+        async for action in self.model.generate_with_tools_stream(
             prompt=question2,
             output_type=str,
             mcp_servers={"sqlite": mcp_server},
@@ -603,7 +603,7 @@ class TestDeepSeekModel:
         for i, scenario in enumerate(scenarios):
             action_count = 0
 
-            async for action in self.model.generate_with_mcp_stream(
+            async for action in self.model.generate_with_tools_stream(
                 prompt=scenario,
                 output_type=str,
                 mcp_servers={"sqlite": mcp_server},

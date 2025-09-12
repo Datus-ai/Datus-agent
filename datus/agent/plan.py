@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import yaml
+from agents import Tool
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
@@ -31,7 +32,10 @@ def load_builtin_workflow_config() -> dict:
 
 
 def create_nodes_from_config(
-    workflow_config: list, sql_task: SqlTask, agent_config: Optional[AgentConfig] = None
+    workflow_config: list,
+    sql_task: SqlTask,
+    agent_config: Optional[AgentConfig] = None,
+    tools: Optional[List[Tool]] = None,
 ) -> List[Node]:
     nodes = []
 
@@ -41,11 +45,12 @@ def create_nodes_from_config(
         node_type=NodeType.TYPE_BEGIN,
         input_data=sql_task,
         agent_config=agent_config,
+        tools=tools,
     )
     nodes.append(start_node)
 
     # Process workflow config that may contain nested structures
-    processed_nodes = _process_workflow_config(workflow_config, sql_task, agent_config)
+    processed_nodes = _process_workflow_config(workflow_config, sql_task, agent_config, tools)
     nodes.extend(processed_nodes)
 
     logger.info(f"Generated workflow with {len(nodes)} nodes")
@@ -59,6 +64,7 @@ def _process_workflow_config(
     agent_config: Optional[AgentConfig] = None,
     start_index: int = 1,
     node_id_prefix: str = "node",
+    tools: Optional[List[Tool]] = None,
 ) -> List[Node]:
     """Process workflow configuration that may contain nested parallel structures"""
     nodes = []
@@ -92,6 +98,7 @@ def _process_workflow_config(
                         node_type=NodeType.TYPE_PARALLEL,
                         input_data=parallel_input,
                         agent_config=agent_config,
+                        tools=tools,
                     )
                     nodes.append(parallel_node)
                     current_index += 1
@@ -231,7 +238,7 @@ def generate_workflow(
     if workflow_config:
         workflow.workflow_config = workflow_config
 
-    nodes = create_nodes_from_config(workflow_steps, task, agent_config)
+    nodes = create_nodes_from_config(workflow_steps, task, agent_config, workflow.tools)
 
     for node in nodes:
         workflow.add_node(node)

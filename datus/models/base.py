@@ -2,7 +2,7 @@ import multiprocessing
 import os
 import platform
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional
+from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional, Union
 
 from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
@@ -93,7 +93,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     @abstractmethod
     async def generate_with_tools(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         instruction: str = "",
@@ -121,7 +121,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     @abstractmethod
     async def generate_with_tools_stream(
         self,
-        prompt: str,
+        prompt: Union[str, List[Dict[str, str]]],
         tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         instruction: str = "",
@@ -197,32 +197,3 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     def list_sessions(self) -> List[str]:
         """List all available sessions."""
         return self.session_manager.list_sessions()
-
-    # Backward compatibility - concrete implementation using new methods
-    async def generate_with_mcp(
-        self,
-        prompt: str,
-        mcp_servers: Dict[str, MCPServerStdio],
-        instruction: str,
-        output_type: type[Any],
-        max_turns: int = 10,
-        **kwargs,
-    ) -> Dict:
-        """Generate a response using multiple MCP (Machine Conversation Protocol) servers.
-
-        Returns:
-            The result from the MCP agent execution with content and sql_contexts
-        """
-        import warnings
-
-        warnings.warn(
-            "generate_with_mcp is deprecated. Use generate_with_tools instead.", DeprecationWarning, stacklevel=2
-        )
-        return await self.generate_with_tools(
-            prompt=prompt,
-            mcp_servers=mcp_servers,
-            instruction=instruction,
-            output_type=output_type,
-            max_turns=max_turns,
-            **kwargs,
-        )

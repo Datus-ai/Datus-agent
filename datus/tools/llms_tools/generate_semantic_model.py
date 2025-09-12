@@ -32,12 +32,11 @@ async def generate_semantic_model_with_mcp_stream(
     if not isinstance(input_data, GenerateSemanticModelInput):
         raise ValueError("Input must be a GenerateSemanticModelInput instance")
 
-    def generate_semantic_model_prompt(input_data, db_config):
-        return get_generate_semantic_model_prompt(
-            database_type=db_config.type,
-            table_definition=table_definition,
-            prompt_version=input_data.prompt_version,
-        )
+    prompt = get_generate_semantic_model_prompt(
+        database_type=db_config.type,
+        table_definition=table_definition,
+        prompt_version=input_data.prompt_version,
+    )
 
     # Setup MCP servers
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=os.getenv("MF_MODEL_PATH"))
@@ -56,7 +55,7 @@ async def generate_semantic_model_with_mcp_stream(
         db_config=db_config,
         tool_config=tool_config,
         mcp_servers=mcp_servers,
-        prompt_generator=generate_semantic_model_prompt,
+        prompt=prompt,
         instruction_template="generate_semantic_model_system",
         action_history_manager=action_history_manager,
     ):
@@ -91,7 +90,7 @@ def generate_semantic_model_with_mcp(
 
     try:
         exec_result = asyncio.run(
-            model.generate_with_mcp(
+            model.generate_with_tools(
                 prompt=prompt,
                 mcp_servers={
                     "filesystem_mcp_server": filesystem_mcp_server,

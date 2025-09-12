@@ -1,16 +1,15 @@
 import asyncio
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
+from agents import Tool
 from langsmith import traceable
 
-from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.prompts.reasoning_sql_with_mcp import get_reasoning_prompt
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
-from datus.tools.mcp_server import MCPServer
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json, llm_result2sql
@@ -23,8 +22,8 @@ logger = get_logger(__name__)
 async def reasoning_sql_with_mcp_stream(
     model: LLMBaseModel,
     input_data: ReasoningInput,
-    db_config: DbConfig,
     tool_config: Dict[str, Any],
+    tools: List[Tool],
     action_history_manager: Optional[ActionHistoryManager] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
     """Generate SQL reasoning with streaming support and action history tracking."""
@@ -32,27 +31,23 @@ async def reasoning_sql_with_mcp_stream(
         logger.error(f"Input type error: expected ReasoningInput, got {type(input_data)}")
         raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
 
-    def generate_reasoning_prompt(input_data, db_config):
-        return get_reasoning_prompt(
-            database_type=input_data.get("database_type", "sqlite"),
-            table_schemas=input_data.table_schemas,
-            data_details=input_data.data_details,
-            metrics=input_data.metrics,
-            question=input_data.sql_task.task,
-            context=[sql_context.to_str(input_data.max_sql_return_length) for sql_context in input_data.contexts],
-            prompt_version=input_data.prompt_version,
-            max_table_schemas_length=input_data.max_table_schemas_length,
-            max_data_details_length=input_data.max_data_details_length,
-            max_context_length=input_data.max_context_length,
-            max_value_length=input_data.max_value_length,
-            max_text_mark_length=input_data.max_text_mark_length,
-            knowledge_content=input_data.external_knowledge,
-        )
+    prompt = get_reasoning_prompt(
+        database_type=input_data.get("database_type", "sqlite"),
+        table_schemas=input_data.table_schemas,
+        data_details=input_data.data_details,
+        metrics=input_data.metrics,
+        question=input_data.sql_task.task,
+        context=[sql_context.to_str(input_data.max_sql_return_length) for sql_context in input_data.contexts],
+        prompt_version=input_data.prompt_version,
+        max_table_schemas_length=input_data.max_table_schemas_length,
+        max_data_details_length=input_data.max_data_details_length,
+        max_context_length=input_data.max_context_length,
+        max_value_length=input_data.max_value_length,
+        max_text_mark_length=input_data.max_text_mark_length,
+        knowledge_content=input_data.external_knowledge,
+    )
 
     # Setup MCP servers
-    db_mcp_server = MCPServer.get_db_mcp_server(db_config)
-    mcp_servers = {input_data.sql_task.database_name: db_mcp_server}
-
     # If no action history manager provided, create one to track the final result
     if action_history_manager is None:
         action_history_manager = ActionHistoryManager()
@@ -60,10 +55,10 @@ async def reasoning_sql_with_mcp_stream(
     async for action in base_mcp_stream(
         model=model,
         input_data=input_data,
-        db_config=db_config,
         tool_config=tool_config,
-        mcp_servers=mcp_servers,
-        prompt_generator=generate_reasoning_prompt,
+        mcp_servers={},
+        prompt=prompt,
+        tools=tools,
         instruction_template="reasoning_system",
         action_history_manager=action_history_manager,
     ):
@@ -135,29 +130,12 @@ async def reasoning_sql_with_mcp_stream(
 
 @traceable
 def reasoning_sql_with_mcp(
-    model: LLMBaseModel, input_data: ReasoningInput, db_config: DbConfig, tool_config: Dict[str, Any]
+    model: LLMBaseModel, input_data: ReasoningInput, tools: List[Tool], tool_config: Dict[str, Any]
 ) -> ReasoningResult:
     """Generate SQL via MCP, execute it, and return the execution result."""
     if not isinstance(input_data, ReasoningInput):
         logger.error(f"Input type error: expected ReasoningInput, got {type(input_data)}")
         raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
-
-    # logger.info(f"@@@@db_config: {db_config}, input_data: {input_data.sql_task.database_name}")
-    # Create a dedicated MCP server instance for this call to avoid races with parallel subworkflows
-    if db_config.type == DBType.SQLITE:
-        # Resolve db path like MCPServer.get_db_mcp_server does
-        from pathlib import Path
-
-        db_path = "./sqlite_mcp_server.db"
-        if db_config and db_config.uri:
-            if db_config.uri.startswith("sqlite///") or db_config.uri.startswith("sqlite:///"):
-                db_path = db_config.uri.replace("sqlite:///", "")
-            else:
-                db_path = db_config.uri
-            db_path = str(Path(db_path).expanduser().resolve())
-        mcp_server = MCPServer.create_sqlite_mcp_server(db_path=db_path)
-    else:
-        mcp_server = MCPServer.get_db_mcp_server(db_config)
 
     instruction = prompt_manager.get_raw_template("reasoning_system", input_data.prompt_version)
     # update to python 3.12 to enable structured output
@@ -183,17 +161,18 @@ def reasoning_sql_with_mcp(
     )
     try:
         exec_result = asyncio.run(
-            model.generate_with_mcp(
+            model.generate_with_tools(
                 prompt=prompt,
-                mcp_servers={input_data.sql_task.database_name: mcp_server},
+                mcp_servers={},
                 instruction=instruction,
+                tools=tools,
                 # if model is OpenAI, json_schema output is supported, use ReasoningSQLResponse
                 output_type=str,
                 max_turns=max_turns,
             )
         )
 
-        logger.debug(f"exec_result: {exec_result['content']}")
+        logger.debug(f"Reasoning SQL execute result: {exec_result['content']}")
 
         # Try JSON parsing first
         content_dict = llm_result2json(exec_result["content"])

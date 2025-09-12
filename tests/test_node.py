@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 import duckdb
 import pytest
 import yaml
+from agents import Tool
 from pydantic import BaseModel, ValidationError
 
 from datus.agent.node import Node
@@ -30,6 +31,7 @@ from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaL
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.llms_tools.llms import LLMTool
+from datus.tools.tools import db_function_tools
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
@@ -130,13 +132,7 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    agent_config = load_acceptance_config(namespace="duckdb")  # FIXME Modify it according to your configuration
-    return agent_config
-
-
-@pytest.fixture
-def search_metrics_agent_config() -> AgentConfig:
-    agent_config = load_acceptance_config(namespace="duckdb")  # FIXME Modify it according to your configuration
+    agent_config = load_acceptance_config(namespace="bird_sqlite")  # FIXME Modify it according to your configuration
     return agent_config
 
 
@@ -163,6 +159,11 @@ def sql_connector(db_manager: DBManager):
 
     # Close connection after test
     db.close()
+
+
+@pytest.fixture
+def function_tools(agent_config: AgentConfig) -> List[Tool]:
+    return db_function_tools(agent_config)
 
 
 @pytest.fixture
@@ -297,7 +298,7 @@ class TestNode:
         assert res.value_count == 0
 
     @pytest.mark.acceptance
-    def test_generation_node(self, generate_sql_input, agent_config):
+    def test_generation_node(self, generate_sql_input, agent_config, function_tools: List[Tool]):
         """Test SQL generation node with real DeepSeek model and Snowflake database"""
         try:
             # Create table schema from input data
@@ -310,6 +311,7 @@ class TestNode:
                 node_type=NodeType.TYPE_GENERATE_SQL,
                 input_data=input_data,
                 agent_config=agent_config,
+                tools=function_tools,
             )
 
             # Verify initial node configuration
@@ -422,6 +424,7 @@ class TestNode:
                 node_type=NodeType.TYPE_REASONING,
                 input_data=input_data,
                 agent_config=agent_config,
+                tools=db_function_tools(agent_config),
             )
 
             # Verify initial node configuration
@@ -454,7 +457,7 @@ class TestNode:
             logger.error(f"Reasoning node test failed: {str(e)}")
             raise
 
-    def test_reasoning_node(self, agent_config):
+    def test_reasoning_node(self, agent_config, function_tools: List[Tool]):
         """Test reasoning node with SSB SQLite database using revenue calculation task"""
         try:
             agent_config.current_namespace = "ssb_sqlite"
@@ -487,6 +490,7 @@ class TestNode:
                 node_type=NodeType.TYPE_REASONING,
                 input_data=input_data,
                 agent_config=agent_config,
+                tools=function_tools,
             )
 
             # Verify initial node configuration
@@ -507,7 +511,7 @@ class TestNode:
             raise
 
     @pytest.mark.acceptance
-    def test_reflection_node(self, reflection_input, agent_config):
+    def test_reflection_node(self, reflection_input, agent_config, function_tools: List[Tool]):
         """Test reflection node with test case[0] from YAML"""
         try:
             # Create reflection input data
@@ -531,6 +535,7 @@ class TestNode:
                 node_type=NodeType.TYPE_REFLECT,
                 input_data=reflection_input,
                 agent_config=agent_config,
+                tools=function_tools,
             )
 
             # Validate node type and input
@@ -546,7 +551,7 @@ class TestNode:
             raise
 
     @pytest.mark.acceptance
-    def test_execution_node(self, execute_sql_input, sql_connector, agent_config):
+    def test_execution_node(self, execute_sql_input, sql_connector, agent_config, function_tools: List[Tool]):
         """Test SQL execution node with Snowflake database"""
         try:
             agent_config.current_namespace = "snowflake"
@@ -564,6 +569,7 @@ class TestNode:
                     node_type=NodeType.TYPE_EXECUTE_SQL,
                     input_data=input_data,
                     agent_config=agent_config,
+                    tools=function_tools,
                 )
 
                 # Verify initial node configuration
@@ -612,7 +618,9 @@ class TestNode:
             logger.error(f"Doc search node test failed: {str(e)}")
             raise
 
-    def test_generate_semantic_model_node(self, generate_semantic_model_input, agent_config):
+    def test_generate_semantic_model_node(
+        self, generate_semantic_model_input, agent_config, function_tools: List[Tool]
+    ):
         """Test generate semantic model node"""
         try:
             # Create generate semantic model input from test data
@@ -624,6 +632,7 @@ class TestNode:
                     node_type=NodeType.TYPE_GENERATE_SEMANTIC_MODEL,
                     input_data=input_data,
                     agent_config=agent_config,
+                    tools=function_tools,
                 )
                 result = node.run()
                 logger.debug(f"Generate semantic model node result: {result}")
@@ -634,7 +643,7 @@ class TestNode:
             logger.error(f"Generate semantic model node test failed: {str(e)}")
             raise
 
-    def test_generate_metrics_node(self, generate_metrics_input, agent_config):
+    def test_generate_metrics_node(self, generate_metrics_input, agent_config, function_tools: List[Tool]):
         """Test generate metrics node"""
         try:
             # Create generate metrics input from test data
@@ -646,6 +655,7 @@ class TestNode:
                     node_type=NodeType.TYPE_GENERATE_METRICS,
                     input_data=input_data,
                     agent_config=agent_config,
+                    tools=function_tools,
                 )
                 result = node.run()
                 logger.debug(f"Generate metrics node result: {result}")
@@ -658,7 +668,7 @@ class TestNode:
             logger.error(f"Generate metrics node test failed: {str(e)}")
             raise
 
-    def test_search_metrics_node(self, search_metrics_input, search_metrics_agent_config: AgentConfig):
+    def test_search_metrics_node(self, search_metrics_input, agent_config: AgentConfig):
         """Test schema linking node"""
         # Take first test case from the list
         try:
@@ -669,7 +679,7 @@ class TestNode:
                     description="Search Metrics",
                     node_type=NodeType.TYPE_SEARCH_METRICS,
                     input_data=input_data,
-                    agent_config=search_metrics_agent_config,
+                    agent_config=agent_config,
                 )
                 assert node.type == NodeType.TYPE_SEARCH_METRICS
                 assert isinstance(node.input, SearchMetricsInput)
@@ -683,7 +693,7 @@ class TestNode:
             raise
 
     # @pytest.mark.acceptance
-    def test_compare_node(self, agent_config):
+    def test_compare_node(self, agent_config: AgentConfig, function_tools: List[Tool]):
         """Test compare node with real california_schools data"""
         try:
             # Create test SQL task
@@ -725,6 +735,7 @@ class TestNode:
                 node_type=NodeType.TYPE_COMPARE,
                 input_data=input_data,
                 agent_config=agent_config,
+                tools=db_function_tools,
             )
 
             # Verify initial node configuration
@@ -774,7 +785,7 @@ class TestNode:
             raise
 
     @pytest.mark.acceptance
-    def test_compare_with_mcp_node(self, agent_config):
+    def test_compare_with_mcp_node(self, agent_config, function_tools: List[Tool]):
         """Test compare node with MCP streaming for enhanced database analysis"""
         try:
             # Create test SQL task
@@ -816,6 +827,7 @@ class TestNode:
                 node_type=NodeType.TYPE_COMPARE,
                 input_data=input_data,
                 agent_config=agent_config,
+                tools=function_tools,
             )
 
             # Verify initial node configuration

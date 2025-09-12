@@ -1,4 +1,4 @@
-from typing import List
+from typing import Dict, List
 
 from pydantic import BaseModel
 
@@ -71,7 +71,7 @@ def get_reasoning_prompt(
     max_value_length: int = 500,
     max_text_mark_length: int = 16,
     knowledge_content: str = "",
-) -> str:
+) -> List[Dict[str, str]]:
     if isinstance(table_schemas, str):
         processed_schemas = table_schemas
     else:

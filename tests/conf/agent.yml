@@ -71,6 +71,7 @@ agent:
       max_data_details_length: 8000
       max_context_length: 8000
       max_value_length: 500
+      max_turns: 20
     reflect:
       prompt_version: "2.1"
     output:

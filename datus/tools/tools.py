@@ -5,7 +5,9 @@ from typing import Any, Callable, List, Optional
 from agents import FunctionTool, Tool, function_tool
 from pydantic import BaseModel, Field
 
+from datus.configuration.agent_config import AgentConfig
 from datus.tools.db_tools import BaseSqlConnector
+from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.constants import SUPPORT_CATALOG_DIALECTS, SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
 
@@ -268,3 +270,12 @@ class DBFuncTool:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
+
+
+def db_function_tool_instance(agent_config: AgentConfig) -> DBFuncTool:
+    db_manager = db_manager_instance(agent_config.namespaces)
+    return DBFuncTool(db_manager.get_conn(agent_config.current_namespace, agent_config.current_database))
+
+
+def db_function_tools(agent_config: AgentConfig) -> List[Tool]:
+    return db_function_tool_instance(agent_config).available_tools()

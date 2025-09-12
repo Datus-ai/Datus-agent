@@ -48,7 +48,7 @@ class OpenAIModel(OpenAICompatibleModel):
             encoding = tiktoken.encoding_for_model(self.model_name)
 
             # Count tokens
-            tokens = encoding.encode(prompt)
+            tokens = encoding.encode(str(prompt))
             return len(tokens)
         except ImportError:
             # Fallback: rough estimation (1 token ≈ 4 characters for English text)

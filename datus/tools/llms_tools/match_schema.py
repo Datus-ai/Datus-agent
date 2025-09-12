@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 import pyarrow as pa
 
@@ -179,13 +179,13 @@ class MatchSchemaTool(BaseTool):
             input_data.prompt_version,
             # input_data.top_n,
         )
-        task_size = self.count_task_size(self.model, input_data.input_text, messages)
+        task_size = self.count_task_size(self.model, input_data.input_text, str(messages))
         if task_size == 1:
             return llm_result2json(self.model.generate(messages, temperature=0.3))
         else:
             return self.split_and_match_schema(input_data, all_table_dict, table_metadata, task_size)
 
-    def count_task_size(self, model: LLMBaseModel, user_question: str, prompt: str) -> int:
+    def count_task_size(self, model: LLMBaseModel, user_question: str, prompt: Union[str, List[Dict[str, str]]]) -> int:
         tokens_count = model.token_count(prompt)
         max_tokens = model.max_tokens()
         if tokens_count > max_tokens:

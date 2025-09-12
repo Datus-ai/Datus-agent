@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
+
+from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
@@ -31,9 +33,8 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-
-class Workflow:
-    pass
+if TYPE_CHECKING:
+    from datus.agent.workflow import Workflow
 
 
 class Node(ABC):
@@ -49,6 +50,7 @@ class Node(ABC):
         node_type: str,
         input_data: BaseInput = None,
         agent_config: Optional[AgentConfig] = None,
+        tools: Optional[List[Tool]] = None,
     ):
         from datus.agent.node import (
             BeginNode,
@@ -74,11 +76,11 @@ class Node(ABC):
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
             return SchemaLinkingNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_GENERATE_SQL:
-            return GenerateSQLNode(node_id, description, node_type, input_data, agent_config)
+            return GenerateSQLNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
-            return ExecuteSQLNode(node_id, description, node_type, input_data, agent_config)
+            return ExecuteSQLNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_REASONING:
-            return ReasonSQLNode(node_id, description, node_type, input_data, agent_config)
+            return ReasonSQLNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_DOC_SEARCH:
             return DocSearchNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_OUTPUT:
@@ -86,25 +88,25 @@ class Node(ABC):
         elif node_type == NodeType.TYPE_FIX:
             return FixNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_REFLECT:
-            return ReflectNode(node_id, description, node_type, input_data, agent_config)
+            return ReflectNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_HITL:
             return HitlNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_BEGIN:
             return BeginNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_GENERATE_METRICS:
-            return GenerateMetricsNode(node_id, description, node_type, input_data, agent_config)
+            return GenerateMetricsNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
             return GenerateSemanticModelNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_SEARCH_METRICS:
             return SearchMetricsNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_PARALLEL:
-            return ParallelNode(node_id, description, node_type, input_data, agent_config)
+            return ParallelNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_SELECTION:
-            return SelectionNode(node_id, description, node_type, input_data, agent_config)
+            return SelectionNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_SUBWORKFLOW:
-            return SubworkflowNode(node_id, description, node_type, input_data, agent_config)
+            return SubworkflowNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_COMPARE:
-            return CompareNode(node_id, description, node_type, input_data, agent_config)
+            return CompareNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_DATE_PARSER:
             return DateParserNode(node_id, description, node_type, input_data, agent_config)
         else:
@@ -117,6 +119,7 @@ class Node(ABC):
         node_type: str,
         input_data: BaseInput = None,
         agent_config: Optional[AgentConfig] = None,
+        tools: Optional[List[Tool]] = None,
     ):
         """
         Initialize a node with its metadata.
@@ -142,6 +145,7 @@ class Node(ABC):
         self.metadata = {}
         self.agent_config = agent_config
         self.model = None
+        self.tools = tools
 
     def _initialize(self):
         """Initialize the model for this node"""
@@ -179,11 +183,11 @@ class Node(ABC):
         self.model = llm_model
 
     @abstractmethod
-    def update_context(self, workflow: Workflow) -> Dict:
+    def update_context(self, workflow: "Workflow") -> Dict:
         pass
 
     @abstractmethod
-    def setup_input(self, workflow: Workflow) -> Dict:
+    def setup_input(self, workflow: "Workflow") -> Dict:
         pass
 
     def start(self):

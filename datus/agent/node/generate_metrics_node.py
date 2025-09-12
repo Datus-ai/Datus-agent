@@ -121,7 +121,7 @@ class GenerateMetricsNode(Node):
                         )
 
                         # Use await instead of asyncio.run since we're already in async context
-                        exec_result = await self.model.generate_with_mcp(
+                        exec_result = await self.model.generate_with_tools(
                             prompt=prompt,
                             mcp_servers={
                                 "filesystem_mcp_server": filesystem_mcp_server,
@@ -230,7 +230,9 @@ class GenerateMetricsNode(Node):
             tool = LLMTool(self.model)
             logger.debug(f"Generate metrics input: {type(self.input)} {self.input}")
             return tool.generate_metrics(
-                self.input, self.agent_config.current_db_config(self.input.sql_task.database_name)
+                self.input,
+                self.agent_config.current_db_config(self.input.sql_task.database_name),
+                self.tools,
             )
         except Exception as e:
             logger.error(f"Metrics generation execution error: {str(e)}")
@@ -311,6 +313,7 @@ class GenerateMetricsNode(Node):
             async for action in generate_metrics_with_mcp_stream(
                 model=self.model,
                 input_data=self.input,
+                tools=self.tools,
                 db_config=self.agent_config.current_db_config(self.input.sql_task.database_name),
                 tool_config={},
                 action_history_manager=action_history_manager,

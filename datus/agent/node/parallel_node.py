@@ -213,6 +213,7 @@ class ParallelNode(Node):
                 node_type=node_type_to_use,
                 input_data=input_data,
                 agent_config=self.agent_config,
+                tools=workflow.tools,
             )
 
             child_node.workflow = workflow

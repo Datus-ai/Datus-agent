@@ -1,6 +1,6 @@
 # flake8：noqa
 import json
-from typing import List, Union
+from typing import Dict, List, Union
 
 from datus.schemas.node_models import Metric, TableSchema, TableValue
 from datus.utils.constants import DBType
@@ -28,7 +28,7 @@ def get_sql_prompt(
     database_docs: str = "",
     current_date: str = None,
     date_ranges: str = "",
-) -> str:
+) -> List[Dict[str, str]]:
     if context is None:
         context = []
 

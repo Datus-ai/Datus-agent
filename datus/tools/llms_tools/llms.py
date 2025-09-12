@@ -1,4 +1,6 @@
-from typing import Optional, Union
+from typing import List, Optional, Union
+
+from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig, DbConfig
 from datus.models.base import LLMBaseModel
@@ -15,7 +17,7 @@ from ...schemas.fix_node_models import FixInput, FixResult
 from ...schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from ...schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from .autofix_sql import autofix_sql
-from .compare_sql import compare_sql, compare_sql_with_mcp_stream
+from .compare_sql import compare_sql
 from .generate_metrics import generate_metrics_with_mcp
 from .generate_semantic_model import generate_semantic_model_with_mcp
 from .generate_sql import generate_sql
@@ -46,11 +48,9 @@ class LLMTool(BaseTool):
     def autofix_sql(self, input_data: FixInput, docs: list[str]) -> FixResult:
         return autofix_sql(self.model, input_data, docs)
 
-    def reasoning_sql(self, input_data: ReasoningInput, db_config: DbConfig) -> ReasoningResult:
+    def reasoning_sql(self, input_data: ReasoningInput, tools: List[Tool]) -> ReasoningResult:
         tool_config = {"max_turns": input_data.max_turns}
-        return reasoning_sql_with_mcp(
-            model=self.model, input_data=input_data, db_config=db_config, tool_config=tool_config
-        )
+        return reasoning_sql_with_mcp(model=self.model, input_data=input_data, tools=tools, tool_config=tool_config)
 
     def test(self, input: str) -> GenerateSQLResult:
         return self.model.generate(input)
@@ -72,11 +72,17 @@ class LLMTool(BaseTool):
         return match_schema_tool.execute(input_data)
 
     def generate_metrics(
-        self, input_data: GenerateMetricsInput, db_config: DbConfig, tool_config=None
+        self,
+        input_data: GenerateMetricsInput,
+        db_config: DbConfig,
+        tools: List[Tool],
+        tool_config=None,
     ) -> GenerateMetricsResult:
         if tool_config is None:
             tool_config = {}
-        return generate_metrics_with_mcp(self.model, input_data, db_config=db_config, tool_config=tool_config)
+        return generate_metrics_with_mcp(
+            self.model, input_data, tools=tools, db_config=db_config, tool_config=tool_config
+        )
 
     def generate_semantic_model(
         self, table_definition: str, input_data: GenerateSemanticModelInput, db_config: DbConfig, tool_config=None
@@ -89,9 +95,3 @@ class LLMTool(BaseTool):
 
     def compare_sql(self, input_data: CompareInput) -> CompareResult:
         return compare_sql(self.model, input_data)
-
-    def compare_sql_with_mcp_stream(self, input_data: CompareInput, db_config: DbConfig, tool_config=None):
-        """Compare SQL with MCP streaming support."""
-        if tool_config is None:
-            tool_config = {}
-        return compare_sql_with_mcp_stream(self.model, input_data, db_config=db_config, tool_config=tool_config)

@@ -82,7 +82,7 @@ class TestOpenAIModel:
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
         try:
-            result = await self.model.generate_with_mcp(
+            result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
                 mcp_servers={"sqlite": mcp_server},
@@ -257,7 +257,7 @@ class TestKimiModel:
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
         try:
-            result = await self.model.generate_with_mcp(
+            result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
                 mcp_servers={"sqlite": mcp_server},
@@ -363,7 +363,7 @@ class TestGeminiModel:
         mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
         try:
-            result = await self.model.generate_with_mcp(
+            result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
                 mcp_servers={"sqlite": mcp_server},

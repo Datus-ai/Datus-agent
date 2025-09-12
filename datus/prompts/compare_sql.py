@@ -1,4 +1,6 @@
 # flake8：noqa
+from typing import Dict, List
+
 from datus.utils.loggings import get_logger
 
 from .prompt_manager import prompt_manager
@@ -14,7 +16,7 @@ def compare_sql_prompt(
     sql_result: str = "",
     sql_error: str = "",
     expectation: str = "",
-) -> str:
+) -> List[Dict[str, str]]:
     system_content = prompt_manager.get_raw_template("compare_sql_system_mcp", version=prompt_version)
     user_content = prompt_manager.render_template(
         "compare_sql_user",

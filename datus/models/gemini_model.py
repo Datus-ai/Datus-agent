@@ -1,4 +1,5 @@
 import os
+from typing import Dict, List, Union
 
 import google.generativeai as genai
 
@@ -25,7 +26,7 @@ class GeminiModel(OpenAICompatibleModel):
             raise ValueError("Gemini API key must be provided or set as GEMINI_API_KEY environment variable")
         return api_key
 
-    def generate(self, prompt: str, **kwargs) -> str:
+    def generate(self, prompt: Union[str, List[Dict[str, str]]], **kwargs) -> str:
         try:
             generation_config = genai.types.GenerationConfig(
                 temperature=kwargs.get("temperature", 0.7),
