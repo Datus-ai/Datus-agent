@@ -623,6 +623,7 @@ class StreamingActionContext:
         self.actions = actions_list
         self.display = display_instance
         self.live = None
+        self.paused = False  # Flag to pause display updates
 
     def __enter__(self):
         # Create the content renderer
@@ -658,6 +659,20 @@ class StreamingActionContext:
     def __exit__(self, exc_type, exc_val, exc_tb):  # pylint: disable=unused-argument
         if self.live:
             self.live.stop()
+
+    def pause_display(self):
+        """Pause the live display updates"""
+        self.paused = True
+        if self.live:
+            # Temporarily stop the live display during pause
+            self.live.stop()
+
+    def resume_display(self):
+        """Resume the live display updates"""
+        self.paused = False
+        if self.live:
+            # Restart the live display after pause
+            self.live.start()
 
 
 def create_action_display(console: Optional[Console] = None, enable_truncation: bool = True) -> ActionHistoryDisplay:

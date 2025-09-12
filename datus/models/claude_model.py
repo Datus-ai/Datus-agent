@@ -274,6 +274,7 @@ class ClaudeModel(LLMBaseModel):
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        hooks: Optional[Any] = None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support."""
@@ -287,7 +288,15 @@ class ClaudeModel(LLMBaseModel):
 
         # Use existing generate_with_mcp_stream implementation
         async for action in self.generate_with_mcp_stream(
-            prompt, mcp_servers, instruction, output_type, max_turns, action_history_manager, **kwargs
+            prompt,
+            mcp_servers,
+            instruction,
+            output_type,
+            max_turns,
+            action_history_manager,
+            hooks=hooks,
+            tools=tools,
+            **kwargs,
         ):
             yield action
 
@@ -477,6 +486,8 @@ class ClaudeModel(LLMBaseModel):
         output_type: dict,
         max_turns: int = 10,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        hooks: Optional[Any] = None,
+        tools: Optional[List[Any]] = None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate a response using multiple MCP servers with streaming support."""
@@ -500,7 +511,9 @@ class ClaudeModel(LLMBaseModel):
         for attempt in range(max_retries + 1):
             try:
                 async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                    agent = self._setup_async_agent(instruction, connected_servers, output_type, **kwargs)
+                    agent = self._setup_async_agent(
+                        instruction, connected_servers, output_type, hooks=hooks, tools=tools, **kwargs
+                    )
                     result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns)
                     function_call_count = 0
 
@@ -597,20 +610,38 @@ class ClaudeModel(LLMBaseModel):
         # We can use a simple approximation of ~4 characters per token
         return int(len(prompt) / 4 + 0.5)
 
-    def _setup_async_agent(self, instruction: str, mcp_servers: Dict, output_type: dict, **kwargs):
+    def _setup_async_agent(
+        self,
+        instruction: str,
+        mcp_servers: Dict,
+        output_type: dict,
+        hooks: Optional[Any] = None,
+        tools: Optional[List[Any]] = None,
+        **kwargs,
+    ):
         """Setup async client and agent."""
         async_client = wrap_openai(AsyncOpenAI(api_key=self.api_key, base_url=self.api_base + "/v1"))
         model_params = {"model": self.model_name}
         async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
         # Claude uses OpenAI-compatible interface via /v1 endpoint
-        agent = Agent(
-            name=kwargs.pop("agent_name", "MCP_Agent"),
-            instructions=instruction,
-            mcp_servers=list(mcp_servers.values()),
-            output_type=str,  # Use str for compatibility
-            model=async_model,
-        )
+        agent_kwargs = {
+            "name": kwargs.pop("agent_name", "MCP_Agent"),
+            "instructions": instruction,
+            "mcp_servers": list(mcp_servers.values()),
+            "output_type": str,  # Use str for compatibility
+            "model": async_model,
+        }
+
+        # Add tools if provided
+        if tools:
+            agent_kwargs["tools"] = tools
+
+        # Add hooks if provided
+        if hooks:
+            agent_kwargs["hooks"] = hooks
+
+        agent = Agent(**agent_kwargs)
         return agent
 
     async def _generate_with_mcp_session(

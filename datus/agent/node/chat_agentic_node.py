@@ -38,6 +38,7 @@ class ChatAgenticNode(AgenticNode):
         namespace: Optional[str] = None,
         agent_config: Optional[AgentConfig] = None,
         max_turns: int = 30,
+        shared_plan_tool=None,
     ):
         """
         Initialize the ChatAgenticNode.
@@ -46,8 +47,11 @@ class ChatAgenticNode(AgenticNode):
             namespace: Database namespace for MCP server selection
             agent_config: Agent configuration
             max_turns: Maximum conversation turns per interaction
+            shared_plan_tool: Optional shared PlanTool instance for plan mode
         """
         self.namespace = namespace
+        self.shared_plan_tool = shared_plan_tool  # Store for use in setup_tools
+
         # Get max_turns from node configuration if available
         node_max_turns = None
         if agent_config and hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
@@ -82,9 +86,15 @@ class ChatAgenticNode(AgenticNode):
 
         # Add todo tools in plan mode
         if plan_mode:
-            from datus.tools.plan_tools.plan_tool import PlanTool
+            if self.shared_plan_tool is not None:
+                # Use the provided plan_tool instance (shared with plan manager)
+                self.plan_tool = self.shared_plan_tool
+            else:
+                # Create new instance if none provided (fallback)
+                from datus.tools.plan_tools import PlanTool
 
-            self.plan_tool = PlanTool()
+                self.plan_tool = PlanTool()
+
             plan_tools = self.plan_tool.available_tools()
             self.tools.extend(plan_tools)
 

@@ -441,6 +441,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         Yields:
             ActionHistory objects for streaming updates
         """
+        logger.info(f"Generating with tools stream with hooks in openai_compatible: {hooks}")
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
@@ -639,7 +640,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Add hooks if we have them
                 if hooks:
                     agent_kwargs["hooks"] = hooks
-
+                logger.info(f"Agent kwargs in openai_compatible: {agent_kwargs}")
                 agent = Agent(**agent_kwargs)
 
                 try:

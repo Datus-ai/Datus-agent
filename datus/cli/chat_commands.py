@@ -39,6 +39,7 @@ class ChatCommands:
         # Chat state management
         self.chat_node: ChatAgenticNode | None = None
         self.chat_history = []
+        self.current_streaming_context = None  # Track current Action Stream context for pause/resume
 
     def update_chat_node_tools(self):
         """Update chat node tools when namespace changes."""
@@ -51,150 +52,135 @@ class ChatCommands:
         hooks=None,
         show_details: bool = True,
         plan_mode: bool = False,
+        shared_plan_tool=None,
     ):
         """Execute a chat command with hooks support for plan mode."""
-        # Set hooks in chat node
-        if self.chat_node and hooks:
-            self.chat_node.hooks = hooks
 
-        # Call regular execute_chat_command
-        return self.execute_chat_command(message, show_details=show_details, plan_mode=plan_mode)
-
-    def execute_chat_command(self, message: str, show_details: bool = True, plan_mode: bool = False):
-        """Execute a chat command (/ prefix) using ChatAgenticNode."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
 
         try:
+            # Parse context and create input
             at_tables, at_metrics, at_sqls = self.cli.at_completer.parse_at_context(message)
-
-            # Create chat input with current database context
             chat_input = ChatNodeInput(
                 user_message=message,
-                catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
-                database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
-                db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                catalog=self.cli.cli_context.current_catalog,
+                database=self.cli.cli_context.current_db_name,
+                db_schema=self.cli.cli_context.current_schema,
                 schemas=at_tables,
                 metrics=at_metrics,
                 historical_sql=at_sqls,
             )
-            # Get or create persistent ChatAgenticNode
-            if self.chat_node is None:
-                self.console.print("[dim]Creating new chat session...[/]")
-                self.chat_node = ChatAgenticNode(
-                    namespace=self.cli.agent_config.current_namespace,
-                    agent_config=self.cli.agent_config,
-                )
-            else:
-                # Show session info for existing session (if not in plan mode)
-                if not plan_mode:
-                    session_info = self.chat_node.get_session_info()
-                    if session_info["session_id"]:
-                        session_display = (
-                            f"[dim]Using existing session: {session_info['session_id']} "
-                            f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
-                        )
-                        self.console.print(session_display)
 
-            # Setup tools with plan mode if needed
-            self.chat_node.setup_tools(plan_mode=plan_mode)
+            # Setup chat node
+            self._setup_chat_node(shared_plan_tool, plan_mode, hooks)
 
-            # Display streaming execution
+            # Execute streaming chat
             self.console.print("[bold green]Processing chat request...[/]")
+            incremental_actions = self._execute_streaming_chat(chat_input)
 
-            # Initialize action history display for incremental actions only
-            action_display = ActionHistoryDisplay(self.console)
-            incremental_actions = []
-
-            # Run streaming execution with real-time display
-            # Create a live display like the !reason command (shows only new actions)
-            with action_display.display_streaming_actions(incremental_actions):
-                # Run the async streaming method
-                async def run_chat_stream():
-                    async for action in self.chat_node.execute_stream(chat_input, self.cli.actions):
-                        incremental_actions.append(action)
-                        # Add delay to make the streaming visible
-                        await asyncio.sleep(0.5)
-
-                # Execute the streaming chat
-                asyncio.run(run_chat_stream())
-
-            # Display final response from the last successful action
+            # Display results
             if incremental_actions:
-                final_action = incremental_actions[-1]
-
-                if (
-                    final_action.output
-                    and isinstance(final_action.output, dict)
-                    and final_action.status == ActionStatus.SUCCESS
-                ):
-                    # Parse response to extract clean SQL and output
-                    sql = None
-                    clean_output = None
-
-                    logger.debug(f"DEBUG: final_action.output: {final_action.output}")
-
-                    # First check if SQL and response are directly available
-                    sql = final_action.output.get("sql")
-                    response = final_action.output.get("response")
-
-                    # Try to extract SQL and output from the string response
-                    extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
-                    sql = sql or extracted_sql
-
-                    # Determine clean_output based on sql and extracted_output
-                    clean_output = None
-
-                    if sql:
-                        # Has SQL: use extracted_output or fallback to response
-                        clean_output = extracted_output or response
-                    elif isinstance(extracted_output, dict):
-                        # No SQL, extracted_output is dict: get raw_output from dict
-                        clean_output = extracted_output.get("raw_output", str(extracted_output))
-                    else:
-                        # No SQL, no extracted_output: try to parse raw_output from response string
-                        try:
-                            import ast
-
-                            response_dict = ast.literal_eval(response)
-                            clean_output = (
-                                response_dict.get("raw_output", response)
-                                if isinstance(response_dict, dict)
-                                else response
-                            )
-                        except (ValueError, SyntaxError):
-                            clean_output = response
-
-                    # Display using simple, focused methods
-                    if sql:
-                        self._display_sql_with_copy(sql)
-
-                    if clean_output:
-                        self._display_markdown_response(clean_output)
-
-                    if show_details:
-                        self._show_detail(incremental_actions)
-
-            # Add all actions from chat to our main action history
-            self.cli.actions.actions.extend(incremental_actions)
-
-            # Update chat history for potential context in future interactions
-            self.chat_history.append(
-                {
-                    "user": message,
-                    "response": (
-                        incremental_actions[-1].output.get("response", "")
-                        if incremental_actions and incremental_actions[-1].output
-                        else ""
-                    ),
-                    "actions": len(incremental_actions),
-                }
-            )
+                self._display_final_results(incremental_actions, show_details)
+                self._update_history(message, incremental_actions)
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+    def _setup_chat_node(self, shared_plan_tool, plan_mode: bool, hooks):
+        """Setup or reuse chat node with proper configuration"""
+        if self.chat_node is None:
+            self.console.print("[dim]Creating new chat session...[/]")
+            self.chat_node = ChatAgenticNode(
+                namespace=self.cli.agent_config.current_namespace,
+                agent_config=self.cli.agent_config,
+                shared_plan_tool=shared_plan_tool,
+            )
+        elif not plan_mode and not hooks:
+            # Show session info for regular chat (not plan mode)
+            session_info = self.chat_node.get_session_info()
+            if session_info.get("session_id"):
+                self.console.print(
+                    f"[dim]Using existing session: {session_info['session_id']} "
+                    f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+                )
+
+        if hooks:
+            self.chat_node.hooks = hooks
+        self.chat_node.setup_tools(plan_mode=plan_mode)
+
+    def _execute_streaming_chat(self, chat_input) -> list:
+        """Execute streaming chat and return actions"""
+        action_display = ActionHistoryDisplay(self.console)
+        incremental_actions = []
+
+        with action_display.display_streaming_actions(incremental_actions) as streaming_context:
+            self.current_streaming_context = streaming_context
+
+            async def run_chat_stream():
+                async for action in self.chat_node.execute_stream(chat_input, self.cli.actions):
+                    incremental_actions.append(action)
+                    await asyncio.sleep(0.5)
+
+            asyncio.run(run_chat_stream())
+            self.current_streaming_context = None
+
+        return incremental_actions
+
+    def _display_final_results(self, incremental_actions, show_details: bool):
+        """Display final results from successful action"""
+        final_action = incremental_actions[-1]
+
+        if not (
+            final_action.output
+            and isinstance(final_action.output, dict)
+            and final_action.status == ActionStatus.SUCCESS
+        ):
+            return
+
+        # Extract SQL and response
+        sql = final_action.output.get("sql")
+        response = final_action.output.get("response", "")
+
+        # Try to extract more from response if needed
+        if not sql:
+            extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
+            sql = extracted_sql
+            response = extracted_output or response
+
+        # Display results
+        if sql:
+            self._display_sql_with_copy(sql)
+        if response:
+            self._display_markdown_response(response)
+        if show_details:
+            self._show_detail(incremental_actions)
+
+        # Add to main action history
+        self.cli.actions.actions.extend(incremental_actions)
+
+    def _update_history(self, message: str, incremental_actions):
+        """Update chat history with latest interaction"""
+        response = ""
+        if incremental_actions and incremental_actions[-1].output:
+            response = incremental_actions[-1].output.get("response", "")
+
+        self.chat_history.append(
+            {
+                "user": message,
+                "response": response,
+                "actions": len(incremental_actions),
+            }
+        )
+
+    def execute_chat_command(self, message: str, show_details: bool = True, plan_mode: bool = False):
+        """Execute a chat command (/ prefix) using ChatAgenticNode."""
+        # Delegate to the main implementation
+        self.execute_chat_command_with_hooks(
+            message=message, hooks=None, show_details=show_details, plan_mode=plan_mode
+        )
 
     def _show_detail(self, actions: List[ActionHistory]):
         """Show detailed action information with user confirmation."""
@@ -333,6 +319,7 @@ class ChatCommands:
     # Chat management commands
 
     def cmd_clear_chat(self, args: str):
+        _ = args  # Mark parameter as used
         """Clear the console screen and chat session."""
         # Clear the console screen using Rich
         self.console.clear()
@@ -346,6 +333,7 @@ class ChatCommands:
         self.chat_node = None
 
     def cmd_chat_info(self, args: str):
+        _ = args  # Mark parameter as used
         """Display information about the current chat session."""
         if self.chat_node:
             session_info = self.chat_node.get_session_info()
@@ -367,6 +355,7 @@ class ChatCommands:
             self.console.print("[yellow]No active chat session.[/]")
 
     def cmd_compact(self, args: str):
+        _ = args  # Mark parameter as used
         """Manually compact the chat session by summarizing conversation history."""
         if not self.chat_node:
             self.console.print("[yellow]No active chat session to compact.[/]")
@@ -405,6 +394,7 @@ class ChatCommands:
             self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     def cmd_list_sessions(self, args: str):
+        _ = args  # Mark parameter as used
         """List all available chat sessions."""
         try:
             # Create a session manager directly (don't rely on chat_node)

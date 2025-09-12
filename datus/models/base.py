@@ -129,6 +129,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        hooks: Optional[Any] = None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support.
