@@ -50,7 +50,7 @@ def create_nodes_from_config(
     nodes.append(start_node)
 
     # Process workflow config that may contain nested structures
-    processed_nodes = _process_workflow_config(workflow_config, sql_task, agent_config, tools)
+    processed_nodes = _process_workflow_config(workflow_config, sql_task, agent_config, tools=tools)
     nodes.extend(processed_nodes)
 
     logger.info(f"Generated workflow with {len(nodes)} nodes")

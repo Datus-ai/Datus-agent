@@ -272,10 +272,12 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
 
-def db_function_tool_instance(agent_config: AgentConfig) -> DBFuncTool:
+def db_function_tool_instance(agent_config: AgentConfig, database_name: str = "") -> DBFuncTool:
     db_manager = db_manager_instance(agent_config.namespaces)
-    return DBFuncTool(db_manager.get_conn(agent_config.current_namespace, agent_config.current_database))
+    return DBFuncTool(
+        db_manager.get_conn(agent_config.current_namespace, database_name or agent_config.current_database)
+    )
 
 
-def db_function_tools(agent_config: AgentConfig) -> List[Tool]:
-    return db_function_tool_instance(agent_config).available_tools()
+def db_function_tools(agent_config: AgentConfig, database_name: str = "") -> List[Tool]:
+    return db_function_tool_instance(agent_config, database_name).available_tools()
