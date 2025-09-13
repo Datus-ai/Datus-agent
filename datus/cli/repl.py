@@ -737,22 +737,22 @@ class DatusCLI:
 
     def _get_plan_execution_choice(self):
         """Let user choose what to do with the generated plan"""
+        # Display the menu
         self.console.print("\n[bold yellow]Execution Plan Review[/]")
         self.console.print("[dim]────────────────────────────────────────────────────[/]")
-        self.console.print("\n[bold]How would you like to proceed with this plan?[/]")
-        self.console.print("")
-        self.console.print("  [bold]1. Auto Execute[/] - Run all steps automatically")
-        self.console.print("  [bold]2. Manual Review[/] - Confirm each tool before execution")
-        self.console.print("  [bold]3. Revise Plan[/] - Provide feedback to improve the plan")
-        self.console.print("  [bold]4. Cancel[/] - Exit without executing")
+        self.console.print("\n[bold]How would you like to proceed with this plan?[/]\n")
+        self.console.print("  [bold]1. Manual Confirm[/] - Confirm each step before execution")
+        self.console.print("  [bold]2. Auto Execute[/] - Run all steps automatically")
+        self.console.print("  [bold]3. Reject Plan[/] - Provide feedback to replan")
+        self.console.print("\n[dim]Enter your choice (1-3) [1]: [/]", end="")
 
         try:
-            choice = input("\nYour choice (1-4) [1]: ").strip() or "1"
+            choice = input().strip() or "1"
 
             if choice == "1":
-                return {"action": "execute", "mode": "auto"}
-            elif choice == "2":
                 return {"action": "execute", "mode": "manual"}
+            elif choice == "2":
+                return {"action": "execute", "mode": "auto"}
             elif choice == "3":
                 feedback = input("Your feedback: ").strip()
                 if feedback:
@@ -760,8 +760,6 @@ class DatusCLI:
                 else:
                     self.console.print("[yellow]No feedback provided, cancelling operation[/]")
                     return {"action": "cancel"}
-            elif choice == "4":
-                return {"action": "cancel"}
             else:
                 self.console.print("[red]Invalid choice, cancelling operation[/]")
                 return {"action": "cancel"}

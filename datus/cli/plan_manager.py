@@ -76,7 +76,6 @@ class PlanModeHooksWithInterception(AgentHooks):
                     raise UserCancelledException("Execution cancelled by user")
                 elif user_choice == UserChoice.REPLAN:
                     self.should_continue_execution = False
-                    self._replan_requested = True
                     raise PlanningCompletedException("User requested replanning during task execution")
 
             except (PlanningCompletedException, UserCancelledException):
@@ -145,11 +144,24 @@ class PlanModeHooksWithInterception(AgentHooks):
                         streaming_context.pause_display()
 
             # Brief pause to let streams settle
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
 
             # Force flush all output streams before prompting
             sys.stdout.flush()
             sys.stderr.flush()
+
+            # Show current todo list status
+            self.console.print("\n[bold cyan]Current Todo List Status:[/]")
+            todo_list = self.plan_manager.plan_tool.storage.get_todo_list()
+            if todo_list:
+                for i, item in enumerate(todo_list.items, 1):
+                    status_icon = "✓" if item.status == "completed" else "○" if item.status == "pending" else "✗"
+                    status_color = (
+                        "green" if item.status == "completed" else "yellow" if item.status == "pending" else "red"
+                    )
+                    self.console.print(f"  {i}. [{status_color}]{status_icon}[/{status_color}] {item.content}")
+            else:
+                self.console.print("  [yellow]No todo list found[/]")
 
             # Show task confirmation options
             self.console.print(f"\n[bold]Ready to start task:[/] {task_description}")
@@ -164,7 +176,7 @@ class PlanModeHooksWithInterception(AgentHooks):
             def get_user_choice():
                 while True:
                     try:
-                        user_input = input("\nYour choice (1-4): ").strip()
+                        user_input = input("\nYour choice (1-4) [1]: ").strip() or "1"
                         if user_input in ["1", "2", "3", "4"]:
                             return user_input
                         print("Please enter a valid choice (1-4)")
