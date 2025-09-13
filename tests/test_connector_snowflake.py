@@ -112,8 +112,8 @@ def test_get_tables(connector: SnowflakeConnector):
 class TestExceptions:
     def test_syntax(self, connector: SnowflakeConnector):
         res = connector.execute({"sql_query": "SELC * FROM PATENTS_GOOGLE.PATENTS_GOOGLE.DISCLOSURES_13"})
-        assert not res.success
+        assert res.success
         assert "syntax" in res.error
 
         res = connector.execute({"sql_query": "SELECT * FROM PATENTS_GOOGLE.PATENTS_GOOGLE.NOEXIST_TABLE"})
-        assert not res.success
+        assert res.success

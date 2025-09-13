@@ -103,26 +103,22 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         catalog_name = self.reset_catalog_to_default(catalog_name or self.catalog_name)
         database_name = database_name or self.database_name
         table_name = self.full_name(catalog_name=catalog_name, database_name=database_name, table_name=table_name)
-        try:
-            # Use DESCRIBE or SHOW COLUMNS to get table schema
-            sql = f"DESCRIBE {table_name}"
-            query_result = self._execute_pandas(sql)
-            result = []
-            for i in range(len(query_result)):
-                result.append(
-                    {
-                        "cid": i,
-                        "name": query_result["Field"][i],
-                        "type": query_result["Type"][i],
-                        "nullable": query_result["Null"][i] == "YES",
-                        "default_value": query_result["Default"][i],
-                        "pk": query_result["Key"][i] == "PRI",
-                    }
-                )
-            return result
-        except Exception as e:
-            logger.error(f"Error getting schema for table {table_name}: {e}")
-            return []
+        # Use DESCRIBE or SHOW COLUMNS to get table schema
+        sql = f"DESCRIBE {table_name}"
+        query_result = self._execute_pandas(sql)
+        result = []
+        for i in range(len(query_result)):
+            result.append(
+                {
+                    "cid": i,
+                    "name": query_result["Field"][i],
+                    "type": query_result["Type"][i],
+                    "nullable": query_result["Null"][i] == "YES",
+                    "default_value": query_result["Default"][i],
+                    "pk": query_result["Key"][i] == "PRI",
+                }
+            )
+        return result
 
     @override
     def sqlalchemy_schema(

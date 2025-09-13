@@ -60,9 +60,9 @@ class SQLAlchemyConnector(BaseSqlConnector):
         """Destructor to ensure connections are properly closed."""
         try:
             self.close()
-        except Exception:
+        except Exception as e:
             # Ignore any errors during cleanup
-            pass
+            logger.debug(f"Failed to close connection: {str(e)}")
 
     def _trans_sqlalchemy_exception(
         self, e: Exception, sql: str = None, operation: str = "SQL execution"
@@ -267,21 +267,18 @@ class SQLAlchemyConnector(BaseSqlConnector):
         try:
             # Force close and dispose of existing connection and engine
             if self.connection:
-                try:
-                    self.connection.rollback()
-                except Exception:
-                    pass
+                self._safe_rollback()
                 try:
                     self.connection.close()
                 except Exception:
-                    pass
+                    logger.debug(f"Close failed for {self.connection}")
                 self.connection = None
 
             if self.engine:
                 try:
                     self.engine.dispose()
                 except Exception:
-                    pass
+                    logger.debug(f"Dispose failed for {self.engine}")
                 self.engine = None
 
             self._owns_engine = False
@@ -308,13 +305,15 @@ class SQLAlchemyConnector(BaseSqlConnector):
 
     @override
     def execute_ddl(self, sql: str) -> ExecuteSQLResult:
-        self.connect()
         try:
+            self.connect()
             res = self.connection.execute(text(sql))
             return ExecuteSQLResult(success=True, sql_query=sql, sql_return=str(res.rowcount), row_count=res.rowcount)
         except Exception as e:
-            ex = self._trans_sqlalchemy_exception(e, sql)
-            logger.error(f"Failed to execute DDL: {ex.message}")
+            if isinstance(e, DatusException):
+                ex = e
+            else:
+                ex = self._trans_sqlalchemy_exception(e, sql)
             return ExecuteSQLResult(success=False, sql_query=sql, error=str(ex))
 
     def execute_pandas(self, sql: str) -> ExecuteSQLResult:
@@ -328,14 +327,17 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 result_format="pandas",
             )
         except Exception as e:
-            return ExecuteSQLResult(success=False, error=str(e), sql_query=sql)
-        # return self.do_execute(ExecuteSQLInput(sql_query=query), "pandas")
+            if isinstance(e, DatusException):
+                ex = e
+            else:
+                ex = self._trans_sqlalchemy_exception(e, sql)
+            return ExecuteSQLResult(success=False, error=str(ex), sql_query=sql)
 
     def execute_csv(self, sql: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results with csv format."""
-        self.connect()
 
         try:
+            self.connect()
             df = self._execute_pandas(sql)
             return ExecuteSQLResult(
                 success=True,
@@ -345,20 +347,24 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 result_format="csv",
             )
         except Exception as e:
+            if isinstance(e, DatusException):
+                ex = e
+            else:
+                ex = self._trans_sqlalchemy_exception(e, sql)
             return ExecuteSQLResult(
                 success=False,
                 sql_query=sql,
                 sql_return="",
                 row_count=0,
-                error=str(e),
+                error=str(ex),
                 result_format="csv",
             )
 
     def execute_arrow(self, query: str) -> ExecuteSQLResult:
         """Execute query and return results as Arrow table."""
-        self.connect()
 
         try:
+            self.connect()
             result = self.connection.execute(text(query))
             if result.returns_rows:
                 # TODO: improve the performance of this function with ADBC or remove pandas dependency
@@ -381,10 +387,14 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 row_count=0,
                 result_format="arrow",
             )
-        except SQLAlchemyError as e:
+        except Exception as e:
+            if isinstance(e, DatusException):
+                ex = e
+            else:
+                ex = self._trans_sqlalchemy_exception(e, query)
             return ExecuteSQLResult(
                 success=False,
-                error=str(e),
+                error=str(ex),
                 sql_query=query,
                 sql_return="",
                 row_count=0,
@@ -393,8 +403,8 @@ class SQLAlchemyConnector(BaseSqlConnector):
 
     def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator[Tuple]:
         """Execute query and return results as tuples in batches."""
+        self.connect()
         try:
-            self.connect()
             result = self.connection.execute(text(sql).execution_options(stream_results=True, max_row_buffer=max_rows))
             if result.returns_rows:
                 while True:
@@ -407,12 +417,14 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 # Return empty iterator
                 yield from []
         except Exception as e:
+            if isinstance(e, DatusException):
+                raise e
             raise self._trans_sqlalchemy_exception(e) from e
 
     def execute_csv_iterator(self, query: str, max_rows: int = 100, with_header: bool = True) -> Iterator[Tuple]:
         """Execute a SQL query and return results as tuples in batches."""
+        self.connect()
         try:
-            self.connect()
             result = self.connection.execute(
                 text(query).execution_options(stream_results=True, max_row_buffer=max_rows)
             )
@@ -431,9 +443,8 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 if with_header:
                     yield ()
                 yield from []
-        except SQLAlchemyError as e:
-            logger.error(f"Error executing csv iterator: {e}")
-            raise e
+        except Exception as e:
+            raise self._trans_sqlalchemy_exception(e) from e
 
     def execute_to_arrow_stream(self, query: str, output_stream: Any, compression: Optional[str] = "lz4") -> None:
         """Execute query and stream results as Arrow format."""
@@ -449,7 +460,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
                     table = Table.from_pandas(df)
                     with ipc.new_stream(output_stream, table.schema) as writer:
                         writer.write_table(table)
-        except SQLAlchemyError as e:
+        except Exception as e:
             raise self._trans_sqlalchemy_exception(e, query) from e
 
     def test_connection(self) -> bool:
@@ -505,8 +516,8 @@ class SQLAlchemyConnector(BaseSqlConnector):
             A dictionary containing the insert operation results
         """
 
-        self.connect()
         try:
+            self.connect()
             res = self.connection.execute(text(sql))
             return ExecuteSQLResult(
                 success=True,
@@ -515,8 +526,10 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 row_count=res.rowcount,
             )
         except Exception as e:
-            ex = self._trans_sqlalchemy_exception(e, sql)
-            logger.error(f"Execute insert error: {ex.message}")
+            if isinstance(e, DatusException):
+                ex = e
+            else:
+                ex = self._trans_sqlalchemy_exception(e, sql)
             return ExecuteSQLResult(
                 success=False,
                 error=str(ex),
@@ -537,8 +550,8 @@ class SQLAlchemyConnector(BaseSqlConnector):
         Returns:
             A dictionary containing the update operation results
         """
-        self.connect()
         try:
+            self.connect()
             rowcount = self._update(sql)
             return ExecuteSQLResult(
                 success=True,
@@ -547,8 +560,10 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 row_count=rowcount,
             )
         except Exception as e:
-            ex = self._trans_sqlalchemy_exception(e, sql)
-            logger.error(f"Execute update error: {ex.message}")
+            if isinstance(e, DatusException):
+                ex = e
+            else:
+                ex = self._trans_sqlalchemy_exception(e, sql)
             return ExecuteSQLResult(
                 success=False,
                 error=str(ex),
@@ -571,8 +586,8 @@ class SQLAlchemyConnector(BaseSqlConnector):
             A dictionary containing the delete operation results
         """
 
-        self.connect()
         try:
+            self.connect()
             rowcount = self.delete(sql)
             return ExecuteSQLResult(
                 success=True,
@@ -581,8 +596,10 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 row_count=rowcount,
             )
         except Exception as e:
-            ex = self._trans_sqlalchemy_exception(e, sql)
-            logger.error(f"Execute delete error: {ex.message}")
+            if isinstance(e, DatusException):
+                ex = e
+            else:
+                ex = self._trans_sqlalchemy_exception(e, sql)
             return ExecuteSQLResult(
                 success=False,
                 error=str(ex),
@@ -610,7 +627,11 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 success=True, sql_query=sql, sql_return=result, row_count=row_count, result_format=result_format
             )
         except Exception as e:
-            return ExecuteSQLResult(success=False, error=str(e), sql_query=sql)
+            if isinstance(e, DatusException):
+                ex = e
+            else:
+                ex = self._trans_sqlalchemy_exception(e, sql)
+            return ExecuteSQLResult(success=False, error=str(ex), sql_query=sql)
 
     def _execute_query(self, query_sql: str) -> List[Dict[str, Any]]:
         if parse_sql_type(query_sql, self.dialect) in (
@@ -627,8 +648,10 @@ class SQLAlchemyConnector(BaseSqlConnector):
             result = self.connection.execute(text(query_sql))
             rows = result.fetchall()
             return [row._asdict() for row in rows]
+        except DatusException:
+            raise
         except Exception as e:
-            raise self._handle_sql_exception(e, query_sql, "query execution") from e
+            raise self._trans_sqlalchemy_exception(e, query_sql, "query execution") from e
 
     def _execute_pandas(self, query_sql: str) -> DataFrame:
         return DataFrame(self._execute_query(query_sql))
@@ -656,7 +679,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
         try:
             res = self.connection.execute(text(sql))
             return res.rowcount
-        except SQLAlchemyError as e:
+        except Exception as e:
             raise self._handle_sql_exception(e, sql, operation) from e
 
     def delete(self, sql: str) -> int:
@@ -853,7 +876,11 @@ class SQLAlchemyConnector(BaseSqlConnector):
                         }
                     )
             return samples
+        except DatusException:
+            raise
         except Exception as e:
+            if isinstance(e, DatusException):
+                raise e
             raise self._trans_sqlalchemy_exception(e) from e
 
     def get_columns(

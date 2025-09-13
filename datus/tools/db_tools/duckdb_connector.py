@@ -1,7 +1,5 @@
 from typing import Any, Dict, List, Literal, Optional, Set, override
 
-from sqlalchemy.exc import SQLAlchemyError
-
 from datus.configuration.agent_config import duckdb_database_name
 from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.base import list_to_in_str
@@ -171,8 +169,8 @@ class DuckdbConnector(SQLAlchemyConnector):
         schema_name: str = "",
     ) -> List[Dict[str, str]]:
         """Get sample values from tables."""
+        self.connect()
         try:
-            self.connect()
             samples = []
             if not tables:
                 tables = self.get_tables(database_name=database_name, schema_name=schema_name)
@@ -219,7 +217,9 @@ class DuckdbConnector(SQLAlchemyConnector):
                             }
                         )
             return samples
-        except SQLAlchemyError as e:
+        except DatusException:
+            raise
+        except Exception as e:
             raise DatusException(
                 ErrorCode.DB_EXECUTION_ERROR,
                 message_args={
@@ -233,11 +233,19 @@ class DuckdbConnector(SQLAlchemyConnector):
     ) -> List[Dict[str, str]]:
         if not table_name:
             return []
+        database_name = database_name or self.database_name
+        schema_name = schema_name or self.schema_name or "main"
         full_name = self.full_name(database_name=database_name, schema_name=schema_name, table_name=table_name)
         if table_name:
             sql = f"PRAGMA table_info('{full_name}')"
             try:
                 return self._execute_pandas(sql).to_dict(orient="records")
+            except DatusException as e:
+                if "error_message" in e.message_args:
+                    message = e.message_args["error_message"]
+                else:
+                    message = e.message
+                raise DatusException(ErrorCode.DB_QUERY_METADATA_FAILED, message=message)
             except Exception as e:
                 raise DatusException(
                     ErrorCode.DB_QUERY_METADATA_FAILED,

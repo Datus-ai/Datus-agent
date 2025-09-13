@@ -7,6 +7,7 @@ from sqlglot.expressions import CTE, Table
 
 from datus.utils.constants import DBType, SQLType
 
+from .exceptions import DatusException, ErrorCode
 from .loggings import get_logger
 
 logger = get_logger(__name__)
@@ -330,8 +331,12 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
         return SQLType.CONTENT_SET
     # Normalize the query for parsing by stripping whitespace and getting the first word.
     normalized_sql = sql.strip().lower()
-
-    parsed_expression = sqlglot.parse_one(normalized_sql, dialect=parse_dialect(dialect))
+    try:
+        parsed_expression = sqlglot.parse_one(normalized_sql, dialect=parse_dialect(dialect))
+    except Exception:
+        raise DatusException(
+            ErrorCode.DB_EXECUTION_SYNTAX_ERROR, message_args={"sql": sql, "error_message": "SQL parsing failed"}
+        )
     if isinstance(parsed_expression, expressions.Select):
         return SQLType.SELECT
     elif isinstance(parsed_expression, expressions.Insert):
