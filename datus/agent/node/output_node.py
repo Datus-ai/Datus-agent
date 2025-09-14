@@ -36,6 +36,7 @@ class OutputNode(Node):
             table_schemas=workflow.context.table_schemas,
             metrics=workflow.context.metrics,
             external_knowledge=workflow.task.external_knowledge,
+            error=sql_context.sql_error,
         )
         self.input = next_input
         return {"success": True, "message": "Output appears valid", "suggestions": [next_input]}

@@ -32,7 +32,7 @@ class BenchmarkOutputTool(BaseTool):
         target_dir = input_data.output_dir
         os.makedirs(target_dir, exist_ok=True)
         csv_file = f"{input_data.task_id}.csv"
-        if input_data.finished:
+        if input_data.finished and not input_data.error:
             final_sql_query, final_sql_result = self.check_sql(input_data, sql_connector, model)
             with (
                 open(os.path.join(target_dir, f"{input_data.task_id}.json"), "w") as json_f,
