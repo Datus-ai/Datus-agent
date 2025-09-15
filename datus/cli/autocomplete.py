@@ -180,9 +180,9 @@ class SQLCompleter(Completer):
             "!bash": None,
             "!daend": None,
             # Context commands
-            "@": None,
             "@catalog": None,
             "@subject": None,
+            "@sql": None,
             # Internal commands
             ".help": None,
             ".exit": None,

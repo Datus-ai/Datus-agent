@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from typing import Any, Dict
 
@@ -53,6 +54,7 @@ class SubjectScreen(ContextScreen):
         }
 
         #details-container {
+            width: 50%;
             height: 100%;
             background: $surface-lighten-1;
             overflow-y: auto;
@@ -101,6 +103,7 @@ class SubjectScreen(ContextScreen):
         #properties-container {
             background: $surface;
             height: 40%;
+            width: 100%;
         }
         #properties-panel {
             background: $surface;
@@ -171,10 +174,6 @@ class SubjectScreen(ContextScreen):
         super().__init__(title=title, context_data=context_data, inject_callback=inject_callback)
         self.rag: SemanticMetricsRAG = context_data.get("rag")
         self.database_name = context_data.get("database_name")
-        """
-        dict level
-            domain -> layer1 -> layer2 -> semantic_model -> [metrics1, metrics2]
-        """
         self.inject_callback = inject_callback
         self.selected_path = ""
         self.selected_data = {}
@@ -379,6 +378,70 @@ class SubjectScreen(ContextScreen):
         """Get cached metrics data using LRU cache."""
         return _fetch_metrics_with_cache(self.rag, domain, layer1, layer2, semantic_model_name)
 
+    def _create_nested_table_for_json(self, field_value: Any, title: str = "") -> Any:
+        """Create nested table for JSON field values."""
+        from rich import box
+
+        if not field_value or field_value == "N/A":
+            return "[dim]N/A[/dim]"
+
+        # Parse JSON string if needed
+        parsed_data = field_value
+        if isinstance(field_value, str):
+            try:
+                parsed_data = json.loads(field_value)
+            except (json.JSONDecodeError, TypeError):
+                # If not valid JSON, return as simple colored text
+                if field_value.startswith("[") and field_value.endswith("]"):
+                    return f"[bright_green]{field_value}[/bright_green]"
+                elif field_value.startswith("{") and field_value.endswith("}"):
+                    return f"[bright_blue]{field_value}[/bright_blue]"
+                else:
+                    return str(field_value)
+
+        # Create nested table based on data type
+        if isinstance(parsed_data, list):
+            if not parsed_data:
+                return "[dim]Empty list[/dim]"
+
+            # Create table for list items
+            nested_table = Table(show_header=True, box=box.ROUNDED, border_style="dim", padding=(0, 0), expand=True)
+            if parsed_data and isinstance(parsed_data[0], dict):
+                for k in parsed_data[0].keys():
+                    nested_table.add_column(k, style="dim cyan", justify="center")
+
+                for item in parsed_data:
+                    values = [str(v) for v in item.values()]
+                    nested_table.add_row(*values)
+            else:
+                nested_table.add_column("Value", style="dim cyan")
+                for item in parsed_data:
+                    nested_table.add_row(str(item))
+
+            return nested_table
+
+        elif isinstance(parsed_data, dict):
+            if not parsed_data:
+                return "[dim]Empty object[/dim]"
+
+            # Create table for dict key-value pairs
+            nested_table = Table(show_header=True, box=box.ROUNDED, border_style="dim", padding=(0, 1), expand=True)
+            nested_table.add_column("Property", style="bright_cyan", width=15)
+            nested_table.add_column("Value", style="bright_yellow")
+
+            for key, value in parsed_data.items():
+                if isinstance(value, (dict, list)):
+                    value_str = json.dumps(value, indent=1, ensure_ascii=False)
+                else:
+                    value_str = str(value)
+                nested_table.add_row(str(key), value_str)
+
+            return nested_table
+
+        else:
+            # For simple values, return as formatted string
+            return f"[bright_white]{str(parsed_data)}[/bright_white]"
+
     def _build_properties_content(
         self,
         semantic_details: Dict[str, Any],
@@ -395,22 +458,28 @@ class SubjectScreen(ContextScreen):
             padding=(0, 1),
         )
 
-        table.add_column("Key", style="bright_cyan", width=20, max_width=25)
-        table.add_column("Value", style="yellow", width=50)
+        table.add_column("Key", style="bright_cyan", ratio=1)
+        table.add_column("Value", style="yellow", justify="left", ratio=3, no_wrap=False)
 
         # Add basic properties
         table.add_row("Semantic Model Name", semantic_details.get("semantic_model_name", "N/A"))
         table.add_row("Domain", semantic_details.get("domain", "N/A"))
         table.add_row("Layer1", semantic_details.get("layer1", "N/A"))
         table.add_row("Layer2", semantic_details.get("layer2", "N/A"))
-        table.add_row("Catalog Name", semantic_details.get("catalog_name", ""))
-        table.add_row("Database Name", semantic_details.get("database_name", ""))
-        table.add_row("Schema Name", semantic_details.get("schema_name", ""))
-        table.add_row("Table Name", semantic_details.get("table_name", ""))
+        table.add_row("Catalog Name", semantic_details.get("catalog_name", "") or "[dim]N/A[/dim]")
+        table.add_row("Database Name", semantic_details.get("database_name", "") or "[dim]N/A[/dim]")
+        table.add_row("Schema Name", semantic_details.get("schema_name", "") or "[dim]N/A[/dim]")
+        table.add_row("Table Name", semantic_details.get("table_name", "") or "[dim]N/A[/dim]")
         table.add_row("Semantic File", semantic_details.get("semantic_file_path", "N/A"))
-        table.add_row("Dimensions", semantic_details.get("dimensions", "N/A"))
-        table.add_row("Measures", semantic_details.get("measures", "N/A"))
-        table.add_row("Identifiers", semantic_details.get("identifiers", "N/A"))
+
+        # Create nested tables for JSON fields
+        dimensions_table = self._create_nested_table_for_json(semantic_details.get("dimensions"), "Dimensions")
+        measures_table = self._create_nested_table_for_json(semantic_details.get("measures"), "Measures")
+        identifiers_table = self._create_nested_table_for_json(semantic_details.get("identifiers"), "Identifiers")
+
+        table.add_row("Dimensions", dimensions_table)
+        table.add_row("Measures", measures_table)
+        table.add_row("Identifiers", identifiers_table)
         table.add_row("Description", semantic_details.get("semantic_model_desc", "N/A"))
 
         return table

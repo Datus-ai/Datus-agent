@@ -192,7 +192,7 @@ class SqlHistoryRAG:
         logger.info(f"store sql history items: {len(sql_history_items)} items")
         self.sql_history_storage.store_batch(sql_history_items)
 
-    def search_all_sql_history(self, domain: str) -> List[Dict[str, Any]]:
+    def search_all_sql_history(self, domain: str = "") -> List[Dict[str, Any]]:
         """Search all SQL history items."""
         return self.sql_history_storage.search_all(domain)
 
