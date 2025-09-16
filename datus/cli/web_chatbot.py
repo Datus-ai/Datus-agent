@@ -232,9 +232,8 @@ class StreamlitChatbot:
             if self.cli:
                 # Current namespace info
                 st.subheader("🏷️ Current Namespace")
-                namespace_info = self.get_namespace_info()
-                if namespace_info:
-                    st.json(namespace_info)
+                if hasattr(self.cli.agent_config, 'current_namespace'):
+                    st.info(f"**{self.cli.agent_config.current_namespace}**")
 
                 # Model selection
                 st.subheader("🤖 Chat Model")
@@ -277,50 +276,6 @@ class StreamlitChatbot:
 
             return {"config_loaded": self.cli is not None}
 
-    def get_namespace_info(self) -> Dict[str, Any]:
-        """Get detailed namespace configuration information"""
-        if not self.cli or not hasattr(self.cli.agent_config, "current_namespace"):
-            return {}
-
-        try:
-            namespace = self.cli.agent_config.current_namespace
-
-            # Get namespace configuration (which is a dict of db_name -> DbConfig)
-            namespace_dbs = self.cli.agent_config.namespaces.get(namespace, {})
-
-            # Determine the database type from the first database
-            db_type = "unknown"
-            databases = []
-
-            for db_name, db_config in namespace_dbs.items():
-                # Extract type from first database
-                if db_type == "unknown" and hasattr(db_config, "type"):
-                    db_type = db_config.type
-
-                # Build database info
-                db_info = {
-                    "name": db_name,
-                    "type": db_config.type if hasattr(db_config, "type") else "unknown",
-                    "uri": db_config.uri if hasattr(db_config, "uri") else "",
-                }
-
-                # Add additional properties if they exist
-                for attr in ["host", "port", "username", "database", "schema", "warehouse", "catalog"]:
-                    if hasattr(db_config, attr):
-                        value = getattr(db_config, attr)
-                        if value:  # Only add non-empty values
-                            db_info[attr] = value
-
-                databases.append(db_info)
-
-            # Build comprehensive info
-            info = {"name": namespace, "type": db_type, "databases": databases}
-
-            return info
-
-        except Exception as e:
-            logger.error(f"Failed to get namespace info: {e}")
-            return {"error": str(e)}
 
     def get_available_models(self) -> List[str]:
         """Get list of available model names"""
@@ -646,6 +601,65 @@ class StreamlitChatbot:
                 else:
                     current_model = "Unknown"
                 st.metric("Current Model", current_model)
+
+
+def run_web_interface(args):
+    """Launch Streamlit web interface"""
+    import subprocess
+    import sys
+    import os
+
+    try:
+        # Get the path to the web chatbot
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        web_chatbot_path = os.path.join(current_dir, "web_chatbot.py")
+
+        if not os.path.exists(web_chatbot_path):
+            print(f"❌ Error: Web chatbot not found at {web_chatbot_path}")
+            sys.exit(1)
+
+        print("🚀 Starting Datus Web Interface...")
+        if args.namespace:
+            print(f"🔗 Using namespace: {args.namespace}")
+        if args.config:
+            print(f"⚙️ Using config: {args.config}")
+        print(f"🌐 Starting server at http://{args.host}:{args.port}")
+        print("⏹️ Press Ctrl+C to stop server")
+        print("-" * 50)
+
+        # Prepare streamlit command
+        cmd = [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            web_chatbot_path,
+            "--server.port",
+            str(args.port),
+            "--server.address",
+            args.host,
+            "--browser.serverAddress",
+            args.host,
+        ]
+
+        # Add arguments to pass to the web app
+        web_args = []
+        if args.namespace:
+            web_args.extend(["--namespace", args.namespace])
+        if args.config:
+            web_args.extend(["--config", args.config])
+
+        if web_args:
+            cmd.extend(["--"] + web_args)
+
+        # Launch streamlit
+        subprocess.run(cmd)
+
+    except KeyboardInterrupt:
+        print("\n🛑 Web server stopped")
+    except Exception as e:
+        print(f"❌ Failed to start web interface: {e}")
+        sys.exit(1)
 
 
 def main():
