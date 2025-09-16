@@ -294,14 +294,14 @@ class StreamlitChatbot:
 
             for db_name, db_config in namespace_dbs.items():
                 # Extract type from first database
-                if db_type == "unknown" and hasattr(db_config, 'type'):
+                if db_type == "unknown" and hasattr(db_config, "type"):
                     db_type = db_config.type
 
                 # Build database info
                 db_info = {
                     "name": db_name,
-                    "type": db_config.type if hasattr(db_config, 'type') else "unknown",
-                    "uri": db_config.uri if hasattr(db_config, 'uri') else "",
+                    "type": db_config.type if hasattr(db_config, "type") else "unknown",
+                    "uri": db_config.uri if hasattr(db_config, "uri") else "",
                 }
 
                 # Add additional properties if they exist
@@ -314,11 +314,7 @@ class StreamlitChatbot:
                 databases.append(db_info)
 
             # Build comprehensive info
-            info = {
-                "name": namespace,
-                "type": db_type,
-                "databases": databases
-            }
+            info = {"name": namespace, "type": db_type, "databases": databases}
 
             return info
 
@@ -608,7 +604,8 @@ class StreamlitChatbot:
                         self.display_markdown_response(response)
                     else:
                         st.markdown(
-                            "Sorry, unable to generate a valid response. Please check execution details for more information."
+                            "Sorry, unable to generate a valid response. "
+                            "Please check execution details for more information."
                         )
 
                     # Display SQL if available
