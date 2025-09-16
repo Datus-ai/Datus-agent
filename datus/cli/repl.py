@@ -281,6 +281,10 @@ class DatusCLI:
         if self.agent_initializing or self.agent_ready:
             return
 
+        # Skip background initialization in Streamlit mode to avoid vector DB conflicts
+        if hasattr(self, "streamlit_mode") and self.streamlit_mode:
+            return
+
         self.agent_initializing = True
         self.console.print("[dim]Initializing AI capabilities in background...[/]")
 

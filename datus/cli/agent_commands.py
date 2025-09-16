@@ -836,10 +836,12 @@ class AgentCommands:
                     asyncio.run(run_stream())
 
                 # Skip interactive prompt in Streamlit mode
-                if hasattr(self.cli, 'streamlit_mode') and self.cli.streamlit_mode:
+                if hasattr(self.cli, "streamlit_mode") and self.cli.streamlit_mode:
                     show_details = "n"  # Auto-skip in Streamlit mode
                 else:
-                    show_details = self.cli._prompt_input("Show Full Action History? (y/N)", default="n").strip().lower()
+                    show_details = (
+                        self.cli._prompt_input("Show Full Action History? (y/N)", default="n").strip().lower()
+                    )
 
                 if show_details == "y":
                     self.console.print("\n[bold blue]Full Action History:[/]")

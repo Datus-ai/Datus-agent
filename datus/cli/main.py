@@ -125,9 +125,9 @@ class Application:
 
     def _run_web_interface(self, args):
         """Launch Streamlit web interface"""
+        import os
         import subprocess
         import sys
-        import os
 
         try:
             # Get the path to the web chatbot
@@ -149,11 +149,17 @@ class Application:
 
             # Prepare streamlit command
             cmd = [
-                sys.executable, "-m", "streamlit", "run",
+                sys.executable,
+                "-m",
+                "streamlit",
+                "run",
                 web_chatbot_path,
-                "--server.port", str(args.port),
-                "--server.address", args.host,
-                "--browser.serverAddress", args.host,
+                "--server.port",
+                str(args.port),
+                "--server.address",
+                args.host,
+                "--browser.serverAddress",
+                args.host,
             ]
 
             # Add arguments to pass to the web app

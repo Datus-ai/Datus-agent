@@ -10,11 +10,9 @@ maximizing reuse of existing Datus CLI components including:
 """
 
 from argparse import Namespace
-from io import StringIO
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
-from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -34,14 +32,15 @@ def get_available_namespaces(config_path: str = "conf/agent.yml") -> List[str]:
     """Extract available namespaces from config file"""
     try:
         import yaml
-        with open(config_path, 'r') as f:
+
+        with open(config_path, "r") as f:
             config = yaml.safe_load(f)
 
         # Look for namespace configuration
-        if 'agent' in config and 'namespace' in config['agent']:
-            return list(config['agent']['namespace'].keys())
-        elif 'namespace' in config:
-            return list(config['namespace'].keys())
+        if "agent" in config and "namespace" in config["agent"]:
+            return list(config["agent"]["namespace"].keys())
+        elif "namespace" in config:
+            return list(config["namespace"].keys())
         else:
             return []
     except Exception as e:
@@ -77,14 +76,15 @@ def create_cli_args(config_path: str = "conf/agent.yml", namespace: str = None) 
 def get_storage_path_from_config(config_path: str) -> str:
     """Extract storage base_path from configuration file"""
     try:
-        import yaml
         import os
 
-        with open(config_path, 'r', encoding='utf-8') as f:
+        import yaml
+
+        with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
 
-        storage_config = config.get('agent', {}).get('storage', {})
-        base_path = storage_config.get('base_path', 'data')
+        storage_config = config.get("agent", {}).get("storage", {})
+        base_path = storage_config.get("base_path", "data")
 
         # Expand user path if needed
         return os.path.expanduser(base_path)
@@ -105,7 +105,7 @@ class StreamlitActionRenderer:
         if isinstance(content, str):
             st.markdown(content)
         elif isinstance(content, Panel):
-            title = getattr(content, 'title', None)
+            title = getattr(content, "title", None)
             if title:
                 st.markdown(f"**{title}**")
             # Extract content from panel
@@ -114,7 +114,7 @@ class StreamlitActionRenderer:
         elif isinstance(content, Table):
             self._render_rich_table(content)
         elif isinstance(content, Syntax):
-            language = getattr(content, 'lexer_name', 'text')
+            language = getattr(content, "lexer_name", "text")
             code = str(content.code)
             st.code(code, language=language)
         elif isinstance(content, Markdown):
@@ -138,7 +138,7 @@ class StreamlitActionRenderer:
                 row_data = []
                 for cell in row:
                     # Convert cell content to string
-                    if hasattr(cell, 'plain'):
+                    if hasattr(cell, "plain"):
                         row_data.append(cell.plain)
                     else:
                         row_data.append(str(cell))
@@ -146,6 +146,7 @@ class StreamlitActionRenderer:
 
             if rows:
                 import pandas as pd
+
                 df = pd.DataFrame(rows, columns=headers)
                 st.dataframe(df, use_container_width=True)
         except Exception as e:
@@ -161,13 +162,13 @@ class StreamlitChatbot:
         self.collapsible_generator = CollapsibleActionContentGenerator()
 
         # Initialize session state
-        if 'messages' not in st.session_state:
+        if "messages" not in st.session_state:
             st.session_state.messages = []
-        if 'current_actions' not in st.session_state:
+        if "current_actions" not in st.session_state:
             st.session_state.current_actions = []
-        if 'chat_session_initialized' not in st.session_state:
+        if "chat_session_initialized" not in st.session_state:
             st.session_state.chat_session_initialized = False
-        if 'cli_instance' not in st.session_state:
+        if "cli_instance" not in st.session_state:
             st.session_state.cli_instance = None
 
     @property
@@ -206,16 +207,15 @@ class StreamlitChatbot:
             logger.error(f"Configuration loading error: {e}")
             return False
 
-
     def render_sidebar(self) -> Dict[str, Any]:
         """Render sidebar with configuration information"""
         with st.sidebar:
             st.header("📊 Datus Chat")
 
             # Auto-load config with startup parameters (only once)
-            if not self.cli and not st.session_state.get('initialization_attempted', False):
-                startup_config = st.session_state.get('startup_config_path', 'conf/agent.yml')
-                startup_namespace = st.session_state.get('startup_namespace', None)
+            if not self.cli and not st.session_state.get("initialization_attempted", False):
+                startup_config = st.session_state.get("startup_config_path", "conf/agent.yml")
+                startup_namespace = st.session_state.get("startup_namespace", None)
 
                 # Mark that we've attempted initialization
                 st.session_state.initialization_attempted = True
@@ -246,7 +246,7 @@ class StreamlitChatbot:
                         "Select Model:",
                         options=available_models,
                         index=available_models.index(current_model) if current_model in available_models else 0,
-                        help="Choose the model for chat conversations"
+                        help="Choose the model for chat conversations",
                     )
 
                     if selected_model != current_model:
@@ -263,9 +263,9 @@ class StreamlitChatbot:
                     session_info = self.cli.chat_commands.chat_node.get_session_info()
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.metric("Messages", session_info.get('action_count', 0))
+                        st.metric("Messages", session_info.get("action_count", 0))
                     with col2:
-                        st.metric("Tokens", session_info.get('token_count', 0))
+                        st.metric("Tokens", session_info.get("token_count", 0))
 
                 # Clear chat button
                 if st.button("🗑️ Clear Chat", type="secondary", use_container_width=True):
@@ -279,32 +279,46 @@ class StreamlitChatbot:
 
     def get_namespace_info(self) -> Dict[str, Any]:
         """Get detailed namespace configuration information"""
-        if not self.cli or not hasattr(self.cli.agent_config, 'current_namespace'):
+        if not self.cli or not hasattr(self.cli.agent_config, "current_namespace"):
             return {}
 
         try:
             namespace = self.cli.agent_config.current_namespace
-            namespace_config = self.cli.agent_config.namespace.get(namespace, {})
+
+            # Get namespace configuration (which is a dict of db_name -> DbConfig)
+            namespace_dbs = self.cli.agent_config.namespaces.get(namespace, {})
+
+            # Determine the database type from the first database
+            db_type = "unknown"
+            databases = []
+
+            for db_name, db_config in namespace_dbs.items():
+                # Extract type from first database
+                if db_type == "unknown" and hasattr(db_config, 'type'):
+                    db_type = db_config.type
+
+                # Build database info
+                db_info = {
+                    "name": db_name,
+                    "type": db_config.type if hasattr(db_config, 'type') else "unknown",
+                    "uri": db_config.uri if hasattr(db_config, 'uri') else "",
+                }
+
+                # Add additional properties if they exist
+                for attr in ["host", "port", "username", "database", "schema", "warehouse", "catalog"]:
+                    if hasattr(db_config, attr):
+                        value = getattr(db_config, attr)
+                        if value:  # Only add non-empty values
+                            db_info[attr] = value
+
+                databases.append(db_info)
 
             # Build comprehensive info
             info = {
                 "name": namespace,
-                "type": namespace_config.get("database_type", "unknown"),
-                "databases": []
+                "type": db_type,
+                "databases": databases
             }
-
-            # Add database info
-            dbs = namespace_config.get("dbs", [])
-            for db in dbs:
-                db_info = {
-                    "name": db.get("name", "unknown"),
-                    "uri": db.get("uri", ""),
-                }
-                # Add additional properties if they exist
-                for key in ["host", "port", "user", "warehouse", "schema"]:
-                    if key in db:
-                        db_info[key] = db[key]
-                info["databases"].append(db_info)
 
             return info
 
@@ -314,7 +328,7 @@ class StreamlitChatbot:
 
     def get_available_models(self) -> List[str]:
         """Get list of available model names"""
-        if not self.cli or not hasattr(self.cli.agent_config, 'models'):
+        if not self.cli or not hasattr(self.cli.agent_config, "models"):
             return []
 
         try:
@@ -328,11 +342,12 @@ class StreamlitChatbot:
         try:
             # Read directly from config file to get nodes.chat.model
             import yaml
-            config_path = st.session_state.get('startup_config_path', 'conf/agent.yml')
-            with open(config_path, 'r', encoding='utf-8') as f:
+
+            config_path = st.session_state.get("startup_config_path", "conf/agent.yml")
+            with open(config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
 
-            chat_model = config.get('agent', {}).get('nodes', {}).get('chat', {}).get('model', '')
+            chat_model = config.get("agent", {}).get("nodes", {}).get("chat", {}).get("model", "")
             if chat_model:
                 return chat_model
 
@@ -359,10 +374,11 @@ class StreamlitChatbot:
 
         final_action = actions[-1]
 
-        if (final_action.output and
-            isinstance(final_action.output, dict) and
-            final_action.status == ActionStatus.SUCCESS):
-
+        if (
+            final_action.output
+            and isinstance(final_action.output, dict)
+            and final_action.status == ActionStatus.SUCCESS
+        ):
             # Use existing extraction logic from ChatCommands
             sql = final_action.output.get("sql")
             response = final_action.output.get("response")
@@ -383,11 +399,10 @@ class StreamlitChatbot:
             else:
                 try:
                     import ast
+
                     response_dict = ast.literal_eval(response)
                     clean_output = (
-                        response_dict.get("raw_output", response)
-                        if isinstance(response_dict, dict)
-                        else response
+                        response_dict.get("raw_output", response) if isinstance(response_dict, dict) else response
                     )
                 except (ValueError, SyntaxError):
                     clean_output = response
@@ -409,14 +424,19 @@ class StreamlitChatbot:
         # Copy to clipboard functionality
         if st.button("📋 Copy SQL", key=f"copy_sql_{hash(sql)}"):
             # Use streamlit's built-in clipboard functionality
-            st.write(f'<textarea id="sql_copy" style="opacity:0;position:absolute;">{sql}</textarea>', unsafe_allow_html=True)
-            st.write("""
+            st.write(
+                f'<textarea id="sql_copy" style="opacity:0;position:absolute;">{sql}</textarea>', unsafe_allow_html=True
+            )
+            st.write(
+                """
             <script>
             const textarea = document.getElementById('sql_copy');
             textarea.select();
             document.execCommand('copy');
             </script>
-            """, unsafe_allow_html=True)
+            """,
+                unsafe_allow_html=True,
+            )
             st.success("SQL copied to clipboard!")
 
     def display_markdown_response(self, response: str):
@@ -508,11 +528,16 @@ class StreamlitChatbot:
             page_title="Datus AI Chat Assistant",
             page_icon="🤖",
             layout="wide",
-            initial_sidebar_state="expanded"
+            initial_sidebar_state="expanded",
+            menu_items={"Get Help": None, "Report a bug": None, "About": None},
         )
 
-        # Custom CSS
-        st.markdown("""
+        # Hide deploy button and toolbar
+        st.set_option("client.toolbarMode", "viewer")
+
+        # Custom CSS for chat styling
+        st.markdown(
+            """
         <style>
         .stChatMessage {
             padding: 1rem;
@@ -531,7 +556,9 @@ class StreamlitChatbot:
             margin-bottom: 0.5rem;
         }
         </style>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
         # Title and description
         st.title("🤖 Datus AI Chat Assistant")
@@ -580,7 +607,9 @@ class StreamlitChatbot:
                     if response:
                         self.display_markdown_response(response)
                     else:
-                        st.markdown("Sorry, unable to generate a valid response. Please check execution details for more information.")
+                        st.markdown(
+                            "Sorry, unable to generate a valid response. Please check execution details for more information."
+                        )
 
                     # Display SQL if available
                     if sql:
@@ -595,7 +624,7 @@ class StreamlitChatbot:
                     "role": "assistant",
                     "content": response or "Unable to generate valid response",
                     "sql": sql,
-                    "actions": actions
+                    "actions": actions,
                 }
                 st.session_state.messages.append(assistant_message)
 
@@ -613,8 +642,10 @@ class StreamlitChatbot:
                 st.metric("Total Characters", f"{total_chars:,}")
 
             with col3:
-                if self.cli and hasattr(self.cli.agent_config, 'models'):
-                    current_model = list(self.cli.agent_config.models.keys())[0] if self.cli.agent_config.models else "Unknown"
+                if self.cli and hasattr(self.cli.agent_config, "models"):
+                    current_model = (
+                        list(self.cli.agent_config.models.keys())[0] if self.cli.agent_config.models else "Unknown"
+                    )
                 else:
                     current_model = "Unknown"
                 st.metric("Current Model", current_model)
@@ -636,9 +667,9 @@ def main():
             config_path = sys.argv[i + 1]
 
     # Store in session state for use by the app
-    if 'startup_namespace' not in st.session_state:
+    if "startup_namespace" not in st.session_state:
         st.session_state.startup_namespace = namespace
-    if 'startup_config_path' not in st.session_state:
+    if "startup_config_path" not in st.session_state:
         st.session_state.startup_config_path = config_path
 
     chatbot = StreamlitChatbot()

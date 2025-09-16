@@ -179,7 +179,7 @@ class ChatCommands:
     def _show_detail(self, actions: List[ActionHistory]):
         """Show detailed action information with user confirmation."""
         # Skip interactive prompt in Streamlit mode
-        if hasattr(self.cli, 'streamlit_mode') and self.cli.streamlit_mode:
+        if hasattr(self.cli, "streamlit_mode") and self.cli.streamlit_mode:
             choice = "n"  # Auto-skip in Streamlit mode
         else:
             choice = self.cli._prompt_input(
