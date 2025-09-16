@@ -69,6 +69,8 @@ class ChatAgenticNode(AgenticNode):
         )
         self.db_func_tool: DBFuncTool
         self.context_search_tools: ContextSearchTools
+        self.plan_mode_active = False
+        self.plan_hooks = None
         self.setup_tools()
 
     def setup_tools(self):
@@ -118,6 +120,13 @@ class ChatAgenticNode(AgenticNode):
 
         return mcp_servers
 
+    def _get_plan_tools(self, session):
+        """Get plan-specific tools."""
+        from datus.tools.plan_tools import PlanTool
+
+        plan_tool = PlanTool(session)
+        return plan_tool.available_tools()
+
     async def execute_stream(
         self, user_input: ChatNodeInput, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
@@ -134,10 +143,26 @@ class ChatAgenticNode(AgenticNode):
         if not action_history_manager:
             action_history_manager = ActionHistoryManager()
 
+        # Check if this is plan mode
+        is_plan_mode = getattr(user_input, "plan_mode", False)
+
+        if is_plan_mode:
+            self.plan_mode_active = True
+
+            # Create plan mode hooks
+            from rich.console import Console
+
+            from datus.cli.plan_hooks import PlanModeHooks
+
+            console = Console()
+            session = self._get_or_create_session()[0]
+            self.plan_hooks = PlanModeHooks(console=console, session=session, plan_message=user_input.user_message)
+
         # Create initial action
+        action_type = "plan_mode_interaction" if is_plan_mode else "chat_interaction"
         action = ActionHistory.create_action(
             role=ActionRole.USER,
-            action_type="chat_interaction",
+            action_type=action_type,
             messages=f"User: {user_input.user_message}",
             input_data=user_input.model_dump(),
             status=ActionStatus.PROCESSING,
@@ -199,17 +224,42 @@ class ChatAgenticNode(AgenticNode):
             action_history_manager.add_action(assistant_action)
             yield assistant_action
 
-            # Stream response using the model's generate_with_tools_stream
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=enhanced_message,
-                tools=self.tools,
-                mcp_servers=self.mcp_servers,
-                instruction=system_instruction,
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-            ):
-                yield stream_action
+            # If this is plan mode, use special execution flow
+            if is_plan_mode and self.plan_hooks:
+                # Add plan tools to the tools list
+                plan_tools = self._get_plan_tools(session)
+                all_tools = self.tools + plan_tools
+
+                # Add plan mode instruction
+                plan_instruction = (
+                    system_instruction
+                    + "\n\nPLAN MODE ACTIVE: Generate a detailed plan first using todo_write tool. "
+                    + "Do not execute any tasks until the plan is confirmed."
+                )
+
+                async for stream_action in self.model.generate_with_tools_stream(
+                    prompt=enhanced_message,
+                    tools=all_tools,
+                    mcp_servers=self.mcp_servers,
+                    instruction=plan_instruction,
+                    max_turns=self.max_turns,
+                    session=session,
+                    action_history_manager=action_history_manager,
+                    hooks=self.plan_hooks,
+                ):
+                    yield stream_action
+            else:
+                # Normal chat flow
+                async for stream_action in self.model.generate_with_tools_stream(
+                    prompt=enhanced_message,
+                    tools=self.tools,
+                    mcp_servers=self.mcp_servers,
+                    instruction=system_instruction,
+                    max_turns=self.max_turns,
+                    session=session,
+                    action_history_manager=action_history_manager,
+                ):
+                    yield stream_action
 
                 # Collect response content from successful actions
                 if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
@@ -325,6 +375,12 @@ class ChatAgenticNode(AgenticNode):
             )
             action_history_manager.add_action(error_action)
             yield error_action
+
+        finally:
+            # Clean up plan mode state
+            if is_plan_mode:
+                self.plan_mode_active = False
+                self.plan_hooks = None
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """

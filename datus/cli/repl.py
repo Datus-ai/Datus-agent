@@ -3,6 +3,7 @@ Datus-CLI REPL (Read-Eval-Print Loop) implementation.
 This module provides the main interactive shell for the CLI.
 """
 
+import asyncio
 import sys
 import threading
 from datetime import date, datetime
@@ -65,6 +66,10 @@ class DatusCLI:
         self.agent = None
         self.agent_initializing = False
         self.agent_ready = False
+
+        # Plan mode support
+        self.plan_mode_active = False
+        self.pending_plan_message = None
 
         # Setup history
         history_file = Path(args.history_file)
@@ -153,6 +158,21 @@ class DatusCLI:
                 # If the menu is incomplete, trigger completion.
                 buffer.start_completion(select_first=False)
 
+        @kb.add("s-tab")
+        def _(event):
+            """Shift+Tab: Toggle Plan Mode"""
+            _ = event  # Mark as used
+            self.plan_mode_active = not self.plan_mode_active
+
+            if self.plan_mode_active:
+                self.console.print("[bold green]Plan Mode Activated![/]")
+                self.console.print("[dim]Enter your planning task and press Enter to generate plan[/]")
+            else:
+                self.console.print("[yellow]Plan Mode Deactivated[/]")
+
+            # Update prompt to show plan mode status
+            self._update_prompt()
+
         @kb.add("enter")
         def _(event):
             """Enter key: closes the complementary menu or executes a command"""
@@ -163,10 +183,55 @@ class DatusCLI:
                 buffer.apply_completion(buffer.complete_state.current_completion)
                 return
 
+            # Check if we're in plan mode
+            if self.plan_mode_active:
+                current_text = buffer.text.strip()
+                if current_text:
+                    # Execute plan mode with the current text
+                    self._execute_plan_mode(current_text)
+                    # Clear buffer and exit plan mode
+                    buffer.text = ""
+                    self.plan_mode_active = False
+                    self._update_prompt()
+                return
+
             # Performs normal Enter behavior when there is no complementary menu
             buffer.validate_and_handle()
 
         return kb
+
+    def _get_prompt_text(self):
+        """Get the current prompt text based on mode"""
+        if self.plan_mode_active:
+            return "[PLAN MODE] Datus-sql> "
+        else:
+            return "Datus-sql> "
+
+    def _update_prompt(self):
+        """Update the prompt display (called when mode changes)"""
+        # The prompt will be updated on the next iteration of the main loop
+        # This is a limitation of prompt_toolkit's PromptSession
+        # For immediate feedback, we could force a redraw, but it's complex
+        pass
+
+    def _execute_plan_mode(self, message: str):
+        """Execute plan mode with the given message"""
+        if not self.chat_commands.chat_node:
+            self.console.print("[red]Error: Chat session not initialized[/]")
+            return
+
+        # Use chat_commands to execute plan mode
+        asyncio.create_task(self._execute_plan_mode_async(message))
+
+    async def _execute_plan_mode_async(self, message: str):
+        """Async execution of plan mode"""
+        try:
+            # Use existing chat execution framework with plan_mode flag
+            self.chat_commands.execute_chat_command(message, plan_mode=True)
+
+        except Exception as e:
+            logger.error(f"Plan mode execution error: {e}")
+            self.console.print(f"[bold red]Plan Mode Error:[/] {str(e)}")
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
@@ -216,14 +281,8 @@ class DatusCLI:
 
         while True:
             try:
-                # Check if we have a selected catalog path to inject
-                prompt_text = "Datus> "
-                # TODO use selected_catalog_path
-                # if self.selected_catalog_path:
-                #     # prompt_text = f"Datus> {self.selected_catalog_path}"
-                #     selected_path = self.selected_catalog_path
-                #     self.console.print(f"Selected catalog: {selected_path}")
-                #     self.selected_catalog_path = None
+                # Get dynamic prompt text
+                prompt_text = self._get_prompt_text()
 
                 # Get user input
                 user_input = self.session.prompt(

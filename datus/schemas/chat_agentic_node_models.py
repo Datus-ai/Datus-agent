@@ -28,6 +28,7 @@ class ChatNodeInput(BaseInput):
     schemas: Optional[list[TableSchema]] = Field(default=None, description="Schemas to use")
     metrics: Optional[list[Metric]] = Field(default=None, description="Metrics to use")
     historical_sql: Optional[list[HistoricalSql]] = Field(default=None, description="Metrics to use")
+    plan_mode: bool = Field(default=False, description="Whether this is a plan mode interaction")
 
     class Config:
         populate_by_name = True

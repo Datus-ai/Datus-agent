@@ -46,7 +46,7 @@ class ChatCommands:
         if self.chat_node:
             self.chat_node.setup_tools()
 
-    def execute_chat_command(self, message: str):
+    def execute_chat_command(self, message: str, plan_mode: bool = False):
         """Execute a chat command (/ prefix) using ChatAgenticNode."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
@@ -64,6 +64,7 @@ class ChatCommands:
                 schemas=at_tables,
                 metrics=at_metrics,
                 historical_sql=at_sqls,
+                plan_mode=plan_mode,
             )
             # Get or create persistent ChatAgenticNode
             if self.chat_node is None:
