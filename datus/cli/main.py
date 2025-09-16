@@ -80,6 +80,27 @@ class ArgumentParser:
             help="Enable saving LLM input/output traces to YAML files",
         )
 
+        # Web interface settings
+        self.parser.add_argument(
+            "--web",
+            action="store_true",
+            help="Launch web-based Streamlit chatbot interface",
+        )
+
+        self.parser.add_argument(
+            "--port",
+            type=int,
+            default=8501,
+            help="Port for web interface (default: 8501)",
+        )
+
+        self.parser.add_argument(
+            "--host",
+            type=str,
+            default="localhost",
+            help="Host for web interface (default: localhost)",
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 
@@ -92,12 +113,67 @@ class Application:
         args = self.arg_parser.parse_args()
 
         # Configure logging based on debug flag, disable console output
-
         configure_logging(args.debug, console_output=False)
 
-        # Initialize and run CLI
-        cli = DatusCLI(args)
-        cli.run()
+        # Check if web interface is requested
+        if args.web:
+            self._run_web_interface(args)
+        else:
+            # Initialize and run CLI
+            cli = DatusCLI(args)
+            cli.run()
+
+    def _run_web_interface(self, args):
+        """Launch Streamlit web interface"""
+        import subprocess
+        import sys
+        import os
+
+        try:
+            # Get the path to the web chatbot
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            web_chatbot_path = os.path.join(current_dir, "web_chatbot.py")
+
+            if not os.path.exists(web_chatbot_path):
+                print(f"❌ Error: Web chatbot not found at {web_chatbot_path}")
+                sys.exit(1)
+
+            print("🚀 Starting Datus Web Interface...")
+            if args.namespace:
+                print(f"🔗 Using namespace: {args.namespace}")
+            if args.config:
+                print(f"⚙️ Using config: {args.config}")
+            print(f"🌐 Starting server at http://{args.host}:{args.port}")
+            print("⏹️ Press Ctrl+C to stop server")
+            print("-" * 50)
+
+            # Prepare streamlit command
+            cmd = [
+                sys.executable, "-m", "streamlit", "run",
+                web_chatbot_path,
+                "--server.port", str(args.port),
+                "--server.address", args.host,
+                "--browser.serverAddress", args.host,
+            ]
+
+            # Add arguments to pass to the web app
+            web_args = []
+            if args.namespace:
+                web_args.extend(["--namespace", args.namespace])
+            if args.config:
+                web_args.extend(["--config", args.config])
+
+            if web_args:
+                cmd.extend(["--"] + web_args)
+
+            # Launch streamlit
+            subprocess.run(cmd)
+
+        except KeyboardInterrupt:
+            print("\n🛑 Web server stopped")
+        except Exception as e:
+            print(f"❌ Failed to start web interface: {e}")
+            sys.exit(1)
 
 
 def main():
