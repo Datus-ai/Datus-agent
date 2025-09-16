@@ -3,7 +3,6 @@ Datus-CLI REPL (Read-Eval-Print Loop) implementation.
 This module provides the main interactive shell for the CLI.
 """
 
-import asyncio
 import sys
 import threading
 from datetime import date, datetime
@@ -160,18 +159,24 @@ class DatusCLI:
 
         @kb.add("s-tab")
         def _(event):
-            """Shift+Tab: Toggle Plan Mode"""
-            _ = event  # Mark as used
+            """Shift+Tab: Toggle Plan Mode on/off"""
             self.plan_mode_active = not self.plan_mode_active
 
+            # Clear current input buffer and force exit current prompt
+            buffer = event.app.current_buffer
+            buffer.reset()
+
+            # Force the prompt to exit and restart with new prefix
+            # This will cause the main loop to regenerate the prompt
+            buffer.validation_state = None
+            event.app.exit()
+
+            # Show mode change message
             if self.plan_mode_active:
                 self.console.print("[bold green]Plan Mode Activated![/]")
                 self.console.print("[dim]Enter your planning task and press Enter to generate plan[/]")
             else:
                 self.console.print("[yellow]Plan Mode Deactivated[/]")
-
-            # Update prompt to show plan mode status
-            self._update_prompt()
 
         @kb.add("enter")
         def _(event):
@@ -183,17 +188,7 @@ class DatusCLI:
                 buffer.apply_completion(buffer.complete_state.current_completion)
                 return
 
-            # Check if we're in plan mode
-            if self.plan_mode_active:
-                current_text = buffer.text.strip()
-                if current_text:
-                    # Execute plan mode with the current text
-                    self._execute_plan_mode(current_text)
-                    # Clear buffer and exit plan mode
-                    buffer.text = ""
-                    self.plan_mode_active = False
-                    self._update_prompt()
-                return
+            # Don't intercept plan mode here - let it flow through normal command processing
 
             # Performs normal Enter behavior when there is no complementary menu
             buffer.validate_and_handle()
@@ -213,25 +208,6 @@ class DatusCLI:
         # This is a limitation of prompt_toolkit's PromptSession
         # For immediate feedback, we could force a redraw, but it's complex
         pass
-
-    def _execute_plan_mode(self, message: str):
-        """Execute plan mode with the given message"""
-        if not self.chat_commands.chat_node:
-            self.console.print("[red]Error: Chat session not initialized[/]")
-            return
-
-        # Use chat_commands to execute plan mode
-        asyncio.create_task(self._execute_plan_mode_async(message))
-
-    async def _execute_plan_mode_async(self, message: str):
-        """Async execution of plan mode"""
-        try:
-            # Use existing chat execution framework with plan_mode flag
-            self.chat_commands.execute_chat_command(message, plan_mode=True)
-
-        except Exception as e:
-            logger.error(f"Plan mode execution error: {e}")
-            self.console.print(f"[bold red]Plan Mode Error:[/] {str(e)}")
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
@@ -285,9 +261,12 @@ class DatusCLI:
                 prompt_text = self._get_prompt_text()
 
                 # Get user input
-                user_input = self.session.prompt(
+                user_input_raw = self.session.prompt(
                     message=prompt_text,
-                ).strip()
+                )
+                if user_input_raw is None:
+                    continue
+                user_input = user_input_raw.strip()
                 if not user_input:
                     continue
 
@@ -313,6 +292,10 @@ class DatusCLI:
             except EOFError:
                 return 0
             except Exception as e:
+                # Check if this is an exit event (for plan mode toggle)
+                if "exit" in str(e).lower() and "app" in str(e).lower():
+                    # This is expected from shift+tab toggle, continue loop
+                    continue
                 logger.error(f"Error: {str(e)}")
                 self.console.print(f"[bold red]Error:[/] {str(e)}")
 
@@ -736,7 +719,7 @@ class DatusCLI:
 
     def _execute_chat_command(self, message: str):
         """Execute a chat command (/ prefix) using ChatAgenticNode."""
-        self.chat_commands.execute_chat_command(message)
+        self.chat_commands.execute_chat_command(message, plan_mode=self.plan_mode_active)
 
     def _execute_internal_command(self, cmd: str, args: str):
         """Execute an internal command (. prefix)."""

@@ -2,7 +2,6 @@
 Simplified plan tools - merged from multiple files into single module
 """
 
-import json
 from enum import Enum
 from typing import List, Optional
 from uuid import uuid4
@@ -61,70 +60,38 @@ class TodoList(BaseModel):
 
 
 class SessionTodoStorage:
-    """Session-based storage for todo lists"""
-
-    TODO_STORAGE_KEY = "todo_list_data"
+    """In-memory storage for todo lists to avoid conflicts with agents library session"""
 
     def __init__(self, session: SQLiteSession):
         """Initialize storage with session"""
         self.session = session
+        self._current_todo_list: Optional[TodoList] = None
 
     async def save_list(self, todo_list: TodoList) -> bool:
-        """Save the todo list to session storage"""
+        """Save the todo list to in-memory storage"""
         try:
-            # Convert to JSON for session storage
-            todo_data = todo_list.model_dump_json()
-            # Store in session
-            await self.session.add_items([(self.TODO_STORAGE_KEY, todo_data)])
-            logger.info(f"Saved todo list to session with {len(todo_list.items)} items")
+            self._current_todo_list = todo_list
+            logger.info(f"Saved todo list to memory with {len(todo_list.items)} items")
             return True
         except Exception as e:
-            logger.error(f"Failed to save todo list to session: {e}")
+            logger.error(f"Failed to save todo list to memory: {e}")
             return False
 
     async def get_todo_list(self) -> Optional[TodoList]:
-        """Get the todo list from session storage"""
-        try:
-            items = await self.session.get_items()
-            todo_data = None
-            for key, value in items:
-                if key == self.TODO_STORAGE_KEY:
-                    todo_data = value
-                    break
-
-            if todo_data:
-                # Parse from JSON
-                todo_dict = json.loads(todo_data)
-                return TodoList.model_validate(todo_dict)
-            return None
-        except Exception as e:
-            logger.error(f"Failed to load todo list from session: {e}")
-            return None
+        """Get the todo list from in-memory storage"""
+        return self._current_todo_list
 
     async def clear_all(self) -> None:
-        """Clear the todo list from session storage"""
+        """Clear the todo list from in-memory storage"""
         try:
-            items = await self.session.get_items()
-            for key, _ in items:
-                if key == self.TODO_STORAGE_KEY:
-                    # SQLiteSession doesn't have direct delete, so we'll just overwrite
-                    await self.session.add_items([(self.TODO_STORAGE_KEY, "")])
-                    logger.info("Cleared todo list from session")
-                    break
+            self._current_todo_list = None
+            logger.info("Cleared todo list from memory")
         except Exception as e:
-            logger.error(f"Failed to clear todo list from session: {e}")
+            logger.error(f"Failed to clear todo list from memory: {e}")
 
     async def has_todo_list(self) -> bool:
-        """Check if session has a todo list"""
-        try:
-            items = await self.session.get_items()
-            for key, value in items:
-                if key == self.TODO_STORAGE_KEY:
-                    return bool(value)
-            return False
-        except Exception as e:
-            logger.error(f"Failed to check todo list in session: {e}")
-            return False
+        """Check if storage has a todo list"""
+        return self._current_todo_list is not None
 
 
 class PlanTool:
@@ -222,14 +189,51 @@ class PlanTool:
         else:
             return FuncToolResult(success=0, error="Failed to save todo list to storage")
 
-    def todo_update_pending(self, todo_id: str) -> FuncToolResult:
-        return self._update_todo_status(todo_id, "pending")
+    async def todo_update_pending(self, todo_id: str) -> FuncToolResult:
+        """Mark a todo item as 'pending' (about to be executed).
 
-    def todo_update_completed(self, todo_id: str) -> FuncToolResult:
-        return self._update_todo_status(todo_id, "completed")
+        IMPORTANT: This is the FIRST step when executing any todo item.
+        Call this BEFORE starting to work on a task to indicate execution is starting.
+        This will trigger user confirmation before execution begins.
 
-    def todo_update_failed(self, todo_id: str) -> FuncToolResult:
-        return self._update_todo_status(todo_id, "failed")
+        Args:
+            todo_id: The ID of the todo item to mark as pending
+
+        Returns:
+            FuncToolResult: Success/error status
+        """
+        return await self._update_todo_status(todo_id, "pending")
+
+    async def todo_update_completed(self, todo_id: str) -> FuncToolResult:
+        """Mark a todo item as 'completed' (successfully executed).
+
+        IMPORTANT: This is the LAST step when executing any todo item.
+        Call this AFTER successfully completing the task.
+
+        WORKFLOW: todo_update_pending -> [execute task] -> todo_update_completed
+
+        Args:
+            todo_id: The ID of the todo item to mark as completed
+
+        Returns:
+            FuncToolResult: Success/error status
+        """
+        return await self._update_todo_status(todo_id, "completed")
+
+    async def todo_update_failed(self, todo_id: str) -> FuncToolResult:
+        """Mark a todo item as 'failed' (execution failed).
+
+        IMPORTANT: Call this when a task fails to execute.
+
+        WORKFLOW: todo_update_pending -> [execute task] -> todo_update_failed (if failed)
+
+        Args:
+            todo_id: The ID of the todo item to mark as failed
+
+        Returns:
+            FuncToolResult: Success/error status
+        """
+        return await self._update_todo_status(todo_id, "failed")
 
     async def _update_todo_status(
         self, todo_id: str, status: str, execution_output: Optional[str] = None, error_message: Optional[str] = None

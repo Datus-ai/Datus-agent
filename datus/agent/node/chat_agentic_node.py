@@ -145,7 +145,7 @@ class ChatAgenticNode(AgenticNode):
 
         # Check if this is plan mode
         is_plan_mode = getattr(user_input, "plan_mode", False)
-
+        logger.info(f"ChatAgenticNode: is_plan_mode: {is_plan_mode}")
         if is_plan_mode:
             self.plan_mode_active = True
 
@@ -224,42 +224,21 @@ class ChatAgenticNode(AgenticNode):
             action_history_manager.add_action(assistant_action)
             yield assistant_action
 
-            # If this is plan mode, use special execution flow
-            if is_plan_mode and self.plan_hooks:
-                # Add plan tools to the tools list
-                plan_tools = self._get_plan_tools(session)
-                all_tools = self.tools + plan_tools
+            logger.info(f"ChatAgenticNode: is_plan_mode: {is_plan_mode}, plan_hooks: {self.plan_hooks}")
 
-                # Add plan mode instruction
-                plan_instruction = (
-                    system_instruction
-                    + "\n\nPLAN MODE ACTIVE: Generate a detailed plan first using todo_write tool. "
-                    + "Do not execute any tasks until the plan is confirmed."
-                )
+            # Determine execution mode and start unified recursive execution
+            execution_mode = "plan" if is_plan_mode and self.plan_hooks else "normal"
+            logger.info(f"ChatAgenticNode: Starting {execution_mode} mode execution")
 
-                async for stream_action in self.model.generate_with_tools_stream(
-                    prompt=enhanced_message,
-                    tools=all_tools,
-                    mcp_servers=self.mcp_servers,
-                    instruction=plan_instruction,
-                    max_turns=self.max_turns,
-                    session=session,
-                    action_history_manager=action_history_manager,
-                    hooks=self.plan_hooks,
-                ):
-                    yield stream_action
-            else:
-                # Normal chat flow
-                async for stream_action in self.model.generate_with_tools_stream(
-                    prompt=enhanced_message,
-                    tools=self.tools,
-                    mcp_servers=self.mcp_servers,
-                    instruction=system_instruction,
-                    max_turns=self.max_turns,
-                    session=session,
-                    action_history_manager=action_history_manager,
-                ):
-                    yield stream_action
+            # Start unified recursive execution
+            async for stream_action in self._execute_with_recursive_replan(
+                prompt=enhanced_message,
+                execution_mode=execution_mode,
+                original_input=user_input,
+                action_history_manager=action_history_manager,
+                session=session,
+            ):
+                yield stream_action
 
                 # Collect response content from successful actions
                 if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
@@ -349,7 +328,7 @@ class ChatAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Chat execution error: {e}")
 
-            # Create error result
+            # Create error result for all exceptions
             error_result = ChatNodeResult(
                 success=False,
                 error=str(e),
@@ -381,6 +360,149 @@ class ChatAgenticNode(AgenticNode):
             if is_plan_mode:
                 self.plan_mode_active = False
                 self.plan_hooks = None
+
+    async def _execute_with_recursive_replan(
+        self,
+        prompt: str,
+        execution_mode: str,
+        original_input: "ChatNodeInput",
+        action_history_manager: "ActionHistoryManager",
+        session,
+    ):
+        """
+        Unified recursive execution function that handles all execution modes.
+
+        Args:
+            prompt: The prompt to send to LLM
+            execution_mode: "normal", "plan", or "replan"
+            original_input: Original chat input for context
+            action_history_manager: Action history manager
+            session: Chat session
+        """
+        logger.info(f"Executing mode: {execution_mode}")
+
+        # Get execution configuration for this mode
+        config = self._get_execution_config(execution_mode, original_input)
+
+        # Reset state for replan mode
+        if execution_mode == "plan" and self.plan_hooks:
+            self.plan_hooks.plan_phase = "generating"
+
+        try:
+            # Unified execution using configuration
+            async for stream_action in self.model.generate_with_tools_stream(
+                prompt=prompt,
+                tools=config["tools"],
+                mcp_servers=self.mcp_servers,
+                instruction=config["instruction"],
+                max_turns=self.max_turns,
+                session=session,
+                action_history_manager=action_history_manager,
+                hooks=config.get("hooks"),
+            ):
+                yield stream_action
+
+        except Exception as e:
+            if "REPLAN_REQUIRED" in str(e):
+                # Extract replan prompt and recurse
+                replan_prompt = self._extract_replan_prompt(e)
+                logger.info("Replan requested, recursing...")
+
+                # Recursive call - enter replan mode
+                async for action in self._execute_with_recursive_replan(
+                    prompt=replan_prompt,
+                    execution_mode=execution_mode,
+                    original_input=original_input,
+                    action_history_manager=action_history_manager,
+                    session=session,
+                ):
+                    yield action
+            else:
+                # Other exceptions propagate up
+                raise
+
+    def _get_execution_config(self, execution_mode: str, original_input: "ChatNodeInput") -> dict:
+        """
+        Get execution configuration based on mode.
+
+        Args:
+            execution_mode: "normal", "plan"
+            original_input: Original chat input for context
+
+        Returns:
+            Configuration dict with tools, instruction, and hooks
+        """
+        if execution_mode == "normal":
+            return {"tools": self.tools, "instruction": self._get_system_instruction(original_input), "hooks": None}
+        elif execution_mode == "plan":
+            # Plan mode: standard tools + plan tools
+            plan_tools = self.plan_hooks.get_plan_tools() if self.plan_hooks else []
+            return {
+                "tools": self.tools + plan_tools,
+                "instruction": self._build_plan_instruction(original_input),
+                "hooks": self.plan_hooks,
+            }
+        else:
+            raise ValueError(f"Unknown execution mode: {execution_mode}")
+
+    def _get_system_instruction(self, original_input: "ChatNodeInput") -> str:
+        """Get system instruction for normal mode."""
+        _, conversation_summary = self._get_or_create_session()
+        return self._get_system_prompt(conversation_summary, original_input.prompt_version)
+
+    def _build_plan_instruction(self, original_input: "ChatNodeInput") -> str:
+        """Build instruction for plan mode."""
+        system_instruction = self._get_system_instruction(original_input)
+
+        # Check for replan feedback to incorporate
+        replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
+        replan_instruction = ""
+        if replan_feedback:
+            replan_instruction = (
+                f"\n\nREPLANNING REQUESTED \nUser feedback: {replan_feedback}\n"
+                "Please revise the plan based on this feedback.\n"
+            )
+
+        # Build plan mode instruction
+        plan_instruction = (
+            system_instruction
+            + "\n\nPLAN MODE ACTIVE \n"
+            + "MANDATORY FIRST STEP: You MUST call todo_write tool immediately to break down the task into steps. "
+            + "DO NOT attempt to execute any other tools or provide direct answers until you have:\n"
+            + "1. Called todo_write with a JSON list of detailed steps\n"
+            + "2. Received confirmation that the plan was generated successfully\n\n"
+            + replan_instruction
+            + "Example todo_write call:\n"
+            + 'todo_write(\'[{"content": "Search database for charter schools", "status": "pending"}, '
+            + '{"content": "Filter schools in Fresno County", "status": "pending"}, '
+            + '{"content": "Extract zip codes from results", "status": "pending"}]\')\n\n'
+            + "CRITICAL WORKFLOW for executing todo items (AFTER plan confirmation):\n"
+            + "1. todo_update_pending(todo_id) -> Call this FIRST to mark task as 'pending' "
+            + "and trigger user confirmation\n"
+            + "2. Execute the actual task (e.g., run SQL queries, generate code)\n"
+            + "3. todo_update_completed(todo_id) -> Call this LAST to mark task as 'completed'\n"
+            + "4. todo_update_failed(todo_id) -> Call this if task execution fails\n\n"
+            + "IMPORTANT: Always follow this exact sequence! "
+            + "Never call todo_update_completed without first calling todo_update_pending."
+        )
+        return plan_instruction
+
+    def _build_replan_instruction(self) -> str:
+        """Build instruction for replan mode."""
+        return (
+            "Please follow the replan instruction and regenerate the plan using todo_write. "
+            "Check the session context for any completed tasks and preserve them in the new plan "
+            "with status='completed'. Only regenerate the remaining pending tasks based on the user's feedback."
+        )
+
+    def _extract_replan_prompt(self, exception: Exception) -> str:
+        """Extract replan prompt from exception."""
+        error_str = str(exception)
+        if "feedback:" in error_str:
+            feedback_part = error_str.split("feedback:")[-1].strip()
+            return f"System: REPLAN_REQUIRED: Use todo_write with feedback: {feedback_part}"
+        else:
+            return f"System: {error_str}"
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """

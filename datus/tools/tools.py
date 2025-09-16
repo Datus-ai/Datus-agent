@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import json
 from typing import Any, Callable, List, Optional
 
@@ -10,6 +11,9 @@ from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.constants import SUPPORT_CATALOG_DIALECTS, SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 class FuncToolResult(BaseModel):
@@ -29,6 +33,10 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
     """
     tool_template = function_tool(bound_method)
 
+    # Debug: Check if description is properly captured
+    logger.info(f"Tool template description for {bound_method.__name__}: {tool_template.description}")
+    logger.info(f"Original method docstring: {bound_method.__doc__}")
+
     corrected_schema = json.loads(json.dumps(tool_template.params_json_schema))
     if "self" in corrected_schema.get("properties", {}):
         del corrected_schema["properties"]["self"]
@@ -40,12 +48,19 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
     def create_async_invoker(method_to_call: Callable) -> Callable:
         async def final_invoker(tool_ctx, args_str: str) -> dict:
             """
-            This is an async wrapper around our synchronous tool method.
+            This is an async wrapper that can handle both sync and async methods.
             The agent framework will 'await' this coroutine.
             """
-            # The actual work (JSON parsing, method call) is synchronous.
+            # The actual work (JSON parsing, method call)
             args_dict = json.loads(args_str)
-            result_dict = method_to_call(**args_dict)
+            result = method_to_call(**args_dict)
+
+            # If the method returned a coroutine, await it
+            if asyncio.iscoroutine(result):
+                result_dict = await result
+            else:
+                result_dict = result
+
             if isinstance(result_dict, FuncToolResult):
                 result_dict = result_dict.model_dump()
             return result_dict

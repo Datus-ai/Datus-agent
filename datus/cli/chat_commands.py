@@ -92,13 +92,24 @@ class ChatCommands:
 
             # Run streaming execution with real-time display
             # Create a live display like the !reason command (shows only new actions)
-            with action_display.display_streaming_actions(incremental_actions):
-                # Run the async streaming method
+            # Skip live display in plan mode to avoid conflicts
+            if not plan_mode:
+                with action_display.display_streaming_actions(incremental_actions):
+                    # Run the async streaming method
+                    async def run_chat_stream():
+                        async for action in self.chat_node.execute_stream(chat_input, self.cli.actions):
+                            incremental_actions.append(action)
+                            # Add delay to make the streaming visible
+                            await asyncio.sleep(0.5)
+
+                    # Execute the streaming chat
+                    asyncio.run(run_chat_stream())
+            else:
+                # In plan mode, run without live display to avoid conflicts with plan hooks
                 async def run_chat_stream():
                     async for action in self.chat_node.execute_stream(chat_input, self.cli.actions):
                         incremental_actions.append(action)
-                        # Add delay to make the streaming visible
-                        await asyncio.sleep(0.5)
+                        # No delay needed in plan mode
 
                 # Execute the streaming chat
                 asyncio.run(run_chat_stream())

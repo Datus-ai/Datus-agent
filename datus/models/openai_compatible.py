@@ -347,6 +347,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        hooks=None,
         **kwargs,
     ) -> Dict:
         """
@@ -368,7 +369,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         """
         # Use the internal method that returns a Dict
         result = await self._generate_with_tools_internal(
-            prompt, mcp_servers, tools, instruction, output_type, max_turns, session, **kwargs
+            prompt, mcp_servers, tools, instruction, output_type, max_turns, session, hooks, **kwargs
         )
 
         # Enhance result with tracing metadata
@@ -395,6 +396,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        hooks=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
@@ -418,7 +420,16 @@ class OpenAICompatibleModel(LLMBaseModel):
             action_history_manager = ActionHistoryManager()
 
         async for action in self._generate_with_tools_stream_internal(
-            prompt, mcp_servers, tools, instruction, output_type, max_turns, session, action_history_manager, **kwargs
+            prompt,
+            mcp_servers,
+            tools,
+            instruction,
+            output_type,
+            max_turns,
+            session,
+            action_history_manager,
+            hooks,
+            **kwargs,
         ):
             yield action
 
@@ -431,6 +442,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         output_type: type,
         max_turns: int,
         session: Optional[SQLiteSession] = None,
+        hooks=None,
         **kwargs,
     ) -> Dict:
         """Internal method for tool execution with error handling."""
@@ -471,7 +483,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 agent = Agent(**agent_kwargs)
                 try:
-                    result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+                    result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session, hooks=hooks)
                 except MaxTurnsExceeded as e:
                     logger.error(f"Max turns exceeded: {str(e)}")
                     raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
@@ -557,6 +569,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         max_turns: int,
         session: Optional[SQLiteSession],
         action_history_manager: ActionHistoryManager,
+        hooks=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Internal method for tool streaming execution with error handling."""
@@ -602,7 +615,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 agent = Agent(**agent_kwargs)
 
                 try:
-                    result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+                    result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session, hooks=hooks)
                 except MaxTurnsExceeded as e:
                     logger.error(f"Max turns exceeded in streaming: {str(e)}")
                     raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})

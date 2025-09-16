@@ -1,12 +1,11 @@
-"""
-Plan mode hooks implementation for intercepting agent execution flow.
-"""
+"""Plan mode hooks implementation for intercepting agent execution flow."""
 
 import asyncio
-from enum import Enum
+import time
 
 from agents import SQLiteSession
 from agents.lifecycle import AgentHooks
+from langsmith import traceable
 from rich.console import Console
 
 from datus.utils.loggings import get_logger
@@ -14,35 +13,8 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-class UserChoice(Enum):
-    """User choice options during manual task confirmation"""
-
-    CONTINUE = "continue"
-    CANCEL = "cancel"
-    REPLAN = "replan"
-
-
-# Plan mode specific exceptions
 class PlanningPhaseException(Exception):
     """Exception raised when trying to execute tools during planning phase."""
-
-    pass
-
-
-class SkipStepException(Exception):
-    """Exception raised when user wants to skip a step."""
-
-    pass
-
-
-class AskAgainException(Exception):
-    """Exception raised when user needs to be asked again."""
-
-    pass
-
-
-class PlanningCompletedException(Exception):
-    """Exception raised when planning phase is completed and execution should begin"""
 
     pass
 
@@ -53,16 +25,9 @@ class UserCancelledException(Exception):
     pass
 
 
-class ReplanRequestedException(Exception):
-    """Exception raised when user requests replanning with feedback"""
-
-    def __init__(self, feedback: str = ""):
-        self.feedback = feedback
-        super().__init__(f"User requested replanning with feedback: {feedback}")
-
-
+@traceable(name="PlanModeHooks", run_type="chain")
 class PlanModeHooks(AgentHooks):
-    """Enhanced Plan Mode hooks for complete workflow management"""
+    """Plan Mode hooks for workflow management"""
 
     def __init__(self, console: Console, session: SQLiteSession, plan_message: str):
         self.console = console
@@ -71,344 +36,311 @@ class PlanModeHooks(AgentHooks):
         from datus.tools.plan_tools import SessionTodoStorage
 
         self.todo_storage = SessionTodoStorage(session)
-        self.plan_phase = "generating"  # generating, confirming, executing, completed
-        self.execution_mode = "manual"  # manual, auto
+        self.plan_phase = "generating"
+        self.execution_mode = "manual"
         self.current_step = 0
-        self.replan_requested = False
         self.replan_feedback = ""
         self.planning_completed = False
         self.should_continue_execution = True
         self._user_choice_in_progress = False
+        self._state_transitions = []
 
+    async def on_agent_start(self, context, agent) -> None:
+        logger.info(f"Plan mode agent start: phase={self.plan_phase}")
+
+    async def on_start(self, context, agent) -> None:
+        logger.info(f"Plan mode start: phase={self.plan_phase}")
+
+    @traceable(name="on_tool_start", run_type="chain")
     async def on_tool_start(self, context, agent, tool) -> None:
-        """Called before tool execution - control plan mode workflow"""
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+        logger.info(f"Plan mode tool start: {tool_name}, phase: {self.plan_phase}, mode: {self.execution_mode}")
 
-        # Check if replan was requested
-        if self.replan_requested:
-            self.console.print("[yellow]🔄 Replanning requested, stopping current execution...[/]")
-            raise ReplanRequestedException(self.replan_feedback)
+        # if self.plan_phase == "generating":
+        #     if tool_name in ["todo_write", "todo_read"]:
+        #         logger.info(f"Allowing plan tool: {tool_name}")
+        #         return
+        #     else:
+        #         logger.warning(f"Blocking execution tool during planning: {tool_name}")
+        #         raise PlanningPhaseException("Please complete the plan generation first")
 
-        if self.plan_phase == "generating":
-            # Generation phase: only allow plan-related tools
-            if tool_name in ["todo_write", "todo_read"]:
-                return  # Allow plan tools
-            else:
-                # Block execution tools, wait for plan completion
-                self.console.print(f"[yellow]⏸️  Waiting for plan completion... ({tool_name} blocked)[/]")
-                raise PlanningPhaseException("Please complete the plan generation first")
+        # elif self.plan_phase == "executing":
+        #     if tool_name == "todo_write":
+        #         return
+        #     elif tool_name == "todo_update_pending":
+        #         await self._handle_execution_step(tool_name)
+        #     elif tool_name in ["todo_update_completed", "todo_update_failed", "todo_read"]:
+        #         return
+        if tool_name == "todo_update_pending":
+            logger.info(f"Plan mode tool start: {tool_name}, phase: {self.plan_phase}, mode: {self.execution_mode}")
+            await self._handle_execution_step(tool_name)
 
-        elif self.plan_phase == "executing":
-            # Execution phase: control execution flow
-            if tool_name == "todo_write":
-                return  # Allow replanning
-            elif tool_name.startswith("todo_update"):
-                await self._handle_execution_step(tool_name)
-            elif tool_name == "todo_read":
-                return  # Allow reading plan status
-
+    @traceable(name="on_tool_end", run_type="chain")
     async def on_tool_end(self, context, agent, tool, result) -> None:
-        """Called after tool execution - handle plan progression"""
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+        logger.info(f"Plan mode tool end: {tool_name}, phase: {self.plan_phase}, result_type: {type(result)}")
 
-        if tool_name == "todo_write" and self.plan_phase == "generating":
-            # Plan generation completed
+        if tool_name == "todo_write":
+            logger.info("Plan generation completed, transitioning to confirmation")
             await self._on_plan_generated()
-        elif tool_name.startswith("todo_update") and self.plan_phase == "executing":
-            # Execution step completed
-            await self._on_execution_step_completed(tool_name, result)
+        # elif tool_name.startswith("todo_update") and self.plan_phase == "executing":
+        #     logger.info(f"Execution step completed: {tool_name}")
+        #     await self._on_execution_step_completed(tool_name, result)
 
+    async def on_handoff(self, context, agent, source) -> None:
+        pass
+
+    async def on_agent_end(self, context, agent, output) -> None:
+        pass
+        # logger.info(f"Plan mode agent end: phase={self.plan_phase}")
+        # if self.plan_phase == "generating":
+        #     todo_list = await self.todo_storage.get_todo_list()
+        #     if not todo_list or len(todo_list.items) == 0:
+        #         self.console.print("[red]❌ No plan generated[/]")
+        #         self.console.print("[yellow]The agent completed without creating a todo list.[/]")
+
+    async def on_end(self, context, agent, output) -> None:
+        logger.info(f"Plan mode end: phase={self.plan_phase}")
+
+    @traceable(name="on_error", run_type="chain")
     async def on_error(self, context, agent, error) -> None:
-        """Called when there's an error during execution"""
-        _ = context, agent  # Mark parameters as used to avoid warnings
-        if self.execution_mode == "manual":
-            self.console.print(f"[red]Error occurred: {str(error)[:100]}[/]")
+        pass
+        # error_info = {
+        #     "error_type": type(error).__name__,
+        #     "error_message": str(error)[:200],
+        #     "plan_phase": self.plan_phase,
+        #     "execution_mode": self.execution_mode,
+        #     "current_step": self.current_step,
+        # }
+        # logger.error(f"Plan mode error: {error_info}")
 
-            # In manual mode, ask user if they want to continue despite the error
-            try:
-                response = input("Continue despite error? (y/n) [y]: ").strip().lower() or "y"
-                if response != "y":
-                    self.should_continue_execution = False
-                    self.console.print("[yellow]Cancelled due to error[/]")
-            except (KeyboardInterrupt, EOFError):
-                self.should_continue_execution = False
-                self.console.print("[yellow]Cancelled[/]")
+        # if self.execution_mode == "manual":
+        #     self.console.print(f"[red]Error occurred: {str(error)[:100]}[/]")
+        #     try:
+        #         loop = asyncio.get_event_loop()
+        #         response = await loop.run_in_executor(
+        #             None, lambda: input("Continue despite error? (y/n) [y]: ").strip().lower() or "y"
+        #         )
+        #         if response != "y":
+        #             self.should_continue_execution = False
+        #             self._transition_state("cancelled", {"reason": "error_cancelled", "error": str(error)[:100]})
+        #             self.console.print("[yellow]Cancelled due to error[/]")
+        #     except (KeyboardInterrupt, EOFError):
+        #         self.should_continue_execution = False
+        #         self._transition_state("cancelled", {"reason": "error_interrupted"})
+        #         self.console.print("[yellow]Cancelled[/]")
 
-    async def _handle_manual_confirmation(self, task_description: str) -> UserChoice:
-        """Handle manual task confirmation with replan option"""
-        try:
-            import asyncio
-            import sys
+    def _transition_state(self, new_state: str, context: dict = None):
+        old_state = self.plan_phase
+        self.plan_phase = new_state
 
-            # Pause Action Stream display during manual confirmation
-            streaming_context = None
-            if hasattr(self, "repl_executor") and self.repl_executor:
-                if hasattr(self.repl_executor, "chat_commands") and self.repl_executor.chat_commands:
-                    streaming_context = self.repl_executor.chat_commands.current_streaming_context
-                    if streaming_context:
-                        streaming_context.pause_display()
+        transition_data = {
+            "from_state": old_state,
+            "to_state": new_state,
+            "context": context or {},
+            "timestamp": time.time(),
+        }
 
-            # Brief pause to let streams settle
-            await asyncio.sleep(0.2)
+        self._state_transitions.append(transition_data)
+        logger.info(f"Plan mode state transition: {old_state} -> {new_state}")
+        return transition_data
 
-            # Force flush all output streams before prompting
-            sys.stdout.flush()
-            sys.stderr.flush()
+    def get_trace_summary(self) -> dict:
+        return {
+            "current_phase": self.plan_phase,
+            "execution_mode": self.execution_mode,
+            "current_step": self.current_step,
+            "state_transitions": self._state_transitions,
+            "replan_requested": self.replan_requested,
+            "planning_completed": self.planning_completed,
+            "should_continue_execution": self.should_continue_execution,
+            "total_transitions": len(self._state_transitions),
+        }
 
-            # Show current todo list status
-            self.console.print("\n[bold cyan]Current Todo List Status:[/]")
-            todo_list = None
-
-            if self._get_todo_storage():
-                todo_list = self._get_todo_storage().get_todo_list()
-            if todo_list:
-                for i, item in enumerate(todo_list.items, 1):
-                    status_icon = "✓" if item.status == "completed" else "○" if item.status == "pending" else "✗"
-                    status_color = (
-                        "green" if item.status == "completed" else "yellow" if item.status == "pending" else "red"
-                    )
-                    self.console.print(f"  {i}. [{status_color}]{status_icon}[/{status_color}] {item.content}")
-            else:
-                self.console.print("  [yellow]No todo list found[/]")
-
-            # Show task confirmation options
-            self.console.print(f"\n[bold]Ready to start task:[/] {task_description}")
-            self.console.print("")
-            self.console.print("  [bold]1. Continue[/] - Execute this task")
-            self.console.print("  [bold]2. Cancel[/] - Cancel execution")
-            self.console.print("  [bold]3. Replan[/] - Provide feedback and revise plan")
-            self.console.print("  [bold]4. Auto[/] - Switch to auto mode")
-
-            loop = asyncio.get_event_loop()
-
-            def get_user_choice():
-                while True:
-                    try:
-                        user_input = input("\nYour choice (1-4) [1]: ").strip() or "1"
-                        if user_input in ["1", "2", "3", "4"]:
-                            return user_input
-                        print("Please enter a valid choice (1-4)")
-                    except (KeyboardInterrupt, EOFError):
-                        return "interrupt"
-
-            response = await loop.run_in_executor(None, get_user_choice)
-
-            # Handle user choice
-            if response == "1":
-                choice = UserChoice.CONTINUE
-            elif response == "2":
-                self.console.print("[yellow]Cancelling execution[/]")
-                choice = UserChoice.CANCEL
-            elif response == "3":
-                # Get feedback for replanning
-                def get_feedback():
-                    try:
-                        return input("Feedback for replanning: ").strip()
-                    except (KeyboardInterrupt, EOFError):
-                        return ""
-
-                feedback = await loop.run_in_executor(None, get_feedback)
-                if feedback:
-                    self._replan_feedback = feedback
-                    self.console.print(f"[blue]Will replan with your feedback: '{feedback}'[/]")
-                    # Directly raise the exception with feedback
-                    raise ReplanRequestedException(feedback)
-                else:
-                    self.console.print("[yellow]No feedback provided, stopping instead[/]")
-                    choice = UserChoice.CANCEL
-            elif response == "4":
-                self.console.print("[yellow]Switching to auto mode[/]")
-                self.execution_mode = "auto"
-                choice = UserChoice.CONTINUE
-            else:  # interrupt
-                self.console.print("[red]Interrupted[/]")
-                choice = UserChoice.CANCEL
-
-            # Resume Action Stream display after manual confirmation
-            if streaming_context:
-                streaming_context.resume_display()
-
-            return choice
-
-        except ReplanRequestedException:
-            # Let ReplanRequestedException propagate up
-            raise
-        except Exception as e:
-            logger.error(f"Manual task confirmation error: {str(e)}")
-            return UserChoice.CONTINUE
-
-    async def clear_todo_storage(self):
-        """Clear todo storage - useful for session cleanup"""
-        if self.todo_storage:
-            await self.todo_storage.clear_all()
-
+    @traceable(name="_on_plan_generated", run_type="chain")
     async def _on_plan_generated(self):
-        """Handle plan generation completion."""
-        self.plan_phase = "confirming"
-
-        # Display generated plan
         todo_list = await self.todo_storage.get_todo_list()
+        logger.info(f"Plan generation - todo_list: {todo_list.model_dump() if todo_list else None}")
+        self._transition_state("confirming", {"todo_count": len(todo_list.items) if todo_list else 0})
         if not todo_list:
             self.console.print("[red]❌ No plan generated[/]")
             return
 
         self.console.print("\n[bold green]✅ Plan Generated Successfully![/]")
-        self.console.print("[bold cyan]📋 Execution Plan:[/]")
+        self.console.print("[bold cyan]Execution Plan:[/]")
 
         for i, item in enumerate(todo_list.items, 1):
-            status_icon = "📋" if item.status == "pending" else "✅" if item.status == "completed" else "❌"
-            self.console.print(f"  {i}. {status_icon} {item.content}")
-
-        # Get user confirmation
-        await self._get_user_confirmation()
-
-    async def _get_user_confirmation(self):
-        """Get user confirmation for plan execution."""
-        self.console.print("\n[bold cyan]🤔 Choose execution mode:[/]")
-        self.console.print("  1. 🔄 Auto Execute - Run all steps automatically")
-        self.console.print("  2. 👣 Step-by-Step - Confirm each step")
-        self.console.print("  3. ✏️  Revise - Provide feedback and regenerate plan")
-        self.console.print("  4. ❌ Cancel")
+            self.console.print(f"  {i}. {item.content}")
 
         try:
+            await self._get_user_confirmation()
+        except PlanningPhaseException:
+            # Re-raise to be handled by chat_agentic_node.py
+            raise
+
+    @traceable(name="_get_user_confirmation", run_type="chain")
+    async def _get_user_confirmation(self):
+        import asyncio
+        import sys
+
+        try:
+            await asyncio.sleep(0.2)
+            sys.stdout.flush()
+            sys.stderr.flush()
+
+            self.console.print("\n" + "=" * 50)
+            self.console.print("\n[bold cyan]CHOOSE EXECUTION MODE:[/]")
+            self.console.print("")
+            self.console.print("  1. Step-by-Step - Confirm each step")
+            self.console.print("  2. Auto Execute - Run all steps automatically")
+            self.console.print("  3. Revise - Provide feedback and regenerate plan")
+            self.console.print("  4. Cancel")
+            self.console.print("")
+
             loop = asyncio.get_event_loop()
-
-            def get_choice():
-                choice = input("\nYour choice (1-4): ").strip()
-                return choice
-
-            choice = await loop.run_in_executor(None, get_choice)
+            choice = await loop.run_in_executor(None, lambda: input("Your choice (1-4) [1]: ").strip() or "1")
 
             if choice == "1":
-                self.execution_mode = "auto"
-                self.plan_phase = "executing"
-                self.console.print("[green]🚀 Auto execution mode selected[/]")
-            elif choice == "2":
                 self.execution_mode = "manual"
-                self.plan_phase = "executing"
-                self.console.print("[blue]👣 Step-by-step mode selected[/]")
+                self._transition_state("executing", {"mode": "manual"})
+                self.console.print("[green]Step-by-step mode selected[/]")
+            elif choice == "2":
+                self.execution_mode = "auto"
+                self._transition_state("executing", {"mode": "auto"})
+                self.console.print("[green]Auto execution mode selected[/]")
             elif choice == "3":
-                await self._handle_replan_request()
+                await self._handle_replan()
+                raise PlanningPhaseException(f"REPLAN_REQUIRED: Use todo_write with feedback: {self.replan_feedback}")
             elif choice == "4":
-                self.plan_phase = "cancelled"
-                self.console.print("[yellow]❌ Plan cancelled[/]")
+                self._transition_state("cancelled", {})
+                self.console.print("[yellow]Plan cancelled[/]")
             else:
                 self.console.print("[red]Invalid choice, please try again[/]")
                 await self._get_user_confirmation()
 
         except (KeyboardInterrupt, EOFError):
-            self.plan_phase = "cancelled"
-            self.console.print("\n[yellow]❌ Plan cancelled[/]")
+            self._transition_state("cancelled", {"reason": "keyboard_interrupt"})
+            self.console.print("\n[yellow]Plan cancelled[/]")
 
-    async def _handle_replan_request(self):
-        """Handle replan request."""
+    @traceable(name="_handle_replan", run_type="chain")
+    async def _handle_replan(self):
         try:
-            feedback = input("\n💭 Feedback for replanning: ").strip()
+            loop = asyncio.get_event_loop()
+            feedback = await loop.run_in_executor(None, lambda: input("\nFeedback for replanning: ").strip())
             if feedback:
-                self.replan_feedback = feedback
-                self.replan_requested = True
-                self.console.print(f"[blue]🔄 Will replan with feedback: {feedback}[/]")
-                # Trigger replanning
-                raise ReplanRequestedException(feedback)
-            else:
-                self.console.print("[yellow]No feedback provided, showing options again[/]")
-                await self._get_user_confirmation()
-        except (KeyboardInterrupt, EOFError):
-            self.plan_phase = "cancelled"
-
-    async def _handle_execution_step(self, _tool_name: str):
-        """Handle individual execution step in manual mode."""
-        _ = _tool_name  # Mark as used
-        if self.execution_mode == "manual":
-            # Get current pending items
-            todo_list = await self.todo_storage.get_todo_list()
-            pending_items = [item for item in todo_list.items if item.status == "pending"]
-
-            if pending_items:
-                current_item = pending_items[0]
-                self.console.print(f"\n[bold cyan]🎯 Next step:[/] {current_item.content}")
-                self.console.print("Options:")
-                self.console.print("  1. ✅ Execute this step")
-                self.console.print("  2. 🚀 Execute this step and continue automatically")
-                self.console.print("  3. ⏭️  Skip this step")
-                self.console.print("  4. ✏️  Revise remaining plan")
-                self.console.print("  5. ❌ Cancel")
-
-                try:
-                    loop = asyncio.get_event_loop()
-
-                    def get_step_choice():
-                        choice = input("\nYour choice (1-5): ").strip()
-                        return choice
-
-                    choice = await loop.run_in_executor(None, get_step_choice)
-
-                    if choice == "1":
-                        self.console.print("[green]✅ Executing step...[/]")
-                        return  # Allow execution
-                    elif choice == "2":
-                        self.execution_mode = "auto"
-                        self.console.print("[green]🚀 Switching to auto mode...[/]")
-                        return  # Allow execution and continue
-                    elif choice == "3":
-                        # Skip this step
-                        self.console.print("[yellow]⏭️  Skipping step...[/]")
-                        raise SkipStepException("Step skipped by user")
-                    elif choice == "4":
-                        # Replan remaining parts
-                        await self._handle_partial_replan()
-                    elif choice == "5":
-                        self.plan_phase = "cancelled"
-                        self.console.print("[yellow]❌ Execution cancelled[/]")
-                    else:
-                        self.console.print("[red]Invalid choice, please try again[/]")
-                        # Ask again
-                        raise AskAgainException("Invalid choice")
-
-                except (KeyboardInterrupt, EOFError):
-                    self.plan_phase = "cancelled"
-                    self.console.print("\n[yellow]❌ Execution cancelled[/]")
-
-    async def _handle_partial_replan(self):
-        """Handle partial replan from current step."""
-        try:
-            feedback = input("\n💭 Feedback for revising remaining plan: ").strip()
-            if feedback:
-                # Mark current step as completed, regenerate remaining steps
                 todo_list = await self.todo_storage.get_todo_list()
-                completed_items = [item for item in todo_list.items if item.status == "completed"]
+                completed_items = [item for item in todo_list.items if item.status == "completed"] if todo_list else []
 
                 if completed_items:
-                    self.console.print(f"[blue]📝 Keeping {len(completed_items)} completed steps[/]")
+                    self.console.print(f"[blue]Found {len(completed_items)} completed steps[/]")
 
+                self.console.print(f"[green]Replanning with feedback: {feedback}[/]")
                 self.replan_feedback = feedback
-                self.replan_requested = True
-                raise ReplanRequestedException(feedback)
             else:
                 self.console.print("[yellow]No feedback provided[/]")
+                if self.plan_phase == "confirming":
+                    await self._get_user_confirmation()
+        except (KeyboardInterrupt, EOFError):
+            self.console.print("\n[yellow]Replan cancelled[/]")
+
+    @traceable(name="_handle_execution_step", run_type="chain")
+    async def _handle_execution_step(self, _tool_name: str):
+        import asyncio
+        import sys
+
+        logger.info(f"PlanHooks: _handle_execution_step called with tool: {_tool_name}")
+
+        todo_list = await self.todo_storage.get_todo_list()
+        logger.info(f"PlanHooks: Retrieved todo list with {len(todo_list.items) if todo_list else 0} items")
+
+        if not todo_list:
+            logger.warning("PlanHooks: No todo list found!")
+            return
+
+        pending_items = [item for item in todo_list.items if item.status == "pending"]
+        logger.info(f"PlanHooks: Found {len(pending_items)} pending items")
+
+        if not pending_items:
+            return
+
+        current_item = pending_items[0]
+
+        await asyncio.sleep(0.2)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        self.console.print("\n" + "-" * 40)
+
+        try:
+            if self.execution_mode == "auto":
+                self.console.print(f"\n[bold cyan]Auto Mode:[/] {current_item.content}")
+                loop = asyncio.get_event_loop()
+                choice = await loop.run_in_executor(None, lambda: input("Execute? (y/n) [y]: ").strip().lower() or "y")
+
+                if choice in ["y", "yes"]:
+                    self.console.print("[green]Executing...[/]")
+                    return
+                elif choice in ["cancel", "c", "n", "no"]:
+                    self.console.print("[yellow]Execution cancelled[/]")
+                    self.plan_phase = "cancelled"
+                    raise UserCancelledException("Execution cancelled by user")
+            else:
+                self.console.print(f"\n[bold cyan]Next step:[/] {current_item.content}")
+                self.console.print("Options:")
+                self.console.print("  1. Execute this step")
+                self.console.print("  2. Execute this step and continue automatically")
+                self.console.print("  3. Revise remaining plan")
+                self.console.print("  4. Cancel")
+
+                while True:
+                    loop = asyncio.get_event_loop()
+                    choice = await loop.run_in_executor(None, lambda: input("\nYour choice (1-4) [1]: ").strip() or "1")
+
+                    if choice == "1":
+                        self.console.print("[green]Executing step...[/]")
+                        return
+                    elif choice == "2":
+                        self.execution_mode = "auto"
+                        self.console.print("[green]Switching to auto mode...[/]")
+                        return
+                    elif choice == "3":
+                        await self._handle_replan()
+                        raise PlanningPhaseException(
+                            f"REPLAN_REQUIRED: Use todo_write with feedback: {self.replan_feedback}"
+                        )
+                    elif choice == "4":
+                        self._transition_state("cancelled", {"step": current_item.content, "user_choice": choice})
+                        self.console.print("[yellow]Execution cancelled[/]")
+                        return
+                    else:
+                        self.console.print(f"[red]Invalid choice '{choice}'. Please enter 1, 2, 3, or 4.[/]")
 
         except (KeyboardInterrupt, EOFError):
-            self.plan_phase = "cancelled"
+            self._transition_state("cancelled", {"reason": "execution_interrupted"})
+            self.console.print("\n[yellow]Execution cancelled[/]")
 
-    async def _on_execution_step_completed(self, _tool_name: str, result):
-        """Handle completion of execution step."""
-        _ = _tool_name  # Mark as used
-        if result.success and result.result:
-            # Display execution result
-            message = result.result.get("message", "Step completed")
-            self.console.print(f"[green]✅ {message}[/]")
+    # @traceable(name="_on_execution_step_completed", run_type="chain")
+    # async def _on_execution_step_completed(self, _tool_name: str, result):
+    #     if isinstance(result, dict):
+    #         success = result.get("success", 0) == 1
+    #         result_data = result.get("result", {})
+    #     else:
+    #         success = result.success == 1
+    #         result_data = result.result
 
-            # Check if all steps are completed
-            todo_list = await self.todo_storage.get_todo_list()
-            pending_items = [item for item in todo_list.items if item.status == "pending"]
+    #     if success and result_data:
+    #         message = result_data.get("message", "Step completed")
+    #         self.console.print(f"[green]✅ {message}[/]")
 
-            if not pending_items:
-                self.plan_phase = "completed"
-                self.console.print("\n[bold green]🎉 All tasks completed successfully![/]")
+    #         todo_list = await self.todo_storage.get_todo_list()
+    #         if todo_list:
+    #             pending_items = [item for item in todo_list.items if item.status == "pending"]
+    #             if not pending_items:
+    #                 self._transition_state("completed", {"total_steps": len(todo_list.items)})
+    #                 self.console.print("\n[bold green]🎉 All tasks completed successfully![/]")
 
     def get_plan_tools(self):
-        """Get plan-specific tools for the agent."""
         from datus.tools.plan_tools import PlanTool
 
         plan_tool = PlanTool(self.session)
+        plan_tool.storage = self.todo_storage
         return plan_tool.available_tools()
