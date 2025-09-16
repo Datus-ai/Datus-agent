@@ -232,7 +232,7 @@ class StreamlitChatbot:
             if self.cli:
                 # Current namespace info
                 st.subheader("🏷️ Current Namespace")
-                if hasattr(self.cli.agent_config, 'current_namespace'):
+                if hasattr(self.cli.agent_config, "current_namespace"):
                     st.info(f"**{self.cli.agent_config.current_namespace}**")
 
                 # Model selection
@@ -275,7 +275,6 @@ class StreamlitChatbot:
                 st.warning("⚠️ Loading configuration...")
 
             return {"config_loaded": self.cli is not None}
-
 
     def get_available_models(self) -> List[str]:
         """Get list of available model names"""
@@ -605,9 +604,9 @@ class StreamlitChatbot:
 
 def run_web_interface(args):
     """Launch Streamlit web interface"""
+    import os
     import subprocess
     import sys
-    import os
 
     try:
         # Get the path to the web chatbot
