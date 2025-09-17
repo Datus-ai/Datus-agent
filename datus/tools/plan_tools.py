@@ -192,10 +192,6 @@ class PlanTool:
     async def todo_update_pending(self, todo_id: str) -> FuncToolResult:
         """Mark a todo item as 'pending' (about to be executed).
 
-        IMPORTANT: This is the FIRST step when executing any todo item.
-        Call this BEFORE starting to work on a task to indicate execution is starting.
-        This will trigger user confirmation before execution begins.
-
         Args:
             todo_id: The ID of the todo item to mark as pending
 
@@ -206,9 +202,6 @@ class PlanTool:
 
     async def todo_update_completed(self, todo_id: str) -> FuncToolResult:
         """Mark a todo item as 'completed' (successfully executed).
-
-        IMPORTANT: This is the LAST step when executing any todo item.
-        Call this AFTER successfully completing the task.
 
         WORKFLOW: todo_update_pending -> [execute task] -> todo_update_completed
 
@@ -222,8 +215,6 @@ class PlanTool:
 
     async def todo_update_failed(self, todo_id: str) -> FuncToolResult:
         """Mark a todo item as 'failed' (execution failed).
-
-        IMPORTANT: Call this when a task fails to execute.
 
         WORKFLOW: todo_update_pending -> [execute task] -> todo_update_failed (if failed)
 

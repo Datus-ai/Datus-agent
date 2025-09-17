@@ -56,22 +56,7 @@ class PlanModeHooks(AgentHooks):
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
         logger.info(f"Plan mode tool start: {tool_name}, phase: {self.plan_phase}, mode: {self.execution_mode}")
 
-        # if self.plan_phase == "generating":
-        #     if tool_name in ["todo_write", "todo_read"]:
-        #         logger.info(f"Allowing plan tool: {tool_name}")
-        #         return
-        #     else:
-        #         logger.warning(f"Blocking execution tool during planning: {tool_name}")
-        #         raise PlanningPhaseException("Please complete the plan generation first")
-
-        # elif self.plan_phase == "executing":
-        #     if tool_name == "todo_write":
-        #         return
-        #     elif tool_name == "todo_update_pending":
-        #         await self._handle_execution_step(tool_name)
-        #     elif tool_name in ["todo_update_completed", "todo_update_failed", "todo_read"]:
-        #         return
-        if tool_name == "todo_update_pending":
+        if tool_name == "todo_update_pending" and self.execution_mode == "manual" and self.plan_phase == "executing":
             logger.info(f"Plan mode tool start: {tool_name}, phase: {self.plan_phase}, mode: {self.execution_mode}")
             await self._handle_execution_step(tool_name)
 
@@ -83,21 +68,12 @@ class PlanModeHooks(AgentHooks):
         if tool_name == "todo_write":
             logger.info("Plan generation completed, transitioning to confirmation")
             await self._on_plan_generated()
-        # elif tool_name.startswith("todo_update") and self.plan_phase == "executing":
-        #     logger.info(f"Execution step completed: {tool_name}")
-        #     await self._on_execution_step_completed(tool_name, result)
 
     async def on_handoff(self, context, agent, source) -> None:
         pass
 
     async def on_agent_end(self, context, agent, output) -> None:
         pass
-        # logger.info(f"Plan mode agent end: phase={self.plan_phase}")
-        # if self.plan_phase == "generating":
-        #     todo_list = await self.todo_storage.get_todo_list()
-        #     if not todo_list or len(todo_list.items) == 0:
-        #         self.console.print("[red]❌ No plan generated[/]")
-        #         self.console.print("[yellow]The agent completed without creating a todo list.[/]")
 
     async def on_end(self, context, agent, output) -> None:
         logger.info(f"Plan mode end: phase={self.plan_phase}")
@@ -105,30 +81,6 @@ class PlanModeHooks(AgentHooks):
     @traceable(name="on_error", run_type="chain")
     async def on_error(self, context, agent, error) -> None:
         pass
-        # error_info = {
-        #     "error_type": type(error).__name__,
-        #     "error_message": str(error)[:200],
-        #     "plan_phase": self.plan_phase,
-        #     "execution_mode": self.execution_mode,
-        #     "current_step": self.current_step,
-        # }
-        # logger.error(f"Plan mode error: {error_info}")
-
-        # if self.execution_mode == "manual":
-        #     self.console.print(f"[red]Error occurred: {str(error)[:100]}[/]")
-        #     try:
-        #         loop = asyncio.get_event_loop()
-        #         response = await loop.run_in_executor(
-        #             None, lambda: input("Continue despite error? (y/n) [y]: ").strip().lower() or "y"
-        #         )
-        #         if response != "y":
-        #             self.should_continue_execution = False
-        #             self._transition_state("cancelled", {"reason": "error_cancelled", "error": str(error)[:100]})
-        #             self.console.print("[yellow]Cancelled due to error[/]")
-        #     except (KeyboardInterrupt, EOFError):
-        #         self.should_continue_execution = False
-        #         self._transition_state("cancelled", {"reason": "error_interrupted"})
-        #         self.console.print("[yellow]Cancelled[/]")
 
     def _transition_state(self, new_state: str, context: dict = None):
         old_state = self.plan_phase
@@ -162,11 +114,14 @@ class PlanModeHooks(AgentHooks):
         todo_list = await self.todo_storage.get_todo_list()
         logger.info(f"Plan generation - todo_list: {todo_list.model_dump() if todo_list else None}")
         self._transition_state("confirming", {"todo_count": len(todo_list.items) if todo_list else 0})
+
+        # Clear replan feedback after plan is generated
+        self.replan_feedback = ""
         if not todo_list:
-            self.console.print("[red]❌ No plan generated[/]")
+            self.console.print("[red]No plan generated[/]")
             return
 
-        self.console.print("\n[bold green]✅ Plan Generated Successfully![/]")
+        self.console.print("\n[bold green]Plan Generated Successfully![/]")
         self.console.print("[bold cyan]Execution Plan:[/]")
 
         for i, item in enumerate(todo_list.items, 1):
@@ -204,16 +159,19 @@ class PlanModeHooks(AgentHooks):
                 self.execution_mode = "manual"
                 self._transition_state("executing", {"mode": "manual"})
                 self.console.print("[green]Step-by-step mode selected[/]")
+                return
             elif choice == "2":
                 self.execution_mode = "auto"
                 self._transition_state("executing", {"mode": "auto"})
                 self.console.print("[green]Auto execution mode selected[/]")
+                return
             elif choice == "3":
                 await self._handle_replan()
-                raise PlanningPhaseException(f"REPLAN_REQUIRED: Use todo_write with feedback: {self.replan_feedback}")
+                raise PlanningPhaseException(f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}")
             elif choice == "4":
                 self._transition_state("cancelled", {})
                 self.console.print("[yellow]Plan cancelled[/]")
+                raise UserCancelledException("User cancelled plan execution")
             else:
                 self.console.print("[red]Invalid choice, please try again[/]")
                 await self._get_user_confirmation()
@@ -305,7 +263,7 @@ class PlanModeHooks(AgentHooks):
                     elif choice == "3":
                         await self._handle_replan()
                         raise PlanningPhaseException(
-                            f"REPLAN_REQUIRED: Use todo_write with feedback: {self.replan_feedback}"
+                            f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}"
                         )
                     elif choice == "4":
                         self._transition_state("cancelled", {"step": current_item.content, "user_choice": choice})
@@ -317,26 +275,6 @@ class PlanModeHooks(AgentHooks):
         except (KeyboardInterrupt, EOFError):
             self._transition_state("cancelled", {"reason": "execution_interrupted"})
             self.console.print("\n[yellow]Execution cancelled[/]")
-
-    # @traceable(name="_on_execution_step_completed", run_type="chain")
-    # async def _on_execution_step_completed(self, _tool_name: str, result):
-    #     if isinstance(result, dict):
-    #         success = result.get("success", 0) == 1
-    #         result_data = result.get("result", {})
-    #     else:
-    #         success = result.success == 1
-    #         result_data = result.result
-
-    #     if success and result_data:
-    #         message = result_data.get("message", "Step completed")
-    #         self.console.print(f"[green]✅ {message}[/]")
-
-    #         todo_list = await self.todo_storage.get_todo_list()
-    #         if todo_list:
-    #             pending_items = [item for item in todo_list.items if item.status == "pending"]
-    #             if not pending_items:
-    #                 self._transition_state("completed", {"total_steps": len(todo_list.items)})
-    #                 self.console.print("\n[bold green]🎉 All tasks completed successfully![/]")
 
     def get_plan_tools(self):
         from datus.tools.plan_tools import PlanTool

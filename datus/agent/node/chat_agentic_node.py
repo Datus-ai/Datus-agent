@@ -389,9 +389,14 @@ class ChatAgenticNode(AgenticNode):
             self.plan_hooks.plan_phase = "generating"
 
         try:
+            # Build enhanced prompt for plan mode
+            final_prompt = prompt
+            if execution_mode == "plan":
+                final_prompt = self._build_plan_prompt(prompt)
+
             # Unified execution using configuration
             async for stream_action in self.model.generate_with_tools_stream(
-                prompt=prompt,
+                prompt=final_prompt,
                 tools=config["tools"],
                 mcp_servers=self.mcp_servers,
                 instruction=config["instruction"],
@@ -404,19 +409,20 @@ class ChatAgenticNode(AgenticNode):
 
         except Exception as e:
             if "REPLAN_REQUIRED" in str(e):
-                # Extract replan prompt and recurse
-                replan_prompt = self._extract_replan_prompt(e)
                 logger.info("Replan requested, recursing...")
 
-                # Recursive call - enter replan mode
+                # Recursive call - enter replan mode with original user prompt
                 async for action in self._execute_with_recursive_replan(
-                    prompt=replan_prompt,
+                    prompt=prompt,
                     execution_mode=execution_mode,
                     original_input=original_input,
                     action_history_manager=action_history_manager,
                     session=session,
                 ):
                     yield action
+            elif "User cancelled" in str(e):
+                logger.info("User cancelled execution, stopping...")
+                return  # Stop execution gracefully
             else:
                 # Other exceptions propagate up
                 raise
@@ -437,9 +443,24 @@ class ChatAgenticNode(AgenticNode):
         elif execution_mode == "plan":
             # Plan mode: standard tools + plan tools
             plan_tools = self.plan_hooks.get_plan_tools() if self.plan_hooks else []
+
+            # Add execution workflow to instruction for consistency
+            base_instruction = self._get_system_instruction(original_input)
+            current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
+
+            if current_phase in ["executing", "confirming"]:
+                plan_instruction = (
+                    base_instruction
+                    + "\n\nEXECUTION WORKFLOW:\n"
+                    + "For each todo step: todo_update_pending(id) → execute task → todo_update_completed(id)\n"
+                    + "Always follow this exact sequence for every step."
+                )
+            else:
+                plan_instruction = base_instruction
+
             return {
                 "tools": self.tools + plan_tools,
-                "instruction": self._build_plan_instruction(original_input),
+                "instruction": plan_instruction,
                 "hooks": self.plan_hooks,
             }
         else:
@@ -450,59 +471,50 @@ class ChatAgenticNode(AgenticNode):
         _, conversation_summary = self._get_or_create_session()
         return self._get_system_prompt(conversation_summary, original_input.prompt_version)
 
-    def _build_plan_instruction(self, original_input: "ChatNodeInput") -> str:
-        """Build instruction for plan mode."""
-        system_instruction = self._get_system_instruction(original_input)
-
-        # Check for replan feedback to incorporate
+    def _build_plan_prompt(self, original_prompt: str) -> str:
+        """Build enhanced prompt for plan mode based on current phase."""
+        # Check current phase and replan feedback
+        current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
+        logger.info(f"ChatAgenticNode: _build_plan_prompt: current_phase: {current_phase}")
         replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
-        replan_instruction = ""
+
         if replan_feedback:
-            replan_instruction = (
-                f"\n\nREPLANNING REQUESTED \nUser feedback: {replan_feedback}\n"
-                "Please revise the plan based on this feedback.\n"
+            # REPLAN MODE: Generate revised plan
+            plan_prompt_addition = (
+                "\n\nREPLAN MODE\n"
+                + f"Revise the remaining steps in the current plan based on USER FEEDBACK: {replan_feedback}\n\n"
+                + "STEPS:\n"
+                + "1. FIRST: call todo_read to review current plan and completed steps\n"
+                + "2. then call todo_write to generate revised plan: "
+                + "keep completed items as 'completed', revise remaining as 'pending'\n"
+            )
+        elif current_phase == "generating":
+            # INITIAL PLANNING PHASE
+            plan_prompt_addition = (
+                "\n\nPLAN MODE - PLANNING PHASE\n"
+                + "Task: Break down user request into 3-8 steps.\n\n"
+                + "call todo_write to generate complete todo list (3-8 steps)\n"
+                + 'Example: todo_write(\'[{"content": "Connect to database", "status": "pending"}, '
+                + '{"content": "Query data", "status": "pending"}]\')'
+            )
+        elif current_phase in ["executing", "confirming"]:
+            # EXECUTION PHASE - Focus on executing existing plan
+            plan_prompt_addition = (
+                "\n\nPLAN MODE - EXECUTION PHASE\n"
+                + "The plan has been confirmed. Now execute the pending steps.\n\n"
+                + "WORKFLOW for each pending step:\n"
+                + "1. FIRST: call todo_update_pending(todo_id) to mark step as pending (triggers user confirmation)\n"
+                + "2. then execute the actual task (SQL queries, data processing, etc.)\n"
+                + "3. then call todo_update_completed(todo_id) to mark step as completed\n\n"
+                + "Start with the first pending step in the plan."
+            )
+        else:
+            # Default fallback
+            plan_prompt_addition = (
+                "\n\nPLAN MODE\n" + "Check todo_read to see current plan status and proceed accordingly."
             )
 
-        # Build plan mode instruction
-        plan_instruction = (
-            system_instruction
-            + "\n\nPLAN MODE ACTIVE \n"
-            + "MANDATORY FIRST STEP: You MUST call todo_write tool immediately to break down the task into steps. "
-            + "DO NOT attempt to execute any other tools or provide direct answers until you have:\n"
-            + "1. Called todo_write with a JSON list of detailed steps\n"
-            + "2. Received confirmation that the plan was generated successfully\n\n"
-            + replan_instruction
-            + "Example todo_write call:\n"
-            + 'todo_write(\'[{"content": "Search database for charter schools", "status": "pending"}, '
-            + '{"content": "Filter schools in Fresno County", "status": "pending"}, '
-            + '{"content": "Extract zip codes from results", "status": "pending"}]\')\n\n'
-            + "CRITICAL WORKFLOW for executing todo items (AFTER plan confirmation):\n"
-            + "1. todo_update_pending(todo_id) -> Call this FIRST to mark task as 'pending' "
-            + "and trigger user confirmation\n"
-            + "2. Execute the actual task (e.g., run SQL queries, generate code)\n"
-            + "3. todo_update_completed(todo_id) -> Call this LAST to mark task as 'completed'\n"
-            + "4. todo_update_failed(todo_id) -> Call this if task execution fails\n\n"
-            + "IMPORTANT: Always follow this exact sequence! "
-            + "Never call todo_update_completed without first calling todo_update_pending."
-        )
-        return plan_instruction
-
-    def _build_replan_instruction(self) -> str:
-        """Build instruction for replan mode."""
-        return (
-            "Please follow the replan instruction and regenerate the plan using todo_write. "
-            "Check the session context for any completed tasks and preserve them in the new plan "
-            "with status='completed'. Only regenerate the remaining pending tasks based on the user's feedback."
-        )
-
-    def _extract_replan_prompt(self, exception: Exception) -> str:
-        """Extract replan prompt from exception."""
-        error_str = str(exception)
-        if "feedback:" in error_str:
-            feedback_part = error_str.split("feedback:")[-1].strip()
-            return f"System: REPLAN_REQUIRED: Use todo_write with feedback: {feedback_part}"
-        else:
-            return f"System: {error_str}"
+        return original_prompt + plan_prompt_addition
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """
