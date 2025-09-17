@@ -23,9 +23,10 @@ from datus.cli.action_history_display import ActionContentGenerator
 from datus.cli.repl import DatusCLI
 from datus.cli.screen.action_display_app import CollapsibleActionContentGenerator
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-from datus.utils.loggings import get_logger
+from datus.utils.loggings import setup_web_chatbot_logging
 
-logger = get_logger(__name__)
+# Initialize web chatbot logging
+logger = setup_web_chatbot_logging(debug=False)
 
 
 def get_available_namespaces(config_path: str = "conf/agent.yml") -> List[str]:
@@ -170,6 +171,10 @@ class StreamlitChatbot:
             st.session_state.chat_session_initialized = False
         if "cli_instance" not in st.session_state:
             st.session_state.cli_instance = None
+        if "rendered_action_ids" not in st.session_state:
+            st.session_state.rendered_action_ids = set()
+        if "current_chat_id" not in st.session_state:
+            st.session_state.current_chat_id = None
 
     @property
     def cli(self):
@@ -313,6 +318,8 @@ class StreamlitChatbot:
         """Clear chat history and session"""
         st.session_state.messages = []
         st.session_state.current_actions = []
+        st.session_state.rendered_action_ids = set()
+        st.session_state.current_chat_id = None
 
         if self.cli and self.cli.chat_commands:
             self.cli.chat_commands.cmd_clear_chat("")
@@ -397,15 +404,19 @@ class StreamlitChatbot:
         st.markdown("### 💬 AI Response")
         st.markdown(response)
 
-    def render_action_history(self, actions: List[ActionHistory]):
+    def render_action_history(self, actions: List[ActionHistory], chat_id: str = None):
         """Render action history using existing ActionContentGenerator"""
         if not actions:
             return
 
+        chat_id = chat_id or "default"
+
+        # Use expander without key parameter (not supported in this Streamlit version)
         with st.expander("🔍 Execution Step Details", expanded=False):
             content_generator = ActionContentGenerator(enable_truncation=False)
 
-            for action in actions:
+            for i, action in enumerate(actions):
+                # Use container without key parameter (not supported in this Streamlit version)
                 with st.container():
                     # Action header
                     dot = content_generator._get_action_dot(action)
@@ -454,25 +465,44 @@ class StreamlitChatbot:
             return []
 
         try:
-            # Store original actions count
-            original_count = len(self.cli.actions.actions)
+            # Clear any existing actions
+            initial_actions_count = len(self.cli.actions.actions)
+            if initial_actions_count > 0:
+                logger.warning(f"Found {initial_actions_count} existing actions, clearing...")
 
-            # Execute chat command (this will modify self.cli.actions.actions)
+            self.cli.actions.actions.clear()
+            if hasattr(self.cli.actions, "_action_history"):
+                self.cli.actions._action_history.clear()
+            if hasattr(self.cli, "current_actions"):
+                self.cli.current_actions = []
+
+            # Execute chat command
+            logger.info(f"Executing chat: {user_message}")
             self.cli.chat_commands.execute_chat_command(user_message)
 
-            # Get new actions added during this execution
-            all_actions = self.cli.actions.actions
-            new_actions = all_actions[original_count:]
+            # Get all actions from this execution
+            new_actions = self.cli.actions.actions.copy()
+            logger.info(f"Chat completed with {len(new_actions)} actions")
 
+            # Clear actions to prevent persistence
+            self.cli.actions.actions.clear()
             return new_actions
 
         except Exception as e:
             st.error(f"Error executing chat command: {str(e)}")
             logger.error(f"Chat execution error: {e}")
+            import traceback
+
+            logger.error(f"Chat execution traceback: {traceback.format_exc()}")
             return []
 
     def run(self):
         """Main Streamlit app runner"""
+        # Initialize logging for web interface
+        if "log_manager_initialized" not in st.session_state:
+            st.session_state.log_manager_initialized = True
+            logger.info("Web chatbot logging initialized")
+
         # Page configuration
         st.set_page_config(
             page_title="Datus AI Chat Assistant",
@@ -524,7 +554,7 @@ class StreamlitChatbot:
             return
 
         # Display chat history
-        for message in st.session_state.messages:
+        for i, message in enumerate(st.session_state.messages):
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
@@ -532,13 +562,18 @@ class StreamlitChatbot:
                 if "sql" in message and message["sql"]:
                     self.display_sql_with_copy(message["sql"])
 
-                if "actions" in message and message["actions"]:
-                    self.render_action_history(message["actions"])
+                # Skip displaying historical actions to prevent duplication
 
         # Chat input
         if prompt := st.chat_input("Enter your data query question..."):
+            # Create unique chat ID for this conversation
+            import uuid
+
+            chat_id = str(uuid.uuid4())
+            st.session_state.current_chat_id = chat_id
+
             # Add user message to chat history
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.session_state.messages.append({"role": "user", "content": prompt, "chat_id": chat_id})
 
             # Display user message
             with st.chat_message("user"):
@@ -566,9 +601,11 @@ class StreamlitChatbot:
                     if sql:
                         self.display_sql_with_copy(sql)
 
-                    # Display action history
-                    if actions:
-                        self.render_action_history(actions)
+                    # Display action history for current conversation - only once per chat
+                    action_render_id = f"{chat_id}_actions"
+                    if actions and action_render_id not in st.session_state.rendered_action_ids:
+                        self.render_action_history(actions, chat_id)
+                        st.session_state.rendered_action_ids.add(action_render_id)
 
                 # Add assistant message to chat history
                 assistant_message = {
@@ -576,6 +613,7 @@ class StreamlitChatbot:
                     "content": response or "Unable to generate valid response",
                     "sql": sql,
                     "actions": actions,
+                    "chat_id": chat_id,
                 }
                 st.session_state.messages.append(assistant_message)
 

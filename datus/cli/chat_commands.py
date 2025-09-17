@@ -156,9 +156,6 @@ class ChatCommands:
 
                     self._show_detail(incremental_actions)
 
-            # Add all actions from chat to our main action history
-            self.cli.actions.actions.extend(incremental_actions)
-
             # Update chat history for potential context in future interactions
             self.chat_history.append(
                 {

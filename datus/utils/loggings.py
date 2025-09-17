@@ -168,6 +168,86 @@ def get_logger(name: str) -> structlog.BoundLogger:
     return structlog.get_logger(name)
 
 
+def setup_web_chatbot_logging(debug=False, log_dir="logs"):
+    """Setup independent logging for web chatbot
+
+    Args:
+        debug: Enable debug logging
+        log_dir: Directory for log files
+
+    Returns:
+        structlog.BoundLogger: Configured logger for web chatbot
+    """
+    # Create log directory if it doesn't exist
+    log_dir = os.path.expanduser(log_dir)
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    # Create independent logger for web chatbot
+    web_logger = logging.getLogger("web_chatbot")
+    web_logger.setLevel(logging.DEBUG if debug else logging.INFO)
+
+    # Remove existing handlers to avoid duplicates
+    web_logger.handlers.clear()
+
+    # Create file handler with date-based naming
+    from datetime import datetime
+
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    log_file_base = os.path.join(log_dir, f"web_chatbot.{current_date}")
+
+    file_handler = TimedRotatingFileHandler(
+        log_file_base + ".log", when="midnight", interval=1, backupCount=30, encoding="utf-8"
+    )
+    file_handler.suffix = "%Y-%m-%d"
+
+    # Use plain text formatter (reuse existing pattern)
+    class PlainTextFormatter(logging.Formatter):
+        def format(self, record):
+            # Remove ANSI color codes if present
+            message = super().format(record)
+            import re
+
+            ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+            return ansi_escape.sub("", message)
+
+    formatter = PlainTextFormatter(fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    file_handler.setFormatter(formatter)
+
+    web_logger.addHandler(file_handler)
+    web_logger.propagate = False  # Prevent propagation to root logger
+
+    # Configure structlog for this logger
+    structlog.configure(
+        processors=[
+            structlog.stdlib.filter_by_level,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.UnicodeDecoder(),
+            structlog.processors.JSONRenderer(),
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
+    return structlog.get_logger("web_chatbot")
+
+
+def get_web_chatbot_logger() -> structlog.BoundLogger:
+    """Get the web chatbot logger
+
+    Returns:
+        structlog.BoundLogger: Web chatbot logger
+    """
+    return structlog.get_logger("web_chatbot")
+
+
 @contextmanager
 def log_context(target: Literal["both", "file", "console", "none"]):
     """Log output context manager
