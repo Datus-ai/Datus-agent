@@ -557,6 +557,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
         catalog_column = schema_table["catalog_name"]
         database_column = schema_table["database_name"]
         schema_column = schema_table["schema_name"]
+        identifier_column = schema_table["identifier"]
 
         data: Dict[str, Any] = {}
 
@@ -566,16 +567,18 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     # catalog -> database -> schema -> table
                     self.max_level = 4
                     # Catalog -> Database -> Schema -> Table structure
-                    for catalog, database, schema, table, definition, table_type in zip(
+                    for catalog, database, schema, table, definition, table_type, identifier in zip(
                         catalog_column,
                         database_column,
                         schema_column,
                         table_column,
                         schema_table["definition"],
                         schema_table["table_type"],
+                        identifier_column,
                     ):
                         insert_into_dict(data, [catalog.as_py(), database.as_py(), schema.as_py()], table.as_py())
                         self.flatten_data[f"{catalog}.{database}.{schema}.{table}"] = {
+                            "identifier": identifier.as_py(),
                             "catalog_name": catalog.as_py(),
                             "database_name": database.as_py(),
                             "schema_name": schema.as_py(),
@@ -587,7 +590,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                 else:
                     # catalog -> database -> table
                     self.max_level = 3
-                    for catalog, database, table, definition, table_type in (
+                    for catalog, database, table, definition, table_type, identifier in (
                         zip(
                             catalog_column,
                             database_column,
@@ -596,9 +599,11 @@ class TableCompleter(DynamicAtReferenceCompleter):
                             schema_table["table_type"],
                         ),
                         schema_column["definition"],
+                        identifier_column,
                     ):
                         insert_into_dict(data, [catalog.as_py(), database.as_py()], table.as_py())
                         self.flatten_data[f"{catalog}.{database}.{table}"] = {
+                            "identifier": identifier.as_py(),
                             "catalog_name": catalog.as_py(),
                             "database_name": database.as_py(),
                             "table_name": table.as_py(),
@@ -609,11 +614,17 @@ class TableCompleter(DynamicAtReferenceCompleter):
             elif DBType.support_schema(self.agent_config.db_type):
                 self.max_level = 3
                 # catalog -> schema -> table
-                for catalog, schema, table, definition, table_type in zip(
-                    catalog_column, schema_column, table_column, schema_table["definition"], schema_table["table_type"]
+                for catalog, schema, table, definition, table_type, identifier in zip(
+                    catalog_column,
+                    schema_column,
+                    table_column,
+                    schema_table["definition"],
+                    schema_table["table_type"],
+                    identifier_column,
                 ):
                     insert_into_dict(data, [catalog.as_py(), schema.as_py()], table.as_py())
                     self.flatten_data[f"{catalog}.{schema}.{table}"] = {
+                        "identifier": identifier.as_py(),
                         "catalog_name": catalog.as_py(),
                         "schema_name": schema.as_py(),
                         "table_name": table.as_py(),
@@ -625,11 +636,17 @@ class TableCompleter(DynamicAtReferenceCompleter):
             if DBType.support_schema(self.agent_config.db_type) and schema_column[0].as_py():
                 self.max_level = 3
                 # Database -> Schema -> Table structure
-                for database, schema, table, definition, table_type in zip(
-                    database_column, schema_column, table_column, schema_table["definition"], schema_table["definition"]
+                for database, schema, table, definition, table_type, identifier in zip(
+                    database_column,
+                    schema_column,
+                    table_column,
+                    schema_table["definition"],
+                    schema_table["definition"],
+                    identifier_column,
                 ):
                     insert_into_dict(data, [database.as_py(), schema.as_py()], table.as_py())
                     self.flatten_data[f"{database}.{schema}.{table}"] = {
+                        "identifier": identifier.as_py(),
                         "database_name": database.as_py(),
                         "schema_name": schema.as_py(),
                         "table_name": table.as_py(),
@@ -639,11 +656,16 @@ class TableCompleter(DynamicAtReferenceCompleter):
             else:
                 self.max_level = 2
                 # Database -> Table structure
-                for database, table, definition, table_type in zip(
-                    database_column, table_column, schema_table["definition"], schema_table["table_type"]
+                for database, table, definition, table_type, identifier in zip(
+                    database_column,
+                    table_column,
+                    schema_table["definition"],
+                    schema_table["table_type"],
+                    identifier_column,
                 ):
                     insert_into_dict(data, [database.as_py()], table.as_py())
                     self.flatten_data[f"{database}.{table}"] = {
+                        "identifier": identifier.as_py(),
                         "database_name": database.as_py(),
                         "table_name": table.as_py(),
                         "table_type": table_type,
@@ -654,11 +676,12 @@ class TableCompleter(DynamicAtReferenceCompleter):
         if DBType.support_schema(self.agent_config.db_type):
             self.max_level = 2
             # schema -> table
-            for schema, table, definition, table_type in zip(
-                schema_column, table_column, schema_table["definition"], schema_table["table_type"]
+            for schema, table, definition, table_type, identifier in zip(
+                schema_column, table_column, schema_table["definition"], schema_table["table_type"], identifier_column
             ):
                 insert_into_dict(data, [schema.as_py()], table.as_py())
                 self.flatten_data[f"{schema}.{table}"] = {
+                    "identifier": identifier.as_py(),
                     "schema_name": schema.as_py(),
                     "table_name": table.as_py(),
                     "table_type": table_type,

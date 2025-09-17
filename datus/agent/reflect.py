@@ -1,17 +1,16 @@
 from typing import Dict
 
-from langsmith import traceable
-
 from datus.models.base import LLMBaseModel
 from datus.prompts.reflection import get_evaluation_prompt
 from datus.schemas.base import BaseInput
 from datus.schemas.node_models import STRATEGY_LIST, SqlTask
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
 
-@traceable
+@optional_traceable
 def evaluate_with_model(task: SqlTask, node_input: BaseInput, model: LLMBaseModel) -> Dict:
     """
     Use a language model to evaluate SQL execution results.

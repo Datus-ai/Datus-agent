@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 
 class ArgumentParser:
     def __init__(self):
-        self.parser = argparse.ArgumentParser(description="Datus-CLI: AI-powered SQL command-line interface")
+        self.parser = argparse.ArgumentParser(description="Datus: AI-powered SQL command-line interface")
         self._setup_arguments()
 
     def _setup_arguments(self):

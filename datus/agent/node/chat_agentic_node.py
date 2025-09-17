@@ -4,7 +4,7 @@ ChatAgenticNode implementation for flexible CLI chat interactions.
 This module provides a concrete implementation of AgenticNode specifically
 designed for chat interactions with database and filesystem tool support.
 """
-
+import json
 from typing import AsyncGenerator, Dict, Optional
 
 from agents.mcp import MCPServerStdio
@@ -13,6 +13,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
+from datus.schemas.node_models import TableSchema
 from datus.tools.context_search import ContextSearchTools
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.mcp_server import MCPServer
@@ -158,7 +159,7 @@ class ChatAgenticNode(AgenticNode):
             enhanced_message = user_input.user_message
             enhanced_parts = []
             if user_input.catalog or user_input.database or user_input.db_schema:
-                context_parts = []
+                context_parts = [f"dialect: {self.agent_config.db_type}"]
                 if user_input.catalog:
                     context_parts.append(f"catalog: {user_input.catalog}")
                 if user_input.database:
@@ -167,15 +168,16 @@ class ChatAgenticNode(AgenticNode):
                     context_parts.append(f"schema: {user_input.db_schema}")
                 context_part_str = f'Context: {", ".join(context_parts)}'
                 enhanced_parts.append(context_part_str)
-            # if user_input.schemas:
-            #     enhanced_parts.append(f"Table Schemas: \n{TableSchema.list_to_prompt(user_input.schemas)}")
-            # if user_input.metrics:
-            #     enhanced_parts.append(f"Metrics: \n{json.dumps([item.model_dump() for item in user_input.metrics])}")
-            #
-            # if user_input.historical_sql:
-            #     enhanced_parts.append(
-            #         f"Historical SQL: \n{json.dumps([item.model_dump() for item in user_input.historical_sql])}"
-            #     )
+            if user_input.schemas:
+                table_schemas_str = TableSchema.list_to_prompt(user_input.schemas, dialect=self.agent_config.db_type)
+                enhanced_parts.append(f"Table Schemas: \n{table_schemas_str}")
+            if user_input.metrics:
+                enhanced_parts.append(f"Metrics: \n{json.dumps([item.model_dump() for item in user_input.metrics])}")
+
+            if user_input.historical_sql:
+                enhanced_parts.append(
+                    f"Historical SQL: \n{json.dumps([item.model_dump() for item in user_input.historical_sql])}"
+                )
 
             if enhanced_parts:
                 enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {user_input.user_message}"

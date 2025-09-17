@@ -8,8 +8,6 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import AsyncGenerator, Optional, Set
 
-from langsmith import traceable
-
 from datus.agent.evaluate import evaluate_result, setup_node_input
 from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
@@ -37,6 +35,7 @@ from datus.utils.benchmark_utils import (
 )
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -193,8 +192,8 @@ class Agent:
         self.workflow_ready = True
         return True
 
-    @traceable(name="agent", run_type="chain")
-    def run(self, sql_task: Optional[SqlTask] = None, check_storage: bool = False):
+    @optional_traceable(name="agent")
+    def run(self, sql_task: Optional[SqlTask] = None, check_storage: bool = False) -> dict:
         """
         Main execution loop for the agent.
 
@@ -206,7 +205,7 @@ class Agent:
         logger.info("Starting agent execution")
 
         if not self.init_or_load_workflow(sql_task):
-            return None
+            return {}
         self.check_db()
         # Main execution loop
         step_count = 0

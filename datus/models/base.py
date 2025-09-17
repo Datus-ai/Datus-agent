@@ -10,6 +10,9 @@ from agents.mcp import MCPServerStdio
 from datus.configuration.agent_config import AgentConfig, ModelConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.constants import LLMProvider
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 # Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
 try:

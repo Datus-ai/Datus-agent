@@ -32,13 +32,13 @@ datus-cli --namespace local_duckdb
 - Start chat with Datus. 
 
 ```bash
-Datus-sql> /Ask any questions you'd like to know
+Datus> /Ask any questions you'd like to know
 ```
 
 For example:
 
 ```bash
-Datus-sql> /list all tables
+Datus> /list all tables
 Using existing session: chat_session_97e067fb (tokens: 31586, actions: 24)
 Processing chat request...
 ╭─────────────────────────────────────────────────────────────────────────────────── Action Stream ────────────────────────────────────────────────────────────────────────────────────╮
@@ -105,7 +105,7 @@ The database contains a diverse set of tables covering various topics including:
  • Various visualization-ready datasets (boxplot, candle, radar, sankey, tree)                                                                                                          
 
 Would you like me to explore any specific table in more detail or help you with queries on any of these datasets? 
-Datus-sql>  
+Datus>  
 ```
 
 For more command references and options, see the documentation: [Cli references](./cli/reference.md)
@@ -281,10 +281,10 @@ datus-cli --namespace local_duckdb
 - Ask Datus a natural language question, and it will automatically generate the appropriate SQL query for you.
 
 ```bash
-Datus-sql> /which state  has the highest total asset value of failure bank?
+Datus> /which state  has the highest total asset value of failure bank?
 
 #run the sql generated
-Datus-sql>SELECT 
+Datus>SELECT 
     State,
     SUM("Assets ($mil.)") as Total_Assets_Millions,
     COUNT(*) as Number_of_Failures
@@ -297,7 +297,7 @@ LIMIT 1
 - Generate metrics based on your question
 
 ```bash
-Datus-sql> !gen_metrics
+Datus> !gen_metrics
 ```
 
 - View the generated metric definitions

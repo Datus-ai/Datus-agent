@@ -11,9 +11,7 @@ import yaml
 from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
-from langsmith import traceable
-from langsmith.wrappers import wrap_openai
-from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
+from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, RateLimitError
 from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
@@ -23,6 +21,7 @@ from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import create_openai_client, optional_traceable
 
 logger = get_logger(__name__)
 
@@ -109,8 +108,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.base_url = self._get_base_url()
 
         # Initialize clients
-        self.client = self._create_sync_client()
-        self._async_client = None
+        self.client = create_openai_client(AsyncOpenAI, self.api_key, self.base_url)
 
         # Context for tracing ToDo: replace it with Context object
         self.current_node = None
@@ -125,27 +123,6 @@ class OpenAICompatibleModel(LLMBaseModel):
     def _get_base_url(self) -> Optional[str]:
         """Get base URL from config. Override in subclasses if needed."""
         return self.model_config.base_url
-
-    def _create_sync_client(self) -> OpenAI:
-        """Create synchronous OpenAI client."""
-        client_kwargs = {"api_key": self.api_key}
-        if self.base_url:
-            client_kwargs["base_url"] = self.base_url
-
-        client = OpenAI(**client_kwargs)
-        return wrap_openai(client)
-
-    def _create_async_client(self) -> AsyncOpenAI:
-        """Create asynchronous OpenAI client."""
-        if self._async_client is None:
-            client_kwargs = {"api_key": self.api_key}
-            if self.base_url:
-                client_kwargs["base_url"] = self.base_url
-
-            client = AsyncOpenAI(**client_kwargs)
-            self._async_client = wrap_openai(client)
-
-        return self._async_client
 
     def _with_retry(
         self, operation_func, operation_name: str = "operation", max_retries: int = 3, base_delay: float = 1.0
@@ -227,7 +204,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
 
-    @traceable(name="openai_compatible_generate", run_type="chain")
+    @optional_traceable(name="openai_compatible_generate", run_type="chain")
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """
         Generate a response from the model with error handling and retry logic.
@@ -360,7 +337,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             return {"error": "Failed to parse JSON response", "raw_response": response_text}
 
-    @traceable(name="openai_compatible_tools", run_type="chain")
+    @optional_traceable(name="openai_compatible_tools", run_type="chain")
     async def generate_with_tools(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -408,7 +385,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         return enhanced_result
 
-    @traceable(name="openai_compatible_tools_stream", run_type="chain")
+    @optional_traceable(name="openai_compatible_tools_stream", run_type="chain")
     async def generate_with_tools_stream(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -472,7 +449,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         json._default_encoder = CustomJSONEncoder()
 
         async def _tools_operation():
-            async_client = self._create_async_client()
+            async_client = create_openai_client(AsyncOpenAI, self.api_key, self.base_url)
             model_params = {"model": self.model_name}
             async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
@@ -597,7 +574,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         json._default_encoder = CustomJSONEncoder()
 
         async def _stream_operation():
-            async_client = self._create_async_client()
+            async_client = create_openai_client(AsyncOpenAI, self.api_key, self.base_url)
 
             # Configure stream_options to include usage information for token tracking
             model_settings = ModelSettings(extra_body={"stream_options": {"include_usage": True}})

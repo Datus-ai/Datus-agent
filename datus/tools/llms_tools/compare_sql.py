@@ -2,7 +2,6 @@ import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from agents import Tool
-from langsmith import traceable
 
 from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
@@ -11,6 +10,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.compare_node_models import CompareInput, CompareResult
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -31,7 +31,7 @@ def generate_compare_prompt(input_data: CompareInput):
     )
 
 
-@traceable
+@optional_traceable
 def compare_sql(model: LLMBaseModel, input_data) -> CompareResult:
     """Compare SQL query with expectation using the provided model."""
     if not isinstance(input_data, CompareInput):
@@ -76,7 +76,7 @@ def compare_sql(model: LLMBaseModel, input_data) -> CompareResult:
         )
 
 
-@traceable
+@optional_traceable
 async def compare_sql_with_mcp_stream(
     model: LLMBaseModel,
     input_data: CompareInput,

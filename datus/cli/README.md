@@ -26,7 +26,7 @@ python main.py bootstrap-kb --benchmark bird_dev --namespace bird_sqlite --kb_up
 
 1. Natural Language Query:
 ```sql
-Datus-sql> !dastart
+Datus> !dastart
 Creating a new SQL task
 Enter task description (): How many schools in merged Alameda have number of test takers less than 100?
 Enter database name (benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite): california_schools
@@ -41,7 +41,7 @@ Enter external knowledge (optional) ():
 
 3. schema linking
 ```sql
-Datus-sql> !sl
+Datus> !sl
 Node Type: SCHEMA_LINKING
 Node Input:
 SchemaLinkingInput(
@@ -57,7 +57,7 @@ Do you want to execute this node? [y/n] (y):
 
 4. SQL Generation:
 ```sql
-Datus-sql> !gen
+Datus> !gen
 Node Type: GENERATE_SQL
 Node Input:
 GenerateSQLInput(
@@ -95,7 +95,7 @@ Context updated successfully
 
 5. Run sql
 ```sql
-Datus-sql> !run
+Datus> !run
 Running SQL: SELECT COUNT(*) AS NumberOfSchools FROM satscores WHERE cname = 'Alameda' AND NumTstTakr < 100 AND rtype = 'S';
 ┏━━━━━━━━━━━━━━━━━┓
 ┃ NumberOfSchools ┃
@@ -107,7 +107,7 @@ Returned 1 rows in 0.01 seconds
 
 6. Chat with AI:
 ````sql
-Datus-sql> / Can you explain this query's performance?
+Datus> / Can you explain this query's performance?
 # SQL Query Performance Explanation
 
 The query you executed is performing well for several reasons:
@@ -140,7 +140,7 @@ The query appears optimal for its purpose - it's simple, specific, and returns m
 
 7. End the workflow:
 ```sql
-Datus-sql> !save
+Datus> !save
 
 Do you want to execute this node? [y/n] (y): 
 Executing OUTPUT node...
@@ -148,12 +148,12 @@ Node Result:
 OutputResult(success=True, error=None, output='02bd515a.csv', sql_query='', sql_result='')
 Context updated successfully
 
-Datus-sql> !bash ls output
+Datus> !bash ls output
 02bd515a.csv
-Datus-sql> !bash cat output/02bd515a.csv
+Datus> !bash cat output/02bd515a.csv
 ...
 
-Datus-sql> !daend
+Datus> !daend
 Ending workflow session: <agent.workflow.Workflow object at 0x17f4af3b0>
 ```
 

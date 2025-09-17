@@ -4,7 +4,6 @@ from io import StringIO
 from typing import Any, Optional, Tuple
 
 import pandas as pd
-from langsmith import traceable
 
 from datus.models.base import LLMBaseModel
 from datus.prompts.output_checking import gen_prompt
@@ -12,6 +11,7 @@ from datus.schemas.node_models import OutputInput, OutputResult
 from datus.tools.base import BaseTool
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -89,7 +89,7 @@ class BenchmarkOutputTool(BaseTool):
                 sql_result=input_data.sql_result,
             )
 
-    @traceable
+    @optional_traceable
     def check_sql(
         self,
         input_data: OutputInput,

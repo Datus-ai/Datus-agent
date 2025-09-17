@@ -5,18 +5,17 @@ Simplified SQL reasoning implementation that doesn't require MCP/tool calling
 import json
 from typing import Any, Dict
 
-from langsmith import traceable
-
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import SQLContext
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.utils.json_utils import strip_json_str
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
 
-@traceable
+@optional_traceable
 def reasoning_sql_simple(
     model: LLMBaseModel, input_data: ReasoningInput, tool_config: Dict[str, Any] = None
 ) -> ReasoningResult:

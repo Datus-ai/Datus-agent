@@ -39,6 +39,7 @@ class ChatCommands:
         # Chat state management
         self.chat_node: ChatAgenticNode | None = None
         self.chat_history = []
+        self.last_actions = []
 
     def update_chat_node_tools(self):
         """Update chat node tools when namespace changes."""
@@ -153,7 +154,7 @@ class ChatCommands:
 
                     if clean_output:
                         self._display_markdown_response(clean_output)
-
+                    self.last_actions = incremental_actions
                     self._show_detail(incremental_actions)
 
             # Add all actions from chat to our main action history

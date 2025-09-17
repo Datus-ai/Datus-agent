@@ -18,7 +18,7 @@ _log_manager = None
 class DynamicLogManager:
     """Dynamic log manager that supports switching log output targets at runtime"""
 
-    def __init__(self, debug=False, log_dir="logs"):
+    def __init__(self, debug=False, log_dir="~/.datus/logs"):
         self.debug = debug
         self.log_dir = os.path.expanduser(log_dir)
         self.root_logger = logging.getLogger()

@@ -1,16 +1,15 @@
 import json
 
-from langsmith import traceable
-
 from datus.models.base import LLMBaseModel
 from datus.prompts.fix_sql import fix_sql_prompt
 from datus.schemas.fix_node_models import FixInput, FixResult
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
 
-@traceable
+@optional_traceable
 def autofix_sql(model: LLMBaseModel, input_data: FixInput, docs: list[str]) -> FixResult:
     """Generate SQL query using the provided model."""
     if not isinstance(input_data, FixInput):

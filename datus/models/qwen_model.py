@@ -1,8 +1,6 @@
 import os
 from typing import Any, Dict, List
 
-from langsmith.wrappers import wrap_openai
-from openai import AsyncOpenAI
 from transformers import AutoTokenizer
 
 from datus.configuration.agent_config import ModelConfig
@@ -35,18 +33,6 @@ class QwenModel(OpenAICompatibleModel):
     def _get_base_url(self) -> str:
         """Get Qwen base URL from config or environment."""
         return self.model_config.base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
-    def async_client(self):
-        if self._async_client is None:
-            logger.debug(f"Creating async OpenAI client with base_url: {self.api_base}, model: {self.model_name}")
-
-            async_client = AsyncOpenAI(api_key=self.api_key, base_url=self.api_base)
-            try:
-                self._async_client = wrap_openai(async_client)
-            except Exception as e:
-                logger.error(f"Error wrapping async OpenAI client: {str(e)}. Use the original client.")
-                self._async_client = async_client
-        return self._async_client
 
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """

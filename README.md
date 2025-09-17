@@ -155,7 +155,7 @@ python -m datus.main check-db --namespace local_duckdb
 ```bash
 python -m datus.cli.main --namespace local_duckdb --config conf/agent.yml
 
-Datus-sql> select * from tree;
+Datus> select * from tree;
 ┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┓
 ┃ Continent ┃ TradingBloc ┃ Country    ┃ GDP    ┃
 ┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━┩
@@ -177,7 +177,7 @@ Datus-sql> select * from tree;
 └───────────┴─────────────┴────────────┴────────┘
 Returned 15 rows in 0.03 seconds
 
-Datus-sql> .help
+Datus> .help
 ```
 
 ---
@@ -219,7 +219,7 @@ python -m datus.main benchmark --namespace spidersnow --benchmark spider2 --benc
 ```bash
 python -m datus.cli.main --namespace spidersnow  --config conf/agent.yml
 
-Datus-sql> !darun_screen
+Datus> !darun_screen
 Creating a new SQL task
 Enter task ID (49856268):
 Enter task description (): Based on the most recent refresh date, identify the top-ranked rising search term for the week that is exactly one year prior to the latest available week in the dataset.

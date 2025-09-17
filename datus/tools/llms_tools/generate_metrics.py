@@ -4,7 +4,6 @@ import os
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from agents import Tool
-from langsmith import traceable
 
 from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
@@ -16,11 +15,12 @@ from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
 from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
 
-@traceable
+@optional_traceable
 async def generate_metrics_with_mcp_stream(
     model: LLMBaseModel,
     input_data: GenerateMetricsInput,
@@ -65,7 +65,7 @@ async def generate_metrics_with_mcp_stream(
         yield action
 
 
-@traceable
+@optional_traceable
 def generate_metrics_with_mcp(
     model: LLMBaseModel,
     input_data: GenerateMetricsInput,

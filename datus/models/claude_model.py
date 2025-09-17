@@ -12,7 +12,6 @@ import httpx
 from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, SQLiteSession, Usage
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
-from langsmith.wrappers import wrap_anthropic, wrap_openai
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from pydantic import AnyUrl
 
@@ -23,6 +22,7 @@ from datus.schemas.node_models import SQLContext
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import create_openai_client
 
 logger = get_logger(__name__)
 
@@ -136,31 +136,31 @@ class ClaudeModel(LLMBaseModel):
 
         logger.debug(f"Using Claude model: {self.model_name} base Url: {self.api_base}")
 
-        self.client = wrap_openai(OpenAI(api_key=self.api_key, base_url=self.api_base + "/v1"))
+        self.client = create_openai_client(OpenAI, api_key=self.api_key, base_url=self.api_base + "/v1")
 
         # Optional proxy configuration - only use if environment variable is set
         proxy_url = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
         self.proxy_client = None  # Store reference for cleanup
+
         if proxy_url:
             self.proxy_client = httpx.Client(
                 transport=httpx.HTTPTransport(proxy=httpx.Proxy(url=proxy_url)),
                 timeout=60.0,
             )
-            self.anthropic_client = wrap_anthropic(
-                anthropic.Anthropic(
-                    api_key=self.api_key,
-                    base_url=self.api_base if self.api_base else None,
-                    http_client=self.proxy_client,
-                )
-            )
-        else:
-            self.anthropic_client = wrap_anthropic(
-                anthropic.Anthropic(
-                    api_key=self.api_key,
-                    base_url=self.api_base if self.api_base else None,
-                )
-            )
 
+        self.anthropic_client = anthropic.Anthropic(
+            api_key=self.api_key,
+            base_url=self.api_base if self.api_base else None,
+            http_client=self.proxy_client,
+        )
+        try:
+            from langsmith.wrappers import wrap_anthropic
+
+            self.anthropic_client = wrap_anthropic(
+                self.anthropic_client,
+            )
+        except ImportError:
+            logger.debug("No langsmith wrapper available")
         # Session manager is initialized lazily in the base class via property
 
     def generate(self, prompt: Any, **kwargs) -> str:
@@ -599,7 +599,7 @@ class ClaudeModel(LLMBaseModel):
 
     def _setup_async_agent(self, instruction: str, mcp_servers: Dict, output_type: dict, **kwargs):
         """Setup async client and agent."""
-        async_client = wrap_openai(AsyncOpenAI(api_key=self.api_key, base_url=self.api_base + "/v1"))
+        async_client = create_openai_client(AsyncOpenAI, self.api_key, self.api_base + "/v1")
         model_params = {"model": self.model_name}
         async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
@@ -640,7 +640,7 @@ class ClaudeModel(LLMBaseModel):
             # Use context manager to manage multiple MCP servers
             async with multiple_mcp_servers(mcp_servers) as connected_servers:
                 # Set up agent with session support
-                async_client = wrap_openai(AsyncOpenAI(api_key=self.api_key, base_url=self.api_base + "/v1"))
+                async_client = create_openai_client(AsyncOpenAI, self.api_key, self.api_base + "/v1")
                 model_params = {"model": self.model_name}
                 async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 

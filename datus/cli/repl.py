@@ -217,10 +217,10 @@ class DatusCLI:
         while True:
             try:
                 # Check if we have a selected catalog path to inject
-                prompt_text = "Datus-sql> "
+                prompt_text = "Datus> "
                 # TODO use selected_catalog_path
                 # if self.selected_catalog_path:
-                #     # prompt_text = f"Datus-sql> {self.selected_catalog_path}"
+                #     # prompt_text = f"Datus> {self.selected_catalog_path}"
                 #     selected_path = self.selected_catalog_path
                 #     self.console.print(f"Selected catalog: {selected_path}")
                 #     self.selected_catalog_path = None
@@ -836,7 +836,7 @@ class DatusCLI:
     def _print_welcome(self):
         """Print the welcome message."""
         welcome_text = """
-[bold green]Datus-CLI[/] - [bold]AI-powered SQL command-line interface[/]
+[bold green]Datus[/] - [bold]AI-powered SQL command-line interface[/]
 Type '.help' for a list of commands or '.exit' to quit.
 """
         self.console.print(welcome_text)
