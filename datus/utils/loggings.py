@@ -169,7 +169,7 @@ def get_logger(name: str) -> structlog.BoundLogger:
 
 
 def setup_web_chatbot_logging(debug=False, log_dir="logs"):
-    """Setup independent logging for web chatbot
+    """Setup simplified logging for web chatbot using same format as agent.log
 
     Args:
         debug: Enable debug logging
@@ -190,7 +190,7 @@ def setup_web_chatbot_logging(debug=False, log_dir="logs"):
     # Remove existing handlers to avoid duplicates
     web_logger.handlers.clear()
 
-    # Create file handler with date-based naming
+    # Create file handler with same naming pattern as agent.log
     from datetime import datetime
 
     current_date = datetime.now().strftime("%Y-%m-%d")
@@ -201,40 +201,12 @@ def setup_web_chatbot_logging(debug=False, log_dir="logs"):
     )
     file_handler.suffix = "%Y-%m-%d"
 
-    # Use plain text formatter (reuse existing pattern)
-    class PlainTextFormatter(logging.Formatter):
-        def format(self, record):
-            # Remove ANSI color codes if present
-            message = super().format(record)
-            import re
-
-            ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-            return ansi_escape.sub("", message)
-
-    formatter = PlainTextFormatter(fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    # Use same formatter as agent.log (simple message format)
+    formatter = logging.Formatter("%(message)s")
     file_handler.setFormatter(formatter)
 
     web_logger.addHandler(file_handler)
     web_logger.propagate = False  # Prevent propagation to root logger
-
-    # Configure structlog for this logger
-    structlog.configure(
-        processors=[
-            structlog.stdlib.filter_by_level,
-            structlog.stdlib.add_logger_name,
-            structlog.stdlib.add_log_level,
-            structlog.stdlib.PositionalArgumentsFormatter(),
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.UnicodeDecoder(),
-            structlog.processors.JSONRenderer(),
-        ],
-        context_class=dict,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
-    )
 
     return structlog.get_logger("web_chatbot")
 
