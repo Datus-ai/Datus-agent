@@ -415,7 +415,7 @@ class StreamlitChatbot:
         with st.expander("🔍 Execution Step Details", expanded=False):
             content_generator = ActionContentGenerator(enable_truncation=False)
 
-            for i, action in enumerate(actions):
+            for action in actions:
                 # Use container without key parameter (not supported in this Streamlit version)
                 with st.container():
                     # Action header
@@ -554,7 +554,7 @@ class StreamlitChatbot:
             return
 
         # Display chat history
-        for i, message in enumerate(st.session_state.messages):
+        for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
@@ -631,12 +631,7 @@ class StreamlitChatbot:
                 st.metric("Total Characters", f"{total_chars:,}")
 
             with col3:
-                if self.cli and hasattr(self.cli.agent_config, "models"):
-                    current_model = (
-                        list(self.cli.agent_config.models.keys())[0] if self.cli.agent_config.models else "Unknown"
-                    )
-                else:
-                    current_model = "Unknown"
+                current_model = self.get_current_chat_model()
                 st.metric("Current Model", current_model)
 
 
