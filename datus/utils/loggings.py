@@ -211,15 +211,6 @@ def setup_web_chatbot_logging(debug=False, log_dir="logs"):
     return structlog.get_logger("web_chatbot")
 
 
-def get_web_chatbot_logger() -> structlog.BoundLogger:
-    """Get the web chatbot logger
-
-    Returns:
-        structlog.BoundLogger: Web chatbot logger
-    """
-    return structlog.get_logger("web_chatbot")
-
-
 @contextmanager
 def log_context(target: Literal["both", "file", "console", "none"]):
     """Log output context manager
