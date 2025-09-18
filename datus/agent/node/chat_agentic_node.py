@@ -478,15 +478,30 @@ class ChatAgenticNode(AgenticNode):
         logger.info(f"ChatAgenticNode: _build_plan_prompt: current_phase: {current_phase}")
         replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
 
-        if replan_feedback:
+        execution_prompt = (
+            "After the plan has been confirmed, execute the pending steps.\n\n"
+            + "WORKFLOW for each pending step:\n"
+            + "1. FIRST: call todo_update_pending(todo_id) to mark step as pending (triggers user confirmation)\n"
+            + "2. then execute the actual task (SQL queries, data processing, etc.)\n"
+            + "3. then call todo_update_completed(todo_id) to mark step as completed\n\n"
+            + "Start with the first pending step in the plan."
+        )
+
+        # Only enter replan mode if we have feedback AND we're still in generating phase
+        if replan_feedback and current_phase == "generating":
             # REPLAN MODE: Generate revised plan
             plan_prompt_addition = (
                 "\n\nREPLAN MODE\n"
-                + f"Revise the remaining steps in the current plan based on USER FEEDBACK: {replan_feedback}\n\n"
+                + f"Revise the current plan based on USER FEEDBACK: {replan_feedback}\n\n"
                 + "STEPS:\n"
-                + "1. FIRST: call todo_read to review current plan and completed steps\n"
-                + "2. then call todo_write to generate revised plan: "
-                + "keep completed items as 'completed', revise remaining as 'pending'\n"
+                + "1. FIRST: call todo_read to review the current plan, the completed and pending steps\n"
+                + "2. then call todo_write to generate revised plan following these rules:\n"
+                + "   - COMPLETED steps: keep items that were actually executed as 'completed'\n"
+                + "   - PENDING steps that are no longer needed: DISCARD (don't include in new plan)\n"
+                + "   - PENDING steps that are still needed: keep as 'pending' or revise content\n"
+                + "   - NEW steps: add as 'pending'\n"
+                + "3. Only include steps that are actually needed in the revised plan\n"
+                + execution_prompt
             )
         elif current_phase == "generating":
             # INITIAL PLANNING PHASE
@@ -496,8 +511,10 @@ class ChatAgenticNode(AgenticNode):
                 + "call todo_write to generate complete todo list (3-8 steps)\n"
                 + 'Example: todo_write(\'[{"content": "Connect to database", "status": "pending"}, '
                 + '{"content": "Query data", "status": "pending"}]\')'
+                + execution_prompt
             )
         elif current_phase in ["executing", "confirming"]:
+            logger.info(f"ChatAgenticNode: _build_plan_prompt: current_phase: {current_phase}, in execution prompt")
             # EXECUTION PHASE - Focus on executing existing plan
             plan_prompt_addition = (
                 "\n\nPLAN MODE - EXECUTION PHASE\n"

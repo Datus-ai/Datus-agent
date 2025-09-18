@@ -143,6 +143,12 @@ class PlanTool:
         Args:
             todos_json: JSON string of list of dicts with 'content' and 'status' keys.
                        Status can be 'pending' or 'completed'.
+
+                       IMPORTANT: In replan mode, only include steps that are actually needed:
+                       - 'completed': Steps that were actually executed and finished
+                       - 'pending': Steps that still need to be executed (existing or new)
+                       - DISCARD: Don't include steps that are no longer needed
+
                        Example: '[{"content": "Query database", "status": "completed"},
                                 {"content": "Generate report", "status": "pending"}]'
         """
@@ -167,13 +173,14 @@ class PlanTool:
                 continue
 
             if status == "completed":
-                # Create completed item - LLM decides based on session context
+                # Create completed item - should only be for actually executed steps
                 new_item = TodoItem(content=content, status=TodoStatus.COMPLETED)
                 todo_list.items.append(new_item)
-                logger.info(f"LLM marked as completed: {content}")
+                logger.info(f"Keeping completed step: {content}")
             else:
-                # Create pending step
+                # Create pending step - for steps that still need execution
                 todo_list.add_item(content)
+                logger.info(f"Added pending step: {content}")
 
         if await self.storage.save_list(todo_list):
             completed_count = sum(1 for item in todo_list.items if item.status == TodoStatus.COMPLETED)

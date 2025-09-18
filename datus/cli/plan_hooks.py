@@ -113,10 +113,11 @@ class PlanModeHooks(AgentHooks):
     async def _on_plan_generated(self):
         todo_list = await self.todo_storage.get_todo_list()
         logger.info(f"Plan generation - todo_list: {todo_list.model_dump() if todo_list else None}")
+
+        # Clear replan feedback BEFORE transitioning state to ensure prompt updates correctly
+        self.replan_feedback = ""
         self._transition_state("confirming", {"todo_count": len(todo_list.items) if todo_list else 0})
 
-        # Clear replan feedback after plan is generated
-        self.replan_feedback = ""
         if not todo_list:
             self.console.print("[red]No plan generated[/]")
             return
@@ -146,7 +147,7 @@ class PlanModeHooks(AgentHooks):
             self.console.print("\n" + "=" * 50)
             self.console.print("\n[bold cyan]CHOOSE EXECUTION MODE:[/]")
             self.console.print("")
-            self.console.print("  1. Step-by-Step - Confirm each step")
+            self.console.print("  1. Manual Confirm - Confirm each step")
             self.console.print("  2. Auto Execute - Run all steps automatically")
             self.console.print("  3. Revise - Provide feedback and regenerate plan")
             self.console.print("  4. Cancel")
@@ -158,7 +159,7 @@ class PlanModeHooks(AgentHooks):
             if choice == "1":
                 self.execution_mode = "manual"
                 self._transition_state("executing", {"mode": "manual"})
-                self.console.print("[green]Step-by-step mode selected[/]")
+                self.console.print("[green]Manual confirmation mode selected[/]")
                 return
             elif choice == "2":
                 self.execution_mode = "auto"
@@ -194,6 +195,8 @@ class PlanModeHooks(AgentHooks):
 
                 self.console.print(f"[green]Replanning with feedback: {feedback}[/]")
                 self.replan_feedback = feedback
+                # Transition back to generating phase for replan
+                self._transition_state("generating", {"replan_triggered": True, "feedback": feedback})
             else:
                 self.console.print("[yellow]No feedback provided[/]")
                 if self.plan_phase == "confirming":
