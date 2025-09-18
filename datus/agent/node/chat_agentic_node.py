@@ -513,18 +513,6 @@ class ChatAgenticNode(AgenticNode):
                 + '{"content": "Query data", "status": "pending"}]\')'
                 + execution_prompt
             )
-        elif current_phase in ["executing", "confirming"]:
-            logger.info(f"ChatAgenticNode: _build_plan_prompt: current_phase: {current_phase}, in execution prompt")
-            # EXECUTION PHASE - Focus on executing existing plan
-            plan_prompt_addition = (
-                "\n\nPLAN MODE - EXECUTION PHASE\n"
-                + "The plan has been confirmed. Now execute the pending steps.\n\n"
-                + "WORKFLOW for each pending step:\n"
-                + "1. FIRST: call todo_update_pending(todo_id) to mark step as pending (triggers user confirmation)\n"
-                + "2. then execute the actual task (SQL queries, data processing, etc.)\n"
-                + "3. then call todo_update_completed(todo_id) to mark step as completed\n\n"
-                + "Start with the first pending step in the plan."
-            )
         else:
             # Default fallback
             plan_prompt_addition = (

@@ -233,6 +233,24 @@ class PlanModeHooks(AgentHooks):
 
         try:
             if self.execution_mode == "auto":
+                # Display full todo list with progress indicators in auto mode too
+                self.console.print("\n[bold cyan]Plan Progress:[/]")
+                for i, item in enumerate(todo_list.items, 1):
+                    if item.status == "completed":
+                        status_icon = "[green]✓[/]"
+                        text_style = "[dim]"
+                        close_tag = "[/]"
+                    elif item.id == current_item.id:
+                        status_icon = "[yellow]▶[/]"  # Current step
+                        text_style = "[bold cyan]"
+                        close_tag = "[/]"
+                    else:
+                        status_icon = "[white]○[/]"  # Pending
+                        text_style = ""
+                        close_tag = ""
+
+                    self.console.print(f"  {status_icon} {text_style}{i}. {item.content}{close_tag}")
+
                 self.console.print(f"\n[bold cyan]Auto Mode:[/] {current_item.content}")
                 loop = asyncio.get_event_loop()
                 choice = await loop.run_in_executor(None, lambda: input("Execute? (y/n) [y]: ").strip().lower() or "y")
@@ -245,6 +263,24 @@ class PlanModeHooks(AgentHooks):
                     self.plan_phase = "cancelled"
                     raise UserCancelledException("Execution cancelled by user")
             else:
+                # Display full todo list with progress indicators
+                self.console.print("\n[bold cyan]Plan Progress:[/]")
+                for i, item in enumerate(todo_list.items, 1):
+                    if item.status == "completed":
+                        status_icon = "[green]✓[/]"
+                        text_style = "[dim]"
+                        close_tag = "[/]"
+                    elif item.id == current_item.id:
+                        status_icon = "[yellow]▶[/]"  # Current step
+                        text_style = "[bold cyan]"
+                        close_tag = "[/]"
+                    else:
+                        status_icon = "[white]○[/]"  # Pending
+                        text_style = ""
+                        close_tag = ""
+
+                    self.console.print(f"  {status_icon} {text_style}{i}. {item.content}{close_tag}")
+
                 self.console.print(f"\n[bold cyan]Next step:[/] {current_item.content}")
                 self.console.print("Options:")
                 self.console.print("  1. Execute this step")
