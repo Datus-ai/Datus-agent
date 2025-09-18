@@ -534,7 +534,15 @@ class TableCompleter(DynamicAtReferenceCompleter):
         storage = rag_by_configuration(self.agent_config)
         schema_table = storage.search_all_schemas(
             database_name=self.agent_config.current_database,
-            select_fields=["catalog_name", "database_name", "schema_name", "table_name", "table_type", "definition"],
+            select_fields=[
+                "catalog_name",
+                "database_name",
+                "schema_name",
+                "table_name",
+                "table_type",
+                "definition",
+                "identifier",
+            ],
         )
         if schema_table is None or schema_table.num_rows == 0:
             return []
