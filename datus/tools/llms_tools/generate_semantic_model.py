@@ -18,7 +18,7 @@ from datus.utils.traceable_utils import optional_traceable
 logger = get_logger(__name__)
 
 
-@optional_traceable
+@optional_traceable()
 async def generate_semantic_model_with_mcp_stream(
     model: LLMBaseModel,
     table_definition: str,
@@ -61,7 +61,7 @@ async def generate_semantic_model_with_mcp_stream(
         yield action
 
 
-@optional_traceable
+@optional_traceable()
 def generate_semantic_model_with_mcp(
     model: LLMBaseModel,
     table_definition: str,

@@ -11,7 +11,7 @@ import yaml
 from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
-from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, RateLimitError
+from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
@@ -108,7 +108,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.base_url = self._get_base_url()
 
         # Initialize clients
-        self.client = create_openai_client(AsyncOpenAI, self.api_key, self.base_url)
+        self.client = create_openai_client(OpenAI, self.api_key, self.base_url)
 
         # Context for tracing ToDo: replace it with Context object
         self.current_node = None
@@ -253,7 +253,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                 messages = [{"role": "user", "content": str(prompt)}]
 
             response = self.client.chat.completions.create(messages=messages, **params)
-
             message = response.choices[0].message
             content = message.content
 

@@ -15,7 +15,7 @@ from datus.utils.traceable_utils import optional_traceable
 logger = get_logger(__name__)
 
 
-@optional_traceable
+@optional_traceable()
 def reasoning_sql_simple(
     model: LLMBaseModel, input_data: ReasoningInput, tool_config: Dict[str, Any] = None
 ) -> ReasoningResult:

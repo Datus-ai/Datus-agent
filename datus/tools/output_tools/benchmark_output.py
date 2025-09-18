@@ -89,7 +89,7 @@ class BenchmarkOutputTool(BaseTool):
                 sql_result=input_data.sql_result,
             )
 
-    @optional_traceable
+    @optional_traceable()
     def check_sql(
         self,
         input_data: OutputInput,

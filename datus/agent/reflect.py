@@ -10,7 +10,7 @@ from datus.utils.traceable_utils import optional_traceable
 logger = get_logger(__name__)
 
 
-@optional_traceable
+@optional_traceable()
 def evaluate_with_model(task: SqlTask, node_input: BaseInput, model: LLMBaseModel) -> Dict:
     """
     Use a language model to evaluate SQL execution results.

@@ -31,7 +31,7 @@ def generate_compare_prompt(input_data: CompareInput):
     )
 
 
-@optional_traceable
+@optional_traceable()
 def compare_sql(model: LLMBaseModel, input_data) -> CompareResult:
     """Compare SQL query with expectation using the provided model."""
     if not isinstance(input_data, CompareInput):
@@ -76,7 +76,7 @@ def compare_sql(model: LLMBaseModel, input_data) -> CompareResult:
         )
 
 
-@optional_traceable
+@optional_traceable()
 async def compare_sql_with_mcp_stream(
     model: LLMBaseModel,
     input_data: CompareInput,

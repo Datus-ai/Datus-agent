@@ -18,7 +18,7 @@ from datus.utils.traceable_utils import optional_traceable
 logger = get_logger(__name__)
 
 
-@optional_traceable
+@optional_traceable()
 async def reasoning_sql_with_mcp_stream(
     model: LLMBaseModel,
     input_data: ReasoningInput,
@@ -128,7 +128,7 @@ async def reasoning_sql_with_mcp_stream(
         # Don't fail the entire process, just log the warning
 
 
-@optional_traceable
+@optional_traceable()
 def reasoning_sql_with_mcp(
     model: LLMBaseModel, input_data: ReasoningInput, tools: List[Tool], tool_config: Dict[str, Any]
 ) -> ReasoningResult:

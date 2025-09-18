@@ -9,7 +9,7 @@ from datus.utils.traceable_utils import optional_traceable
 logger = get_logger(__name__)
 
 
-@optional_traceable
+@optional_traceable()
 def autofix_sql(model: LLMBaseModel, input_data: FixInput, docs: list[str]) -> FixResult:
     """Generate SQL query using the provided model."""
     if not isinstance(input_data, FixInput):
