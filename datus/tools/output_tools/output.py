@@ -16,7 +16,7 @@ from datus.utils.traceable_utils import optional_traceable
 logger = get_logger(__name__)
 
 
-class BenchmarkOutputTool(BaseTool):
+class OutputTool(BaseTool):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -31,41 +31,37 @@ class BenchmarkOutputTool(BaseTool):
     ) -> OutputResult:
         target_dir = input_data.output_dir
         os.makedirs(target_dir, exist_ok=True)
-        csv_file = f"{input_data.task_id}.csv"
         if input_data.finished and not input_data.error:
             final_sql_query, final_sql_result = self.check_sql(input_data, sql_connector, model)
-            with (
-                open(os.path.join(target_dir, f"{input_data.task_id}.json"), "w") as json_f,
-                open(os.path.join(target_dir, f"{input_data.task_id}.csv"), "w") as csv_f,
-                open(os.path.join(target_dir, f"{input_data.task_id}.sql"), "w") as sql_f,
-            ):
-                json.dump(
-                    {
-                        "finished": True,
-                        "instance_id": input_data.task_id,
-                        "instruction": input_data.task,
-                        "database_name": input_data.database_name,
-                        "gen_sql": input_data.gen_sql,
-                        "gen_sql_final": final_sql_query,
-                        "sql_result": input_data.sql_result,
-                        "sql_result_final": final_sql_result,
-                        "row_count": input_data.row_count,
-                        "result": csv_file,
-                    },
-                    json_f,
-                    ensure_ascii=False,
-                    indent=4,
+
+            if input_data.file_type == "sql":
+                result_file = save_sql(
+                    target_dir, input_data.task_id, final_sql_query if final_sql_query else input_data.gen_sql
                 )
-                csv_f.write(final_sql_result)
-                sql_f.write(final_sql_query)
-                return OutputResult(
-                    success=True,
-                    output=csv_file,
-                    sql_query=input_data.gen_sql,
-                    sql_result=input_data.sql_result,
-                    sql_query_final=final_sql_query,
-                    sql_result_final=final_sql_result,
+            elif input_data.file_type == "json":
+                result_file = save_json(target_dir, input_data, final_sql_query, final_sql_result)
+            elif input_data.file_type == "csv":
+                result_file = save_csv(
+                    target_dir,
+                    input_data.task_id,
+                    final_sql_result if final_sql_result else input_data.sql_result,
                 )
+            else:
+                result_file = save_csv(
+                    target_dir,
+                    input_data.task_id,
+                    final_sql_result if final_sql_result else input_data.sql_result,
+                )
+                save_sql(target_dir, input_data.task_id, final_sql_query)
+                save_json(target_dir, input_data, final_sql_query, final_sql_result, result_file)
+            return OutputResult(
+                success=True,
+                output=result_file,
+                sql_query=input_data.gen_sql,
+                sql_result=input_data.sql_result,
+                sql_query_final=final_sql_query,
+                sql_result_final=final_sql_result,
+            )
         else:
             with open(os.path.join(target_dir, "result.json"), "w") as f:
                 json.dump(
@@ -142,3 +138,53 @@ class BenchmarkOutputTool(BaseTool):
         except Exception as e:
             logger.error(f"Failed execution based on new sql and results. new_sql=[{final_sql}], error: {e}")
             return input_data.gen_sql, input_data.sql_result
+
+
+def save_sql(target_dir: str, file_name: str, sql_query: str) -> str:
+    sql_file = f"{target_dir}/{file_name}.sql"
+    with open(sql_file, "w") as f:
+        f.write(sql_query)
+    return sql_file
+
+
+def save_csv(target_dir: str, file_name: str, query_result: str) -> str:
+    csv_file = f"{target_dir}/{file_name}.csv"
+    with open(csv_file, "w") as f:
+        f.write(query_result)
+    return csv_file
+
+
+def save_json(
+    target_dir: str,
+    input_data: OutputInput,
+    final_sql: str,
+    final_query_result: str,
+    result_file_name: Optional[str] = None,
+) -> str:
+    json_file = f"{target_dir}/{input_data.task_id}.json"
+    result_json: dict[str, Any] = {
+        "finished": True,
+        "instance_id": input_data.task_id,
+        "database_name": input_data.database_name,
+        "gen_sql": input_data.gen_sql,
+        "result": result_file_name if result_file_name else json_file,
+    }
+    if input_data.gen_sql != final_sql:
+        result_json["gen_sql_final"] = final_sql
+    if input_data.sql_result:
+        result_json["sql_result"] = input_data.sql_result
+        result_json["row_count"] = input_data.row_count
+
+        if input_data.sql_result != final_query_result:
+            result_json["sql_result_final"] = final_query_result
+    if input_data.task:
+        result_json["instruction"] = input_data.task
+
+    with open(json_file, "w") as json_f:
+        json.dump(
+            result_json,
+            json_f,
+            ensure_ascii=False,
+            indent=4,
+        )
+    return json_file

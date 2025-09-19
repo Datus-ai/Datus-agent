@@ -120,7 +120,7 @@ def get_log_manager() -> DynamicLogManager:
     return _log_manager
 
 
-def configure_logging(debug=False, log_dir="logs", console_output=True) -> DynamicLogManager:
+def configure_logging(debug=False, log_dir="~/.datus/logs", console_output=True) -> DynamicLogManager:
     """Configure logging with the specified debug level.
     Args:
         debug: If True, set log level to DEBUG
@@ -168,7 +168,7 @@ def get_logger(name: str) -> structlog.BoundLogger:
     return structlog.get_logger(name)
 
 
-def setup_web_chatbot_logging(debug=False, log_dir="logs"):
+def setup_web_chatbot_logging(debug=False, log_dir="~/.datus/logs"):
     """Setup simplified logging for web chatbot using same format as agent.log
 
     Args:

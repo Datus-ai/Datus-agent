@@ -36,7 +36,13 @@ class ContextSearchTools:
         ]
 
     def search_table_metadata(
-        self, query_text: str, catalog_name: str = "", database_name: str = "", schema_name: str = "", top_n=5
+        self,
+        query_text: str,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        top_n=5,
+        simple_sample_data: bool = True,
     ) -> FuncToolResult:
         """
         Search for database table metadata using natural language queries.
@@ -91,17 +97,26 @@ class ContextSearchTools:
                         "table_type",
                         "definition",
                         "identifier",
+                        "_distance",
                     ]
                 ).to_pylist()
 
             if sample_values:
-                result_dict["sample_data"] = sample_values.select(
-                    [
+                selected_fields = (
+                    ["identifier", "table_type", "sample_rows", "_distance"]
+                    if simple_sample_data
+                    else [
                         "identifier",
+                        "catalog_name",
+                        "database_name",
+                        "schema_name",
                         "table_type",
+                        "table_name",
                         "sample_rows",
+                        "_distance",
                     ]
-                ).to_pylist()
+                )
+                result_dict["sample_data"] = sample_values.select(selected_fields).to_pylist()
             return FuncToolResult(success=1, error=None, result=result_dict)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))

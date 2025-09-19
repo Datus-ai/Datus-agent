@@ -4,7 +4,6 @@ from typing import Any, Dict
 from rich import box
 from rich.syntax import Syntax
 from rich.table import Table
-from rich.text import Text
 from textual import events, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -16,6 +15,7 @@ from textual.widgets._tree import TreeNode
 from textual.worker import get_current_worker
 
 from datus.cli.screen.context_screen import ContextScreen
+from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.storage.sql_history import SqlHistoryRAG
 from datus.utils.loggings import get_logger
 
@@ -230,19 +230,6 @@ class HistoricalSqlScreen(ContextScreen):
         table.add_column("Key", style="bright_cyan", ratio=1)
         table.add_column("Value", style="yellow", justify="left", ratio=3, no_wrap=False)
 
-        tag_colors = [
-            "#4E79A7",
-            "#F28E2B",
-            "#E15759",
-            "#76B7B2",
-            "#59A14F",
-            "#EDC948",
-            "#B07AA1",
-            "#FF9DA7",
-            "#9C755F",
-            "#BAB0AC",
-        ]
-
         # Display all fields from the history_details dictionary
         for key, value in history_details.items():
             display_key = key.replace("_", " ").title()
@@ -251,14 +238,8 @@ class HistoricalSqlScreen(ContextScreen):
                 table.add_row(
                     display_key, Syntax(str(value), "sql", theme="monokai", line_numbers=True, word_wrap=True)
                 )
-            elif key == "tags" and isinstance(value, str) and value:
-                tags = [t.strip() for t in value.split(",")]
-                tags_text = Text()
-                for i, tag in enumerate(tags):
-                    color = tag_colors[i % len(tag_colors)]
-                    tags_text.append(f" {tag} ", style=f"white on {color}")
-                    tags_text.append(" ")
-                table.add_row(display_key, tags_text)
+            elif key == "tags" and value:
+                table.add_row(display_key, build_historical_sql_tags(value))
             elif isinstance(value, (dict, list)):
                 table.add_row(display_key, json.dumps(value, indent=2, ensure_ascii=False))
             else:

@@ -18,8 +18,9 @@ from rich.table import Table
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_history_display import ActionHistoryDisplay
-from datus.schemas.action_history import ActionHistory, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
+from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -131,6 +132,7 @@ class ChatCommands:
                     if sql:
                         # Has SQL: use extracted_output or fallback to response
                         clean_output = extracted_output or response
+                        self.add_in_sql_context(sql, clean_output, incremental_actions)
                     elif isinstance(extracted_output, dict):
                         # No SQL, extracted_output is dict: get raw_output from dict
                         clean_output = extracted_output.get("raw_output", str(extracted_output))
@@ -450,3 +452,38 @@ class ChatCommands:
         except Exception as e:
             logger.error(f"Error listing sessions: {e}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+    def add_in_sql_context(self, sql: str, explanation: str, incremental_actions: List[ActionHistory]):
+        last_sql_action = None
+        for i in range(len(incremental_actions) - 1, -1, -1):
+            action = incremental_actions[i]
+            if (
+                action
+                and action.is_done()
+                and action.role == ActionRole.TOOL
+                and action.function_name() == "read_query"
+            ):
+                last_sql_action = action
+                break
+
+        action_output = last_sql_action.output
+        if not action_output.get("success", "True"):
+            error = action_output.get("error", "") or action_output.get("raw_output", "")
+            sql_return = None
+            row_count = 0
+        else:
+            tool_result = action_output.get("raw_output", {})
+            if tool_result.get("success", 0) == 1:
+                data_result = tool_result.get("result")
+                error = None
+                row_count = data_result.get("original_rows", 0)
+                sql_return = data_result.get("compressed_data", "")
+            else:
+                error = tool_result.get("error", "")
+                sql_return = ""
+                row_count = 0
+
+        sql_context = SQLContext(
+            sql_query=sql, sql_error=error, sql_return=sql_return, row_count=row_count, explanation=explanation
+        )
+        self.cli.cli_context.add_sql_context(sql_context)

@@ -228,7 +228,7 @@ class SemanticMetricsRAG:
         logger.info(f"start to search metrics, metric_where: {metric_where}, query_text: {query_text}")
         metric_search_results = self.metric_storage.search(
             query_txt=query_text,
-            select_fields=["name", "description", "constraint", "sql_query"],
+            select_fields=["name", "description", "constraint", "sql_query", "semantic_model_name"],
             top_n=top_n,
             where=metric_where,
         )
@@ -240,9 +240,9 @@ class SemanticMetricsRAG:
                 semantic_names_set = semantic_search_results["semantic_model_name"].unique()
 
                 return (
-                    metric_search_results.select(["name", "description", "constraint", "sql_query"]).filter(
-                        pc.is_in(metric_search_results["semantic_model_name"], semantic_names_set)
-                    )
+                    metric_search_results.select(
+                        ["name", "description", "constraint", "sql_query", "semantic_model_name"]
+                    ).filter(pc.is_in(metric_search_results["semantic_model_name"], semantic_names_set))
                 ).to_pylist()
             except Exception as e:
                 logger.warning(f"Failed to get the intersection result, exception: {str(e)}")

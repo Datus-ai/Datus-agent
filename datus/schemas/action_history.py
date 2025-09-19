@@ -68,6 +68,12 @@ class ActionHistory(BaseModel):
             status=status,
         )
 
+    def is_done(self) -> bool:
+        return self.status == ActionStatus.SUCCESS or self.status == ActionStatus.FAILED
+
+    def function_name(self) -> str:
+        return "" if not self.input else str(self.input.get("function_name", "unknown"))
+
     class Config:
         use_enum_values = True
 

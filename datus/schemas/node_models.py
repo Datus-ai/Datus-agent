@@ -5,7 +5,7 @@ import os
 import re
 from enum import Enum
 from io import StringIO
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import pyarrow as pa
 from pydantic import BaseModel, Field, field_validator
@@ -570,11 +570,12 @@ class OutputInput(BaseInput):
     gen_sql: str = Field(..., description="The generated SQL")
     sql_result: str = Field(..., description="The result of SQL execution")
     row_count: int = Field(..., description="The number of rows returned")
-    table_schemas: List[TableSchema] = Field(..., description="The schemas of the tables")
+    table_schemas: List[TableSchema] = Field([], description="The schemas of the tables")
     metrics: List[Metric] = Field(default=[], description="The metrics")
     external_knowledge: str = Field(default="", description="The external knowledge")
     prompt_version: str = Field(default="1.0", description="Version for prompt")
     check_result: bool = Field(default=False, description="Whether to check the result of the previous step")
+    file_type: Literal["csv", "sql", "json", "all"] = Field(default="all", description="The output file type")
 
 
 class OutputResult(BaseResult):

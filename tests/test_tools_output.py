@@ -9,7 +9,7 @@ from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import ExecuteSQLInput, OutputInput
 from datus.storage.schema_metadata.store import rag_by_configuration
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
-from datus.tools.output_tools.benchmark_output import BenchmarkOutputTool
+from datus.tools.output_tools.output import OutputTool
 from datus.utils.constants import DBType
 from datus.utils.sql_utils import extract_table_names
 
@@ -57,7 +57,7 @@ class TestBirdDevOutput:
                 task_group[db_name] = []
             task_group[db_name].append(task)
 
-        tool = BenchmarkOutputTool()
+        tool = OutputTool()
         for db_name, tasks in task_group.items():
             sql_connector = SQLiteConnector(db_path=f"{benchmark_path}/dev_databases/{db_name}/{db_name}.sqlite")
             for task in tasks:

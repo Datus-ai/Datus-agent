@@ -1,3 +1,3 @@
-from .benchmark_output import BenchmarkOutputTool
+from .output import OutputTool
 
-__all__ = ["BenchmarkOutputTool"]
+__all__ = ["OutputTool"]
