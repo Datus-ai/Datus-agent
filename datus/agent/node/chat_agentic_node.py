@@ -135,9 +135,7 @@ class ChatAgenticNode(AgenticNode):
         if not action_history_manager:
             action_history_manager = ActionHistoryManager()
 
-        # Check if this is plan mode
         is_plan_mode = getattr(user_input, "plan_mode", False)
-        logger.info(f"ChatAgenticNode: is_plan_mode: {is_plan_mode}")
         if is_plan_mode:
             self.plan_mode_active = True
 
@@ -148,7 +146,7 @@ class ChatAgenticNode(AgenticNode):
 
             console = Console()
             session = self._get_or_create_session()[0]
-            self.plan_hooks = PlanModeHooks(console=console, session=session, plan_message=user_input.user_message)
+            self.plan_hooks = PlanModeHooks(console=console, session=session)
 
         # Create initial action
         action_type = "plan_mode_interaction" if is_plan_mode else "chat_interaction"

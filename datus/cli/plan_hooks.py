@@ -29,20 +29,15 @@ class UserCancelledException(Exception):
 class PlanModeHooks(AgentHooks):
     """Plan Mode hooks for workflow management"""
 
-    def __init__(self, console: Console, session: SQLiteSession, plan_message: str):
+    def __init__(self, console: Console, session: SQLiteSession):
         self.console = console
         self.session = session
-        self.plan_message = plan_message
         from datus.tools.plan_tools import SessionTodoStorage
 
         self.todo_storage = SessionTodoStorage(session)
         self.plan_phase = "generating"
         self.execution_mode = "manual"
-        self.current_step = 0
         self.replan_feedback = ""
-        self.planning_completed = False
-        self.should_continue_execution = True
-        self._user_choice_in_progress = False
         self._state_transitions = []
 
     async def on_agent_start(self, context, agent) -> None:

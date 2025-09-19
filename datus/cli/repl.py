@@ -68,7 +68,6 @@ class DatusCLI:
 
         # Plan mode support
         self.plan_mode_active = False
-        self.pending_plan_message = None
 
         # Setup history
         history_file = Path(args.history_file)
