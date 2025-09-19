@@ -17,6 +17,7 @@ __all__ = [
     "SubworkflowNode",
     "CompareNode",
     "DateParserNode",
+    "CustomizedAgenticNode",
     "Node",
 ]
 
@@ -24,6 +25,7 @@ from datus.agent.node.node import Node
 
 from .begin_node import BeginNode
 from .compare_node import CompareNode
+from .customized_agentic_node import CustomizedAgenticNode
 from .date_parser_node import DateParserNode
 from .doc_search_node import DocSearchNode
 from .execute_sql_node import ExecuteSQLNode
