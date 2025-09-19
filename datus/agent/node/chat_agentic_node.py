@@ -70,7 +70,6 @@ class ChatAgenticNode(AgenticNode):
         self.db_func_tool: DBFuncTool
         self.context_search_tools: ContextSearchTools
         self.plan_mode_active = False
-        self.plan_hooks = None
         self.setup_tools()
 
     def setup_tools(self):
@@ -119,13 +118,6 @@ class ChatAgenticNode(AgenticNode):
             logger.error(f"Error setting up MCP servers: {e}")
 
         return mcp_servers
-
-    def _get_plan_tools(self, session):
-        """Get plan-specific tools."""
-        from datus.tools.plan_tools import PlanTool
-
-        plan_tool = PlanTool(session)
-        return plan_tool.available_tools()
 
     async def execute_stream(
         self, user_input: ChatNodeInput, action_history_manager: Optional[ActionHistoryManager] = None
@@ -224,11 +216,8 @@ class ChatAgenticNode(AgenticNode):
             action_history_manager.add_action(assistant_action)
             yield assistant_action
 
-            logger.info(f"ChatAgenticNode: is_plan_mode: {is_plan_mode}, plan_hooks: {self.plan_hooks}")
-
             # Determine execution mode and start unified recursive execution
             execution_mode = "plan" if is_plan_mode and self.plan_hooks else "normal"
-            logger.info(f"ChatAgenticNode: Starting {execution_mode} mode execution")
 
             # Start unified recursive execution
             async for stream_action in self._execute_with_recursive_replan(
@@ -326,34 +315,63 @@ class ChatAgenticNode(AgenticNode):
             yield final_action
 
         except Exception as e:
-            logger.error(f"Chat execution error: {e}")
+            # Handle user cancellation as success, not error
+            if "User cancelled" in str(e) or "UserCancelledException" in str(type(e).__name__):
+                logger.info("User cancelled execution, stopping gracefully...")
 
-            # Create error result for all exceptions
-            error_result = ChatNodeResult(
-                success=False,
-                error=str(e),
-                response="Sorry, I encountered an error while processing your request.",
-                tokens_used=0,
-            )
+                # Create cancellation result (success=True)
+                result = ChatNodeResult(
+                    success=True,
+                    response="Execution cancelled by user.",
+                    tokens_used=0,
+                )
 
-            # Update action with error
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
-            )
+                # Update action with cancellation
+                action_history_manager.update_current_action(
+                    status=ActionStatus.SUCCESS,
+                    output=result.model_dump(),
+                    messages="Execution cancelled by user",
+                )
 
-            # Create error action
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="error",
-                messages=f"Chat interaction failed: {str(e)}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
+                # Create cancellation action
+                action = ActionHistory.create_action(
+                    role=ActionRole.ASSISTANT,
+                    action_type="user_cancellation",
+                    messages="Execution cancelled by user",
+                    input_data=user_input.model_dump(),
+                    output_data=result.model_dump(),
+                    status=ActionStatus.SUCCESS,
+                )
+            else:
+                logger.error(f"Chat execution error: {e}")
+
+                # Create error result for all other exceptions
+                result = ChatNodeResult(
+                    success=False,
+                    error=str(e),
+                    response="Sorry, I encountered an error while processing your request.",
+                    tokens_used=0,
+                )
+
+                # Update action with error
+                action_history_manager.update_current_action(
+                    status=ActionStatus.FAILED,
+                    output=result.model_dump(),
+                    messages=f"Error: {str(e)}",
+                )
+
+                # Create error action
+                action = ActionHistory.create_action(
+                    role=ActionRole.ASSISTANT,
+                    action_type="error",
+                    messages=f"Chat interaction failed: {str(e)}",
+                    input_data=user_input.model_dump(),
+                    output_data=result.model_dump(),
+                    status=ActionStatus.FAILED,
+                )
+
+            action_history_manager.add_action(action)
+            yield action
 
         finally:
             # Clean up plan mode state
@@ -420,11 +438,7 @@ class ChatAgenticNode(AgenticNode):
                     session=session,
                 ):
                     yield action
-            elif "User cancelled" in str(e):
-                logger.info("User cancelled execution, stopping...")
-                return  # Stop execution gracefully
             else:
-                # Other exceptions propagate up
                 raise
 
     def _get_execution_config(self, execution_mode: str, original_input: "ChatNodeInput") -> dict:
@@ -444,14 +458,14 @@ class ChatAgenticNode(AgenticNode):
             # Plan mode: standard tools + plan tools
             plan_tools = self.plan_hooks.get_plan_tools() if self.plan_hooks else []
 
-            # Add execution workflow to instruction for consistency
+            # Add execution steps to instruction for consistency
             base_instruction = self._get_system_instruction(original_input)
             current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
 
             if current_phase in ["executing", "confirming"]:
                 plan_instruction = (
                     base_instruction
-                    + "\n\nEXECUTION WORKFLOW:\n"
+                    + "\n\nEXECUTION steps:\n"
                     + "For each todo step: todo_update_pending(id) → execute task → todo_update_completed(id)\n"
                     + "Always follow this exact sequence for every step."
                 )
@@ -470,56 +484,6 @@ class ChatAgenticNode(AgenticNode):
         """Get system instruction for normal mode."""
         _, conversation_summary = self._get_or_create_session()
         return self._get_system_prompt(conversation_summary, original_input.prompt_version)
-
-    def _build_plan_prompt(self, original_prompt: str) -> str:
-        """Build enhanced prompt for plan mode based on current phase."""
-        # Check current phase and replan feedback
-        current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
-        logger.info(f"ChatAgenticNode: _build_plan_prompt: current_phase: {current_phase}")
-        replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
-
-        execution_prompt = (
-            "After the plan has been confirmed, execute the pending steps.\n\n"
-            + "WORKFLOW for each pending step:\n"
-            + "1. FIRST: call todo_update_pending(todo_id) to mark step as pending (triggers user confirmation)\n"
-            + "2. then execute the actual task (SQL queries, data processing, etc.)\n"
-            + "3. then call todo_update_completed(todo_id) to mark step as completed\n\n"
-            + "Start with the first pending step in the plan."
-        )
-
-        # Only enter replan mode if we have feedback AND we're still in generating phase
-        if replan_feedback and current_phase == "generating":
-            # REPLAN MODE: Generate revised plan
-            plan_prompt_addition = (
-                "\n\nREPLAN MODE\n"
-                + f"Revise the current plan based on USER FEEDBACK: {replan_feedback}\n\n"
-                + "STEPS:\n"
-                + "1. FIRST: call todo_read to review the current plan, the completed and pending steps\n"
-                + "2. then call todo_write to generate revised plan following these rules:\n"
-                + "   - COMPLETED steps: keep items that were actually executed as 'completed'\n"
-                + "   - PENDING steps that are no longer needed: DISCARD (don't include in new plan)\n"
-                + "   - PENDING steps that are still needed: keep as 'pending' or revise content\n"
-                + "   - NEW steps: add as 'pending'\n"
-                + "3. Only include steps that are actually needed in the revised plan\n"
-                + execution_prompt
-            )
-        elif current_phase == "generating":
-            # INITIAL PLANNING PHASE
-            plan_prompt_addition = (
-                "\n\nPLAN MODE - PLANNING PHASE\n"
-                + "Task: Break down user request into 3-8 steps.\n\n"
-                + "call todo_write to generate complete todo list (3-8 steps)\n"
-                + 'Example: todo_write(\'[{"content": "Connect to database", "status": "pending"}, '
-                + '{"content": "Query data", "status": "pending"}]\')'
-                + execution_prompt
-            )
-        else:
-            # Default fallback
-            plan_prompt_addition = (
-                "\n\nPLAN MODE\n" + "Check todo_read to see current plan status and proceed accordingly."
-            )
-
-        return original_prompt + plan_prompt_addition
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """

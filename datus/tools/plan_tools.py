@@ -67,7 +67,7 @@ class SessionTodoStorage:
         self.session = session
         self._current_todo_list: Optional[TodoList] = None
 
-    async def save_list(self, todo_list: TodoList) -> bool:
+    def save_list(self, todo_list: TodoList) -> bool:
         """Save the todo list to in-memory storage"""
         try:
             self._current_todo_list = todo_list
@@ -77,11 +77,11 @@ class SessionTodoStorage:
             logger.error(f"Failed to save todo list to memory: {e}")
             return False
 
-    async def get_todo_list(self) -> Optional[TodoList]:
+    def get_todo_list(self) -> Optional[TodoList]:
         """Get the todo list from in-memory storage"""
         return self._current_todo_list
 
-    async def clear_all(self) -> None:
+    def clear_all(self) -> None:
         """Clear the todo list from in-memory storage"""
         try:
             self._current_todo_list = None
@@ -89,7 +89,7 @@ class SessionTodoStorage:
         except Exception as e:
             logger.error(f"Failed to clear todo list from memory: {e}")
 
-    async def has_todo_list(self) -> bool:
+    def has_todo_list(self) -> bool:
         """Check if storage has a todo list"""
         return self._current_todo_list is not None
 
@@ -116,9 +116,9 @@ class PlanTool:
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
 
-    async def todo_read(self) -> FuncToolResult:
+    def todo_read(self) -> FuncToolResult:
         """Read the todo list from storage"""
-        todo_list = await self.storage.get_todo_list()
+        todo_list = self.storage.get_todo_list()
 
         if todo_list:
             return FuncToolResult(
@@ -137,7 +137,7 @@ class PlanTool:
                 }
             )
 
-    async def todo_write(self, todos_json: str) -> FuncToolResult:
+    def todo_write(self, todos_json: str) -> FuncToolResult:
         """Create or update the todo list from todo items with explicit status
 
         Args:
@@ -182,7 +182,7 @@ class PlanTool:
                 todo_list.add_item(content)
                 logger.info(f"Added pending step: {content}")
 
-        if await self.storage.save_list(todo_list):
+        if self.storage.save_list(todo_list):
             completed_count = sum(1 for item in todo_list.items if item.status == TodoStatus.COMPLETED)
             return FuncToolResult(
                 result={
@@ -196,7 +196,7 @@ class PlanTool:
         else:
             return FuncToolResult(success=0, error="Failed to save todo list to storage")
 
-    async def todo_update_pending(self, todo_id: str) -> FuncToolResult:
+    def todo_update_pending(self, todo_id: str) -> FuncToolResult:
         """Mark a todo item as 'pending' (about to be executed).
 
         Args:
@@ -205,12 +205,12 @@ class PlanTool:
         Returns:
             FuncToolResult: Success/error status
         """
-        return await self._update_todo_status(todo_id, "pending")
+        return self._update_todo_status(todo_id, "pending")
 
-    async def todo_update_completed(self, todo_id: str) -> FuncToolResult:
+    def todo_update_completed(self, todo_id: str) -> FuncToolResult:
         """Mark a todo item as 'completed' (successfully executed).
 
-        WORKFLOW: todo_update_pending -> [execute task] -> todo_update_completed
+        Execution steps: todo_update_pending -> [execute task] -> todo_update_completed
 
         Args:
             todo_id: The ID of the todo item to mark as completed
@@ -218,12 +218,12 @@ class PlanTool:
         Returns:
             FuncToolResult: Success/error status
         """
-        return await self._update_todo_status(todo_id, "completed")
+        return self._update_todo_status(todo_id, "completed")
 
-    async def todo_update_failed(self, todo_id: str) -> FuncToolResult:
+    def todo_update_failed(self, todo_id: str) -> FuncToolResult:
         """Mark a todo item as 'failed' (execution failed).
 
-        WORKFLOW: todo_update_pending -> [execute task] -> todo_update_failed (if failed)
+        Execution steps: todo_update_pending -> [execute task] -> todo_update_failed (if failed)
 
         Args:
             todo_id: The ID of the todo item to mark as failed
@@ -231,9 +231,9 @@ class PlanTool:
         Returns:
             FuncToolResult: Success/error status
         """
-        return await self._update_todo_status(todo_id, "failed")
+        return self._update_todo_status(todo_id, "failed")
 
-    async def _update_todo_status(
+    def _update_todo_status(
         self, todo_id: str, status: str, execution_output: Optional[str] = None, error_message: Optional[str] = None
     ) -> FuncToolResult:
         """Internal method to update todo item status and optionally save execution result"""
@@ -245,7 +245,7 @@ class PlanTool:
                 success=0, error=f"Invalid status '{status}'. Must be 'completed', 'pending', or 'failed'"
             )
 
-        todo_list = await self.storage.get_todo_list()
+        todo_list = self.storage.get_todo_list()
         if not todo_list:
             return FuncToolResult(success=0, error="No todo list found")
 
@@ -254,7 +254,7 @@ class PlanTool:
             return FuncToolResult(success=0, error=f"Todo item with ID '{todo_id}' not found")
 
         if todo_list.update_item_status(todo_id, status_enum):
-            if await self.storage.save_list(todo_list):
+            if self.storage.save_list(todo_list):
                 updated_item = todo_list.get_item(todo_id)
                 return FuncToolResult(
                     result={

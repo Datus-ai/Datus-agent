@@ -5,10 +5,10 @@ import time
 
 from agents import SQLiteSession
 from agents.lifecycle import AgentHooks
-from langsmith import traceable
 from rich.console import Console
 
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -25,7 +25,7 @@ class UserCancelledException(Exception):
     pass
 
 
-@traceable(name="PlanModeHooks", run_type="chain")
+@optional_traceable(name="PlanModeHooks", run_type="chain")
 class PlanModeHooks(AgentHooks):
     """Plan Mode hooks for workflow management"""
 
@@ -51,19 +51,17 @@ class PlanModeHooks(AgentHooks):
     async def on_start(self, context, agent) -> None:
         logger.info(f"Plan mode start: phase={self.plan_phase}")
 
-    @traceable(name="on_tool_start", run_type="chain")
+    @optional_traceable(name="on_tool_start", run_type="chain")
     async def on_tool_start(self, context, agent, tool) -> None:
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
         logger.info(f"Plan mode tool start: {tool_name}, phase: {self.plan_phase}, mode: {self.execution_mode}")
 
         if tool_name == "todo_update_pending" and self.execution_mode == "manual" and self.plan_phase == "executing":
-            logger.info(f"Plan mode tool start: {tool_name}, phase: {self.plan_phase}, mode: {self.execution_mode}")
             await self._handle_execution_step(tool_name)
 
-    @traceable(name="on_tool_end", run_type="chain")
+    @optional_traceable(name="on_tool_end", run_type="chain")
     async def on_tool_end(self, context, agent, tool, result) -> None:
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
-        logger.info(f"Plan mode tool end: {tool_name}, phase: {self.plan_phase}, result_type: {type(result)}")
 
         if tool_name == "todo_write":
             logger.info("Plan generation completed, transitioning to confirmation")
@@ -78,7 +76,7 @@ class PlanModeHooks(AgentHooks):
     async def on_end(self, context, agent, output) -> None:
         logger.info(f"Plan mode end: phase={self.plan_phase}")
 
-    @traceable(name="on_error", run_type="chain")
+    @optional_traceable(name="on_error", run_type="chain")
     async def on_error(self, context, agent, error) -> None:
         pass
 
@@ -97,21 +95,9 @@ class PlanModeHooks(AgentHooks):
         logger.info(f"Plan mode state transition: {old_state} -> {new_state}")
         return transition_data
 
-    def get_trace_summary(self) -> dict:
-        return {
-            "current_phase": self.plan_phase,
-            "execution_mode": self.execution_mode,
-            "current_step": self.current_step,
-            "state_transitions": self._state_transitions,
-            "replan_requested": self.replan_requested,
-            "planning_completed": self.planning_completed,
-            "should_continue_execution": self.should_continue_execution,
-            "total_transitions": len(self._state_transitions),
-        }
-
-    @traceable(name="_on_plan_generated", run_type="chain")
+    @optional_traceable(name="_on_plan_generated", run_type="chain")
     async def _on_plan_generated(self):
-        todo_list = await self.todo_storage.get_todo_list()
+        todo_list = self.todo_storage.get_todo_list()
         logger.info(f"Plan generation - todo_list: {todo_list.model_dump() if todo_list else None}")
 
         # Clear replan feedback BEFORE transitioning state to ensure prompt updates correctly
@@ -134,7 +120,7 @@ class PlanModeHooks(AgentHooks):
             # Re-raise to be handled by chat_agentic_node.py
             raise
 
-    @traceable(name="_get_user_confirmation", run_type="chain")
+    @optional_traceable(name="_get_user_confirmation", run_type="chain")
     async def _get_user_confirmation(self):
         import asyncio
         import sys
@@ -181,13 +167,13 @@ class PlanModeHooks(AgentHooks):
             self._transition_state("cancelled", {"reason": "keyboard_interrupt"})
             self.console.print("\n[yellow]Plan cancelled[/]")
 
-    @traceable(name="_handle_replan", run_type="chain")
+    @optional_traceable(name="_handle_replan", run_type="chain")
     async def _handle_replan(self):
         try:
             loop = asyncio.get_event_loop()
             feedback = await loop.run_in_executor(None, lambda: input("\nFeedback for replanning: ").strip())
             if feedback:
-                todo_list = await self.todo_storage.get_todo_list()
+                todo_list = self.todo_storage.get_todo_list()
                 completed_items = [item for item in todo_list.items if item.status == "completed"] if todo_list else []
 
                 if completed_items:
@@ -204,14 +190,14 @@ class PlanModeHooks(AgentHooks):
         except (KeyboardInterrupt, EOFError):
             self.console.print("\n[yellow]Replan cancelled[/]")
 
-    @traceable(name="_handle_execution_step", run_type="chain")
+    @optional_traceable(name="_handle_execution_step", run_type="chain")
     async def _handle_execution_step(self, _tool_name: str):
         import asyncio
         import sys
 
         logger.info(f"PlanHooks: _handle_execution_step called with tool: {_tool_name}")
 
-        todo_list = await self.todo_storage.get_todo_list()
+        todo_list = self.todo_storage.get_todo_list()
         logger.info(f"PlanHooks: Retrieved todo list with {len(todo_list.items) if todo_list else 0} items")
 
         if not todo_list:
@@ -307,7 +293,7 @@ class PlanModeHooks(AgentHooks):
                     elif choice == "4":
                         self._transition_state("cancelled", {"step": current_item.content, "user_choice": choice})
                         self.console.print("[yellow]Execution cancelled[/]")
-                        return
+                        raise UserCancelledException("User cancelled execution")
                     else:
                         self.console.print(f"[red]Invalid choice '{choice}'. Please enter 1, 2, 3, or 4.[/]")
 

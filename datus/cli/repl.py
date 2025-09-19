@@ -198,9 +198,9 @@ class DatusCLI:
     def _get_prompt_text(self):
         """Get the current prompt text based on mode"""
         if self.plan_mode_active:
-            return "[PLAN MODE] Datus-sql> "
+            return "[PLAN MODE] Datus> "
         else:
-            return "Datus-sql> "
+            return "Datus> "
 
     def _update_prompt(self):
         """Update the prompt display (called when mode changes)"""

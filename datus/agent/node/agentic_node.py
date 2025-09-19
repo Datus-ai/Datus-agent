@@ -24,14 +24,6 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-class Plan:
-    """Placeholder for future plan implementation."""
-
-    def __init__(self):
-        self.steps = []
-        self.current_step = 0
-
-
 class AgenticNode(ABC):
     """
     Base agentic node that provides session-based, streaming interactions
@@ -58,7 +50,7 @@ class AgenticNode(ABC):
         self.tools = tools or []
         self.mcp_servers = mcp_servers or {}
         self.agent_config = agent_config
-        self.plan = Plan()
+        self.plan_hooks = None
         self.actions: List[ActionHistory] = []
         self.session_id: Optional[str] = None
         self._session: Optional[SQLiteSession] = None
@@ -166,6 +158,55 @@ class AgenticNode(ABC):
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
             ) from e
+
+    def _build_plan_prompt(self, original_prompt: str) -> str:
+        """Build enhanced prompt for plan mode based on current phase."""
+        # Check current phase and replan feedback
+        current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
+        replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
+
+        execution_prompt = (
+            "After the plan has been confirmed, execute the pending steps.\n\n"
+            + "Execution steps for each pending step:\n"
+            + "1. FIRST: call todo_update_pending(todo_id) to mark step as pending (triggers user confirmation)\n"
+            + "2. then execute the actual task (SQL queries, data processing, etc.)\n"
+            + "3. then call todo_update_completed(todo_id) to mark step as completed\n\n"
+            + "Start with the first pending step in the plan."
+        )
+
+        # Only enter replan mode if we have feedback AND we're still in generating phase
+        if replan_feedback and current_phase == "generating":
+            # REPLAN MODE: Generate revised plan
+            plan_prompt_addition = (
+                "\n\nREPLAN MODE\n"
+                + f"Revise the current plan based on USER FEEDBACK: {replan_feedback}\n\n"
+                + "STEPS:\n"
+                + "1. FIRST: call todo_read to review the current plan, the completed and pending steps\n"
+                + "2. then call todo_write to generate revised plan following these rules:\n"
+                + "   - COMPLETED steps(if there are any): keep items as 'completed'\n"
+                + "   - PENDING steps that are no longer needed: DISCARD (don't include in new plan)\n"
+                + "   - PENDING steps that are still needed: keep as 'pending' or revise content\n"
+                + "   - NEW steps(if there are any): add as 'pending'\n"
+                + "3. Only include steps that are actually needed in the revised plan\n"
+                + execution_prompt
+            )
+        elif current_phase == "generating":
+            # INITIAL PLANNING PHASE
+            plan_prompt_addition = (
+                "\n\nPLAN MODE - PLANNING PHASE\n"
+                + "Task: Break down user request into 3-8 steps.\n\n"
+                + "call todo_write to generate complete todo list (3-8 steps)\n"
+                + 'Example: todo_write(\'[{"content": "Connect to database", "status": "pending"}, '
+                + '{"content": "Query data", "status": "pending"}]\')'
+                + execution_prompt
+            )
+        else:
+            # Default fallback
+            plan_prompt_addition = (
+                "\n\nPLAN MODE\n" + "Check todo_read to see current plan status and proceed accordingly."
+            )
+
+        return original_prompt + plan_prompt_addition
 
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
