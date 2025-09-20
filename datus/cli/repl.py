@@ -874,7 +874,7 @@ Type '.help' for a list of commands or '.exit' to quit.
         else:
             self.console.print("[yellow]Warning: No database connection initialized.[/]")
 
-    def _prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
+    def prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
         """
         Unified input method using prompt_toolkit to avoid conflicts with rich.Prompt.ask().
 

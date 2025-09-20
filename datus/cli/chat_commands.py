@@ -182,7 +182,7 @@ class ChatCommands:
         if hasattr(self.cli, "streamlit_mode") and self.cli.streamlit_mode:
             choice = "n"  # Auto-skip in Streamlit mode
         else:
-            choice = self.cli._prompt_input(
+            choice = self.cli.prompt_input(
                 "Would you like to check the details?",
                 choices=["y", "n"],
                 default="y",

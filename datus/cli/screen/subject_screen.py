@@ -460,7 +460,6 @@ class SubjectScreen(ContextScreen):
 
         table.add_column("Key", style="bright_cyan", ratio=1)
         table.add_column("Value", style="yellow", justify="left", ratio=3, no_wrap=False)
-        logger.info(f"$$$$, {semantic_details}")
         # Add basic properties
         table.add_row("Semantic Model Name", semantic_details.get("semantic_model_name", "N/A"))
         table.add_row("Domain", semantic_details.get("domain", "N/A"))
@@ -503,7 +502,6 @@ class SubjectScreen(ContextScreen):
         table.add_column("Description", style="bright_magenta", min_width=10, max_width=30)
         table.add_column("Constraint", style="yellow", min_width=15)
         table.add_column("SQL", min_width=10, max_width=30, overflow="fold")
-        logger.info(f"$$$$, {metrics}")
 
         # Batch add rows for better performance
         for idx, metric in enumerate(metrics):

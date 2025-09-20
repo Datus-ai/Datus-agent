@@ -6,7 +6,7 @@ This module provides a class to handle all agent-related commands.
 import asyncio
 import os.path
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 from rich.prompt import Confirm
 from rich.syntax import Syntax
@@ -78,11 +78,11 @@ class AgentCommands:
 
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
             if not task_text:
-                task_text = sql_task.task or self.cli._prompt_input(
+                task_text = sql_task.task or self.cli.prompt_input(
                     "Enter task description for schema linking", default=""
                 )
-            top_n = self.cli._prompt_input("Enter number of tables to link", default="5")
-            matching_rate = self.cli._prompt_input(
+            top_n = self.cli.prompt_input("Enter number of tables to link", default="5")
+            matching_rate = self.cli.prompt_input(
                 "Enter matching method",
                 choices=["fast", "medium", "slow", "from_llm"],
                 default="fast",
@@ -99,7 +99,7 @@ class AgentCommands:
             task_text = (
                 task_text
                 or sql_task.task
-                or self.cli._prompt_input("Enter task description for SQL generation", default="")
+                or self.cli.prompt_input("Enter task description for SQL generation", default="")
             )
             return GenerateSQLInput(
                 input_text=task_text,
@@ -115,13 +115,13 @@ class AgentCommands:
             if not last_sql:
                 self.console.print("[bold red]Error:[/] No recent SQL to fix")
                 return None
-            fix_description = self.cli._prompt_input("Describe the issue to fix", default="")
+            fix_description = self.cli.prompt_input("Describe the issue to fix", default="")
             return ExecuteSQLInput(
                 sql_query=last_sql, sql_task=sql_task, database_type=sql_task.database_type, expectation=fix_description
             )
 
         elif node_type == NodeType.TYPE_REASONING:
-            sql_query = self.cli._prompt_input(
+            sql_query = self.cli.prompt_input(
                 "Enter SQL query to reason about", default=self.cli_context.get_last_sql() or ""
             )
             return ReasoningInput(
@@ -146,7 +146,7 @@ class AgentCommands:
             )
 
         elif node_type == NodeType.TYPE_COMPARE:
-            expectation = self.cli._prompt_input("Enter expectation (SQL query or expected data format)", default="")
+            expectation = self.cli.prompt_input("Enter expectation (SQL query or expected data format)", default="")
             if not expectation.strip():
                 self.console.print("[bold red]Error:[/] Expectation cannot be empty")
                 return None
@@ -283,11 +283,11 @@ class AgentCommands:
                 external_knowledge = ""
                 current_date = ""
             else:  # If no input, use a prompt to get the task info
-                task_id = self.cli._prompt_input("Enter task ID", default=task_id)
+                task_id = self.cli.prompt_input("Enter task ID", default=task_id)
 
                 # Use existing task description as default if available
                 default_task = self.cli_context.current_sql_task.task if self.cli_context.current_sql_task else ""
-                task_description = self.cli._prompt_input("Enter task description", default=default_task)
+                task_description = self.cli.prompt_input("Enter task description", default=default_task)
                 if not task_description.strip():
                     self.console.print("[bold red]Error:[/] Task description is required")
                     return
@@ -298,7 +298,7 @@ class AgentCommands:
                     or (self.cli.args.db_path if hasattr(self.cli.args, "db_path") else "")
                     or ""
                 )
-                database_name = self.cli._prompt_input("Enter database name", default=default_db)
+                database_name = self.cli.prompt_input("Enter database name", default=default_db)
                 if not database_name.strip():
                     self.console.print("[bold red]Error:[/] Database name is required")
                     return
@@ -307,10 +307,10 @@ class AgentCommands:
                 output_dir = "output"
 
                 # External knowledge - optional input
-                external_knowledge = self.cli._prompt_input("Enter external knowledge (optional)", default="")
+                external_knowledge = self.cli.prompt_input("Enter external knowledge (optional)", default="")
 
                 # Current date - optional input for relative time expressions
-                current_date = self.cli._prompt_input("Enter current date (optional, e.g., '2025-07-01')", default="")
+                current_date = self.cli.prompt_input("Enter current date (optional, e.g., '2025-07-01')", default="")
 
             # Create the SQL task
             sql_task = SqlTask(
@@ -377,23 +377,13 @@ class AgentCommands:
         Command to perform schema linking. Corresponds to !sl
         """
         self.console.print("[bold blue]Schema Linking[/]")
-        input_text = args.strip() or self.cli._prompt_input("Enter search text for tables")
+        input_text = args.strip() or self.cli.prompt_input("Enter search text for tables")
         if not input_text:
             self.console.print("[bold red]Error:[/] Input text cannot be empty.")
             return
 
-        dialect = self.cli.db_connector.dialect
-        catalog_name, database_name, schema_name = "", "", ""
-
-        if DBType.support_catalog(dialect):
-            catalog_name = self.cli._prompt_input("Enter catalog name", default=self.cli_context.current_catalog or "")
-        if DBType.SQLITE == dialect or DBType.support_database(dialect):
-            database_name = self.cli._prompt_input(
-                "Enter database name", default=self.cli_context.current_db_name or ""
-            )
-        if DBType.support_schema(dialect):
-            schema_name = self.cli._prompt_input("Enter schema name", default=self.cli_context.current_schema or "")
-        top_n = self.cli._prompt_input("Enter top_n to match", default="5")
+        catalog_name, database_name, schema_name = self._prompt_db_layers()
+        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
 
         # The tool's search_similar seems to handle table_type internally.
         # The PDF mentions table_type, but the tool implementation has it fixed to "full".
@@ -432,6 +422,19 @@ class AgentCommands:
         else:
             self.console.print("[yellow]No relevant tables found.[/]")
 
+    def _prompt_db_layers(self) -> Tuple[str, str, str]:
+        dialect = self.cli.db_connector.dialect
+        catalog_name, database_name, schema_name = "", "", ""
+
+        if DBType.support_catalog(dialect):
+            catalog_name = self.cli.prompt_input("Enter catalog name", default=self.cli_context.current_catalog or "")
+        if DBType.SQLITE == dialect or DBType.support_database(dialect):
+            database_name = self.cli.prompt_input("Enter database name", default=self.cli_context.current_db_name or "")
+        if DBType.support_schema(dialect):
+            schema_name = self.cli.prompt_input("Enter schema name", default=self.cli_context.current_schema or "")
+
+        return catalog_name, database_name, schema_name
+
     def _print_metadata_table(
         self, data_list: List[Dict[str, Any]], data_column: str, data_column_dsc: str = "", lexer: str = "sql"
     ):
@@ -466,27 +469,16 @@ class AgentCommands:
         Command to search for metrics. Corresponds to !sm
         """
         self.console.print("[bold blue]Search Metrics[/]")
-        input_text = args.strip() or self.cli._prompt_input("Enter search text for metrics")
+        input_text = args.strip() or self.cli.prompt_input("Enter search text for metrics")
         if not input_text:
             self.console.print("[bold red]Error:[/] Input text cannot be empty.")
             return
 
-        domain = self.cli._prompt_input("Enter domain (optional)")
-        layer1 = self.cli._prompt_input("Enter layer1 (optional)")
-        layer2 = self.cli._prompt_input("Enter layer2 (optional)")
+        domain, layer1, layer2 = self._prompt_logic_layer()
 
-        dialect = self.cli.db_connector.dialect
-        catalog_name, database_name, schema_name = "", "", ""
+        catalog_name, database_name, schema_name = self._prompt_db_layers()
 
-        if DBType.support_catalog(dialect):
-            catalog_name = self.cli._prompt_input("Enter catalog name", default=self.cli_context.current_catalog or "")
-        if dialect == DBType.SQLITE or DBType.support_database(dialect):
-            database_name = self.cli._prompt_input(
-                "Enter database name", default=self.cli_context.current_db_name or ""
-            )
-        if DBType.support_schema(dialect):
-            schema_name = self.cli._prompt_input("Enter schema name", default=self.cli_context.current_schema or "")
-        top_n = self.cli._prompt_input("Enter top_n to match", default="5")
+        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
 
         with self.console.status("[bold green]Searching for metrics...[/]"):
             result = self.context_search_tools.search_metrics(
@@ -527,20 +519,24 @@ class AgentCommands:
         else:
             self.console.print("[yellow]No metrics found.[/]")
 
+    def _prompt_logic_layer(self) -> Tuple[str, str, str]:
+        domain = self.cli.prompt_input("Enter domain (optional)")
+        layer1 = self.cli.prompt_input("Enter layer1 (optional)")
+        layer2 = self.cli.prompt_input("Enter layer2 (optional)")
+        return domain, layer1, layer2
+
     def cmd_search_history(self, args: str):
         """
         Command to search historical SQL queries. Corresponds to !sh
         """
         self.console.print("[bold blue]Search SQL History[/]")
-        input_text = args.strip() or self.cli._prompt_input("Enter search text for SQL history")
+        input_text = args.strip() or self.cli.prompt_input("Enter search text for SQL history")
         if not input_text:
             self.console.print("[bold red]Error:[/] Input text cannot be empty.")
             return
 
-        domain = self.cli._prompt_input("Enter domain (optional)")
-        layer1 = self.cli._prompt_input("Enter layer1 (optional)")
-        layer2 = self.cli._prompt_input("Enter layer2 (optional)")
-        top_n = self.cli._prompt_input("Enter top_n to match", default="5")
+        domain, layer1, layer2 = self._prompt_logic_layer()
+        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
         with self.console.status("[bold green]Searching SQL history...[/]"):
             result = self.context_search_tools.search_historical_sql(
                 query_text=input_text, domain=domain, layer1=layer1, layer2=layer2, top_n=int(top_n.strip())
@@ -596,15 +592,15 @@ class AgentCommands:
             self.console.print("[bold red]Error:[/] No previous result to save.")
             return
 
-        file_type = self.cli._prompt_input(
+        file_type = self.cli.prompt_input(
             "Enter file type (json/csv/sql/all)", default="all", choices=["json", "csv", "sql", "all"]
         )
-        target_dir = self.cli._prompt_input(
+        target_dir = self.cli.prompt_input(
             "Enter output directory (optional)", default=os.path.expanduser("~/.datus/output")
         )
         from datetime import datetime
 
-        file_name = self.cli._prompt_input("Enter file name(optional)", default=datetime.now().strftime("%Y%m%d%H%M%S"))
+        file_name = self.cli.prompt_input("Enter file name(optional)", default=datetime.now().strftime("%Y%m%d%H%M%S"))
         try:
             with self.console.status("[bold green]Saving SQL...[/]"):
                 if not self.output_tool:
@@ -632,15 +628,15 @@ class AgentCommands:
 
     def _modify_input(self, input: BaseInput):
         if isinstance(input, SchemaLinkingInput):
-            top_n = self.cli._prompt_input("Enter number of tables to link", default="5")
+            top_n = self.cli.prompt_input("Enter number of tables to link", default="5")
             input.top_n = int(top_n.strip())
-            matching_rate = self.cli._prompt_input(
+            matching_rate = self.cli.prompt_input(
                 "Enter matching method",
                 choices=["fast", "medium", "slow", "from_llm"],
                 default="fast",
             )
             input.matching_rate = matching_rate.strip()
-            database_name = self.cli._prompt_input("Enter database name", default=input.database_name)
+            database_name = self.cli.prompt_input("Enter database name", default=input.database_name)
             input.database_name = database_name.strip()
         elif isinstance(input, GenerateSQLInput):
             pass
@@ -655,7 +651,7 @@ class AgentCommands:
                     self.console.print(f"\n[bold]Context {i + 1}:[/]")
                     self.console.print(sql_context.to_dict())
 
-                sql_context_id = self.cli._prompt_input(
+                sql_context_id = self.cli.prompt_input(
                     "Enter SQL context ID", default=str(len(self.workflow.context.sql_contexts))
                 )
                 try:
@@ -672,51 +668,51 @@ class AgentCommands:
                 self.console.print("[bold red]Error:[/] No SQL context available")
         elif isinstance(input, GenerateMetricsInput):
             # Allow user to modify task, sql_query and prompt version
-            task = self.cli._prompt_input("Enter task description", default=input.sql_task.task)
+            task = self.cli.prompt_input("Enter task description", default=input.sql_task.task)
             input.sql_task.task = task.strip()
             if not input.sql_task.task.strip():
                 self.console.print("[bold red]Error:[/] Task description is required")
                 return
-            sql_query = self.cli._prompt_input("Enter SQL query to generate metrics from", default=input.sql_query)
+            sql_query = self.cli.prompt_input("Enter SQL query to generate metrics from", default=input.sql_query)
             input.sql_query = sql_query.strip()
             if not input.sql_query.strip():
                 self.console.print("[bold red]Error:[/] SQL query is required")
                 return
-            prompt_version = self.cli._prompt_input("Enter prompt version", default=input.prompt_version)
+            prompt_version = self.cli.prompt_input("Enter prompt version", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()
         elif isinstance(input, GenerateSemanticModelInput):
             # Allow user to modify table name
-            table_name = self.cli._prompt_input(
+            table_name = self.cli.prompt_input(
                 "Enter table name to generate semantic model from", default=input.table_name
             )
             input.table_name = table_name.strip()
 
             # Interactive prompts for metadata (now using sql_task fields)
             self.console.print("[bold blue]Semantic Model Metadata:[/]")
-            catalog_name = self.cli._prompt_input("Enter catalog name", default=input.sql_task.catalog_name)
+            catalog_name = self.cli.prompt_input("Enter catalog name", default=input.sql_task.catalog_name)
             input.sql_task.catalog_name = catalog_name.strip()
 
-            database_name = self.cli._prompt_input("Enter database name", default=input.sql_task.database_name)
+            database_name = self.cli.prompt_input("Enter database name", default=input.sql_task.database_name)
             input.sql_task.database_name = database_name.strip()
 
-            schema_name = self.cli._prompt_input("Enter schema name", default=input.sql_task.schema_name)
+            schema_name = self.cli.prompt_input("Enter schema name", default=input.sql_task.schema_name)
             input.sql_task.schema_name = schema_name.strip()
 
-            layer1 = self.cli._prompt_input("Enter layer1 (business layer)", default=input.sql_task.layer1)
+            layer1 = self.cli.prompt_input("Enter layer1 (business layer)", default=input.sql_task.layer1)
             input.sql_task.layer1 = layer1.strip()
 
-            layer2 = self.cli._prompt_input("Enter layer2 (sub-layer)", default=input.sql_task.layer2)
+            layer2 = self.cli.prompt_input("Enter layer2 (sub-layer)", default=input.sql_task.layer2)
             input.sql_task.layer2 = layer2.strip()
 
-            domain = self.cli._prompt_input("Enter domain", default=input.sql_task.domain)
+            domain = self.cli.prompt_input("Enter domain", default=input.sql_task.domain)
             input.sql_task.domain = domain.strip()
 
-            prompt_version = self.cli._prompt_input("Enter prompt version", default=input.prompt_version)
+            prompt_version = self.cli.prompt_input("Enter prompt version", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()
         elif isinstance(input, CompareInput):
             # Allow user to modify expectation
             if not input.expectation:
-                expectation = self.cli._prompt_input("Enter expectation (SQL query or expected data)", default="")
+                expectation = self.cli.prompt_input("Enter expectation (SQL query or expected data)", default="")
                 input.expectation = expectation.strip()
 
     def cmd_gen(self, args: str):
@@ -896,7 +892,7 @@ class AgentCommands:
             # 3. Human confirmation
             if need_confirm:
                 while True:
-                    choice = self.cli._prompt_input(
+                    choice = self.cli.prompt_input(
                         "Do you want to execute this node? yes/no/edit",
                         choices=["y", "n", "e"],
                         default="y",
@@ -1084,9 +1080,7 @@ class AgentCommands:
                 if hasattr(self.cli, "streamlit_mode") and self.cli.streamlit_mode:
                     show_details = "n"  # Auto-skip in Streamlit mode
                 else:
-                    show_details = (
-                        self.cli._prompt_input("Show Full Action History? (y/N)", default="n").strip().lower()
-                    )
+                    show_details = self.cli.prompt_input("Show Full Action History? (y/N)", default="n").strip().lower()
 
                 if show_details == "y":
                     self.console.print("\n[bold blue]Full Action History:[/]")
