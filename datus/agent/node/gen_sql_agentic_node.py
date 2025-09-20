@@ -1,9 +1,9 @@
 """
-CustomizedAgenticNode implementation for flexible configuration-based interactions.
+GenSQLAgenticNode implementation for SQL generation with enhanced configuration.
 
-This module provides a concrete implementation of AgenticNode that supports
-flexible configuration through agent.yml for system prompts, tools, MCP servers,
-and custom rules.
+This module provides a specialized implementation of AgenticNode focused on
+SQL generation with support for limited context, enhanced template variables,
+and flexible configuration through agent.yml.
 """
 
 import os
@@ -14,7 +14,7 @@ from agents.mcp import MCPServerStdio
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.customized_agentic_node_models import CustomizedNodeInput, CustomizedNodeResult
+from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.tools.context_search import ContextSearchTools
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.mcp_server import MCPServer
@@ -24,15 +24,15 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-class CustomizedAgenticNode(AgenticNode):
+class GenSQLAgenticNode(AgenticNode):
     """
-    Customized agentic node with flexible configuration support.
+    SQL generation agentic node with enhanced configuration and limited context support.
 
-    This node provides configurable capabilities with:
-    - Custom system prompts and prompt versions
-    - Configurable tool sets (db_tools, filesystem_tools, etc.)
-    - MCP server integration (MetricFlow, etc.)
-    - Custom rules and language support
+    This node provides specialized SQL generation capabilities with:
+    - Enhanced system prompt with template variables
+    - Limited context support (tables, metrics, sql_history)
+    - Tool detection and dynamic template preparation
+    - Configurable tool sets and MCP server integration
     - Session-based conversation management
     """
 
@@ -43,18 +43,15 @@ class CustomizedAgenticNode(AgenticNode):
         max_turns: int = 30,
     ):
         """
-        Initialize the CustomizedAgenticNode.
+        Initialize the GenSQLAgenticNode.
 
         Args:
-            node_name: Name of the node configuration in agent.yml
+            node_name: Name of the node configuration in agent.yml (e.g., "chatbot", "gen_sql")
             agent_config: Agent configuration
             max_turns: Maximum conversation turns per interaction
         """
         self.configured_node_name = node_name
         self.max_turns = max_turns
-
-        # Parse node configuration from agent.yml
-        self.node_config = self._parse_node_config(agent_config, node_name)
 
         # Initialize MCP servers based on configuration
         self.mcp_servers = self._setup_mcp_servers(agent_config)
@@ -70,63 +67,17 @@ class CustomizedAgenticNode(AgenticNode):
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.setup_tools()
 
-    def _parse_node_config(self, agent_config: Optional[AgentConfig], node_name: str) -> dict:
-        """
-        Parse node configuration from agent.yml.
-
-        Args:
-            agent_config: Agent configuration
-            node_name: Name of the node configuration
-
-        Returns:
-            Dictionary containing node configuration
-        """
-        if not agent_config or not hasattr(agent_config, "nodes"):
-            return {}
-
-        nodes_config = agent_config.nodes
-        if node_name not in nodes_config:
-            logger.warning(f"Node configuration '{node_name}' not found in agent.yml")
-            return {}
-
-        node_config = nodes_config[node_name]
-
-        # Extract configuration attributes
-        config = {}
-
-        # Basic node config attributes
-        if hasattr(node_config, "model"):
-            config["model"] = node_config.model
-        if hasattr(node_config, "system_prompt"):
-            config["system_prompt"] = node_config.system_prompt
-        if hasattr(node_config, "prompt_version"):
-            config["prompt_version"] = node_config.prompt_version
-        if hasattr(node_config, "prompt_language"):
-            config["prompt_language"] = node_config.prompt_language
-        if hasattr(node_config, "tools"):
-            config["tools"] = node_config.tools
-        if hasattr(node_config, "mcp"):
-            config["mcp"] = node_config.mcp
-        if hasattr(node_config, "rules"):
-            config["rules"] = node_config.rules
-        if hasattr(node_config, "max_turns"):
-            config["max_turns"] = node_config.max_turns
-            self.max_turns = node_config.max_turns
-
-        logger.info(f"Parsed node configuration for '{node_name}': {config}")
-        return config
-
     def get_node_name(self) -> str:
         """
-        Get the configured node name for this customized agentic node.
+        Get the configured node name for this SQL generation agentic node.
 
         Returns:
-            The configured node name (e.g., "gen_metrics")
+            The configured node name from agent.yml (e.g., "chatbot", "gen_sql")
         """
         return self.configured_node_name
 
     def setup_tools(self):
-        """Setup tools based on configuration."""
+        """Setup tools based on configuration patterns (e.g., db_tools.*, context_search_tools.*)."""
         if not self.agent_config:
             logger.warning("No agent config available, skipping tool setup")
             return
@@ -139,19 +90,16 @@ class CustomizedAgenticNode(AgenticNode):
 
         self.tools = []
 
-        # Parse comma-separated tool names
-        tool_names = [name.strip() for name in tools_config.split(",") if name.strip()]
+        # Parse comma-separated tool patterns
+        tool_patterns = [pattern.strip() for pattern in tools_config.split(",") if pattern.strip()]
 
-        for tool_name in tool_names:
-            if tool_name == "db_tools":
+        for tool_pattern in tool_patterns:
+            if tool_pattern in ["db_tools", "db_tools.*"]:
                 self._setup_db_tools()
-            elif tool_name == "filesystem_tools":
-                # Filesystem tools are handled via MCP servers
-                logger.debug("Filesystem tools configured via MCP servers")
-            elif tool_name == "context_search_tools":
+            elif tool_pattern in ["context_search_tools", "context_search_tools.*"]:
                 self._setup_context_search_tools()
             else:
-                logger.warning(f"Unknown tool name: {tool_name}")
+                logger.warning(f"Unknown tool pattern: {tool_pattern}")
 
         logger.info(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
@@ -188,52 +136,155 @@ class CustomizedAgenticNode(AgenticNode):
         mcp_servers = {}
 
         try:
-            # Add filesystem MCP server (always available)
-            root_path = "."
-            if agent_config and hasattr(agent_config, "workspace_root"):
-                workspace_root = agent_config.workspace_root
-                if workspace_root is not None:
-                    root_path = workspace_root
-
-            # Handle relative vs absolute paths
-            if root_path and os.path.isabs(root_path):
-                filesystem_path = root_path
-            else:
-                filesystem_path = os.path.join(os.getcwd(), root_path)
-
-            filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
-            if filesystem_server:
-                mcp_servers["filesystem"] = filesystem_server
-                logger.info(f"Added filesystem MCP server at path: {filesystem_path}")
-            else:
-                logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
-
             # Add configured MCP servers
             mcp_config = self.node_config.get("mcp", "")
             if mcp_config:
-                mcp_names = [name.strip() for name in mcp_config.split(",") if name.strip()]
-                for mcp_name in mcp_names:
-                    if mcp_name.startswith("metricflow_mcp"):
-                        # Handle MetricFlow MCP server
-                        try:
-                            metricflow_server = MCPServer.get_metricflow_mcp_server()
-                            if metricflow_server:
-                                mcp_servers[mcp_name] = metricflow_server
-                                logger.info(f"Added MetricFlow MCP server: {mcp_name}")
-                            else:
-                                logger.warning(f"Failed to create MetricFlow MCP server: {mcp_name}")
-                        except Exception as e:
-                            logger.error(f"Error setting up MetricFlow MCP server {mcp_name}: {e}")
+                mcp_patterns = [pattern.strip() for pattern in mcp_config.split(",") if pattern.strip()]
+                for mcp_pattern in mcp_patterns:
+                    if mcp_pattern in ["filesystem_mcp", "filesystem_mcp.*"]:
+                        # Handle filesystem MCP server
+                        root_path = "."
+                        if agent_config and hasattr(agent_config, "workspace_root"):
+                            workspace_root = agent_config.workspace_root
+                            if workspace_root is not None:
+                                root_path = workspace_root
+
+                        # Handle relative vs absolute paths
+                        if root_path and os.path.isabs(root_path):
+                            filesystem_path = root_path
+                        else:
+                            filesystem_path = os.path.join(os.getcwd(), root_path)
+
+                        filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
+                        if filesystem_server:
+                            mcp_servers["filesystem"] = filesystem_server
+                            logger.info(f"Added filesystem MCP server at path: {filesystem_path}")
+                        else:
+                            logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
                     else:
-                        logger.warning(f"Unknown MCP server type: {mcp_name}")
+                        logger.warning(f"Unknown MCP server pattern: {mcp_pattern}")
 
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
 
         return mcp_servers
 
+    def _prepare_template_context(self, user_input: GenSQLNodeInput) -> dict:
+        """
+        Prepare template context variables for the gen_sql_system template.
+
+        Args:
+            user_input: User input containing limited context settings
+
+        Returns:
+            Dictionary of template variables
+        """
+        context = {}
+
+        # Tool detection flags
+        context["has_db_tools"] = bool(self.db_func_tool)
+        context["has_mcp_filesystem"] = "filesystem" in self.mcp_servers
+        context["has_mf_tools"] = any("metricflow" in k for k in self.mcp_servers.keys())
+        context["has_context_search_tools"] = bool(self.context_search_tools)
+
+        # Tool name lists for template display
+        context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
+        context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
+
+        # Limited context support
+        context["limited_context"] = user_input.limited_context if user_input.limited_context else False
+
+        if context["limited_context"]:
+            # Filter and format limited context data
+            context["tables"] = ", ".join(user_input.limited_tables) if user_input.limited_tables else "None"
+            context["metrics"] = ", ".join(user_input.limited_metrics) if user_input.limited_metrics else "None"
+            context["sql_history"] = (
+                ", ".join(user_input.limited_sql_history) if user_input.limited_sql_history else "None"
+            )
+
+        # Add rules from configuration
+        context["rules"] = self.node_config.get("rules", [])
+
+        # Add agent description from configuration or input
+        context["agent_description"] = user_input.agent_description or self.node_config.get("agent_description", "")
+
+        # Add namespace and workspace info
+        if self.agent_config:
+            context["namespace"] = getattr(self.agent_config, "current_namespace", None)
+            context["workspace_root"] = getattr(self.agent_config, "workspace_root", None)
+
+        logger.debug(f"Prepared template context: {context}")
+        return context
+
+    def _get_system_prompt(
+        self,
+        conversation_summary: Optional[str] = None,
+        prompt_version: Optional[str] = None,
+        template_context: Optional[dict] = None,
+    ) -> str:
+        """
+        Get the system prompt for this SQL generation node using enhanced template context.
+
+        Args:
+            conversation_summary: Optional summary from previous conversation compact
+            prompt_version: Optional prompt version to use, overrides agent config version
+            template_context: Optional template context variables
+
+        Returns:
+            System prompt string loaded from the template
+        """
+        # Get prompt version from parameter, fallback to node config, then agent config
+        version = prompt_version
+        if version is None:
+            version = self.node_config.get("prompt_version")
+        if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
+            version = self.agent_config.prompt_version
+
+        root_path = "."
+        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
+            root_path = self.agent_config.workspace_root
+
+        # Construct template name: {node_name}_system_{version}
+        template_name = f"{self.get_node_name()}_system"
+
+        try:
+            # Prepare template variables
+            template_vars = {
+                "agent_config": self.agent_config,
+                "namespace": getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
+                "workspace_root": root_path,
+                "conversation_summary": conversation_summary,
+            }
+
+            # Add template context if provided
+            if template_context:
+                template_vars.update(template_context)
+
+            # Use prompt manager to render the template
+            from datus.prompts.prompt_manager import prompt_manager
+
+            return prompt_manager.render_template(template_name=template_name, version=version, **template_vars)
+
+        except FileNotFoundError as e:
+            # Template not found - throw DatusException
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
+                message_args={"template_name": template_name, "version": version or "latest"},
+            ) from e
+        except Exception as e:
+            # Other template errors - wrap in DatusException
+            logger.error(f"Template loading error for '{template_name}': {e}")
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
+            ) from e
+
     async def execute_stream(
-        self, user_input: CustomizedNodeInput, action_history_manager: Optional[ActionHistoryManager] = None
+        self, user_input: GenSQLNodeInput, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute the customized node interaction with streaming support.
@@ -251,7 +302,7 @@ class CustomizedAgenticNode(AgenticNode):
         # Create initial action
         action = ActionHistory.create_action(
             role=ActionRole.USER,
-            action_type="customized_interaction",
+            action_type=self.get_node_name(),
             messages=f"User: {user_input.user_message}",
             input_data=user_input.model_dump(),
             status=ActionStatus.PROCESSING,
@@ -266,12 +317,12 @@ class CustomizedAgenticNode(AgenticNode):
             # Get or create session and any available summary
             session, conversation_summary = self._get_or_create_session()
 
-            # Get system instruction from template, passing summary and prompt version if available
-            prompt_version = user_input.prompt_version or self.node_config.get("prompt_version")
-            system_instruction = self._get_system_prompt(conversation_summary, prompt_version)
+            # Prepare enhanced template context with tool detection and limited context
+            template_context = self._prepare_template_context(user_input)
 
-            # Enhance system prompt with custom rules if configured
-            enhanced_system_instruction = self._enhance_system_prompt(system_instruction)
+            # Get system instruction from template with enhanced context
+            prompt_version = user_input.prompt_version or self.node_config.get("prompt_version")
+            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
 
             # Add context to user message if provided
             enhanced_message = user_input.user_message
@@ -302,7 +353,7 @@ class CustomizedAgenticNode(AgenticNode):
                 role=ActionRole.ASSISTANT,
                 action_type="llm_generation",
                 messages="Generating response with tools...",
-                input_data={"prompt": enhanced_message, "system": enhanced_system_instruction},
+                input_data={"prompt": enhanced_message, "system": system_instruction},
                 status=ActionStatus.PROCESSING,
             )
             action_history_manager.add_action(assistant_action)
@@ -313,7 +364,7 @@ class CustomizedAgenticNode(AgenticNode):
                 prompt=enhanced_message,
                 tools=self.tools,
                 mcp_servers=self.mcp_servers,
-                instruction=enhanced_system_instruction,
+                instruction=system_instruction,
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
@@ -370,7 +421,7 @@ class CustomizedAgenticNode(AgenticNode):
                                 logger.warning(f"no usage token found in this action {action.messages}")
 
             # Create final result
-            result = CustomizedNodeResult(
+            result = GenSQLNodeResult(
                 success=True,
                 response=response_content,
                 sql=sql_content,
@@ -383,8 +434,8 @@ class CustomizedAgenticNode(AgenticNode):
             # Create final action
             final_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
-                action_type="customized_response",
-                messages="Customized interaction completed successfully",
+                action_type=f"{self.get_node_name()}_response",
+                messages=f"{self.get_node_name()} interaction completed successfully",
                 input_data=user_input.model_dump(),
                 output_data=result.model_dump(),
                 status=ActionStatus.SUCCESS,
@@ -393,10 +444,10 @@ class CustomizedAgenticNode(AgenticNode):
             yield final_action
 
         except Exception as e:
-            logger.error(f"Customized execution error: {e}")
+            logger.error(f"{self.get_node_name()} execution error: {e}")
 
             # Create error result
-            error_result = CustomizedNodeResult(
+            error_result = GenSQLNodeResult(
                 success=False,
                 error=str(e),
                 response="Sorry, I encountered an error while processing your request.",
@@ -414,40 +465,13 @@ class CustomizedAgenticNode(AgenticNode):
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type="error",
-                messages=f"Customized interaction failed: {str(e)}",
+                messages=f"{self.get_node_name()} interaction failed: {str(e)}",
                 input_data=user_input.model_dump(),
                 output_data=error_result.model_dump(),
                 status=ActionStatus.FAILED,
             )
             action_history_manager.add_action(error_action)
             yield error_action
-
-    def _enhance_system_prompt(self, base_prompt: str) -> str:
-        """
-        Enhance the system prompt with configured rules and context.
-
-        Args:
-            base_prompt: Base system prompt from template
-
-        Returns:
-            Enhanced system prompt with additional context
-        """
-        enhanced_prompt = base_prompt
-
-        # Add agent description if configured
-        agent_description = self.node_config.get("agent_description", "")
-        if agent_description:
-            enhanced_prompt = enhanced_prompt.replace("{{ agent_description }}", agent_description)
-
-        # Add rules if configured
-        rules = self.node_config.get("rules", [])
-        if rules:
-            rules_text = "\n".join([f"   * {rule}" for rule in rules])
-            enhanced_prompt = enhanced_prompt.replace(
-                "{% for rule in rules %} \n   * {{rule}}\n  {% endfor %}", rules_text
-            )
-
-        return enhanced_prompt
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """

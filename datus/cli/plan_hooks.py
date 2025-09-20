@@ -16,13 +16,9 @@ logger = get_logger(__name__)
 class PlanningPhaseException(Exception):
     """Exception raised when trying to execute tools during planning phase."""
 
-    pass
-
 
 class UserCancelledException(Exception):
     """Exception raised when user explicitly cancels execution"""
-
-    pass
 
 
 @optional_traceable(name="PlanModeHooks", run_type="chain")

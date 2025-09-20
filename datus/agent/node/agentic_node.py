@@ -57,6 +57,9 @@ class AgenticNode(ABC):
         self._session_tokens: int = 0
         self.last_summary: Optional[str] = None
 
+        # Parse node configuration from agent.yml (available to all agentic nodes)
+        self.node_config = self._parse_node_config(agent_config, self.get_node_name())
+
         # Initialize the model using agent config
         if agent_config:
             model_name = None
@@ -367,6 +370,51 @@ class AgenticNode(ABC):
         except Exception as e:
             logger.error(f"Auto-compact check failed: {e}")
             return False
+
+    def _parse_node_config(self, agent_config: Optional[AgentConfig], node_name: str) -> dict:
+        """
+        Parse node configuration from agent.yml.
+
+        Args:
+            agent_config: Agent configuration
+            node_name: Name of the node configuration
+
+        Returns:
+            Dictionary containing node configuration
+        """
+        if not agent_config or not hasattr(agent_config, "nodes"):
+            return {}
+
+        nodes_config = agent_config.nodes
+        if node_name not in nodes_config:
+            logger.warning(f"Node configuration '{node_name}' not found in agent.yml")
+            return {}
+
+        node_config = nodes_config[node_name]
+
+        # Extract configuration attributes
+        config = {}
+
+        # Basic node config attributes
+        if hasattr(node_config, "model"):
+            config["model"] = node_config.model
+        if hasattr(node_config, "system_prompt"):
+            config["system_prompt"] = node_config.system_prompt
+        if hasattr(node_config, "prompt_version"):
+            config["prompt_version"] = node_config.prompt_version
+        if hasattr(node_config, "prompt_language"):
+            config["prompt_language"] = node_config.prompt_language
+        if hasattr(node_config, "tools"):
+            config["tools"] = node_config.tools
+        if hasattr(node_config, "mcp"):
+            config["mcp"] = node_config.mcp
+        if hasattr(node_config, "rules"):
+            config["rules"] = node_config.rules
+        if hasattr(node_config, "max_turns"):
+            config["max_turns"] = node_config.max_turns
+
+        logger.info(f"Parsed node configuration for '{node_name}': {config}")
+        return config
 
     @abstractmethod
     async def execute_stream(

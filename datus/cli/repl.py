@@ -206,7 +206,6 @@ class DatusCLI:
         # The prompt will be updated on the next iteration of the main loop
         # This is a limitation of prompt_toolkit's PromptSession
         # For immediate feedback, we could force a redraw, but it's complex
-        pass
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
