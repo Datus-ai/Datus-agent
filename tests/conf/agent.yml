@@ -77,6 +77,20 @@ agent:
     output:
       prompt_version: "1.0"
       check_result: true
+    chatbot:
+      model: deepseek
+      system_prompt: gen_sql
+      prompt_version: "1.0"
+      prompt_language: en
+      tools: db_tools.*, context_search_tools.*
+      mcp: filesystem_mcp.*
+      agent_description: "You are a specialized AI assistant for SQL generation"
+      rules:
+        - Use filesystem tools to read SQL files from the current directory (*/*.sql) as reference examples
+        - When SQL is involved, explain your approach and provide clear, executable queries
+        - Always check reference SQL files(*.sql) in allowed directory for similar patterns before writing new queries
+        - If context is provided, use the tables/metrics/sqls in user prompt
+        - Try to use database specific dialect
 
   schema_linking_rate: medium
   # benchmark configuration

@@ -7,6 +7,7 @@ from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.date_parser_node_models import DateParserInput
 from datus.schemas.doc_search_node_models import DocSearchInput
 from datus.schemas.fix_node_models import FixInput
+from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, ReflectionInput
@@ -46,6 +47,7 @@ class NodeType:
 
     # Agentic node types
     TYPE_CHAT = "chat"  # For conversational AI interactions
+    TYPE_CHATBOT = "chatbot"  # For SQL generation with conversational AI
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
@@ -63,7 +65,7 @@ class NodeType:
     ]
 
     # Agentic node types list
-    AGENTIC_TYPES = [TYPE_CHAT]
+    AGENTIC_TYPES = [TYPE_CHAT, TYPE_CHATBOT]
 
     NODE_TYPE_DESCRIPTIONS = {
         TYPE_BEGIN: "Beginning of the workflow",
@@ -85,6 +87,7 @@ class NodeType:
         TYPE_COMPARE: "Compare SQL with expectations",
         TYPE_DATE_PARSER: "Parse temporal expressions in queries",
         TYPE_CHAT: "Conversational AI interactions with tool calling",
+        TYPE_CHATBOT: "SQL generation with conversational AI and tool calling",
     }
 
     @classmethod
@@ -128,6 +131,8 @@ class NodeType:
             input_data_cls = DateParserInput
         elif node_type == NodeType.TYPE_CHAT:
             input_data_cls = ChatNodeInput
+        elif node_type == NodeType.TYPE_CHATBOT:
+            input_data_cls = GenSQLNodeInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 

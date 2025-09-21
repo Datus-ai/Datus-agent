@@ -398,20 +398,34 @@ class AgenticNode(ABC):
         # Basic node config attributes
         if hasattr(node_config, "model"):
             config["model"] = node_config.model
-        if hasattr(node_config, "system_prompt"):
-            config["system_prompt"] = node_config.system_prompt
-        if hasattr(node_config, "prompt_version"):
-            config["prompt_version"] = node_config.prompt_version
-        if hasattr(node_config, "prompt_language"):
-            config["prompt_language"] = node_config.prompt_language
-        if hasattr(node_config, "tools"):
-            config["tools"] = node_config.tools
-        if hasattr(node_config, "mcp"):
-            config["mcp"] = node_config.mcp
-        if hasattr(node_config, "rules"):
-            config["rules"] = node_config.rules
-        if hasattr(node_config, "max_turns"):
-            config["max_turns"] = node_config.max_turns
+
+        # Check if configuration is in input field (for agentic nodes like GenSQLAgenticNode)
+        if hasattr(node_config, "input") and node_config.input:
+            input_config = node_config.input
+
+            # Extract attributes from input configuration
+            input_attributes = [
+                "system_prompt",
+                "prompt_version",
+                "prompt_language",
+                "tools",
+                "mcp",
+                "rules",
+                "max_turns",
+            ]
+            for attr in input_attributes:
+                if hasattr(input_config, attr):
+                    value = getattr(input_config, attr)
+                    if value is not None:
+                        config[attr] = value
+
+        # Also check direct attributes on node_config (for backwards compatibility)
+        direct_attributes = ["system_prompt", "prompt_version", "prompt_language", "tools", "mcp", "rules", "max_turns"]
+        for attr in direct_attributes:
+            if hasattr(node_config, attr) and attr not in config:
+                value = getattr(node_config, attr)
+                if value is not None:
+                    config[attr] = value
 
         logger.info(f"Parsed node configuration for '{node_name}': {config}")
         return config

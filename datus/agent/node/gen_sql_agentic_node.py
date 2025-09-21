@@ -53,14 +53,15 @@ class GenSQLAgenticNode(AgenticNode):
         self.configured_node_name = node_name
         self.max_turns = max_turns
 
-        # Initialize MCP servers based on configuration
-        self.mcp_servers = self._setup_mcp_servers(agent_config)
-
+        # Call parent constructor first to set up node_config
         super().__init__(
             tools=[],
-            mcp_servers=self.mcp_servers,
+            mcp_servers={},  # Initialize empty, will setup after parent init
             agent_config=agent_config,
         )
+
+        # Initialize MCP servers based on configuration (after node_config is available)
+        self.mcp_servers = self._setup_mcp_servers(agent_config)
 
         # Setup tools based on configuration
         self.db_func_tool: Optional[DBFuncTool] = None
@@ -244,8 +245,12 @@ class GenSQLAgenticNode(AgenticNode):
         if self.agent_config and hasattr(self.agent_config, "workspace_root"):
             root_path = self.agent_config.workspace_root
 
-        # Construct template name: {node_name}_system_{version}
-        template_name = f"{self.get_node_name()}_system"
+        # Construct template name: {system_prompt}_system or fallback to {node_name}_system
+        system_prompt_name = self.node_config.get("system_prompt")
+        if system_prompt_name:
+            template_name = f"{system_prompt_name}_system"
+        else:
+            template_name = f"{self.get_node_name()}_system"
 
         try:
             # Prepare template variables
