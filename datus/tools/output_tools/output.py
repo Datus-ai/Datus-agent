@@ -63,7 +63,8 @@ class OutputTool(BaseTool):
                 sql_result_final=final_sql_result,
             )
         else:
-            with open(os.path.join(target_dir, "result.json"), "w") as f:
+            file_name = f"{input_data.task_id}.json" if input_data.task_id else "result.json"
+            with open(os.path.join(target_dir, file_name), "w") as f:
                 json.dump(
                     {
                         "finished": False,
