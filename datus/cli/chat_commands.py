@@ -46,8 +46,8 @@ class ChatCommands:
         if self.chat_node:
             self.chat_node.setup_tools()
 
-    def execute_chat_command(self, message: str, plan_mode: bool = False):
-        """Execute a chat command (/ prefix) using ChatAgenticNode."""
+    def execute_chat_command(self, message: str, plan_mode: bool = False, subagent_name: str = None):
+        """Execute a chat command (/ prefix) using ChatAgenticNode or GenSQLAgenticNode."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
@@ -55,36 +55,71 @@ class ChatCommands:
         try:
             at_tables, at_metrics, at_sqls = self.cli.at_completer.parse_at_context(message)
 
-            # Create chat input with current database context
-            chat_input = ChatNodeInput(
-                user_message=message,
-                catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
-                database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
-                db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
-                schemas=at_tables,
-                metrics=at_metrics,
-                historical_sql=at_sqls,
-                plan_mode=plan_mode,
-            )
-            # Get or create persistent ChatAgenticNode
-            if self.chat_node is None:
-                self.console.print("[dim]Creating new chat session...[/]")
-                self.chat_node = ChatAgenticNode(
-                    namespace=self.cli.agent_config.current_namespace,
+            # Choose node type and input based on subagent_name
+            if subagent_name:
+                # Use GenSQLAgenticNode for subagent mode
+                from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+                from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+
+                # Create GenSQL input with current database context
+                chat_input = GenSQLNodeInput(
+                    user_message=message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    schemas=at_tables,
+                    metrics=at_metrics,
+                    historical_sql=at_sqls,
+                    prompt_version="1.0",
+                    prompt_language="en",
+                )
+
+                # Create GenSQLAgenticNode for this subagent
+                self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
+                chat_node = GenSQLAgenticNode(
+                    node_name=subagent_name,
                     agent_config=self.cli.agent_config,
                 )
+
+                # Set current node for this interaction
+                current_node = chat_node
+                node_type = "gensql"
             else:
-                # Show session info for existing session
-                session_info = self.chat_node.get_session_info()
-                if session_info["session_id"]:
-                    session_display = (
-                        f"[dim]Using existing session: {session_info['session_id']} "
-                        f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+                # Create chat input with current database context
+                chat_input = ChatNodeInput(
+                    user_message=message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    schemas=at_tables,
+                    metrics=at_metrics,
+                    historical_sql=at_sqls,
+                    plan_mode=plan_mode,
+                )
+
+                # Get or create persistent ChatAgenticNode
+                if self.chat_node is None:
+                    self.console.print("[dim]Creating new chat session...[/]")
+                    self.chat_node = ChatAgenticNode(
+                        namespace=self.cli.agent_config.current_namespace,
+                        agent_config=self.cli.agent_config,
                     )
-                    self.console.print(session_display)
+                else:
+                    # Show session info for existing session
+                    session_info = self.chat_node.get_session_info()
+                    if session_info["session_id"]:
+                        session_display = (
+                            f"[dim]Using existing session: {session_info['session_id']} "
+                            f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+                        )
+                        self.console.print(session_display)
+
+                # Set current node for this interaction
+                current_node = self.chat_node
+                node_type = "chat"
 
             # Display streaming execution
-            self.console.print("[bold green]Processing chat request...[/]")
+            self.console.print(f"[bold green]Processing {node_type} request...[/]")
 
             # Initialize action history display for incremental actions only
             action_display = ActionHistoryDisplay(self.console)
@@ -97,7 +132,7 @@ class ChatCommands:
                 with action_display.display_streaming_actions(incremental_actions):
                     # Run the async streaming method
                     async def run_chat_stream():
-                        async for action in self.chat_node.execute_stream(chat_input, self.cli.actions):
+                        async for action in current_node.execute_stream(chat_input, self.cli.actions):
                             incremental_actions.append(action)
                             # Add delay to make the streaming visible
                             await asyncio.sleep(0.5)
@@ -107,7 +142,7 @@ class ChatCommands:
             else:
                 # In plan mode, run without live display to avoid conflicts with plan hooks
                 async def run_chat_stream():
-                    async for action in self.chat_node.execute_stream(chat_input, self.cli.actions):
+                    async for action in current_node.execute_stream(chat_input, self.cli.actions):
                         incremental_actions.append(action)
                         # No delay needed in plan mode
 
