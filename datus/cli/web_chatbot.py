@@ -237,9 +237,9 @@ class StreamlitChatbot:
 
             # Show current configuration info
             if self.cli:
-                # Set subagent name from startup config
-                if st.session_state.startup_subagent_name and not st.session_state.subagent_name:
-                    st.session_state.subagent_name = st.session_state.startup_subagent_name
+                # Set subagent name directly from URL (always refresh from URL)
+                current_subagent = self._get_current_subagent_from_url()
+                st.session_state.subagent_name = current_subagent
 
                 # Current subagent info
                 if st.session_state.subagent_name:
@@ -387,6 +387,83 @@ class StreamlitChatbot:
 
         return None, None
 
+    def _get_current_subagent_from_url(self):
+        """Get current subagent directly from URL query parameters."""
+        try:
+            query_params = st.query_params
+            return query_params.get("subagent", None)
+        except Exception:
+            # Fallback for older Streamlit versions
+            try:
+                query_params = st.experimental_get_query_params()
+                if "subagent" in query_params:
+                    return query_params["subagent"][0]
+            except Exception:
+                pass
+        return None
+
+    def _get_available_subagents(self):
+        """Get list of available subagents from agent config, excluding 'chat' (default)."""
+        if not self.cli or not hasattr(self.cli.agent_config, "agentic_nodes"):
+            return {}
+
+        # Get all agentic_nodes except 'chat' since it's the default
+        agentic_nodes = self.cli.agent_config.agentic_nodes
+        return {name: config for name, config in agentic_nodes.items() if name != "chat"}
+
+    def _show_available_subagents(self):
+        """Show available subagents with dynamic routing."""
+        available_subagents = self._get_available_subagents()
+
+        if not available_subagents:
+            return
+
+        with st.expander("🔧 Access Specialized Subagents", expanded=False):
+            st.markdown("**Available specialized subagents:**")
+
+            # Current URL
+            current_host = "http://localhost:8501"
+
+            # Display each available subagent
+            for subagent_name, subagent_config in available_subagents.items():
+                model_name = subagent_config.get("model", "unknown")
+                system_prompt = subagent_config.get("system_prompt", "general")
+                tools = subagent_config.get("tools", "")
+                workspace_root = subagent_config.get("workspace_root")
+
+                # Create columns for better layout
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    subagent_url = f"{current_host}/?subagent={subagent_name}"
+                    st.markdown(f"**{subagent_name.title()} Subagent**: `{subagent_url}`")
+
+                    # Show subagent details
+                    details = [f"Model: {model_name}", f"Prompt: {system_prompt}"]
+                    if workspace_root:
+                        details.append(f"Workspace: {workspace_root}")
+                    if "context_search_tools." in tools:
+                        # Show specific tools if they're specified
+                        specific_tools = [t.strip() for t in tools.split(",") if "context_search_tools." in t]
+                        if specific_tools:
+                            tool_names = []
+                            for tool in specific_tools:
+                                if tool.endswith(".*"):
+                                    tool_names.append("all context tools")
+                                else:
+                                    tool_names.append(tool.split(".")[-1])
+                            details.append(f"Context Tools: {', '.join(tool_names)}")
+
+                    st.caption(" | ".join(details))
+
+                with col2:
+                    if st.button(f"🚀 Use {subagent_name}", key=f"switch_{subagent_name}"):
+                        st.query_params.update({"subagent": subagent_name})
+                        st.rerun()
+
+            st.markdown("---")
+            st.info("💡 **Tip**: Bookmark subagent URLs for direct access!")
+
     def display_sql_with_copy(self, sql: str):
         """Display SQL with syntax highlighting"""
         if not sql:
@@ -477,8 +554,8 @@ class StreamlitChatbot:
             if hasattr(self.cli, "current_actions"):
                 self.cli.current_actions = []
 
-            # Execute chat command with subagent support
-            subagent_name = st.session_state.get("subagent_name", None)
+            # Execute chat command with subagent support - get directly from URL
+            subagent_name = self._get_current_subagent_from_url()
             logger.info(f"Executing chat: {user_message} (subagent: {subagent_name})")
             self.cli.chat_commands.execute_chat_command(user_message, subagent_name=subagent_name)
 
@@ -542,31 +619,17 @@ class StreamlitChatbot:
             unsafe_allow_html=True,
         )
 
-        # Title and description with subagent support
-        subagent_name = st.session_state.get("subagent_name", None)
-        if subagent_name:
-            st.title(f"🤖 Datus AI Chat Assistant - {subagent_name.title()}")
-            st.caption(f"Specialized {subagent_name} subagent for SQL generation - Natural Language to SQL")
+        # Title and description with subagent support - detect directly from URL
+        current_subagent = self._get_current_subagent_from_url()
+        if current_subagent:
+            st.title(f"🤖 Datus AI Chat Assistant - {current_subagent.title()}")
+            st.caption(f"Specialized {current_subagent} subagent for SQL generation - Natural Language to SQL")
+            # Don't show subagent selection when already in subagent mode
         else:
             st.title("🤖 Datus AI Chat Assistant")
             st.caption("Intelligent database query assistant based on Datus Agent - Natural Language to SQL")
-
-            # Show subagent access instructions
-            with st.expander("🔧 Access Specialized Subagents", expanded=False):
-                st.markdown("""
-                **To access specialized SQL generation subagents, use these URLs:**
-
-                - **Chatbot Subagent**: `http://localhost:8501/?subagent=chatbot`
-                - **Generic Subagent**: `http://localhost:8501/?agent=chatbot`
-
-                Or add the query parameter to your current URL:
-                """)
-                current_url = "http://localhost:8501"
-                st.code(f"{current_url}/?subagent=chatbot")
-
-                if st.button("🚀 Switch to Chatbot Subagent"):
-                    st.query_params.update({"subagent": "chatbot"})
-                    st.rerun()
+            # Only show available subagents when NOT in subagent mode
+            self._show_available_subagents()
 
         # Render sidebar and get config status
         sidebar_state = self.render_sidebar()
@@ -734,35 +797,7 @@ def main():
         elif arg == "--config" and i + 1 < len(sys.argv):
             config_path = sys.argv[i + 1]
 
-    # Try to detect subagent from URL query parameters
-    try:
-        query_params = st.query_params
-        if "subagent" in query_params:
-            subagent_name = query_params["subagent"]
-        elif "agent" in query_params:
-            subagent_name = query_params["agent"]
-        # Also check for path-based routing by examining the URL
-        elif hasattr(st, 'session_state') and hasattr(st.session_state, 'get'):
-            # Try to get from session state if set by URL parsing
-            pass
-    except Exception:
-        # Fallback for older Streamlit versions
-        try:
-            query_params = st.experimental_get_query_params()
-            if "subagent" in query_params:
-                subagent_name = query_params["subagent"][0]
-            elif "agent" in query_params:
-                subagent_name = query_params["agent"][0]
-        except Exception:
-            pass
-
-    # Alternative: Parse from command line arguments if provided
-    # Check if chatbot subagent was specified via command line
-    for i, arg in enumerate(sys.argv):
-        if arg == "--subagent" and i + 1 < len(sys.argv):
-            subagent_name = sys.argv[i + 1]
-        elif arg == "chatbot":  # Direct specification
-            subagent_name = "chatbot"
+    # Note: Subagent detection is now handled directly in the interface, not here
 
     # Store in session state for use by the app
     if "startup_namespace" not in st.session_state:

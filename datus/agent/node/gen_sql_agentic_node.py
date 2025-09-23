@@ -259,7 +259,7 @@ class GenSQLAgenticNode(AgenticNode):
         # Add namespace and workspace info
         if self.agent_config:
             context["namespace"] = getattr(self.agent_config, "current_namespace", None)
-            context["workspace_root"] = getattr(self.agent_config, "workspace_root", None)
+            context["workspace_root"] = self._resolve_workspace_root()
 
         logger.debug(f"Prepared template context: {context}")
         return context
