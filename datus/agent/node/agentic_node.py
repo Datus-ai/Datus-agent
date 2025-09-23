@@ -382,10 +382,10 @@ class AgenticNode(ABC):
         Returns:
             Dictionary containing node configuration
         """
-        if not agent_config or not hasattr(agent_config, "nodes"):
+        if not agent_config or not hasattr(agent_config, "agentic_nodes"):
             return {}
 
-        nodes_config = agent_config.nodes
+        nodes_config = agent_config.agentic_nodes
         if node_name not in nodes_config:
             logger.warning(f"Node configuration '{node_name}' not found in agent.yml")
             return {}
@@ -396,7 +396,9 @@ class AgenticNode(ABC):
         config = {}
 
         # Basic node config attributes
-        if hasattr(node_config, "model"):
+        if isinstance(node_config, dict):
+            config["model"] = node_config.get("model")
+        elif hasattr(node_config, "model"):
             config["model"] = node_config.model
 
         # Check if configuration is in input field (for agentic nodes like GenSQLAgenticNode)
@@ -412,6 +414,7 @@ class AgenticNode(ABC):
                 "mcp",
                 "rules",
                 "max_turns",
+                "workspace_root",
             ]
             for attr in input_attributes:
                 if hasattr(input_config, attr):
@@ -420,10 +423,16 @@ class AgenticNode(ABC):
                         config[attr] = value
 
         # Also check direct attributes on node_config (for backwards compatibility)
-        direct_attributes = ["system_prompt", "prompt_version", "prompt_language", "tools", "mcp", "rules", "max_turns"]
+        direct_attributes = ["system_prompt", "prompt_version", "prompt_language", "tools", "mcp", "rules", "max_turns", "workspace_root"]
         for attr in direct_attributes:
-            if hasattr(node_config, attr) and attr not in config:
-                value = getattr(node_config, attr)
+            # Handle both dict and object access patterns
+            if attr not in config:
+                value = None
+                if isinstance(node_config, dict):
+                    value = node_config.get(attr)
+                elif hasattr(node_config, attr):
+                    value = getattr(node_config, attr)
+
                 if value is not None:
                     config[attr] = value
 

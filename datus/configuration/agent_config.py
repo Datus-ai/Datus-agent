@@ -120,6 +120,7 @@ class AgentConfig:
         self._current_namespace = ""
         self._current_database = ""
         self.nodes = nodes
+        self.agentic_nodes = kwargs.get("agentic_nodes", {})
         # use default embedding model if not provided
 
         self._output_dir = kwargs.get("output_dir", "output")

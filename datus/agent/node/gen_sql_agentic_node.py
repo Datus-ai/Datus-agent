@@ -99,6 +99,10 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_db_tools()
             elif tool_pattern in ["context_search_tools", "context_search_tools.*"]:
                 self._setup_context_search_tools()
+            elif tool_pattern.startswith("context_search_tools."):
+                # Handle specific context search tool methods
+                method_name = tool_pattern.split(".", 1)[1]  # Get the method name after the dot
+                self._setup_specific_context_search_tool(method_name)
             else:
                 logger.warning(f"Unknown tool pattern: {tool_pattern}")
 
@@ -116,13 +120,60 @@ class GenSQLAgenticNode(AgenticNode):
             logger.error(f"Failed to setup database tools: {e}")
 
     def _setup_context_search_tools(self):
-        """Setup context search tools."""
+        """Setup all context search tools."""
         try:
             self.context_search_tools = ContextSearchTools(self.agent_config)
             self.tools.extend(self.context_search_tools.available_tools())
             logger.debug(f"Added {len(self.context_search_tools.available_tools())} context search tools")
         except Exception as e:
             logger.error(f"Failed to setup context search tools: {e}")
+
+    def _setup_specific_context_search_tool(self, method_name: str):
+        """Setup a specific context search tool by method name."""
+        try:
+            if not self.context_search_tools:
+                self.context_search_tools = ContextSearchTools(self.agent_config)
+
+            # Get the specific method from ContextSearchTools
+            if hasattr(self.context_search_tools, method_name):
+                method = getattr(self.context_search_tools, method_name)
+                from datus.tools.tools import trans_to_function_tool
+                tool = trans_to_function_tool(method)
+                self.tools.append(tool)
+                logger.debug(f"Added specific context search tool: {method_name}")
+            else:
+                logger.warning(f"Context search method '{method_name}' not found")
+        except Exception as e:
+            logger.error(f"Failed to setup specific context search tool '{method_name}': {e}")
+
+    def _resolve_workspace_root(self) -> str:
+        """
+        Resolve workspace_root with priority: node-specific > global storage > legacy > default.
+
+        Returns:
+            Resolved workspace_root path
+        """
+        # Priority: node-specific workspace_root > global storage.workspace_root > legacy > default "."
+        node_workspace_root = self.node_config.get("workspace_root")
+        if node_workspace_root:
+            logger.debug(f"Using node-specific workspace_root: {node_workspace_root}")
+            return node_workspace_root
+
+        if self.agent_config and hasattr(self.agent_config, "storage") and hasattr(self.agent_config.storage, "workspace_root"):
+            global_workspace_root = self.agent_config.storage.workspace_root
+            if global_workspace_root:
+                logger.debug(f"Using global workspace_root: {global_workspace_root}")
+                return global_workspace_root
+
+        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
+            # Fallback to old workspace_root location
+            workspace_root = self.agent_config.workspace_root
+            if workspace_root is not None:
+                logger.debug(f"Using legacy workspace_root: {workspace_root}")
+                return workspace_root
+
+        logger.debug("Using default workspace_root: .")
+        return "."
 
     def _setup_mcp_servers(self, agent_config: Optional[AgentConfig] = None) -> Dict[str, MCPServerStdio]:
         """
@@ -143,12 +194,8 @@ class GenSQLAgenticNode(AgenticNode):
                 mcp_patterns = [pattern.strip() for pattern in mcp_config.split(",") if pattern.strip()]
                 for mcp_pattern in mcp_patterns:
                     if mcp_pattern in ["filesystem_mcp", "filesystem_mcp.*"]:
-                        # Handle filesystem MCP server
-                        root_path = "."
-                        if agent_config and hasattr(agent_config, "workspace_root"):
-                            workspace_root = agent_config.workspace_root
-                            if workspace_root is not None:
-                                root_path = workspace_root
+                        # Handle filesystem MCP server with workspace_root override
+                        root_path = self._resolve_workspace_root()
 
                         # Handle relative vs absolute paths
                         if root_path and os.path.isabs(root_path):
@@ -241,9 +288,8 @@ class GenSQLAgenticNode(AgenticNode):
         if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
             version = self.agent_config.prompt_version
 
-        root_path = "."
-        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
-            root_path = self.agent_config.workspace_root
+        # Use shared workspace_root resolution logic
+        root_path = self._resolve_workspace_root()
 
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt")
