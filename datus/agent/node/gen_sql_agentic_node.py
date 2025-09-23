@@ -64,7 +64,9 @@ class GenSQLAgenticNode(AgenticNode):
         self.mcp_servers = self._setup_mcp_servers()
 
         # Debug: Log final MCP servers assignment
-        logger.debug(f"GenSQLAgenticNode final mcp_servers: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
+        logger.debug(
+            f"GenSQLAgenticNode final mcp_servers: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
+        )
 
         # Setup tools based on configuration
         self.db_func_tool: Optional[DBFuncTool] = None
@@ -482,8 +484,12 @@ class GenSQLAgenticNode(AgenticNode):
             yield assistant_action
 
             # Debug: Log tools and MCP servers before generation
-            logger.debug(f"Tools available for generation: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
-            logger.debug(f"MCP servers available for generation: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
+            logger.debug(
+                f"Tools available for generation: {len(self.tools)} tools - {[tool.name for tool in self.tools]}"
+            )
+            logger.debug(
+                f"MCP servers available for generation: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
+            )
 
             # Stream response using the model's generate_with_tools_stream
             async for stream_action in self.model.generate_with_tools_stream(

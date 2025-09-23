@@ -401,28 +401,7 @@ class AgenticNode(ABC):
         elif hasattr(node_config, "model"):
             config["model"] = node_config.model
 
-        # Check if configuration is in input field (for agentic nodes like GenSQLAgenticNode)
-        if hasattr(node_config, "input") and node_config.input:
-            input_config = node_config.input
-
-            # Extract attributes from input configuration
-            input_attributes = [
-                "system_prompt",
-                "prompt_version",
-                "prompt_language",
-                "tools",
-                "mcp",
-                "rules",
-                "max_turns",
-                "workspace_root",
-            ]
-            for attr in input_attributes:
-                if hasattr(input_config, attr):
-                    value = getattr(input_config, attr)
-                    if value is not None:
-                        config[attr] = value
-
-        # Also check direct attributes on node_config (for backwards compatibility)
+        # Check direct attributes on node_config
         direct_attributes = [
             "system_prompt",
             "prompt_version",
