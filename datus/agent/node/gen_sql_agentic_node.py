@@ -483,13 +483,8 @@ class GenSQLAgenticNode(AgenticNode):
             action_history_manager.add_action(assistant_action)
             yield assistant_action
 
-            # Debug: Log tools and MCP servers before generation
-            logger.debug(
-                f"Tools available for generation: {len(self.tools)} tools - {[tool.name for tool in self.tools]}"
-            )
-            logger.debug(
-                f"MCP servers available for generation: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
-            )
+            logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
+            logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
 
             # Stream response using the model's generate_with_tools_stream
             async for stream_action in self.model.generate_with_tools_stream(
