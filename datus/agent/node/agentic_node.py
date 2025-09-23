@@ -423,7 +423,16 @@ class AgenticNode(ABC):
                         config[attr] = value
 
         # Also check direct attributes on node_config (for backwards compatibility)
-        direct_attributes = ["system_prompt", "prompt_version", "prompt_language", "tools", "mcp", "rules", "max_turns", "workspace_root"]
+        direct_attributes = [
+            "system_prompt",
+            "prompt_version",
+            "prompt_language",
+            "tools",
+            "mcp",
+            "rules",
+            "max_turns",
+            "workspace_root",
+        ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns
             if attr not in config:

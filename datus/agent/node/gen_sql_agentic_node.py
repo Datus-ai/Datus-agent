@@ -138,6 +138,7 @@ class GenSQLAgenticNode(AgenticNode):
             if hasattr(self.context_search_tools, method_name):
                 method = getattr(self.context_search_tools, method_name)
                 from datus.tools.tools import trans_to_function_tool
+
                 tool = trans_to_function_tool(method)
                 self.tools.append(tool)
                 logger.debug(f"Added specific context search tool: {method_name}")
@@ -159,7 +160,11 @@ class GenSQLAgenticNode(AgenticNode):
             logger.debug(f"Using node-specific workspace_root: {node_workspace_root}")
             return node_workspace_root
 
-        if self.agent_config and hasattr(self.agent_config, "storage") and hasattr(self.agent_config.storage, "workspace_root"):
+        if (
+            self.agent_config
+            and hasattr(self.agent_config, "storage")
+            and hasattr(self.agent_config.storage, "workspace_root")
+        ):
             global_workspace_root = self.agent_config.storage.workspace_root
             if global_workspace_root:
                 logger.debug(f"Using global workspace_root: {global_workspace_root}")
