@@ -339,7 +339,7 @@ Export Environment Variables:
 ```bash
 export MF_PATH=</path/to/metricflow>/.venv/bin/mf
 export MF_VERBOSE=true
-export FILESYSTEM_MCP_DIRECTORY=</path/to/semantic-models-dir>
+export MF_MODEL_PATH=</path/to/semantic-models-dir>
 ```
 
 ### Bootstrap Metrics Generation

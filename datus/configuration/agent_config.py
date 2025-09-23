@@ -39,10 +39,10 @@ class DbConfig:
 
 @dataclass
 class MetricMeta:
-    domain: str = field(default="", init=True)
-    layer1: str = field(default="", init=True)
-    layer2: str = field(default="", init=True)
-    ext_knowledge: str = field(default="", init=True)
+    domain: str = field(default="DEFAULT_DOMAIN", init=True)
+    layer1: str = field(default="DEFAULT_LAYER1", init=True)
+    layer2: str = field(default="DEFAULT_LAYER2", init=True)
+    ext_knowledge: str = field(default="DEFAULT_EXT_KNOWLEDGE", init=True)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -270,10 +270,8 @@ class AgentConfig:
                 message_args={"field_name": "metric_name"},
             )
         if metric_meta_name not in self.metric_meta:
-            raise DatusException(
-                code=ErrorCode.COMMON_UNSUPPORTED,
-                message_args={"field_name": "metric_meta_name", "your_value": metric_meta_name},
-            )
+            # Return a default MetricMeta instance with default values
+            return MetricMeta()
         return self.metric_meta[metric_meta_name]
 
     @property

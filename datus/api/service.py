@@ -99,22 +99,12 @@ class DatusAPIService:
 
     def _create_sql_task(self, request: RunWorkflowRequest, task_id: str, agent: Agent) -> SqlTask:
         """Create SQL task from request parameters."""
-        # Initialize with default metric_meta values from server config
-        external_knowledge = ""
-        domain = ""
-        layer1 = ""
-        layer2 = ""
-
-        # Load from default metric_meta if available
-        try:
-            if "default" in agent.global_config.metric_meta:
-                metric_meta = agent.global_config.current_metric_meta("default")
-                external_knowledge = metric_meta.ext_knowledge
-                domain = metric_meta.domain
-                layer1 = metric_meta.layer1
-                layer2 = metric_meta.layer2
-        except Exception as e:
-            logger.warning(f"Failed to load default metric_meta 'default': {e}")
+        # Load default metric_meta (will return default values if not configured)
+        metric_meta = agent.global_config.current_metric_meta("default")
+        external_knowledge = metric_meta.ext_knowledge
+        domain = metric_meta.domain
+        layer1 = metric_meta.layer1
+        layer2 = metric_meta.layer2
 
         # Override with request parameters if provided
         if request.domain is not None:

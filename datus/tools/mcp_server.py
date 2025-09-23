@@ -386,7 +386,7 @@ class MCPServer:
                     logger.info(f"Using MetricFlow MCP server with directory: {directory}")
 
                     env_settings = {
-                        "MF_MODEL_PATH": os.getenv("FILESYSTEM_MCP_DIRECTORY", "/tmp"),
+                        "MF_MODEL_PATH": os.getenv("MF_MODEL_PATH", "/tmp"),
                         "MF_PATH": os.getenv("MF_PATH", ""),
                         "MF_PROJECT_DIR": os.getenv("MF_PROJECT_DIR", ""),
                         "MF_VERBOSE": os.getenv("MF_VERBOSE", "false"),

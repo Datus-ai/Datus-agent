@@ -143,7 +143,9 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         help="Path to semantic model YAML file",
     )
-    bootstrap_parser.add_argument("--metric_meta", type=str, help="Metric meta for the success story")
+    bootstrap_parser.add_argument(
+        "--metric_meta", type=str, default="default", help="Metric meta for the success story"
+    )
     bootstrap_parser.add_argument("--domain", type=str, help="Domain of the success story")
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
     bootstrap_parser.add_argument("--layer1", type=str, help="Layer1 of the metrics")
@@ -179,7 +181,7 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
     benchmark_parser.add_argument("--task_db_name", type=str, help="Database name for the task")
     benchmark_parser.add_argument("--task_schema", type=str, help="Schema name for the task")
-    benchmark_parser.add_argument("--metric_meta", type=str, help="Metric meta for the task")
+    benchmark_parser.add_argument("--metric_meta", type=str, default="default", help="Metric meta for the task")
     benchmark_parser.add_argument("--domain", type=str, help="Domain for the task")
     benchmark_parser.add_argument("--layer1", type=str, help="Layer1 for the task")
     benchmark_parser.add_argument("--layer2", type=str, help="Layer2 for the task")

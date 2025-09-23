@@ -92,7 +92,7 @@ class MetricFlowServer:
     def query_metrics(
         self,
         metrics: List[str],
-        group_by: Optional[List[str]] = None,
+        dimensions: Optional[List[str]] = None,
         order_by: Optional[List[str]] = None,
         where: Optional[str] = None,
         limit: Optional[int] = None,
@@ -105,7 +105,7 @@ class MetricFlowServer:
 
         Args:
             metrics: List of metric names to query
-            group_by: List of dimensions to group by
+            dimensions: List of dimensions to group by
             order_by: List of fields to order by
             where: WHERE clause filter
             limit: Number of rows to limit
@@ -118,8 +118,8 @@ class MetricFlowServer:
         """
         command = ["query", "--metrics", ",".join(metrics)]
 
-        if group_by:
-            command.extend(["--dimensions", ",".join(group_by)])
+        if dimensions:
+            command.extend(["--dimensions", ",".join(dimensions)])
 
         if order_by:
             command.extend(["--order", ",".join(order_by)])

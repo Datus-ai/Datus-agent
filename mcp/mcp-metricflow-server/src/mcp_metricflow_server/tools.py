@@ -65,7 +65,7 @@ def register_metricflow_tools(server: Server, config: MetricFlowConfig) -> None:
                             "items": {"type": "string"},
                             "description": "List of metric names to query (required)",
                         },
-                        "group_by": {
+                        "dimensions": {
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "Optional list of dimensions to group by",
@@ -139,7 +139,7 @@ def register_metricflow_tools(server: Server, config: MetricFlowConfig) -> None:
 
                 result = metricflow_server.query_metrics(
                     metrics=arguments["metrics"],
-                    group_by=arguments.get("group_by"),
+                    dimensions=arguments.get("dimensions"),
                     order_by=arguments.get("order_by"),
                     where=arguments.get("where"),
                     limit=arguments.get("limit"),
