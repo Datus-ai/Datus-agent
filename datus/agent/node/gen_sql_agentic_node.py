@@ -245,9 +245,9 @@ class GenSQLAgenticNode(AgenticNode):
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
 
         # Limited context support
-        context["limited_context"] = user_input.limited_context if user_input.limited_context else False
+        context["scoped_context"] = user_input.scoped_context if user_input.scoped_context else False
 
-        if context["limited_context"]:
+        if context["scoped_context"]:
             # Filter and format limited context data
             context["tables"] = ", ".join(user_input.limited_tables) if user_input.limited_tables else "None"
             context["metrics"] = ", ".join(user_input.limited_metrics) if user_input.limited_metrics else "None"

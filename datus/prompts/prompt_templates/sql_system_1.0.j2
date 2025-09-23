@@ -28,7 +28,7 @@ You have access to:
 Current context:
 {% if namespace -%}
 - Database namespace: {{ namespace }}
-  {% if limited_context -%}
+  {% if scoped_context -%}
   - but you can only access to 
     - tables in {{tables}}
     - metrics in {{metrics}}

@@ -62,7 +62,7 @@ class ChatCommands:
                 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 
                 # Create GenSQL input with current database context
-                chat_input = GenSQLNodeInput(
+                node_input = GenSQLNodeInput(
                     user_message=message,
                     catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
                     database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
@@ -76,17 +76,17 @@ class ChatCommands:
 
                 # Create GenSQLAgenticNode for this subagent
                 self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
-                chat_node = GenSQLAgenticNode(
+                node = GenSQLAgenticNode(
                     node_name=subagent_name,
                     agent_config=self.cli.agent_config,
                 )
 
                 # Set current node for this interaction
-                current_node = chat_node
+                current_node = node
                 node_type = "gensql"
             else:
                 # Create chat input with current database context
-                chat_input = ChatNodeInput(
+                node_input = ChatNodeInput(
                     user_message=message,
                     catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
                     database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
@@ -132,7 +132,7 @@ class ChatCommands:
                 with action_display.display_streaming_actions(incremental_actions):
                     # Run the async streaming method
                     async def run_chat_stream():
-                        async for action in current_node.execute_stream(chat_input, self.cli.actions):
+                        async for action in current_node.execute_stream(node_input, self.cli.actions):
                             incremental_actions.append(action)
                             # Add delay to make the streaming visible
                             await asyncio.sleep(0.5)
@@ -142,7 +142,7 @@ class ChatCommands:
             else:
                 # In plan mode, run without live display to avoid conflicts with plan hooks
                 async def run_chat_stream():
-                    async for action in current_node.execute_stream(chat_input, self.cli.actions):
+                    async for action in current_node.execute_stream(node_input, self.cli.actions):
                         incremental_actions.append(action)
                         # No delay needed in plan mode
 
