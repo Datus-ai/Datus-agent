@@ -7,7 +7,7 @@ and flexible configuration through agent.yml.
 """
 
 import os
-from typing import AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from agents.mcp import MCPServerStdio
 
@@ -61,7 +61,10 @@ class GenSQLAgenticNode(AgenticNode):
         )
 
         # Initialize MCP servers based on configuration (after node_config is available)
-        self.mcp_servers = self._setup_mcp_servers(agent_config)
+        self.mcp_servers = self._setup_mcp_servers()
+
+        # Debug: Log final MCP servers assignment
+        logger.debug(f"GenSQLAgenticNode final mcp_servers: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
 
         # Setup tools based on configuration
         self.db_func_tool: Optional[DBFuncTool] = None
@@ -78,33 +81,18 @@ class GenSQLAgenticNode(AgenticNode):
         return self.configured_node_name
 
     def setup_tools(self):
-        """Setup tools based on configuration patterns (e.g., db_tools.*, context_search_tools.*)."""
+        """Setup tools based on configuration."""
         if not self.agent_config:
-            logger.warning("No agent config available, skipping tool setup")
-            return
-
-        tools_config = self.node_config.get("tools", "")
-        if not tools_config:
-            logger.info("No tools configured for this node")
-            self.tools = []
             return
 
         self.tools = []
+        config_value = self.node_config.get("tools", "")
+        if not config_value:
+            return
 
-        # Parse comma-separated tool patterns
-        tool_patterns = [pattern.strip() for pattern in tools_config.split(",") if pattern.strip()]
-
-        for tool_pattern in tool_patterns:
-            if tool_pattern in ["db_tools", "db_tools.*"]:
-                self._setup_db_tools()
-            elif tool_pattern in ["context_search_tools", "context_search_tools.*"]:
-                self._setup_context_search_tools()
-            elif tool_pattern.startswith("context_search_tools."):
-                # Handle specific context search tool methods
-                method_name = tool_pattern.split(".", 1)[1]  # Get the method name after the dot
-                self._setup_specific_context_search_tool(method_name)
-            else:
-                logger.warning(f"Unknown tool pattern: {tool_pattern}")
+        tool_patterns = [p.strip() for p in config_value.split(",") if p.strip()]
+        for pattern in tool_patterns:
+            self._setup_tool_pattern(pattern)
 
         logger.info(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
@@ -115,37 +103,94 @@ class GenSQLAgenticNode(AgenticNode):
             conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
             self.db_func_tool = DBFuncTool(conn)
             self.tools.extend(self.db_func_tool.available_tools())
-            logger.debug(f"Added {len(self.db_func_tool.available_tools())} database tools")
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
 
     def _setup_context_search_tools(self):
-        """Setup all context search tools."""
+        """Setup context search tools."""
         try:
             self.context_search_tools = ContextSearchTools(self.agent_config)
             self.tools.extend(self.context_search_tools.available_tools())
-            logger.debug(f"Added {len(self.context_search_tools.available_tools())} context search tools")
         except Exception as e:
             logger.error(f"Failed to setup context search tools: {e}")
 
-    def _setup_specific_context_search_tool(self, method_name: str):
-        """Setup a specific context search tool by method name."""
+    def _setup_tool_pattern(self, pattern: str):
+        """Setup tools based on pattern."""
         try:
-            if not self.context_search_tools:
-                self.context_search_tools = ContextSearchTools(self.agent_config)
+            # Handle wildcard patterns (e.g., "db_tools.*")
+            if pattern.endswith(".*"):
+                base_type = pattern[:-2]  # Remove ".*"
+                if base_type == "db_tools":
+                    self._setup_db_tools()
+                elif base_type == "context_search_tools":
+                    self._setup_context_search_tools()
+                else:
+                    logger.warning(f"Unknown tool type: {base_type}")
 
-            # Get the specific method from ContextSearchTools
-            if hasattr(self.context_search_tools, method_name):
-                method = getattr(self.context_search_tools, method_name)
+            # Handle exact type patterns (e.g., "db_tools")
+            elif pattern == "db_tools":
+                self._setup_db_tools()
+            elif pattern == "context_search_tools":
+                self._setup_context_search_tools()
+
+            # Handle specific method patterns (e.g., "db_tools.list_tables")
+            elif "." in pattern:
+                tool_type, method_name = pattern.split(".", 1)
+                self._setup_specific_tool_method(tool_type, method_name)
+
+            else:
+                logger.warning(f"Unknown tool pattern: {pattern}")
+
+        except Exception as e:
+            logger.error(f"Failed to setup tool pattern '{pattern}': {e}")
+
+    def _setup_specific_tool_method(self, tool_type: str, method_name: str):
+        """Setup a specific tool method."""
+        try:
+            if tool_type == "context_search_tools":
+                if not self.context_search_tools:
+                    self.context_search_tools = ContextSearchTools(self.agent_config)
+                tool_instance = self.context_search_tools
+            elif tool_type == "db_tools":
+                if not self.db_func_tool:
+                    db_manager = db_manager_instance(self.agent_config.namespaces)
+                    conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+                    self.db_func_tool = DBFuncTool(conn)
+                tool_instance = self.db_func_tool
+            else:
+                logger.warning(f"Unknown tool type: {tool_type}")
+                return
+
+            if hasattr(tool_instance, method_name):
+                method = getattr(tool_instance, method_name)
                 from datus.tools.tools import trans_to_function_tool
 
-                tool = trans_to_function_tool(method)
-                self.tools.append(tool)
-                logger.debug(f"Added specific context search tool: {method_name}")
+                self.tools.append(trans_to_function_tool(method))
+                logger.debug(f"Added specific tool method: {tool_type}.{method_name}")
             else:
-                logger.warning(f"Context search method '{method_name}' not found")
+                logger.warning(f"Method '{method_name}' not found in {tool_type}")
         except Exception as e:
-            logger.error(f"Failed to setup specific context search tool '{method_name}': {e}")
+            logger.error(f"Failed to setup {tool_type}.{method_name}: {e}")
+
+    def _setup_filesystem_mcp(self) -> Optional[MCPServerStdio]:
+        """Setup filesystem MCP server."""
+        try:
+            root_path = self._resolve_workspace_root()
+            # Handle relative vs absolute paths
+            if root_path and os.path.isabs(root_path):
+                filesystem_path = root_path
+            else:
+                filesystem_path = os.path.join(os.getcwd(), root_path)
+
+            filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
+            if filesystem_server:
+                logger.info(f"Added filesystem MCP server at path: {filesystem_path}")
+                return filesystem_server
+            else:
+                logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
+        except Exception as e:
+            logger.error(f"Failed to setup filesystem MCP server: {e}")
+        return None
 
     def _resolve_workspace_root(self) -> str:
         """
@@ -180,45 +225,66 @@ class GenSQLAgenticNode(AgenticNode):
         logger.debug("Using default workspace_root: .")
         return "."
 
-    def _setup_mcp_servers(self, agent_config: Optional[AgentConfig] = None) -> Dict[str, MCPServerStdio]:
-        """
-        Set up MCP servers based on configuration.
-
-        Args:
-            agent_config: Agent configuration
-
-        Returns:
-            Dictionary of MCP servers
-        """
-        mcp_servers = {}
-
+    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
+        """Setup MCP server from conf/.mcp.json using mcp_manager."""
         try:
-            # Add configured MCP servers
-            mcp_config = self.node_config.get("mcp", "")
-            if mcp_config:
-                mcp_patterns = [pattern.strip() for pattern in mcp_config.split(",") if pattern.strip()]
-                for mcp_pattern in mcp_patterns:
-                    if mcp_pattern in ["filesystem_mcp", "filesystem_mcp.*"]:
-                        # Handle filesystem MCP server with workspace_root override
-                        root_path = self._resolve_workspace_root()
+            from datus.tools.mcp_tools.mcp_manager import MCPManager
 
-                        # Handle relative vs absolute paths
-                        if root_path and os.path.isabs(root_path):
-                            filesystem_path = root_path
-                        else:
-                            filesystem_path = os.path.join(os.getcwd(), root_path)
+            # Use MCPManager to get server config
+            mcp_manager = MCPManager()
+            server_config = mcp_manager.get_server_config(server_name)
 
-                        filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
-                        if filesystem_server:
-                            mcp_servers["filesystem"] = filesystem_server
-                            logger.info(f"Added filesystem MCP server at path: {filesystem_path}")
-                        else:
-                            logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
-                    else:
-                        logger.warning(f"Unknown MCP server pattern: {mcp_pattern}")
+            if not server_config:
+                logger.warning(f"MCP server '{server_name}' not found in configuration")
+                return None
+
+            # Create server instance using the manager
+            server_instance, details = mcp_manager._create_server_instance(server_config)
+
+            if server_instance:
+                logger.info(f"Added MCP server '{server_name}' from configuration: {details}")
+                return server_instance
+            else:
+                error_msg = details.get("error", "Unknown error")
+                logger.warning(f"Failed to create MCP server '{server_name}': {error_msg}")
+                return None
 
         except Exception as e:
-            logger.error(f"Error setting up MCP servers: {e}")
+            logger.error(f"Failed to setup MCP server '{server_name}' from config: {e}")
+            return None
+
+    def _setup_mcp_servers(self) -> Dict[str, Any]:
+        """Set up MCP servers based on configuration."""
+        mcp_servers = {}
+
+        config_value = self.node_config.get("mcp", "")
+        if not config_value:
+            return mcp_servers
+
+        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
+
+        for server_name in mcp_server_names:
+            try:
+                # Handle filesystem_mcp
+                if server_name == "filesystem_mcp":
+                    server = self._setup_filesystem_mcp()
+                    if server:
+                        mcp_servers["filesystem_mcp"] = server
+
+                # Handle MCP servers from conf/.mcp.json using mcp_manager
+                else:
+                    server = self._setup_mcp_server_from_config(server_name)
+                    if server:
+                        mcp_servers[server_name] = server
+
+            except Exception as e:
+                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
+
+        logger.info(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
+
+        # Debug: Log detailed info about each server
+        for name, server in mcp_servers.items():
+            logger.debug(f"MCP server '{name}': type={type(server)}, instance={server}")
 
         return mcp_servers
 
@@ -414,6 +480,10 @@ class GenSQLAgenticNode(AgenticNode):
             )
             action_history_manager.add_action(assistant_action)
             yield assistant_action
+
+            # Debug: Log tools and MCP servers before generation
+            logger.debug(f"Tools available for generation: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
+            logger.debug(f"MCP servers available for generation: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
 
             # Stream response using the model's generate_with_tools_stream
             async for stream_action in self.model.generate_with_tools_stream(
