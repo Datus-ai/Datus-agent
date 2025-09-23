@@ -362,15 +362,15 @@ datus/tools/mcp_tools/
 This backend implementation provides the foundation for CLI commands like:
 
 ```bash
-@mcp list                    # List all MCP servers
-@mcp add <name> <type>       # Add new MCP server
-@mcp remove <name>           # Remove MCP server
-@mcp get <name>              # Get server config
-@mcp check <name>            # Check server connectivity
-@mcp tools <name>            # List tools from a server
-@mcp filter set <name>       # Set tool filter for server
-@mcp filter get <name>       # Get tool filter configuration
-@mcp filter remove <name>    # Remove tool filter
+.mcp list                    # List all MCP servers
+.mcp add <name> <type>       # Add new MCP server
+.mcp remove <name>           # Remove MCP server
+.mcp get <name>              # Get server config
+.mcp check <name>            # Check server connectivity
+.mcp tools <name>            # List tools from a server
+.mcp filter set <name>       # Set tool filter for server
+.mcp filter get <name>       # Get tool filter configuration
+.mcp filter remove <name>    # Remove tool filter
 ```
 
 ## Error Handling
