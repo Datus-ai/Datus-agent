@@ -166,7 +166,7 @@ class EmbeddingModel:
 
             try:
                 # Method `get_registry` has a multi-threading problem
-                self._model = SentenceTransformerEmbeddings.create(name=self.model_name, device=self.device)
+                self._model = SentenceTransformerEmbeddings.create(name=self.model_name)
                 # first download
                 # self._model.generate_embeddings(["foo"])
                 logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
@@ -273,3 +273,7 @@ def get_document_embedding_model() -> EmbeddingModel:
 
 def get_metric_embedding_model() -> EmbeddingModel:
     return get_embedding_model("metric")
+
+
+def get_embedding_device() -> str:
+    return EMBEDDING_DEVICE_TYPE

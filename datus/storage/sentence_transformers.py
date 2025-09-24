@@ -19,6 +19,7 @@ from lancedb.embeddings.base import TextEmbeddingFunction
 from lancedb.embeddings.registry import register
 from lancedb.embeddings.utils import weak_lru
 
+from datus.storage.embedding_models import get_embedding_device
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -51,6 +52,7 @@ class SentenceTransformerEmbeddings(TextEmbeddingFunction):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._ndims = None
+        self.device = get_embedding_device()
 
     @property
     def embedding_model(self):
