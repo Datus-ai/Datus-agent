@@ -119,3 +119,4 @@ agent:
 
   storage:
     base_path: data
+    embedding_device_type: cpu
