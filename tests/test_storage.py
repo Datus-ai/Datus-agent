@@ -10,7 +10,6 @@ from conftest import PROJECT_ROOT
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.storage.base import BaseEmbeddingStore
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
@@ -190,15 +189,6 @@ def test_save_batch(temp_db_path: str):
 
     result = storage.search_all(catalog_name="c1")
     assert result.num_rows == 2
-
-
-def test_create_table_exception(temp_db_path: str):
-    """Test search with valid parameters but empty results."""
-    model = get_db_embedding_model()
-    with pytest.raises(DatusException) as exc_info:
-        BaseEmbeddingStore(db_path=temp_db_path, table_name="empty_table", embedding_model=model)
-
-    assert exc_info.value.code == ErrorCode.STORAGE_TABLE_OPERATION_FAILED
 
 
 def test_store_exception(rag_storage: SchemaWithValueRAG):

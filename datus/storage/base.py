@@ -144,24 +144,27 @@ class BaseEmbeddingStore(StorageBase):
             ) from e
 
     def _ensure_table(self, schema: Optional[Union[pa.Schema, LanceModel]] = None):
-        try:
-            self.table: Table = self.db.create_table(
-                self.table_name,
-                schema=schema,
-                embedding_functions=[
-                    EmbeddingFunctionConfig(
-                        vector_column=self.vector_column_name,
-                        source_column=self.vector_source_name,
-                        function=self.model.model,
-                    )
-                ],
-                exist_ok=True,
-            )
-        except Exception as e:
-            raise DatusException(
-                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
-                message_args={"operation": "create_table", "table_name": self.table_name, "error_message": str(e)},
-            ) from e
+        if self.table_name in self.db.table_names(limit=100):
+            self.table = self.db.open_table(self.table_name)
+        else:
+            try:
+                self.table: Table = self.db.create_table(
+                    self.table_name,
+                    schema=schema,
+                    embedding_functions=[
+                        EmbeddingFunctionConfig(
+                            vector_column=self.vector_column_name,
+                            source_column=self.vector_source_name,
+                            function=self.model.model,
+                        )
+                    ],
+                    exist_ok=True,
+                )
+            except Exception as e:
+                raise DatusException(
+                    ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                    message_args={"operation": "create_table", "table_name": self.table_name, "error_message": str(e)},
+                ) from e
 
     def create_vector_index(
         self,
