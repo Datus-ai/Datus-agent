@@ -91,6 +91,10 @@ agent:
     bird_sqlite:
       type: sqlite
       path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
+    bird_school:
+      name: california_schools
+      type: sqlite
+      uri: ~/benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # just support glob pattern
     duckdb:
       type: duckdb
       name: duck

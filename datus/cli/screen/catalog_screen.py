@@ -217,13 +217,13 @@ class CatalogScreen(ContextScreen):
         """Called when the screen is mounted."""
         self._build_catalog_tree()
 
-    def on_key(self, event: events.Key) -> None:
+    async def on_key(self, event: events.Key) -> None:
         if event.key == "enter" or event.key == "right":
             self.action_load_details()
         elif event.key == "escape":
             self.action_exit_without_selection()
         else:
-            super()._on_key(event)
+            await super()._on_key(event)
 
     def on_unmount(self):
         self.clear_cache()
@@ -539,12 +539,6 @@ class CatalogScreen(ContextScreen):
         tree = self.query_one("#catalogs-tree", TextualTree)
         tree.action_cursor_up()
         self.clear_header()
-
-    def action_expand_node(self) -> None:
-        """Expand the current node."""
-        tree = self.query_one("#catalogs-tree", TextualTree)
-        if tree.cursor_node is not None:
-            tree.cursor_node.expand()
 
     def action_collapse_node(self) -> None:
         """Collapse the current node."""

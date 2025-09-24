@@ -497,11 +497,11 @@ class SubjectScreen(ContextScreen):
             expand=True,
             padding=(0, 1),
         )
-        table.add_column("#", style="dim", width=3, justify="center")
-        table.add_column("Name", style="bright_cyan", min_width=15, max_width=25)
-        table.add_column("Description", style="bright_magenta", min_width=10, max_width=30)
-        table.add_column("Constraint", style="yellow", min_width=15)
-        table.add_column("SQL", min_width=10, max_width=30, overflow="fold")
+        table.add_column("#", style="dim", width=3, justify="center", overflow="crop")
+        table.add_column("Name", style="bright_cyan", width=25, overflow="crop")
+        table.add_column("Description", style="bright_magenta", width=30, overflow="crop")
+        table.add_column("Constraint", style="yellow", min_width=15, overflow="crop")
+        table.add_column("SQL", min_width=20, overflow="crop")
 
         # Batch add rows for better performance
         for idx, metric in enumerate(metrics):

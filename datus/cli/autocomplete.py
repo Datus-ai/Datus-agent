@@ -180,8 +180,7 @@ class SQLCompleter(Completer):
             "!fix": None,
             "!rf": None,
             "!reason": None,
-            "!save2file": None,
-            "!savesql": None,
+            "!save": None,
             "!bash": None,
             "!daend": None,
             # Context commands

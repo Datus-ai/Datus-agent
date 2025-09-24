@@ -798,7 +798,9 @@ class DatusCLI:
         lines.append("[bold]Tool Commands (! prefix):[/]")
         tool_cmds = [
             ("!run <query>", "Run a natural language query with live workflow status display"),
-            ("!sl", "Schema linking: show list of recommended tables and values"),
+            ("!sl/!schema_linking", "Schema linking: show list of recommended tables and values"),
+            ("!sm/!search_metrics", "Use natural language to search for corresponding metrics"),
+            ("!sh/!search_history", "Use natural language to search for historical SQL"),
             ("!gen", "Generate SQL, optionally with table constraints"),
             ("!fix <description>", "Fix the last SQL query"),
             ("!gen_metrics", "Generate metrics with streaming output"),

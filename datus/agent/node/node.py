@@ -271,6 +271,9 @@ class Node(ABC):
 
         return self.result
 
+    async def run_async(self):
+        return self.run()
+
     async def run_stream(self, action_history_manager: Optional[ActionHistoryManager] = None):
         """Execute the node with streaming support based on its type and update status."""
         try:

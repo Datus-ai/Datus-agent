@@ -105,12 +105,12 @@
     sql_task:
       database_name: california_schools
       database_type: sqlite
-      external_knowledge:
-        Charter schools refers to `Charter School (Y/N)` = 1 in
-        the table fprm
+      external_knowledge: |
+        Charter schools refers to `Charter School (Y/N)` = 1 in the table fprm
       id: "2"
       output_dir: output/bird_sqlite
-      task: Please list the zip code of all the charter schools in Fresno County
+      task: |
+        Please list the zip code of all the charter schools in Fresno County
         Office of Education.
     table_schemas:
       - identifier: california_schools.schools

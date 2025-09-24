@@ -96,17 +96,15 @@ class AgentCommands:
             )
 
         elif node_type == NodeType.TYPE_GENERATE_SQL:
-            task_text = (
+            sql_task.task = (
                 task_text
                 or sql_task.task
                 or self.cli.prompt_input("Enter task description for SQL generation", default="")
             )
             return GenerateSQLInput(
-                input_text=task_text,
                 sql_task=sql_task,
                 database_type=sql_task.database_type,
                 table_schemas=self.cli_context.get_recent_tables(),
-                table_values=[],
                 metrics=self.cli_context.get_recent_metrics(),
             )
 
@@ -169,18 +167,18 @@ class AgentCommands:
                     self.console.print("[yellow]Operation cancelled[/]")
                     return None
 
-            # Get node class from agent configuration
-            node_class = Node.get_node_class(node_type)
-
             # Create node instance
-            node = node_class(
-                namespace=self.cli.agent_config.current_namespace,
+            node = Node.new_instance(
+                node_id=f"standalone_{node_type}",
+                description=f"Standalone {node_type} node",
+                node_type=node_type,
                 agent_config=self.cli.agent_config,
+                input_data=input_data,
             )
 
             # Run the node
             self.console.print(f"[dim]Running {node_type} node...[/]")
-            result = asyncio.run(node.run(input_data))
+            result = asyncio.run(node.run_async())
 
             return result
 
@@ -466,7 +464,7 @@ class AgentCommands:
 
     def cmd_search_metrics(self, args: str):
         """
-        Command to search for metrics. Corresponds to !sm
+        Command to search for metrics. Corresponds to !sm and !search_metrics
         """
         self.console.print("[bold blue]Search Metrics[/]")
         input_text = args.strip() or self.cli.prompt_input("Enter search text for metrics")

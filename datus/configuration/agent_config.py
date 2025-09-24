@@ -207,7 +207,9 @@ class AgentConfig:
                     if "name" in db_config:
                         name = db_config["name"]
                     else:
-                        name = get_file_name(uri[uri.index(":") + 4 :])
+                        name = get_file_name(uri if not uri.startswith(db_type) else uri[uri.index(":") + 4 :])
+                    if not uri.startswith(db_type):
+                        uri = f"{db_type}:///{os.path.expanduser(uri)}"
                     self.namespaces[namespace][name] = DbConfig(
                         type=db_type,
                         uri=uri,
@@ -313,8 +315,10 @@ class AgentConfig:
             self.search_metrics_rate = kwargs["search_metrics_rate"]
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]
-        if kwargs.get("action", "") not in ["probe-llm", "generate-dataset"]:
-            self.current_namespace = kwargs.get("namespace", "")
+        if namespace := kwargs.get("namespace", ""):
+            self.current_namespace = namespace
+        if database_name := kwargs.get("database", ""):
+            self.current_database = database_name
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]
             if benchmark_platform not in self.benchmark_paths:
