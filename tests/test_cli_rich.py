@@ -17,10 +17,11 @@ def mock_args():
     return Namespace(
         history_file="~/.datus/sql_history",
         debug=False,
-        namespace="bird_sqlite",
+        namespace="bird_school",
         database="california_schools",
         # Add any other required args with default values
         config="tests/conf/agent.yml",
+        storage_path="tests/data",
     )
 
 

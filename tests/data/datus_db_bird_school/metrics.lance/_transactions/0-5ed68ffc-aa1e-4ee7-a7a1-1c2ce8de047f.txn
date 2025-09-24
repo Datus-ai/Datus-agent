@@ -1,0 +1,4 @@
+$5ed68ffc-aa1e-4ee7-a7a1-1c2ce8de047f²Æ$id ÿÿÿÿÿÿÿÿÿ*string08Zdefault7semantic_model_name ÿÿÿÿÿÿÿÿÿ*string08Zdefault*domain ÿÿÿÿÿÿÿÿÿ*string08Zdefault*layer1 ÿÿÿÿÿÿÿÿÿ*string08Zdefault*layer2 ÿÿÿÿÿÿÿÿÿ*string08Zdefault8domain_layer1_layer2 ÿÿÿÿÿÿÿÿÿ*string08Zdefault(name ÿÿÿÿÿÿÿÿÿ*string08Zdefault/description ÿÿÿÿÿÿÿÿÿ*string08Zdefault.
+constraint ÿÿÿÿÿÿÿÿÿ*string08Zdefault-	sql_query	 ÿÿÿÿÿÿÿÿÿ*string08Zdefault.
+created_at
+ ÿÿÿÿÿÿÿÿÿ*string08Zdefault=vector ÿÿÿÿÿÿÿÿÿ*fixed_size_list:float:38408Zdefault
