@@ -13,6 +13,7 @@ from argparse import Namespace
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
+import structlog
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -23,10 +24,24 @@ from datus.cli.action_history_display import ActionContentGenerator
 from datus.cli.repl import DatusCLI
 from datus.cli.screen.action_display_app import CollapsibleActionContentGenerator
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-from datus.utils.loggings import setup_web_chatbot_logging
+from datus.utils.loggings import configure_logging, setup_web_chatbot_logging
 
-# Initialize web chatbot logging
-logger = setup_web_chatbot_logging(debug=False)
+# Logging setup shared with CLI entry point
+logger = structlog.get_logger("web_chatbot")
+_LOGGING_INITIALIZED = False
+
+
+def initialize_logging(debug: bool = False, log_dir: str = "~/.datus/logs") -> None:
+    """Configure logging for the Streamlit subprocess to match CLI behavior."""
+
+    global _LOGGING_INITIALIZED, logger
+
+    if _LOGGING_INITIALIZED:
+        return
+
+    configure_logging(debug=debug, log_dir=log_dir, console_output=False)
+    logger = setup_web_chatbot_logging(debug=debug, log_dir=log_dir)
+    _LOGGING_INITIALIZED = True
 
 
 def get_available_namespaces(config_path: str = "conf/agent.yml") -> List[str]:
@@ -61,7 +76,7 @@ def create_cli_args(config_path: str = "conf/agent.yml", namespace: str = None) 
     args.catalog = ""
     args.schema = ""
     # Add missing attributes that DatusCLI expects
-    args.debug = False
+    args.debug = bool(st.session_state.get("startup_debug", False)) if hasattr(st, "session_state") else False
     args.no_color = False
 
     # Read storage path from config file
@@ -767,6 +782,8 @@ def run_web_interface(args):
             web_args.extend(["--namespace", args.namespace])
         if args.config:
             web_args.extend(["--config", args.config])
+        if getattr(args, "debug", False):
+            web_args.append("--debug")
 
         if web_args:
             cmd.extend(["--"] + web_args)
@@ -789,6 +806,7 @@ def main():
     namespace = None
     config_path = "conf/agent.yml"
     subagent_name = None
+    debug = False
 
     # Simple argument parsing for Streamlit
     for i, arg in enumerate(sys.argv):
@@ -796,6 +814,11 @@ def main():
             namespace = sys.argv[i + 1]
         elif arg == "--config" and i + 1 < len(sys.argv):
             config_path = sys.argv[i + 1]
+        elif arg == "--debug":
+            debug = True
+
+    # Initialize logging once per process
+    initialize_logging(debug=debug)
 
     # Note: Subagent detection is now handled directly in the interface, not here
 
@@ -806,6 +829,8 @@ def main():
         st.session_state.startup_config_path = config_path
     if "startup_subagent_name" not in st.session_state:
         st.session_state.startup_subagent_name = subagent_name
+    if "startup_debug" not in st.session_state:
+        st.session_state.startup_debug = debug
 
     chatbot = StreamlitChatbot()
     chatbot.run()

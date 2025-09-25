@@ -603,15 +603,12 @@ class TableCompleter(DynamicAtReferenceCompleter):
                 else:
                     # catalog -> database -> table
                     self.max_level = 3
-                    for catalog, database, table, definition, table_type, identifier in (
-                        zip(
-                            catalog_column,
-                            database_column,
-                            table_column,
-                            schema_table["definition"],
-                            schema_table["table_type"],
-                        ),
-                        schema_column["definition"],
+                    for catalog, database, table, definition, table_type, identifier in zip(
+                        catalog_column,
+                        database_column,
+                        table_column,
+                        schema_table["definition"],
+                        schema_table["table_type"],
                         identifier_column,
                     ):
                         insert_into_dict(data, [catalog.as_py(), database.as_py()], table.as_py())

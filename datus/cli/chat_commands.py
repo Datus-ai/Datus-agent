@@ -513,6 +513,11 @@ class ChatCommands:
                 last_sql_action = action
                 break
 
+        if last_sql_action is None:
+            # No SQL action found, skip adding to context
+            logger.warning("No SQL action found in incremental_actions")
+            return
+
         action_output = last_sql_action.output
         if not action_output.get("success", "True"):
             error = action_output.get("error", "") or action_output.get("raw_output", "")

@@ -18,12 +18,14 @@ __all__ = [
     "CompareNode",
     "DateParserNode",
     "GenSQLAgenticNode",
+    "ChatAgenticNode",
     "Node",
 ]
 
 from datus.agent.node.node import Node
 
 from .begin_node import BeginNode
+from .chat_agentic_node import ChatAgenticNode
 from .compare_node import CompareNode
 from .date_parser_node import DateParserNode
 from .doc_search_node import DocSearchNode
