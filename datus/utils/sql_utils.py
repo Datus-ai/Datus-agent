@@ -342,7 +342,6 @@ def _first_statement(sql: str) -> str:
     s = strip_sql_comments(sql).strip()
     if not s:
         return ""
-    # 只取第一个语句（简单切分）
     return s.split(";", 1)[0].strip()
 
 
