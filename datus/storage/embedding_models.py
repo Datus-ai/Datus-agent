@@ -51,7 +51,7 @@ class EmbeddingModel:
         self.registry_name = registry_name
         self.model_name = model_name
         self._dim_size = dim_size
-        self.device = "cpu" if EMBEDDING_DEVICE_TYPE and "cpu" == EMBEDDING_DEVICE_TYPE else get_device()
+        self.device = EMBEDDING_DEVICE_TYPE
         self._model = None
         self.batch_size = batch_size
         self.openai_config = openai_config
@@ -216,6 +216,8 @@ def init_embedding_models(
     # ensure model just load once
     global EMBEDDING_DEVICE_TYPE
     EMBEDDING_DEVICE_TYPE = str(storage_config.get("embedding_device_type", ""))
+    if not EMBEDDING_DEVICE_TYPE:
+        EMBEDDING_DEVICE_TYPE = get_device()
     models = {}
     for name, config in storage_config.items():
         if not isinstance(config, dict):
