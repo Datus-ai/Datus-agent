@@ -86,6 +86,15 @@ class StarRocksConnector(MySQLConnectorBase):
         return "default_catalog"
 
     @override
+    def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
+        """Get list of views in the database."""
+        try:
+            result = self._get_metadata(meta_table_name="VIEWS", catalog_name=catalog_name, database_name=database_name)
+            return [view["table_name"] for view in result]
+        except Exception as e:
+            logger.warning(f"Failed to get views from StarRocks: {e}")
+            return []
+
     def ignore_schemas(self) -> List[str]:
         return ["sys", "information_schema", "_statistics_"]
 
