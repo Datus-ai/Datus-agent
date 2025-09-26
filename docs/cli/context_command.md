@@ -26,6 +26,8 @@ catalog
           └── table
 ```
 
+![Catalog Screen](../assets/catalog_screen.png)
+
 ### @subject
 ```
 domain
@@ -35,6 +37,8 @@ domain
               └── metrics
 ```
 
+![Subject Screen](../assets/subject_screen.png)
+
 ### @sql
 ```
 domain
@@ -42,6 +46,8 @@ domain
       └── layer2
           └── sql_history / sql_snippet
 ```
+
+![SQL History Screen](../assets/sql_history_screen.png)
 
 When you select an item, it will be injected into the current chat turn as a reference — Datus will know its metadata, lineage, and purpose when generating SQL.
 
@@ -51,23 +57,23 @@ For the initialization of the context tree, you can refer to the Knowledge Base 
 
 ### Context Injection Modes
 
-There are two ways to inject context:
+There are two ways to inject context in chat commands:
 
 #### Browse Mode
 Type `@` (or `@catalog`, `@subject`, `@sql`) and press Tab to open the tree browser, navigating node by node until you reach the desired table, metric, or SQL.
 
 #### Fuzzy Search Mode
-Type `@` (or `@subject orders`) followed by a keyword, then press Tab. Datus will fuzzy search across all context trees and suggest best matches, so you don't need to remember exact paths.
+Type `@` (or `@any_text`) followed by any text, then press Tab. Datus will fuzzy search across all context trees and suggest the best matches, so you don't need to remember exact paths. Recent tables, metrics, and SQL searched in the [!execution command](execution_command.md) will appear at the top of the results.
 
 ### Examples
 
 ```bash
 # Browse mode - navigate step by step
-@ <Tab>
-# Select catalog > my_database > public > customers
+/ pay attention to @catalog <Tab>
+# Select catalog > my_database > public > customers step by step
 
 # Fuzzy search mode - quick keyword search
-@subject revenue <Tab>
+/ @revenue <Tab>
 # Shows all revenue-related metrics across all domains
 ```
 
@@ -90,3 +96,5 @@ Type `@` (or `@subject orders`) followed by a keyword, then press Tab. Datus wil
 - Reusable SQL snippets and templates
 - Query patterns and best practices
 - Optimization examples
+
+Check the [knowledge base documentation](../knowledge_base/introduction.md) to learn how to build these context trees.  
