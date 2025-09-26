@@ -279,7 +279,7 @@ class TableValue(BaseTableSchema):
             database_name=data.get("database_name", ""),
             schema_name=data.get("schema_name", ""),
             table_values=data["table_values"] if "table_values" in data else data["sample_rows"],
-            table_type=data["table_type"],
+            table_type=data.get("table_type", "table"),
         )
 
     @classmethod

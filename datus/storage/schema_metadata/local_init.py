@@ -467,6 +467,8 @@ def store_tables(
                 new_values.extend(sample_rows)
 
     if new_tables or new_values:
+        for item in new_values:
+            item["table_type"] = table_type
         table_lineage_store.store_batch(new_tables, new_values)
         logger.info(f"Stored {len(new_tables)} {table_type}s and {len(new_values)} values for {database_name}")
     else:
