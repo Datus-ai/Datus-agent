@@ -127,7 +127,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         database_name = database_name or self.database_name
         if self.default_catalog():
             # catalog support
-            catalog_name or self.default_catalog()
+            catalog_name = catalog_name or self.catalog_name or self.default_catalog()
             if database_name:
                 return f"{catalog_name}.{database_name}"
             return None

@@ -567,3 +567,12 @@ SELECT
     POWER(CORR(gold, bitcoin), 2) as r_squared
 FROM gold_vs_bitcoin"""
     assert parse_sql_type(sql, dialect=DBType.DUCKDB) == SQLType.SELECT
+    assert (
+        parse_sql_type("show create table `default_catalog`.`ac_manage`.`v_udata_ac_info`", dialect="starrocks")
+        == SQLType.METADATA_SHOW
+    )
+
+    assert (
+        parse_sql_type("select * from `default_catalog`.`ac_manage`.`v_udata_ac_info`", dialect="starrocks")
+        == SQLType.SELECT
+    )

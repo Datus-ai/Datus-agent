@@ -6,9 +6,8 @@ from sqlglot import expressions
 from sqlglot.expressions import CTE, Table
 
 from datus.utils.constants import DBType, SQLType
-
-from .exceptions import DatusException, ErrorCode
-from .loggings import get_logger
+from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
@@ -312,6 +311,41 @@ def parse_table_names_parts(full_table_names: List[str], dialect: str = DBType.S
     return [parse_table_name_parts(table_name, dialect) for table_name in full_table_names]
 
 
+_METADATA_RE: re.Pattern | None = None
+
+
+def _metadata_pattern() -> re.Pattern:
+    global _METADATA_RE
+    if not _METADATA_RE:
+        _METADATA_RE = re.compile(
+            r"""(?ix)^\s*
+        (?:
+            show\b(?:\s+create\s+table|\s+catalogs|\s+databases|\s+tables|\s+functions|\s+views|\s+columns|\s+partitions)?
+            |set\s+catalog\b
+            |describe\b
+            |pragma\b
+        )
+    """,
+        )
+    return _METADATA_RE
+
+
+def strip_sql_comments(sql: str) -> str:
+    """Remove /* ... */ and -- ... comments (simple but effective)."""
+    sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    sql = re.sub(r"--.*?$", " ", sql, flags=re.MULTILINE)
+    return sql
+
+
+def _first_statement(sql: str) -> str:
+    """Return the first non-empty statement (before the first ';'), with comments removed."""
+    s = strip_sql_comments(sql).strip()
+    if not s:
+        return ""
+    # 只取第一个语句（简单切分）
+    return s.split(";", 1)[0].strip()
+
+
 def parse_sql_type(sql: str, dialect: str) -> SQLType:
     """
     Determines the type of an SQL statement based on its first keyword.
@@ -334,6 +368,11 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
     try:
         parsed_expression = sqlglot.parse_one(normalized_sql, dialect=parse_dialect(dialect))
     except Exception:
+        if dialect == DBType.STARROCKS.value:
+            first_stmt = _first_statement(sql)
+            if _metadata_pattern().match(first_stmt):
+                return SQLType.METADATA_SHOW
+
         raise DatusException(
             ErrorCode.DB_EXECUTION_SYNTAX_ERROR, message_args={"sql": sql, "error_message": "SQL parsing failed"}
         )
