@@ -1,5 +1,35 @@
 # Release notes
 
+## 0.2.0 
+### Enhanced Chat Functionality
+- Advanced multi-turn conversations for seamless interactions. #91
+- Agentic execution of database tools, file system operations, and automatic to-do list generation.
+- Support for both automatic and manual compaction (.compact). #125
+- Session management with .resume and .clear commands.
+- Provide dedicated context by introducing it with the @ Table, @ file, @ metrics, @sql_history commands.  #134 #152
+- Token consumption tracking and estimation for better resource visibility. #119
+- Write-capability confirmations before executing sensitive tool actions.
+- Plan Mode: An AI-assisted planning feature that generates and manages a to-do list  #147
+
+### Automatic building knowledge base
+- Automatic generation of Metric YAML files in MetricFlow format from historyical success stories. #10
+- Automatic summary and labeling SQL history files from *.sql files in workspace #132
+- Improves SQL accuracy and generation speed using metrics & SQL history.
+
+### MCP Extension
+- New .mcp commands to add, remove, list, and call MCP servers and tools. #54
+### Flexible Workflow Configuration
+- Fully customizable workflow definitions via agent.yml.
+- Configurable nodes, models, and database connections.
+- Support for sub-workflows and result selection to improve accuracy. #88
+### Context Exploration
+- Improve @catalogs to display all databases, schemas, and tables across multiple databases.
+- New @subject to show all metrics built with MetricFlow.  #165
+- Context search tools integration to enhance recall of metadata and metrics.  #138
+### User Behavior Logging
+- Automatic collection of user behavior logs.
+- Transforms human–computer interaction data into trainable datasets for future improvements.
+
 ## 0.1.0 
 
 ### New features

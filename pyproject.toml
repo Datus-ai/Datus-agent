@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.1.12" # this is a alpha version, use for testing only
+version = "0.2.0rc3" # this is a alpha version, use for testing only
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
