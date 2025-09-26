@@ -38,11 +38,11 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         self.host = host
         self.port = int(port)
         self.user = user
-        self.password = str(password)
+        self.password = str(password) if password else ""
         self.database = database
         # StarRocks uses MySQL protocol, use mysql+pymysql driver with specific pool settings
         # URL encode the password to handle special characters like @, :, etc.
-        encoded_password = quote_plus(str(password))
+        encoded_password = quote_plus(self.password) if self.password else ""
         # Use mysql+pymysql instead of starrocks:// to avoid pymysql struct.pack issues
         self.connection_string = (
             f"mysql+pymysql://{user}:{encoded_password}@{host}:{self.port}/{database}?charset=utf8mb4&autocommit=true"
@@ -243,7 +243,6 @@ class MySQLConnectorBase(SQLAlchemyConnector):
                 logger.warning(f"Could not get DDL for table {full_name}: {e}")
                 # Fallback to basic table info
                 create_statement = f"-- DDL not available for table {table['table_name']}"
-
             table["identifier"] = self.identifier(
                 catalog_name=table["catalog_name"],
                 database_name=table["database_name"],

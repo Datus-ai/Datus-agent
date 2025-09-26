@@ -576,3 +576,5 @@ FROM gold_vs_bitcoin"""
         parse_sql_type("select * from `default_catalog`.`ac_manage`.`v_udata_ac_info`", dialect="starrocks")
         == SQLType.SELECT
     )
+
+    assert parse_sql_type("SHOW CATALOGS", dialect="starrocks") == SQLType.METADATA_SHOW

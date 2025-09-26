@@ -49,6 +49,7 @@ class StarRocksConnector(MySQLConnectorBase):
         database: str = "",
     ):
         super().__init__(host, port, user, password, database)
+        self.dialect = DBType.STARROCKS
         self.catalog_name = catalog
         # Register this connection for cleanup and ensure global cleanup is registered
         _starrocks_connections.add(self)

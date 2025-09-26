@@ -22,11 +22,11 @@ def connector(agent_config: AgentConfig) -> StarRocksConnector:
 
 def test_connector(connector: StarRocksConnector):
     assert connector.test_connection()
-    assert len(connector.get_tables(database_name="ssb")) > 0
+    assert len(connector.get_tables()) > 0
 
 
 def test_get_tables_with_ddl(connector: StarRocksConnector):
-    tables = connector.get_tables_with_ddl(database_name="ssb")
+    tables = connector.get_tables_with_ddl(catalog_name="default_catalog")
     assert len(tables) > 0
     for table in tables:
         assert table["table_name"]
@@ -40,7 +40,7 @@ def test_get_tables_with_ddl(connector: StarRocksConnector):
 
 
 def test_get_views_with_ddl(connector: StarRocksConnector):
-    views = connector.get_views_with_ddl(database_name="ssb")
+    views = connector.get_views_with_ddl(catalog_name="default_catalog")
     assert len(views) >= 0
     for view in views:
         assert view["table_name"]
@@ -57,7 +57,7 @@ def test_get_views_with_ddl(connector: StarRocksConnector):
 
 
 def test_get_materialized_views_with_ddl(connector: StarRocksConnector):
-    views = connector.get_materialized_views_with_ddl(database_name="ssb")
+    views = connector.get_materialized_views_with_ddl(catalog_name="default_catalog")
     assert len(views) >= 0
     for view in views:
         assert view["table_name"]
@@ -71,8 +71,8 @@ def test_get_materialized_views_with_ddl(connector: StarRocksConnector):
 
 
 def test_exceptions(connector: StarRocksConnector):
-    with pytest.raises(DatusException, match=ErrorCode.DB_CONNECTION_FAILED.code):
-        connector.get_sample_rows(database_name="ssb", tables=["nonexistent_table"])
+    with pytest.raises(DatusException, match=ErrorCode.DB_EXECUTION_ERROR.code):
+        connector.get_sample_rows(catalog_name="default_catalog", tables=["nonexistent_table"])
 
 
 def test_get_databases(connector: StarRocksConnector):

@@ -182,9 +182,9 @@ def metadata_identifier(
         return f"{database_name}.{table_name}"
     elif dialect == DBType.DUCKDB:
         return f"{database_name}.{schema_name}.{table_name}"
-    elif dialect == DBType.MYSQL:
+    elif dialect in (DBType.MYSQL, DBType.STARROCKS):
         return f"{catalog_name}.{database_name}.{table_name}" if catalog_name else f"{database_name}.{table_name}"
-    elif dialect == "oracle" or dialect.startswith("postgre"):
+    elif dialect in (DBType.ORACLE, DBType.POSTGRESQL, DBType.POSTGRES):
         return f"{database_name}.{schema_name}.{table_name}"
     elif dialect == DBType.SNOWFLAKE:
         return (
@@ -396,5 +396,12 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
         return SQLType.DDL
     elif isinstance(parsed_expression, (expressions.Show, expressions.Describe, expressions.Pragma)):
         return SQLType.METADATA_SHOW
+    elif isinstance(parsed_expression, expressions.Command):
+        first_stmt = _first_statement(sql).lower().strip()
+        if first_stmt.startswith("show") or first_stmt.startswith("explain") or first_stmt.startswith("ANALYZE"):
+            return SQLType.METADATA_SHOW
+        else:
+            return SQLType.CONTENT_SET
+
     else:
         return SQLType.CONTENT_SET
