@@ -398,7 +398,7 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
         return SQLType.METADATA_SHOW
     elif isinstance(parsed_expression, expressions.Command):
         first_stmt = _first_statement(sql).lower().strip()
-        if first_stmt.startswith("show") or first_stmt.startswith("explain") or first_stmt.startswith("ANALYZE"):
+        if first_stmt.startswith("show") or first_stmt.startswith("explain") or first_stmt.startswith("analyze"):
             return SQLType.METADATA_SHOW
         else:
             return SQLType.CONTENT_SET
