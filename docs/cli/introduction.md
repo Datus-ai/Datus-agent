@@ -6,18 +6,18 @@ Datus-CLI is an AI-native, terminal-first SQL client built for data engineers. I
 
 At its core are three "magic commands" that keep things simple and fast:
 
-- **`/` Chat command** - For multi-turn conversation
-- **`@` Context command** - For on-demand recall of metadata/metrics/SQL history
-- **`!` Execution command** - For deterministic, scriptable actions
+- **[`/` Chat command](chat_command.md)** - For multi-turn conversation
+- **[`@` Context command](context_command.md)** - For on-demand recall of metadata/metrics/SQL history
+- **[`!` Execution command](execution_command.md)** - For deterministic, scriptable actions
 
 ## Additional Features
 
 In addition to the three magic commands, you can also:
 
-- Run SQL directly like a traditional SQL client
-- Use system commands such as `.compact` and `.clear` to manage or reset sessions
-- Explore metadata with `.tables` and `.databases`
-- Use `.mcp` to add, remove, or test MCP servers to extend functionality
+- [Run SQL directly](sql_execution.md) like a traditional SQL client
+- Use [system commands](chat_command.md#session-commands) such as `.compact` and `.clear` to manage or reset sessions
+- [Explore metadata](sql_execution.md#explore-metadata) with `.tables` and `.databases`
+- Use [`.mcp`](mcp_extensions.md) to add, remove, or test MCP servers to extend functionality
 
 ## What is Vibe SQL?
 
