@@ -45,7 +45,7 @@ def initialize_logging(debug: bool = False, log_dir: str = "~/.datus/logs") -> N
     _LOGGING_INITIALIZED = True
 
 
-def get_available_namespaces(config_path: str = "conf/agent.yml") -> List[str]:
+def get_available_namespaces(config_path: str = "") -> List[str]:
     """Extract available namespaces from config file"""
     try:
         config_path = parse_config_path(config_path)
@@ -66,9 +66,7 @@ def get_available_namespaces(config_path: str = "conf/agent.yml") -> List[str]:
         return []
 
 
-def create_cli_args(
-    config_path: str = "conf/agent.yml", namespace: str = None, catalog: str = "", database: str = ""
-) -> Namespace:
+def create_cli_args(config_path: str = "", namespace: str = None, catalog: str = "", database: str = "") -> Namespace:
     """Create CLI arguments for DatusCLI initialization"""
     args = Namespace()
     args.config = parse_config_path(config_path)

@@ -78,10 +78,11 @@ class SubAgentCommands:
     def _update_agent_yml(self, config: SubAgentConfig):
         """Updates the agent.yml file with the new agent's configuration."""
         agent_name = config.system_prompt
-        agent_config: Dict[str, Any] = {
+        sub_agent_config: Dict[str, Any] = {
             "system_prompt": agent_name,
             "prompt_version": config.prompt_version,
             "prompt_language": config.prompt_language,
+            "description": config.description,
             "tools": config.tools,
             "mcp": config.mcp,
             "rules": list(config.rules or []),
@@ -90,12 +91,14 @@ class SubAgentCommands:
         if config.scoped_context:
             scoped_context = config.scoped_context.model_dump(exclude_none=True)
             if scoped_context:
-                agent_config["scoped_context"] = scoped_context
+                sub_agent_config["scoped_context"] = scoped_context
 
         # Add the new agent config
-        self.cli_instance.configuration_manager.update_item(
-            "agentic_nodes", {agent_name: agent_config}, delete_old_key=True
-        )
+
+        data = self.cli_instance.configuration_manager.get("agentic_nodes", {})
+        data[agent_name] = sub_agent_config
+
+        self.cli_instance.configuration_manager.update_item("agentic_nodes", data, delete_old_key=True)
         console.print(f"- Updated configuration file: [cyan]{self.cli_instance.configuration_manager.config_path}[/]")
 
     def _create_prompt_template(self, config: SubAgentConfig):
@@ -172,9 +175,8 @@ class SubAgentCommands:
             console.print(f"[bold red]An error occurred while running the wizard:[/] {e}")
             logger.error(f"Sub-agent wizard failed: {e}")
             return
-
         if result is None:
-            console.print("Agent creation cancelled.", style="yellow")
+            console.print(f"Agent cancelled {'creation' if not data else 'modification'}.", style="yellow")
             return
         agent_name = result.system_prompt
         # 1. Update agent.yml configuration
@@ -182,5 +184,4 @@ class SubAgentCommands:
 
         # 2. Create the .j2 prompt template file
         self._create_prompt_template(result)
-        is_created = not data
-        console.print(f"[bold green]Successfully {'create' if is_created else 'update'} agent '{agent_name}'.[/]")
+        console.print(f"[bold green]Sub-agent {agent_name} {'created' if not data else 'modified'} successfully.[/]")

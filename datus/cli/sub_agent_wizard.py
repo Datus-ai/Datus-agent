@@ -30,6 +30,9 @@ from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.context_search import ContextSearchTools
 from datus.tools.mcp_tools import MCPTool
 from datus.tools.tools import DBFuncTool
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from datus.cli import DatusCLI
@@ -57,17 +60,22 @@ class SubAgentWizard:
 
     def __init__(self, cli_instance: "DatusCLI", data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None):
         self.cli_instance = cli_instance
+
         if not data:
             data = SubAgentConfig(system_prompt="", description="", scoped_context=ScopedContext())
         if isinstance(data, SubAgentConfig):
             self.data = data
         else:
             self.data: SubAgentConfig = SubAgentConfig.model_validate(data)
+        logger.info(f"$$$ INIT {self.data}")
         # Keep track of original name for edit-mode validation
         self._original_name: Optional[str] = self.data.system_prompt
         self.step = 0
         self.done = False
         self.error_dialog = None
+
+        # Preview updates are suspended during initialization until edit-state is applied
+        self._suspend_preview_updates = True
 
         # For step 4: Rules list
         self.selected_rule_index = 0
@@ -110,66 +118,68 @@ class SubAgentWizard:
             self._apply_initial_form_state()
         except Exception:
             # Non-fatal: continue even if prefill hits an issue
-            pass
+            self._suspend_preview_updates = False
+            self._update_previews()
 
     # ------------------ Edit Mode Prefill Helpers ------------------
-    def _parse_to_list(self, value: Any) -> List[str]:
-        """Normalize stored config values (string/list) into a list of tokens."""
+    def _split_comma_tokens(self, value: Any) -> List[str]:
+        """Split comma-delimited values (recursively) into normalized tokens."""
         if value is None:
             return []
         if isinstance(value, list):
             tokens: List[str] = []
-            for v in value:
-                tokens.extend(self._parse_to_list(v))
+            for item in value:
+                tokens.extend(self._split_comma_tokens(item))
             return [t for t in tokens if t]
-        return [t.strip() for t in str(value).split(",") if t.strip()]
+
+        text = str(value).replace("\n", ",")
+        return [part.strip() for part in text.split(",") if part.strip()]
+
+    def _normalize_scoped_text(self, value: Any) -> str:
+        """Convert scoped-context values into newline-delimited text."""
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            tokens: List[str] = []
+            for item in value:
+                tokens.extend(self._split_comma_tokens(item))
+        else:
+            tokens = self._split_comma_tokens(value)
+        return "\n".join(tokens)
 
     def _apply_initial_form_state(self):
         """Populate inputs and checkbox selections from self.data when editing."""
         # 1) Basic fields
         try:
-            self.name_buffer.text = str(self.data.system_prompt or "")
+            self.name_buffer.text = self.data.system_prompt or ""
         except Exception:
-            pass
+            self.name_buffer.text = ""
         try:
-            self.description_area.text = str(self.data.description or "")
+            self.description_area.text = self.data.description or ""
+        except Exception:
+            self.description_area.text = ""
+
+        # 2) Rules (preserve order)
+        try:
+            self.selected_rule_index = 0
+            if isinstance(self.data.rules, list):
+                self._update_rules_display()
         except Exception:
             pass
 
-        # 2) Rules
-        if isinstance(getattr(self.data, "rules", []), list):
-            self._update_rules_display()
-
-        # 3) Scoped context (accept both 'scoped_context' and legacy 'scope_context')
+        # 3) Scoped context
         scoped_ctx = getattr(self.data, "scoped_context", None)
         try:
-            if scoped_ctx is None:
-                tables = metrics = sqls = ""
-            else:
-                tables = scoped_ctx.tables or ""
-                metrics = scoped_ctx.metrics or ""
-                sqls = scoped_ctx.sqls or ""
-            # Support list or comma-separated strings
-            tbl_text = (
-                "\n".join(tables)
-                if isinstance(tables, list)
-                else "\n".join([t.strip() for t in str(tables).split(",") if t.strip()])
-            )
-            met_text = (
-                "\n".join(metrics)
-                if isinstance(metrics, list)
-                else "\n".join([m.strip() for m in str(metrics).split(",") if m.strip()])
-            )
-            sql_text = (
-                "\n".join(sqls)
-                if isinstance(sqls, list)
-                else "\n".join([s.strip() for s in str(sqls).split(",") if s.strip()])
-            )
-            self.catalogs_area.text = tbl_text
-            self.metrics_area.text = met_text
-            self.sqls_area.text = sql_text
+            tables_value = getattr(scoped_ctx, "tables", None)
+            metrics_value = getattr(scoped_ctx, "metrics", None)
+            sqls_value = getattr(scoped_ctx, "sqls", None)
+            self.catalogs_area.text = self._normalize_scoped_text(tables_value)
+            self.metrics_area.text = self._normalize_scoped_text(metrics_value)
+            self.sqls_area.text = self._normalize_scoped_text(sqls_value)
         except Exception:
-            pass
+            self.catalogs_area.text = ""
+            self.metrics_area.text = ""
+            self.sqls_area.text = ""
 
         # 4) Native tool selections
         self._apply_initial_native_selection(self.data.tools)
@@ -177,7 +187,8 @@ class SubAgentWizard:
         # 5) MCP selections
         self._apply_initial_mcp_selection(self.data.mcp)
 
-        # 6) Refresh previews
+        # 6) Refresh previews (now safe to update underlying model)
+        self._suspend_preview_updates = False
         self._update_previews()
 
     def _apply_initial_native_selection(self, tools_value: Any):
@@ -188,46 +199,59 @@ class SubAgentWizard:
           - legacy: ["list_tables", "search_metrics"]
         """
         try:
-            tokens = self._parse_to_list(tools_value)
+            tokens = self._split_comma_tokens(tools_value)
             if not tokens:
                 return
-            categories: Dict[str, Any] = {}
+
+            categories: Dict[str, Dict[str, Any]] = {}
             for entry in getattr(self, "native_category_entries", []):
-                cat = entry.get("name")
+                name = entry.get("name")
                 cbl = entry.get("tools_cbl")
-                if not cat or not cbl:
+                if not name or not cbl:
                     continue
-                all_vals = [v for v, _ in getattr(cbl, "values", [])]
-                categories[cat] = (cbl, set(all_vals))
+                all_values = [v for v, _ in getattr(cbl, "values", [])]
+                categories[name] = {"cbl": cbl, "all_values": all_values}
 
-            per_cat_selected: Dict[str, set] = {cat: set() for cat in categories.keys()}
-            select_all_cats: set = set()
+            per_category: Dict[str, set] = {cat: set() for cat in categories}
+            full_categories: set = set()
 
-            for tok in tokens:
-                if "." in tok:
-                    cat, method = tok.split(".", 1)
-                    if cat in categories and method:
-                        per_cat_selected[cat].add(method)
+            for token in tokens:
+                item = token.strip()
+                if not item:
+                    continue
+                normalized = item.replace(":", ".")
+                if "." in normalized:
+                    cat, tool = normalized.split(".", 1)
+                    cat, tool = cat.strip(), tool.strip()
+                    if not cat:
+                        continue
+                    data = categories.get(cat)
+                    if not data or not tool:
+                        continue
+                    available = data["all_values"]
+                    if tool in available:
+                        per_category.setdefault(cat, set()).add(tool)
                     else:
-                        # Try matching by trailing method name
-                        method_only = tok.split(".")[-1]
-                        for cat_name, (_, all_vals) in categories.items():
-                            if method_only in all_vals:
-                                per_cat_selected[cat_name].add(method_only)
+                        # Fallback: match suffix if config stored fully qualified names
+                        for candidate in available:
+                            if candidate.endswith(tool):
+                                per_category.setdefault(cat, set()).add(candidate)
                 else:
-                    if tok in categories:
-                        select_all_cats.add(tok)
+                    if item in categories:
+                        full_categories.add(item)
                     else:
-                        for cat_name, (_, all_vals) in categories.items():
-                            if tok in all_vals:
-                                per_cat_selected[cat_name].add(tok)
+                        for cat, data in categories.items():
+                            if item in data["all_values"]:
+                                per_category.setdefault(cat, set()).add(item)
 
-            for cat_name, (cbl, all_vals) in categories.items():
-                if cat_name in select_all_cats:
-                    cbl.current_values = list(all_vals)
+            for cat, data in categories.items():
+                cbl: CheckboxList = data["cbl"]
+                all_values = data["all_values"]
+                if cat in full_categories:
+                    cbl.current_values = list(all_values)
                 else:
-                    selected = [v for v in per_cat_selected.get(cat_name, set()) if v in all_vals]
-                    cbl.current_values = selected
+                    selections = [v for v in per_category.get(cat, set()) if v in all_values]
+                    cbl.current_values = selections
         except Exception:
             pass
 
@@ -239,59 +263,56 @@ class SubAgentWizard:
           - legacy list items "server:tool"
         """
         try:
-            tokens = self._parse_to_list(mcp_value)
+            tokens = self._split_comma_tokens(mcp_value)
             if not tokens:
                 return
 
-            server_map: Dict[str, Dict[str, Any]] = {}
-            for tok in tokens:
-                if ":" in tok:
-                    srv, tool = tok.split(":", 1)
-                    srv, tool = srv.strip(), tool.strip()
-                    if not srv:
-                        continue
-                    server_map.setdefault(srv, {"all": False, "tools": set()})
-                    if tool:
-                        server_map[srv]["tools"].add(tool)
-                elif "." in tok:
-                    srv, tool = tok.split(".", 1)
-                    srv, tool = srv.strip(), tool.strip()
-                    if not srv:
-                        continue
-                    server_map.setdefault(srv, {"all": False, "tools": set()})
-                    if tool:
-                        server_map[srv]["tools"].add(tool)
+            selections: Dict[str, Dict[str, Any]] = {}
+            for token in tokens:
+                item = token.strip()
+                if not item:
+                    continue
+                server = item
+                tool = ""
+                normalized = item.replace(":", ".")
+                if "." in normalized:
+                    server, tool = normalized.split(".", 1)
+                    server, tool = server.strip(), tool.strip()
                 else:
-                    srv = tok.strip()
-                    if not srv:
-                        continue
-                    server_map.setdefault(srv, {"all": False, "tools": set()})
-                    server_map[srv]["all"] = True
+                    server = server.strip()
+
+                if not server:
+                    continue
+
+                state = selections.setdefault(server, {"all": False, "tools": set()})
+                if tool:
+                    state["tools"].add(tool)
+                else:
+                    state["all"] = True
 
             for entry in getattr(self, "mcp_server_entries", []):
                 name = entry.get("name")
-                if not name or name not in server_map:
+                if not name or name not in selections:
                     continue
-                state = server_map[name]
+                state = selections[name]
                 if state.get("all"):
                     entry["preselect_all"] = True
                 if state.get("tools"):
-                    existing = set(entry.get("preselect_specific", set()))
-                    entry["preselect_specific"] = existing | set(state["tools"])  # type: ignore
+                    entry["preselect_specific"] = set(state["tools"])  # type: ignore
 
                 tools_cbl = entry.get("tools_cbl")
                 if tools_cbl and getattr(tools_cbl, "values", None):
-                    # Already loaded, apply now
                     if entry.get("preselect_all"):
                         tools_cbl.current_values = [v for v, _ in tools_cbl.values]
                     else:
-                        wanted = set(entry.get("preselect_specific", set()))
+                        desired = set(entry.get("preselect_specific", set()))
                         picks = []
-                        for v, _ in tools_cbl.values:
-                            if ":" in v:
-                                srv, tool = v.split(":", 1)
-                                if srv == name and tool in wanted:
-                                    picks.append(v)
+                        for value, _ in tools_cbl.values:
+                            if ":" not in value:
+                                continue
+                            srv, tool_name = value.split(":", 1)
+                            if srv == name and tool_name in desired:
+                                picks.append(value)
                         tools_cbl.current_values = picks
                 try:
                     self._update_single_mcp_header(entry)
@@ -793,7 +814,23 @@ class SubAgentWizard:
         return sorted(uniq, key=lambda x: x[0])
 
     def _fill_scoped_text(self, area_component: TextArea, new_text: str):
-        area_component.text = new_text
+        """Insert picker selections at the cursor rather than replacing all text."""
+        if not new_text:
+            self.app.layout.focus(area_component)
+            return
+
+        buffer = area_component.buffer
+        document = buffer.document
+
+        prefix = ""
+        if document.cursor_position > 0 and document.char_before_cursor != "\n":
+            prefix = "\n"
+
+        text_to_insert = f"{prefix}{new_text}"
+        if not text_to_insert.endswith("\n"):
+            text_to_insert += "\n"
+
+        buffer.insert_text(text_to_insert, overwrite=False)
         self.app.layout.focus(area_component)
 
     def _open_scoped_picker(self, kind: str):
@@ -1496,6 +1533,8 @@ class SubAgentWizard:
 
     def _update_previews(self, *args, **kwargs):
         """Update YAML and prompt preview panes based on current inputs."""
+        if getattr(self, "_suspend_preview_updates", False):
+            return
         # Sync category button states
         if hasattr(self, "category_buttons"):
             for button, cbl, category in self.category_buttons:

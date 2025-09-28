@@ -79,19 +79,23 @@ class ConfigurationManager:
 CONFIGURATION_MANAGER: ConfigurationManager | None = None
 
 
-def configuration_manager(config_path: str = "") -> ConfigurationManager:
+def configuration_manager(config_path: str = "", reload: bool = False) -> ConfigurationManager:
     global CONFIGURATION_MANAGER
-    if CONFIGURATION_MANAGER:
-        return CONFIGURATION_MANAGER
-    CONFIGURATION_MANAGER = ConfigurationManager(config_path)
+    if reload or not CONFIGURATION_MANAGER:
+        CONFIGURATION_MANAGER = ConfigurationManager(config_path)
     return CONFIGURATION_MANAGER
 
 
-def parse_config_path(config_path: str = "") -> Path:
-    if config_path:
-        config_path = Path(config_path).expanduser()
+def parse_config_path(config_file: str = "") -> Path:
+    if config_file:
+        config_path = Path(config_file).expanduser()
         if config_path.exists():
             return config_path
+        elif config_file != "conf/agent.yml":
+            # default config file
+            raise DatusException(
+                code=ErrorCode.COMMON_FILE_NOT_FOUND, message=f"Agent configuration file not found: {config_path}"
+            )
     if os.path.exists("conf/agent.yml"):
         return Path("conf/agent.yml")
     home_config = Path.home() / ".datus" / "conf" / "agent.yml"
@@ -107,7 +111,7 @@ def parse_config_path(config_path: str = "") -> Path:
     )
 
 
-def load_agent_config(**kwargs) -> AgentConfig:
+def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     # Check config file in order: kwargs["config"] > conf/agent.yml > ~/.datus/conf/agent.yml
     # Load .env file if it exists
     try:
@@ -117,7 +121,7 @@ def load_agent_config(**kwargs) -> AgentConfig:
     except Exception:
         pass
 
-    config = configuration_manager(config_path=kwargs.get("config", ""))
+    config = configuration_manager(config_path=kwargs.get("config", ""), reload=reload)
     agent_raw = config.get("agent")
     nodes = {}
     if "nodes" in agent_raw:
