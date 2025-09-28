@@ -7,6 +7,7 @@ import re
 from abc import abstractmethod
 from typing import Any, Dict, Iterable, List, Tuple, Union
 
+import pyarrow
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
 from pygments.lexers.sql import SqlLexer
@@ -537,18 +538,23 @@ class TableCompleter(DynamicAtReferenceCompleter):
         from datus.storage.schema_metadata.store import rag_by_configuration
 
         storage = rag_by_configuration(self.agent_config)
-        schema_table = storage.search_all_schemas(
-            database_name=self.agent_config.current_database,
-            select_fields=[
-                "catalog_name",
-                "database_name",
-                "schema_name",
-                "table_name",
-                "table_type",
-                "definition",
-                "identifier",
-            ],
-        )
+        try:
+            schema_table = storage.search_all_schemas(
+                database_name=self.agent_config.current_database,
+                select_fields=[
+                    "catalog_name",
+                    "database_name",
+                    "schema_name",
+                    "table_name",
+                    "table_type",
+                    "definition",
+                    "identifier",
+                ],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load table data: {e}")
+            schema_table = pyarrow.table([])
+        logger.debug(f"Load table data for completer: {len(schema_table)}")
         if schema_table is None or schema_table.num_rows == 0:
             return []
 

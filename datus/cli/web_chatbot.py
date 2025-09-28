@@ -23,6 +23,7 @@ from rich.table import Table
 from datus.cli.action_history_display import ActionContentGenerator
 from datus.cli.repl import DatusCLI
 from datus.cli.screen.action_display_app import CollapsibleActionContentGenerator
+from datus.configuration.agent_config_loader import parse_config_path
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import configure_logging, setup_web_chatbot_logging
 
@@ -47,6 +48,7 @@ def initialize_logging(debug: bool = False, log_dir: str = "~/.datus/logs") -> N
 def get_available_namespaces(config_path: str = "conf/agent.yml") -> List[str]:
     """Extract available namespaces from config file"""
     try:
+        config_path = parse_config_path(config_path)
         import yaml
 
         with open(config_path, "r") as f:
@@ -64,16 +66,18 @@ def get_available_namespaces(config_path: str = "conf/agent.yml") -> List[str]:
         return []
 
 
-def create_cli_args(config_path: str = "conf/agent.yml", namespace: str = None) -> Namespace:
+def create_cli_args(
+    config_path: str = "conf/agent.yml", namespace: str = None, catalog: str = "", database: str = ""
+) -> Namespace:
     """Create CLI arguments for DatusCLI initialization"""
     args = Namespace()
-    args.config = config_path
+    args.config = parse_config_path(config_path)
     args.namespace = namespace  # Add namespace parameter
     args.history_file = ".datus_history"
     args.db_type = "sqlite"
     args.db_path = None
-    args.database = ""
-    args.catalog = ""
+    args.database = database
+    args.catalog = catalog
     args.schema = ""
     # Add missing attributes that DatusCLI expects
     args.debug = bool(st.session_state.get("startup_debug", False)) if hasattr(st, "session_state") else False
@@ -95,6 +99,8 @@ def get_storage_path_from_config(config_path: str) -> str:
         import os
 
         import yaml
+
+        config_path = parse_config_path(config_path)
 
         with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
@@ -194,7 +200,7 @@ class StreamlitChatbot:
             st.session_state.subagent_name = None
 
     @property
-    def cli(self):
+    def cli(self) -> DatusCLI:
         """Get CLI instance from session state"""
         return st.session_state.cli_instance
 
@@ -203,7 +209,9 @@ class StreamlitChatbot:
         """Set CLI instance in session state"""
         st.session_state.cli_instance = value
 
-    def setup_config(self, config_path: str = "conf/agent.yml", namespace: str = None) -> bool:
+    def setup_config(
+        self, config_path: str = "conf/agent.yml", namespace: str = None, catalog: str = "", database: str = ""
+    ) -> bool:
         """Setup agent configuration by initializing real DatusCLI"""
         # Check if already initialized to prevent repeated initialization
         if self.cli is not None:
@@ -212,7 +220,7 @@ class StreamlitChatbot:
 
         try:
             # Create CLI arguments
-            args = create_cli_args(config_path, namespace)
+            args = create_cli_args(config_path, namespace, catalog, database=database)
 
             # Note: Removed vector DB cleanup - now using correct storage path to reuse existing DBs
 
@@ -238,12 +246,16 @@ class StreamlitChatbot:
             if not self.cli and not st.session_state.get("initialization_attempted", False):
                 startup_config = st.session_state.get("startup_config_path", "conf/agent.yml")
                 startup_namespace = st.session_state.get("startup_namespace", None)
+                startup_catalog = st.session_state.get("startup_catalog", "")
+                startup_database = st.session_state.get("startup_database", "")
 
                 # Mark that we've attempted initialization
                 st.session_state.initialization_attempted = True
 
                 with st.spinner("Loading configuration..."):
-                    if self.setup_config(startup_config, startup_namespace):
+                    if self.setup_config(
+                        startup_config, startup_namespace, catalog=startup_catalog, database=startup_database
+                    ):
                         st.success("✅ Configuration loaded!")
                         st.rerun()
                     else:
@@ -757,6 +769,8 @@ def run_web_interface(args):
             print(f"🔗 Using namespace: {args.namespace}")
         if args.config:
             print(f"⚙️ Using config: {args.config}")
+        if args.database:
+            print(f"📚 Using database: {args.database}")
         print(f"🌐 Starting server at http://{args.host}:{args.port}")
         print("⏹️ Press Ctrl+C to stop server")
         print("-" * 50)
@@ -782,6 +796,8 @@ def run_web_interface(args):
             web_args.extend(["--namespace", args.namespace])
         if args.config:
             web_args.extend(["--config", args.config])
+        if args.database:
+            web_args.extend(["--database", args.database])
         if getattr(args, "debug", False):
             web_args.append("--debug")
 
@@ -805,6 +821,7 @@ def main():
     # Parse command line arguments
     namespace = None
     config_path = "conf/agent.yml"
+    database = ""
     subagent_name = None
     debug = False
 
@@ -814,6 +831,8 @@ def main():
             namespace = sys.argv[i + 1]
         elif arg == "--config" and i + 1 < len(sys.argv):
             config_path = sys.argv[i + 1]
+        elif arg == "--database" and i + 1 < len(sys.argv):
+            database = sys.argv[i + 1]
         elif arg == "--debug":
             debug = True
 
@@ -829,6 +848,8 @@ def main():
         st.session_state.startup_config_path = config_path
     if "startup_subagent_name" not in st.session_state:
         st.session_state.startup_subagent_name = subagent_name
+    if "startup_database" not in st.session_state:
+        st.session_state.startup_database = database
     if "startup_debug" not in st.session_state:
         st.session_state.startup_debug = debug
 

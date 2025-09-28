@@ -1,4 +1,7 @@
+import pytest
+
 from datus.utils.constants import DBType, SQLType
+from datus.utils.exceptions import DatusException
 from datus.utils.json_utils import llm_result2json
 from datus.utils.sql_utils import extract_table_names, parse_metadata, parse_sql_type, parse_table_name_parts
 
@@ -576,5 +579,17 @@ FROM gold_vs_bitcoin"""
         parse_sql_type("select * from `default_catalog`.`ac_manage`.`v_udata_ac_info`", dialect="starrocks")
         == SQLType.SELECT
     )
+
+    with pytest.raises(DatusException):
+        parse_sql_type("   ", dialect=DBType.DUCKDB)
+
+    merge_sql = (
+        "MERGE INTO target USING source ON target.id = source.id WHEN MATCHED THEN UPDATE SET value = source.value"
+    )
+    assert parse_sql_type(merge_sql, dialect=DBType.SNOWFLAKE) == SQLType.MERGE
+
+    assert parse_sql_type("EXPLAIN SELECT * FROM gold_vs_bitcoin", dialect=DBType.DUCKDB) == SQLType.EXPLAIN
+
+    assert parse_sql_type("SHOW TABLES", dialect=DBType.DUCKDB) == SQLType.METADATA_SHOW
 
     assert parse_sql_type("SHOW CATALOGS", dialect="starrocks") == SQLType.METADATA_SHOW

@@ -132,7 +132,7 @@ def configure_logging(debug=False, log_dir="~/.datus/logs", console_output=True)
 
     # Create or get log manager with specified parameters
     global _log_manager
-    _log_manager = DynamicLogManager(debug=debug, log_dir=log_dir)
+    _log_manager = DynamicLogManager(debug=debug, log_dir=os.path.expanduser(log_dir))
 
     # Set output target based on console_output parameter
     if console_output:

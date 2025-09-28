@@ -638,6 +638,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
             SQLType.INSERT,
             SQLType.UPDATE,
             SQLType.DELETE,
+            SQLType.MERGE,
             SQLType.CONTENT_SET,
             SQLType.UNKNOWN,
         ):

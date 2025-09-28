@@ -24,7 +24,8 @@ from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, Cu
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
 from datus.cli.metadata_commands import MetadataCommands
-from datus.configuration.agent_config_loader import load_agent_config
+from datus.cli.sub_agent_commands import SubAgentCommands
+from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools import BaseSqlConnector
@@ -76,6 +77,7 @@ class DatusCLI:
         history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history = FileHistory(str(history_file))
         self.agent_config = load_agent_config(**vars(self.args))
+        self.configuration_manager = configuration_manager()
         self.at_completer: AtReferenceCompleter
         self._init_prompt_session()
 
@@ -106,6 +108,7 @@ class DatusCLI:
         self.chat_commands = ChatCommands(self)
         self.context_commands = ContextCommands(self)
         self.metadata_commands = MetadataCommands(self)
+        self.sub_agent_commands = SubAgentCommands(self)
 
         # Dictionary of available commands - created after handlers are initialized
         self.commands = {
@@ -143,6 +146,7 @@ class DatusCLI:
             ".table_schema": self.metadata_commands.cmd_table_schema,
             ".indexes": self.metadata_commands.cmd_indexes,
             ".namespace": self._cmd_switch_namespace,
+            ".subagent": self.sub_agent_commands.cmd,
             ".mcp": self._cmd_mcp,
             ".help": self._cmd_help,
             ".exit": self._cmd_exit,

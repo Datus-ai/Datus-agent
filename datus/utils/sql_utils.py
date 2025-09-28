@@ -360,23 +360,32 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
         The determined SQLType enum member. Returns SQLType.UNKNOWN if parsing fails.
     """
     if not sql or not isinstance(sql, str):
-        return SQLType.CONTENT_SET
-    # Normalize the query for parsing by stripping whitespace and getting the first word.
-    normalized_sql = sql.strip().lower()
+        return SQLType.UNKNOWN
+
+    stripped_sql = sql.strip()
+    if not stripped_sql:
+        return SQLType.UNKNOWN
+
+    first_statement = _first_statement(stripped_sql)
+    dialect_name = parse_dialect(dialect)
     try:
-        parsed_expression = sqlglot.parse_one(normalized_sql, dialect=parse_dialect(dialect))
-    except Exception:
-        if dialect == DBType.STARROCKS.value:
-            first_stmt = _first_statement(sql)
-            if _metadata_pattern().match(first_stmt):
-                return SQLType.METADATA_SHOW
+        parsed_expression = sqlglot.parse_one(
+            first_statement, dialect=dialect_name, error_level=sqlglot.ErrorLevel.IGNORE
+        )
+    except Exception as exc:
+        if dialect_name == DBType.STARROCKS.value and _metadata_pattern().match(first_statement):
+            return SQLType.METADATA_SHOW
 
         # Return UNKNOWN instead of raising exception for CLI usage
         return SQLType.UNKNOWN
     if isinstance(parsed_expression, expressions.Select):
         return SQLType.SELECT
+    elif isinstance(parsed_expression, expressions.Values):
+        return SQLType.SELECT
     elif isinstance(parsed_expression, expressions.Insert):
         return SQLType.INSERT
+    elif isinstance(parsed_expression, expressions.Merge):
+        return SQLType.MERGE
     elif isinstance(parsed_expression, expressions.Update):
         return SQLType.UPDATE
     elif isinstance(parsed_expression, expressions.Delete):
@@ -389,17 +398,30 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
             expressions.Drop,
             expressions.TruncateTable,
             expressions.RenameColumn,
+            expressions.Analyze,
+            expressions.Comment,
+            expressions.Grant,
         ),
     ):
         return SQLType.DDL
-    elif isinstance(parsed_expression, (expressions.Show, expressions.Describe, expressions.Pragma)):
+    elif isinstance(parsed_expression, (expressions.Describe, expressions.Show, expressions.Pragma)):
         return SQLType.METADATA_SHOW
     elif isinstance(parsed_expression, expressions.Command):
-        first_stmt = _first_statement(sql).lower().strip()
-        if first_stmt.startswith("show") or first_stmt.startswith("explain") or first_stmt.startswith("analyze"):
+        command_name = str(parsed_expression.args.get("this") or "").upper()
+        if command_name in {"SHOW", "DESC", "DESCRIBE"}:
             return SQLType.METADATA_SHOW
-        else:
+        if command_name == "EXPLAIN":
+            return SQLType.EXPLAIN
+        if command_name == "REPLACE":
+            return SQLType.INSERT
+        if command_name in {"CALL", "EXEC", "EXECUTE"}:
             return SQLType.CONTENT_SET
-
+        return SQLType.CONTENT_SET
+    elif isinstance(
+        parsed_expression, (expressions.Use, expressions.Transaction, expressions.Commit, expressions.Rollback)
+    ):
+        return SQLType.CONTENT_SET
     else:
-        return SQLType.UNKNOWN
+        # Current conclusion: coverage is good for the primary SQL workflows; specialised dialect commands still work
+        # via the catch-all path, so an UNKNOWN enum entry isn’t necessary at this stage.
+        return SQLType.CONTENT_SET

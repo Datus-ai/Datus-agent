@@ -125,7 +125,7 @@ class Application:
 
     def _run_web_interface(self, args):
         """Launch Streamlit web interface"""
-        from .web_chatbot import run_web_interface
+        from datus.cli.web_chatbot import run_web_interface
 
         run_web_interface(args)
 
