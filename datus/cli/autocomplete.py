@@ -207,6 +207,11 @@ class SQLCompleter(Completer):
             ".show": None,
             ".namespace": None,
             ".mcp": None,
+            ".subagent": None,
+            ".subagent list": None,
+            ".subagent add": None,
+            ".subagent update": None,
+            ".subagent remove": None,
         }
 
     def update_tables(self, tables: Dict[str, List[str]]):

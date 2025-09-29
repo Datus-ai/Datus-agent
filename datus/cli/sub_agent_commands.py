@@ -1,4 +1,3 @@
-import os
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from rich.console import Console
@@ -6,10 +5,9 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from datus.cli.sub_agent_wizard import run_wizard
-from datus.prompts.prompt_manager import PromptManager
-from datus.prompts.sub_agent_prompt_template import render_template
 from datus.schemas.agent_models import SubAgentConfig
 from datus.utils.loggings import get_logger
+from datus.utils.sub_agent_manager import SubAgentManager
 
 if TYPE_CHECKING:
     from datus.cli import DatusCLI
@@ -21,12 +19,16 @@ console = Console()
 class SubAgentCommands:
     def __init__(self, cli_instance: "DatusCLI"):
         self.cli_instance: "DatusCLI" = cli_instance
+        self._sub_agent_manager: Optional[SubAgentManager] = None
 
     @property
-    def prompt_manager(self) -> PromptManager:
-        from datus.prompts.prompt_manager import prompt_manager
-
-        return prompt_manager
+    def sub_agent_manager(self) -> SubAgentManager:
+        if self._sub_agent_manager is None:
+            self._sub_agent_manager = SubAgentManager(
+                configuration_manager=self.cli_instance.configuration_manager,
+                namespace=self.cli_instance.agent_config.current_namespace,
+            )
+        return self._sub_agent_manager
 
     def cmd(self, args: str):
         """Main entry point for .subagent commands."""
@@ -67,66 +69,15 @@ class SubAgentCommands:
         self._do_update_agent()
 
     def _cmd_update_agent(self, sub_agent_name):
-        if (
-            "agentic_nodes" in self.cli_instance.configuration_manager.data
-            and sub_agent_name in self.cli_instance.configuration_manager.data["agentic_nodes"]
-        ):
-            self._do_update_agent(self.cli_instance.configuration_manager.data["agentic_nodes"][sub_agent_name])
-        else:
+        existing = self.sub_agent_manager.get_agent(sub_agent_name)
+        if existing is None:
             console.print("[bold red]Error:[/] Agent not found.")
-
-    def _update_agent_yml(self, config: SubAgentConfig):
-        """Updates the agent.yml file with the new agent's configuration."""
-        agent_name = config.system_prompt
-        sub_agent_config: Dict[str, Any] = {
-            "system_prompt": agent_name,
-            "prompt_version": config.prompt_version,
-            "prompt_language": config.prompt_language,
-            "description": config.description,
-            "tools": config.tools,
-            "mcp": config.mcp,
-            "rules": list(config.rules or []),
-        }
-
-        if config.scoped_context:
-            scoped_context = config.scoped_context.model_dump(exclude_none=True)
-            if scoped_context:
-                sub_agent_config["scoped_context"] = scoped_context
-
-        # Add the new agent config
-
-        data = self.cli_instance.configuration_manager.get("agentic_nodes", {})
-        data[agent_name] = sub_agent_config
-
-        self.cli_instance.configuration_manager.update_item("agentic_nodes", data, delete_old_key=True)
-        console.print(f"- Updated configuration file: [cyan]{self.cli_instance.configuration_manager.config_path}[/]")
-
-    def _create_prompt_template(self, config: SubAgentConfig):
-        """Creates the .j2 prompt template file."""
-        agent_name = config.system_prompt
-        version = config.prompt_version
-        lang = config.prompt_language
-
-        # Only add language to filename if it's not the default 'en'
-        lang_suffix = f"_{lang}" if lang != "en" else ""
-
-        template_filename = f"{agent_name}{lang_suffix}_{version}.j2"
-
-        # TODO: This path should be made more robust
-        template_path = os.path.join("datus", "prompts", "prompt_templates", template_filename)
-
-        template_content = render_template(self.cli_instance.agent_config.current_namespace, config)
-
-        try:
-            self.prompt_manager.save(agent_name, version=version, prompt_content=template_content)
-            console.print(f"- Created prompt template: [cyan]{template_path}[/]")
-        except IOError as e:
-            console.print(f"[bold red]Error creating template file:[/] {e}")
-            logger.error(f"Failed to write template file {template_path}: {e}")
+            return
+        self._do_update_agent(existing)
 
     def _list_agents(self):
         """Lists all configured sub-agents from agent.yml."""
-        agents = self.cli_instance.configuration_manager.get("agentic_nodes", {})
+        agents = self.sub_agent_manager.list_agents()
         if not agents:
             console.print("No sub-agents configured.", style="yellow")
             return
@@ -155,17 +106,17 @@ class SubAgentCommands:
 
     def _remove_agent(self, agent_name: str):
         """Removes a sub-agent's configuration from agent.yml."""
-        agents = self.cli_instance.configuration_manager.get("agentic_nodes", {})
-        if agent_name not in agents:
+        removed = False
+        try:
+            removed = self.sub_agent_manager.remove_agent(agent_name)
+        except Exception as exc:
+            console.print(f"[bold red]Error removing agent:[/] {exc}")
+            logger.error("Failed to remove agent '%s': %s", agent_name, exc)
+            return
+        if not removed:
             console.print(f"[bold red]Error:[/] Agent '[bold cyan]{agent_name}[/]' not found.", style="bold red")
             return
-
-        # Remove from config
-        del self.cli_instance.configuration_manager.data["agentic_nodes"][agent_name]
-        self.cli_instance.configuration_manager.save()
         console.print(f"- Removed agent '[bold green]{agent_name}[/]' from configuration.")
-
-        console.print("[yellow]Note:[/] The associated .j2 template file was not removed.", style="yellow")
 
     def _do_update_agent(self, data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None):
         try:
@@ -179,9 +130,17 @@ class SubAgentCommands:
             console.print(f"Agent cancelled {'creation' if not data else 'modification'}.", style="yellow")
             return
         agent_name = result.system_prompt
-        # 1. Update agent.yml configuration
-        self._update_agent_yml(result)
+        try:
+            save_result = self.sub_agent_manager.save_agent(result)
+        except Exception as exc:
+            console.print(f"[bold red]Failed to persist sub-agent:[/] {exc}")
+            logger.error("Failed to persist sub-agent '%s': %s", agent_name, exc)
+            return
 
-        # 2. Create the .j2 prompt template file
-        self._create_prompt_template(result)
+        config_path = save_result.get("config_path")
+        prompt_path = save_result.get("prompt_path")
+        if config_path:
+            console.print(f"- Updated configuration file: [cyan]{config_path}[/]")
+        if prompt_path:
+            console.print(f"- Created prompt template: [cyan]{prompt_path}[/]")
         console.print(f"[bold green]Sub-agent {agent_name} {'created' if not data else 'modified'} successfully.[/]")

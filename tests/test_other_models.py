@@ -4,7 +4,7 @@ import pytest
 from agents import set_tracing_disabled
 from dotenv import load_dotenv
 
-from datus.configuration.agent_config_loader import load_agent_config
+from datus.configuration.agent_config import AgentConfig
 from datus.models.gemini_model import GeminiModel
 from datus.models.openai_model import OpenAIModel
 from datus.tools.tools import db_function_tools
@@ -17,21 +17,25 @@ logger = get_logger(__name__)
 set_tracing_disabled(True)
 
 
+@pytest.fixture
+def agent_config() -> AgentConfig:
+    load_dotenv()
+    return load_acceptance_config()
+
+
 @auto_traceable
 class TestOpenAIModel:
     """Test suite for OpenAI models."""
 
     @pytest.fixture(autouse=True)
-    def setup_method(self):
+    def setup_method(self, agent_config: AgentConfig) -> None:
         """Set up test environment before each test method."""
-        load_dotenv()
-        config = load_agent_config(config="tests/conf/agent.yml")
 
         # Skip if API key is not available
         if not os.getenv("OPENAI_API_KEY"):
             pytest.skip("OPENAI_API_KEY not available")
 
-        self.model_config = config.models.get("openai-4o-mini")
+        self.model_config = agent_config.models.get("openai-4o-mini")
         if not self.model_config:
             pytest.skip("openai-4o-mini configuration not found in test config")
 
@@ -197,16 +201,14 @@ class TestKimiModel:
     """Test suite for Kimi (Moonshot) K2 model."""
 
     @pytest.fixture(autouse=True)
-    def setup_method(self):
+    def setup_method(self, agent_config: AgentConfig):
         """Set up test environment before each test method."""
-        load_dotenv()
-        config = load_agent_config(config="tests/conf/agent.yml")
 
         # Skip if API key is not available
         if not os.getenv("KIMI_API_KEY"):
             pytest.skip("KIMI_API_KEY not available")
 
-        self.model_config = config.models.get("kimi-k2")
+        self.model_config = agent_config.models.get("kimi-k2")
         if not self.model_config:
             pytest.skip("kimi-k2 configuration not found in test config")
 
@@ -286,7 +288,7 @@ class TestGeminiModel:
     """Test suite for Google Gemini model."""
 
     @pytest.fixture(autouse=True)
-    def setup_method(self):
+    def setup_method(self, agent_config: AgentConfig):
         """Set up test environment before each test method."""
         load_dotenv()
 
@@ -295,8 +297,8 @@ class TestGeminiModel:
             pytest.skip("GOOGLE_API_KEY or GEMINI_API_KEY not available")
 
         # Skip if Gemini configuration is not added yet
-        config = load_agent_config(config="tests/conf/agent.yml")
-        self.model_config = config.models.get("gemini-2.5")
+
+        self.model_config = agent_config.models.get("gemini-2.5")
 
         if not self.model_config:
             pytest.skip("gemini-2.5 configuration not found in test config")

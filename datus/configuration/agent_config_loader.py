@@ -64,6 +64,29 @@ class ConfigurationManager:
             print(f"Error updating YAML file: {e}")
             return False
 
+    def remove_item_recursively(self, *keys) -> bool:
+        """
+        Delete recursively the corresponding keys.
+        Example:
+            keys = ['a', 'b', 'c'], The deleted item should be self.data['a']['b']['c']
+        """
+        if not keys:
+            return False
+        key_path = []
+        temp_data = self.data
+        for key in keys[:-1]:
+            key_path.append(key)
+            if key not in temp_data:
+                error_path = ".".join(key_path)
+                raise DatusException(
+                    ErrorCode.COMMON_FIELD_INVALID,
+                    message=f"The key path '{error_path}' does not exist in the configuration data. ",
+                )
+            temp_data = temp_data[key]
+        del temp_data[keys[-1]]
+        self.save()
+        return True
+
     def save(self):
         with open(self.config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(self.data, file, allow_unicode=True, sort_keys=False)

@@ -2,7 +2,7 @@ import pytest
 from agents import set_tracing_disabled
 from dotenv import load_dotenv
 
-from datus.configuration.agent_config_loader import load_agent_config
+from datus.configuration.agent_config import AgentConfig
 from datus.models.deepseek_model import DeepSeekModel
 from datus.tools.tools import db_function_tools
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -18,19 +18,22 @@ set_tracing_disabled(True)
 class TestDeepSeekModel:
     """Test suite for the DeepSeekModel class."""
 
-    @pytest.fixture(autouse=True)
-    def setup_method(self):
-        """Set up test environment before each test method."""
+    @pytest.fixture
+    def agent_config(self) -> AgentConfig:
         load_dotenv()
-        config = load_acceptance_config()
+        return load_acceptance_config()
+
+    @pytest.fixture(autouse=True)
+    def setup_method(self, agent_config: AgentConfig):
+        """Set up test environment before each test method."""
+
         # self.model = DeepSeekModel(config.active_model())
-        self.model = DeepSeekModel(model_config=config["deepseek"])
+        self.model = DeepSeekModel(model_config=agent_config.models["deepseek"])
         # self.model = DeepSeekModel(model_config=config["deepseek-ark"])
 
-    def test_initialization_deepseek_r1(self):
+    def test_initialization_deepseek_r1(self, agent_config: AgentConfig):
         """Test initialization with DeepSeek R1 model."""
-        config = load_agent_config(config="tests/conf/agent.yml")
-        model = DeepSeekModel(config["deepseek-r1"])
+        model = DeepSeekModel(agent_config.models["deepseek-r1"])
 
         result = model.generate("Hello", max_tokens=200)
 
@@ -48,10 +51,9 @@ class TestDeepSeekModel:
 
         logger.debug(f"R1 response: {result}")
 
-    def test_initialization_deepseek_v3(self):
+    def test_initialization_deepseek_v3(self, agent_config: AgentConfig):
         """Test initialization with DeepSeek V3 model."""
-        config = load_agent_config(config="tests/conf/agent.yml")
-        model = DeepSeekModel(config["deepseek"])
+        model = DeepSeekModel(agent_config["deepseek"])
 
         result = model.generate("Hello", max_tokens=50)
 

@@ -17,13 +17,13 @@ def agent_config() -> AgentConfig:
 @pytest.mark.acceptance
 def test_config_exception():
     with pytest.raises(DatusException, match="Agent configuration file not found: not_found.yml"):
-        load_agent_config(config="not_found.yml")
+        load_agent_config(config="not_found.yml", reload=True)
 
     with pytest.raises(
         DatusException,
         match="Unexcepted value of Node Type, excepted value:",
     ):
-        load_agent_config(config="tests/conf/wrong_nodes_agent.yml")
+        load_agent_config(config="tests/conf/wrong_nodes_agent.yml", reload=True)
 
     agent_config = load_agent_config(reload=True)
 

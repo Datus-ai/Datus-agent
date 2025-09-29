@@ -2,7 +2,7 @@ import pytest
 from agents import set_tracing_disabled
 from dotenv import load_dotenv
 
-from datus.configuration.agent_config_loader import load_agent_config
+from datus.configuration.agent_config import AgentConfig
 from datus.models.qwen_model import QwenModel
 from datus.tools.tools import db_function_tools
 from datus.utils.loggings import get_logger
@@ -12,15 +12,20 @@ logger = get_logger(__name__)
 set_tracing_disabled(True)
 
 
+@pytest.fixture
+def agent_config() -> AgentConfig:
+    load_dotenv()
+    return load_acceptance_config()
+
+
 class TestQwenModel:
     """Test suite for the QwenModel class."""
 
     @pytest.fixture(autouse=True)
-    def setup_method(self):
+    def setup_method(self, agent_config):
         """Set up test environment before each test method."""
-        load_dotenv()
-        config = load_agent_config(config="tests/conf/agent.yml")
-        self.model = QwenModel(model_config=config["qwen"])
+
+        self.model = QwenModel(model_config=agent_config.models["qwen"])
 
     def test_generate(self):
         """Test basic text generation functionality."""
@@ -60,10 +65,9 @@ class TestQwenModel:
 
         logger.debug(f"System prompt response: {result}")
 
-    def test_enable_thinking(self):
+    def test_enable_thinking(self, agent_config: AgentConfig):
         """Test Qwen's enable_thinking functionality."""
-        config = load_agent_config(config="tests/conf/agent.yml")
-        qwen_config = config.models.get("qwen")
+        qwen_config = agent_config.models.get("qwen")
 
         if not qwen_config:
             pytest.skip("qwen configuration not found in test config")

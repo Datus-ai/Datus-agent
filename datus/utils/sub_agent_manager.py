@@ -1,0 +1,96 @@
+import os
+from copy import deepcopy
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from datus.configuration.agent_config_loader import ConfigurationManager
+from datus.prompts.prompt_manager import PromptManager, prompt_manager
+from datus.prompts.sub_agent_prompt_template import render_template
+from datus.schemas.agent_models import SubAgentConfig
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
+
+class SubAgentManager:
+    """Encapsulates sub-agent configuration and prompt management operations."""
+
+    def __init__(self, configuration_manager: ConfigurationManager, namespace: str):
+        self._configuration_manager = configuration_manager
+        self._prompt_manager: PromptManager = prompt_manager
+        self._namespace = namespace
+
+    @property
+    def config_path(self) -> Path:
+        return self._configuration_manager.config_path
+
+    def list_agents(self) -> Dict[str, Dict[str, Any]]:
+        agents = self._configuration_manager.get("agentic_nodes", {})
+        return agents if isinstance(agents, dict) else {}
+
+    def get_agent(self, agent_name: str) -> Optional[Dict[str, Any]]:
+        agents = self.list_agents()
+        config = agents.get(agent_name)
+        return deepcopy(config) if config else None
+
+    def save_agent(self, config: SubAgentConfig) -> Dict[str, str]:
+        agent_payload = self._build_agent_payload(config)
+
+        agents = dict(self.list_agents())
+        agents[config.system_prompt] = agent_payload
+
+        self._configuration_manager.update_item("agentic_nodes", agents, delete_old_key=True)
+        prompt_path = self._write_prompt_template(config)
+
+        return {
+            "config_path": str(self.config_path),
+            "prompt_path": prompt_path,
+        }
+
+    def remove_agent(self, agent_name: str) -> bool:
+        agents = self.list_agents()
+        if agent_name not in agents:
+            return False
+        sub_agent = agents[agent_name]
+        try:
+            prompt_name = f"{agent_name}_{sub_agent['prompt_version']}.j2"
+            prompt_path = self._prompt_manager.templates_dir / prompt_name
+
+            self._configuration_manager.remove_item_recursively("agentic_nodes", agent_name)
+            os.remove(str(prompt_path))
+
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error("Failed to remove agent '%s': %s", agent_name, exc)
+            raise
+        return True
+
+    def _build_agent_payload(self, config: SubAgentConfig) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "system_prompt": config.system_prompt,
+            "prompt_version": config.prompt_version,
+            "prompt_language": config.prompt_language,
+            "description": config.description,
+            "tools": config.tools,
+            "mcp": config.mcp,
+            "rules": list(config.rules or []),
+        }
+
+        if config.scoped_context:
+            scoped_context = config.scoped_context.model_dump(exclude_none=True)
+            if scoped_context:
+                payload["scoped_context"] = scoped_context
+
+        return payload
+
+    def _write_prompt_template(self, config: SubAgentConfig) -> str:
+        prompt_content = render_template(self._namespace, config)
+        try:
+            file_name = self._prompt_manager.save(
+                config.system_prompt,
+                version=config.prompt_version,
+                prompt_content=prompt_content,
+            )
+        except IOError as exc:
+            logger.error("Failed to write prompt template for '%s': %s", config.system_prompt, exc)
+            raise
+        return str(self._prompt_manager.templates_dir / file_name)
