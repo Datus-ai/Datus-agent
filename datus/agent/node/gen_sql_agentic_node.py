@@ -16,6 +16,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.tools.context_search import ContextSearchTools
+from datus.tools.date_parsing_tools import DateParsingTools
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.mcp_server import MCPServer
 from datus.tools.tools import DBFuncTool
@@ -71,6 +72,7 @@ class GenSQLAgenticNode(AgenticNode):
         # Setup tools based on configuration
         self.db_func_tool: Optional[DBFuncTool] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
+        self.date_parsing_tools: Optional[DateParsingTools] = None
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -116,6 +118,14 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup context search tools: {e}")
 
+    def _setup_date_parsing_tools(self):
+        """Setup date parsing tools."""
+        try:
+            self.date_parsing_tools = DateParsingTools(self.agent_config, self.model)
+            self.tools.extend(self.date_parsing_tools.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup date parsing tools: {e}")
+
     def _setup_tool_pattern(self, pattern: str):
         """Setup tools based on pattern."""
         try:
@@ -126,6 +136,8 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_db_tools()
                 elif base_type == "context_search_tools":
                     self._setup_context_search_tools()
+                elif base_type == "date_parsing_tools":
+                    self._setup_date_parsing_tools()
                 else:
                     logger.warning(f"Unknown tool type: {base_type}")
 
@@ -134,6 +146,8 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_db_tools()
             elif pattern == "context_search_tools":
                 self._setup_context_search_tools()
+            elif pattern == "date_parsing_tools":
+                self._setup_date_parsing_tools()
 
             # Handle specific method patterns (e.g., "db_tools.list_tables")
             elif "." in pattern:
@@ -307,6 +321,7 @@ class GenSQLAgenticNode(AgenticNode):
         context["has_mcp_filesystem"] = "filesystem" in self.mcp_servers
         context["has_mf_tools"] = any("metricflow" in k for k in self.mcp_servers.keys())
         context["has_context_search_tools"] = bool(self.context_search_tools)
+        context["has_date_parsing_tools"] = bool(self.date_parsing_tools)
 
         # Tool name lists for template display
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
