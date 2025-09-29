@@ -120,7 +120,6 @@ class SubAgentCommands:
 
     def _do_update_agent(self, data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None):
         try:
-            # from datus.cli.sub_agent_wizard2 import run_add_wizard
             result = run_wizard(self.cli_instance, data)
         except Exception as e:
             console.print(f"[bold red]An error occurred while running the wizard:[/] {e}")

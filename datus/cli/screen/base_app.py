@@ -193,7 +193,7 @@ class BaseApp(App):
         General exception handler
         """
         # Log
-        logger.error(f"Unhandled exception: {error}", exc_info=True)
+        logger.error(f"Unhandled exception: {error}")
 
         # Handle WorkerFailed
         if isinstance(error, WorkerFailed):
