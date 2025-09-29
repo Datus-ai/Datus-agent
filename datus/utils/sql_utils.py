@@ -358,7 +358,7 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
         dialect: SQL dialect to determine parsing logic
 
     Returns:
-        The determined SQLType enum member.
+        The determined SQLType enum member. Returns SQLType.UNKNOWN if parsing fails.
     """
     if not sql or not isinstance(sql, str):
         return SQLType.CONTENT_SET
@@ -372,9 +372,8 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
             if _metadata_pattern().match(first_stmt):
                 return SQLType.METADATA_SHOW
 
-        raise DatusException(
-            ErrorCode.DB_EXECUTION_SYNTAX_ERROR, message_args={"sql": sql, "error_message": "SQL parsing failed"}
-        )
+        # Return UNKNOWN instead of raising exception for CLI usage
+        return SQLType.UNKNOWN
     if isinstance(parsed_expression, expressions.Select):
         return SQLType.SELECT
     elif isinstance(parsed_expression, expressions.Insert):
@@ -404,4 +403,4 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
             return SQLType.CONTENT_SET
 
     else:
-        return SQLType.CONTENT_SET
+        return SQLType.UNKNOWN

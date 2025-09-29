@@ -87,3 +87,4 @@ class SQLType(str, Enum):
     DDL = "ddl"
     METADATA_SHOW = "metadata"
     CONTENT_SET = "CONTENT_SET"
+    UNKNOWN = "unknown"

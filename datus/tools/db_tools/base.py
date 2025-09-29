@@ -59,9 +59,20 @@ class BaseSqlConnector(ABC):
                 result = self.execute_content_set(sql_query)
             elif sql_type == SQLType.DDL:
                 result = self.execute_ddl(sql_query)
-            else:
+            elif sql_type == SQLType.SELECT:
                 result = self.execute_query(sql_query, result_format)
-            # For workflow compatibility
+            elif sql_type == SQLType.METADATA_SHOW:
+                result = self.execute_query(sql_query, result_format)
+            else:
+                return ExecuteSQLResult(
+                    success=False,
+                    error="Unknown type of SQL",
+                    sql_query=sql_query,
+                    sql_return="",
+                    row_count=0,
+                    result_format=result_format,
+                )
+
             result.success = True
             return result
         except Exception as e:

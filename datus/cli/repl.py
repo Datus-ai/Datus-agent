@@ -31,6 +31,8 @@ from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_sql_type
+from datus.utils.constants import SQLType
 
 logger = get_logger(__name__)
 
@@ -93,6 +95,15 @@ class DatusCLI:
             current_schema=getattr(args, "schema", ""),
         )
         self.db_manager = db_manager_instance(self.agent_config.namespaces)
+
+        # Initialize available subagents from agentic_nodes (excluding 'chat')
+        self.available_subagents = set()
+        if (hasattr(self.agent_config, 'agentic_nodes') and
+            self.agent_config.agentic_nodes):
+            self.available_subagents = {
+                name for name in self.agent_config.agentic_nodes.keys()
+                if name != "chat"
+            }
 
         # Initialize command handlers after cli_context is created
         self.agent_commands = AgentCommands(self, self.cli_context)
@@ -287,7 +298,7 @@ class DatusCLI:
                 elif cmd_type == CommandType.CONTEXT:
                     self._execute_context_command(cmd, args)
                 elif cmd_type == CommandType.CHAT:
-                    self._execute_chat_command(args)
+                    self._execute_chat_command(args, subagent_name=cmd)
                 elif cmd_type == CommandType.INTERNAL:
                     self._execute_internal_command(cmd, args)
 
@@ -317,7 +328,7 @@ class DatusCLI:
         elif cmd_type == CommandType.CONTEXT:
             self._execute_context_command(cmd, args)
         elif cmd_type == CommandType.CHAT:
-            self._execute_chat_command(args)
+            self._execute_chat_command(args, subagent_name=cmd)
         elif cmd_type == CommandType.INTERNAL:
             self._execute_internal_command(cmd, args)
 
@@ -537,7 +548,22 @@ class DatusCLI:
 
         # Chat commands (/prefix)
         if text.startswith("/"):
-            return CommandType.CHAT, "", text[1:].strip()
+            message = text[1:].strip()
+            parts = message.split(maxsplit=1)
+            if len(parts) > 1:
+                # Check if first part is a valid subagent
+                potential_subagent = parts[0]
+                if potential_subagent in self.available_subagents:
+                    # Sub-agent syntax: /subagent_name message
+                    subagent_name = potential_subagent
+                    actual_message = parts[1]
+                    return CommandType.CHAT, subagent_name, actual_message
+                else:
+                    # Regular chat: /message (first part is not a valid subagent)
+                    return CommandType.CHAT, "", message
+            else:
+                # Regular chat: /message
+                return CommandType.CHAT, "", message
 
         # Internal commands (.prefix)
         if text.startswith("."):
@@ -546,8 +572,20 @@ class DatusCLI:
             args = parts[1] if len(parts) > 1 else ""
             return CommandType.INTERNAL, cmd, args
 
-        # Default to SQL
-        return CommandType.SQL, "", text
+        # Determine if text is SQL or chat using parse_sql_type
+        try:
+            # Get current database dialect from agent_config.db_type (set from current namespace)
+            dialect = self.agent_config.db_type if self.agent_config.db_type else 'snowflake'
+            sql_type = parse_sql_type(text, dialect)
+
+            # If parse_sql_type returns a valid SQL type (not CONTENT_SET or UNKNOWN), treat as SQL
+            if sql_type not in (SQLType.CONTENT_SET, SQLType.UNKNOWN):
+                return CommandType.SQL, "", text
+            else:
+                return CommandType.CHAT, "", text.strip()
+        except Exception:
+            # If any exception occurs, treat as chat
+            return CommandType.CHAT, "", text.strip()
 
     def _execute_sql(self, sql: str, system: bool = False):
         """Execute a SQL query and display results."""
@@ -721,9 +759,9 @@ class DatusCLI:
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 
-    def _execute_chat_command(self, message: str):
+    def _execute_chat_command(self, message: str, subagent_name: str = None):
         """Execute a chat command (/ prefix) using ChatAgenticNode."""
-        self.chat_commands.execute_chat_command(message, plan_mode=self.plan_mode_active)
+        self.chat_commands.execute_chat_command(message, plan_mode=self.plan_mode_active, subagent_name=subagent_name)
 
     def _execute_internal_command(self, cmd: str, args: str):
         """Execute an internal command (. prefix)."""

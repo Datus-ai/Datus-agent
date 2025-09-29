@@ -639,6 +639,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
             SQLType.UPDATE,
             SQLType.DELETE,
             SQLType.CONTENT_SET,
+            SQLType.UNKNOWN,
         ):
             raise DatusException(
                 ErrorCode.DB_EXECUTION_ERROR, message="Only supports normal queries and metadata queries."
