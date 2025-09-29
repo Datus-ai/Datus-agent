@@ -37,18 +37,76 @@ class ChatCommands:
         self.cli = cli_instance
         self.console = cli_instance.console
 
-        # Chat state management
-        self.chat_node: ChatAgenticNode | None = None
+        # Chat state management - unified node management
+        self.current_node: ChatAgenticNode | None = None  # Can be ChatAgenticNode or GenSQLAgenticNode
+        self.chat_node: ChatAgenticNode | None = None  # Kept for backward compatibility
         self.chat_history = []
         self.last_actions = []
 
     def update_chat_node_tools(self):
-        """Update chat node tools when namespace changes."""
+        """Update current node tools when namespace changes."""
+        if self.current_node and hasattr(self.current_node, 'setup_tools'):
+            self.current_node.setup_tools()
+        # Keep backward compatibility
         if self.chat_node:
             self.chat_node.setup_tools()
 
-    def execute_chat_command(self, message: str, plan_mode: bool = False, subagent_name: str = None):
-        """Execute a chat command (/ prefix) using ChatAgenticNode or GenSQLAgenticNode."""
+    def _should_create_new_node(self, subagent_name: str = None) -> bool:
+        """Determine if a new node should be created."""
+        if subagent_name:
+            # Always create new node for subagent
+            return True
+        else:
+            # Create new node only if no current node exists
+            return self.current_node is None
+
+    def _trigger_compact_for_current_node(self):
+        """Trigger compact on current node before switching."""
+        if self.current_node and hasattr(self.current_node, '_manual_compact'):
+            try:
+                session_info = self.current_node.get_session_info()
+                if session_info.get("session_id"):
+                    self.console.print("[yellow]Switching node, compacting current session...[/]")
+
+                    async def run_compact():
+                        return await self.current_node._manual_compact()
+
+                    result = asyncio.run(run_compact())
+
+                    if result.get("success"):
+                        self.console.print("[green]✓ Session compacted successfully![/]")
+                        self.console.print(f"  New Token Count: {result.get('new_token_count', 'N/A')}")
+                        self.console.print(f"  Tokens Saved: {result.get('tokens_saved', 'N/A')}")
+                        self.console.print(f"  Compression Ratio: {result.get('compression_ratio', 'N/A')}")
+                    else:
+                        error_msg = result.get("error", "Unknown error occurred")
+                        self.console.print(f"[bold red]✗ Failed to compact session:[/] {error_msg}")
+
+            except Exception as e:
+                logger.error(f"Compact error during node switch: {e}")
+                self.console.print(f"[bold red]Compact error:[/] {str(e)}")
+
+    def _create_new_node(self, subagent_name: str = None):
+        """Create new node based on subagent_name."""
+        if subagent_name:
+            # Create GenSQLAgenticNode for subagent
+            from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+            self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
+            return GenSQLAgenticNode(
+                node_name=subagent_name,
+                agent_config=self.cli.agent_config,
+            )
+        else:
+            # Create ChatAgenticNode for default chat
+            self.console.print("[dim]Creating new chat session...[/]")
+            return ChatAgenticNode(
+                namespace=self.cli.agent_config.current_namespace,
+                agent_config=self.cli.agent_config,
+            )
+
+    def execute_chat_command(self, message: str, plan_mode: bool = False, subagent_name: str = None, compact_when_new_subagent: bool = True):
+        """Execute a chat command with simplified node management."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
@@ -56,13 +114,40 @@ class ChatCommands:
         try:
             at_tables, at_metrics, at_sqls = self.cli.at_completer.parse_at_context(message)
 
-            # Choose node type and input based on subagent_name
-            if subagent_name:
-                # Use GenSQLAgenticNode for subagent mode
-                from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+            # Decision logic: determine if we need to create a new node
+            need_new_node = self._should_create_new_node(subagent_name)
+
+            # If creating new node and have existing node, trigger compact
+            if need_new_node and self.current_node is not None and compact_when_new_subagent:
+                self._trigger_compact_for_current_node()
+
+            # Get or create node
+            if need_new_node:
+                self.current_node = self._create_new_node(subagent_name)
+                # Update backward compatibility reference
+                if not subagent_name:
+                    self.chat_node = self.current_node
+
+            # Use current node
+            current_node = self.current_node
+
+            # Show session info for existing session
+            if not need_new_node:
+                session_info = current_node.get_session_info()
+                if session_info.get("session_id"):
+                    session_display = (
+                        f"[dim]Using existing session: {session_info['session_id']} "
+                        f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+                    )
+                    self.console.print(session_display)
+
+            # Create appropriate input based on current node type
+            from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+            if isinstance(current_node, GenSQLAgenticNode):
+                # GenSQL input for GenSQLAgenticNode (subagent)
                 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 
-                # Create GenSQL input with current database context
                 node_input = GenSQLNodeInput(
                     user_message=message,
                     catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
@@ -74,19 +159,9 @@ class ChatCommands:
                     prompt_version="1.0",
                     prompt_language="en",
                 )
-
-                # Create GenSQLAgenticNode for this subagent
-                self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
-                node = GenSQLAgenticNode(
-                    node_name=subagent_name,
-                    agent_config=self.cli.agent_config,
-                )
-
-                # Set current node for this interaction
-                current_node = node
                 node_type = "gensql"
             else:
-                # Create chat input with current database context
+                # Chat input for ChatAgenticNode (default chat)
                 node_input = ChatNodeInput(
                     user_message=message,
                     catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
@@ -97,26 +172,6 @@ class ChatCommands:
                     historical_sql=at_sqls,
                     plan_mode=plan_mode,
                 )
-
-                # Get or create persistent ChatAgenticNode
-                if self.chat_node is None:
-                    self.console.print("[dim]Creating new chat session...[/]")
-                    self.chat_node = ChatAgenticNode(
-                        namespace=self.cli.agent_config.current_namespace,
-                        agent_config=self.cli.agent_config,
-                    )
-                else:
-                    # Show session info for existing session
-                    session_info = self.chat_node.get_session_info()
-                    if session_info["session_id"]:
-                        session_display = (
-                            f"[dim]Using existing session: {session_info['session_id']} "
-                            f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
-                        )
-                        self.console.print(session_display)
-
-                # Set current node for this interaction
-                current_node = self.chat_node
                 node_type = "chat"
 
             # Display streaming execution
@@ -364,24 +419,34 @@ class ChatCommands:
     # Chat management commands
 
     def cmd_clear_chat(self, args: str):
-        """Clear the console screen and chat session."""
+        """Clear the console screen and current session."""
         # Clear the console screen using Rich
         self.console.clear()
 
-        # Clear chat session
-        if self.chat_node:
-            self.chat_node.delete_session()
-            self.console.print("[green]Console and chat session cleared.[/]")
+        # Clear current session
+        if self.current_node:
+            try:
+                self.current_node.delete_session()
+                self.console.print("[green]Console and current session cleared.[/]")
+            except Exception as e:
+                logger.error(f"Error deleting session: {e}")
+                self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
         else:
             self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
-        self.chat_node = None
+
+        # Reset all node references
+        self.current_node = None
+        self.chat_node = None  # Keep backward compatibility
 
     def cmd_chat_info(self, args: str):
-        """Display information about the current chat session."""
-        if self.chat_node:
-            session_info = self.chat_node.get_session_info()
-            if session_info["session_id"]:
-                self.console.print("[bold green]Chat Session Info:[/]")
+        """Display information about the current session."""
+        if self.current_node:
+            session_info = self.current_node.get_session_info()
+            if session_info.get("session_id"):
+                # Determine node type for display
+                node_type = "Chat" if isinstance(self.current_node, ChatAgenticNode) else "Subagent"
+
+                self.console.print(f"[bold green]{node_type} Session Info:[/]")
                 self.console.print(f"  Session ID: {session_info['session_id']}")
                 self.console.print(f"  Token Count: {session_info['token_count']}")
                 self.console.print(f"  Action Count: {session_info['action_count']}")
@@ -393,36 +458,39 @@ class ChatCommands:
                         self.console.print(f"  {i+1}. User: {chat['user'][:50]}...")
                         self.console.print(f"     Actions: {chat['actions']}")
             else:
-                self.console.print("[yellow]No active chat session.[/]")
+                self.console.print("[yellow]No active session.[/]")
         else:
-            self.console.print("[yellow]No active chat session.[/]")
+            self.console.print("[yellow]No active session.[/]")
 
     def cmd_compact(self, args: str):
-        """Manually compact the chat session by summarizing conversation history."""
-        if not self.chat_node:
-            self.console.print("[yellow]No active chat session to compact.[/]")
+        """Manually compact the current session by summarizing conversation history."""
+        if not self.current_node:
+            self.console.print("[yellow]No active session to compact.[/]")
             return
 
-        session_info = self.chat_node.get_session_info()
-        if not session_info["session_id"]:
-            self.console.print("[yellow]No active chat session to compact.[/]")
+        session_info = self.current_node.get_session_info()
+        if not session_info.get("session_id"):
+            self.console.print("[yellow]No active session to compact.[/]")
             return
 
         try:
+            # Determine node type for display
+            node_type = "Chat" if isinstance(self.current_node, ChatAgenticNode) else "Subagent"
+
             # Display session info before compacting
-            self.console.print("[bold blue]Compacting Chat Session...[/]")
+            self.console.print(f"[bold blue]Compacting {node_type} Session...[/]")
             self.console.print(f"  Current Session ID: {session_info['session_id']}")
             self.console.print(f"  Current Token Count: {session_info['token_count']}")
             self.console.print(f"  Current Action Count: {session_info['action_count']}")
 
             # Call the manual compact method asynchronously
             async def run_compact():
-                return await self.chat_node._manual_compact()
+                return await self.current_node._manual_compact()
 
             # Run the compact operation
             result = asyncio.run(run_compact())
 
-            if result["success"]:
+            if result.get("success"):
                 self.console.print("[green]✓ Session compacted successfully![/]")
                 self.console.print(f"  New Token Count: {result.get('new_token_count', 'N/A')}")
                 self.console.print(f"  Tokens Saved: {result.get('tokens_saved', 'N/A')}")
@@ -448,10 +516,10 @@ class ChatCommands:
                 self.console.print("[yellow]No chat sessions found.[/]")
                 return
 
-            # Get current session ID for highlighting (if chat_node exists)
+            # Get current session ID for highlighting (if current_node exists)
             current_session_id = None
-            if self.chat_node and hasattr(self.chat_node, "session_id"):
-                current_session_id = self.chat_node.session_id
+            if self.current_node and hasattr(self.current_node, "session_id"):
+                current_session_id = self.current_node.session_id
 
             # Get session info for all sessions first to enable sorting
             sessions_with_info = []
@@ -459,8 +527,8 @@ class ChatCommands:
                 session_id = session_data["session_id"]
                 try:
                     # Get detailed session info if available
-                    if self.chat_node and hasattr(self.chat_node, "_get_session_details"):
-                        detailed_info = self.chat_node._get_session_details(session_id)
+                    if self.current_node and hasattr(self.current_node, "_get_session_details"):
+                        detailed_info = self.current_node._get_session_details(session_id)
                         session_data.update(detailed_info)
                     sessions_with_info.append(session_data)
                 except Exception as e:
