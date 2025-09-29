@@ -73,17 +73,6 @@ def create_parser() -> argparse.ArgumentParser:
     )
     check_db_parser.add_argument("--namespace", type=str, required=True, help="Database namespace to check")
 
-    # check-mcp command
-    check_mcp_parser = subparsers.add_parser(
-        "check-mcp",
-        help="Check MCP server connectivity",
-        parents=[global_parser],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    check_mcp_parser.add_argument(
-        "--namespace", type=str, required=True, help="Database namespace to check MCP server for"
-    )
-
     # bootstrap-kb command
     bootstrap_parser = subparsers.add_parser(
         "bootstrap-kb",
@@ -335,8 +324,6 @@ def main():
     # Execute different functions based on action
     if args.action == "check-db":
         result = agent.check_db()
-    elif args.action == "check-mcp":
-        result = agent.check_mcp()
     elif args.action == "probe-llm":
         result = agent.probe_llm()
     elif args.action == "bootstrap-kb":

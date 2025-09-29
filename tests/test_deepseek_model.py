@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.deepseek_model import DeepSeekModel
-from datus.tools.mcp_server import MCPServer
+from datus.tools.tools import db_function_tools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
@@ -122,14 +122,16 @@ class TestDeepSeekModel:
             "between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the "
             "extended price by the discount'"
         )
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         try:
             result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
-                mcp_servers={"sqlite": mcp_server},
+                tools=tools,
                 instruction=instructions,
             )
 
@@ -165,15 +167,16 @@ class TestDeepSeekModel:
         question = """database_type='sqlite' task='Calculate the total revenue in 1992 from orders with a discount
          between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the extended
          price by the discount'"""
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         try:
             action_count = 0
             async for action in self.model.generate_with_tools_stream(
                 prompt=question,
                 output_type=str,
-                mcp_servers={"sqlite": mcp_server},
+                tools=tools,
                 max_turns=20,
                 instruction=instructions,
             ):
@@ -230,8 +233,9 @@ class TestDeepSeekModel:
 
         instructions = """You are a SQLite expert working with the Star Schema Benchmark database.
         Execute business analytics queries and provide clear results with proper joins."""
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         for i, scenario in enumerate(test_scenarios):
             question = f"database_type='sqlite' task='{scenario['task']}'"
@@ -239,7 +243,7 @@ class TestDeepSeekModel:
             result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
-                mcp_servers={"sqlite": mcp_server},
+                tools=tools,
                 instruction=instructions,
             )
 
@@ -273,11 +277,12 @@ class TestDeepSeekModel:
             ),
         ]
 
-        ssb_db_path = "tests/data/SSB.db"
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         for i, scenario in enumerate(complex_scenarios):
             question = f"database_type='sqlite' task='{scenario}'"
-            mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
             action_count = 0
             total_content_length = 0
@@ -285,7 +290,7 @@ class TestDeepSeekModel:
             async for action in self.model.generate_with_tools_stream(
                 prompt=question,
                 output_type=str,
-                mcp_servers={"sqlite": mcp_server},
+                tools=tools,
                 instruction=instructions,
                 max_turns=30,
             ):
@@ -318,15 +323,16 @@ class TestDeepSeekModel:
         instructions = """You are a SQLite expert working with the SSB database.
         Answer questions about the database schema and data."""
 
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         # First question: explore schema
         question1 = "database_type='sqlite' task='Show me all the tables in the database'"
         result1 = await self.model.generate_with_tools(
             prompt=question1,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             session=session,
         )
@@ -340,7 +346,7 @@ class TestDeepSeekModel:
         result2 = await self.model.generate_with_tools(
             prompt=question2,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             session=session,
         )
@@ -354,7 +360,7 @@ class TestDeepSeekModel:
         result3 = await self.model.generate_with_tools(
             prompt=question3,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             session=session,
         )
@@ -389,8 +395,9 @@ class TestDeepSeekModel:
         instructions = """You are a SQLite expert working with the SSB database.
         Provide clear and concise answers about the database."""
 
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         # First streaming question
         question1 = "database_type='sqlite' task='Describe the customer table structure'"
@@ -399,7 +406,7 @@ class TestDeepSeekModel:
         async for action in self.model.generate_with_tools_stream(
             prompt=question1,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             session=session,
         ):
@@ -416,7 +423,7 @@ class TestDeepSeekModel:
         async for action in self.model.generate_with_tools_stream(
             prompt=question2,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             session=session,
         ):
@@ -448,15 +455,16 @@ class TestDeepSeekModel:
         # " $supplier are located in the Americas, and the parts are manufactured by 'MFGR#1' or 'MFGR#2', you would"
         # " aggregate by year, supplier country, and part category. The result should be sorted in ascending order by"
         # " year, supplier country, and part category'"
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         # Test 1: Non-streaming version
         logger.info("=== Testing generate_with_tools (non-streaming) ===")
         result_non_stream = await self.model.generate_with_tools(
             prompt=question,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             max_turns=20,
         )
@@ -494,7 +502,7 @@ class TestDeepSeekModel:
         async for action in self.model.generate_with_tools_stream(
             prompt=question,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             max_turns=20,
             action_history_manager=action_history_manager,
@@ -588,8 +596,9 @@ class TestDeepSeekModel:
         instructions = """You are a SQLite expert working with the SSB database.
         Provide concise answers about database schema and simple queries."""
 
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         # Simple acceptance scenarios with session
         scenarios = [
@@ -606,7 +615,7 @@ class TestDeepSeekModel:
             async for action in self.model.generate_with_tools_stream(
                 prompt=scenario,
                 output_type=str,
-                mcp_servers={"sqlite": mcp_server},
+                tools=tools,
                 instruction=instructions,
                 session=session,
             ):

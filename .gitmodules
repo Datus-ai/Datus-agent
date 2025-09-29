@@ -2,14 +2,3 @@
 	path = benchmark/spider2
 	url = https://github.com/xlang-ai/Spider2.git
 	ignore = all
-[submodule "mcp/mcp-clickhouse-server"]
-	path = mcp/mcp-clickhouse-server
-	url = https://github.com/ClickHouse/mcp-clickhouse.git
-[submodule "mcp/mcp-duckdb-server"]
-	path = mcp/mcp-duckdb-server
-	url = https://github.com/motherduckdb/mcp-server-motherduck.git
-	ignore = all
-[submodule "mcp/mcp-starrocks-server"]
-	path = mcp/mcp-starrocks-server
-	url = https://github.com/StarRocks/mcp-server-starrocks.git
-	ignore = all

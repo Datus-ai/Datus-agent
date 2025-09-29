@@ -4,9 +4,10 @@ from dotenv import load_dotenv
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.claude_model import ClaudeModel
-from datus.tools.mcp_server import MCPServer
+from datus.tools.tools import db_function_tools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from tests.conftest import load_acceptance_config
 from tests.test_tracing import auto_traceable
 
 logger = get_logger(__name__)
@@ -76,13 +77,15 @@ class TestClaudeModel:
         }"""
 
         question = """database_type='sqlite' task='Find the top 5 customers by total revenue from the SSB database'"""
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
-        result = await self.model.generate_with_mcp(
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
+
+        result = await self.model.generate_with_tools(
             prompt=question,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
         )
 
@@ -107,20 +110,21 @@ class TestClaudeModel:
             ),
         ]
 
-        ssb_db_path = "tests/data/SSB.db"
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         for i, scenario in enumerate(complex_scenarios):
             question = f"database_type='sqlite' task='{scenario}'"
-            mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
 
             action_count = 0
             total_content_length = 0
 
             try:
-                async for action in self.model.generate_with_mcp_stream(
+                async for action in self.model.generate_with_tools_stream(
                     prompt=question,
                     output_type=str,
-                    mcp_servers={"sqlite": mcp_server},
+                    tools=tools,
                     instruction=instructions,
                 ):
                     action_count += 1
@@ -162,15 +166,16 @@ class TestClaudeModel:
         instructions = """You are a SQLite expert working with the SSB database.
         Answer questions about the database schema and data."""
 
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         # First question: explore schema
         question1 = "database_type='sqlite' task='Show me all the tables in the database'"
         result1 = await self.model.generate_with_tools(
             prompt=question1,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             session=session,
         )
@@ -184,7 +189,7 @@ class TestClaudeModel:
         result2 = await self.model.generate_with_tools(
             prompt=question2,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             session=session,
         )
@@ -198,7 +203,7 @@ class TestClaudeModel:
         result3 = await self.model.generate_with_tools(
             prompt=question3,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             session=session,
         )

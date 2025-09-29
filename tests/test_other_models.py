@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.gemini_model import GeminiModel
 from datus.models.openai_model import OpenAIModel
-from datus.tools.mcp_server import MCPServer
+from datus.tools.tools import db_function_tools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from tests.conftest import load_acceptance_config
 from tests.test_tracing import auto_traceable
 
 logger = get_logger(__name__)
@@ -78,14 +79,15 @@ class TestOpenAIModel:
             "between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the "
             "extended price by the discount'"
         )
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         try:
             result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
-                mcp_servers={"sqlite": mcp_server},
+                tools=tools,
                 instruction=instructions,
             )
 
@@ -112,15 +114,16 @@ class TestOpenAIModel:
         Answer the question briefly and concisely."""
 
         question = "database_type='sqlite' task='Count the total number of rows in the customer table'"
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         # Test 1: Non-streaming version
         logger.info("=== Testing generate_with_tools (non-streaming) ===")
         result_non_stream = await self.model.generate_with_tools(
             prompt=question,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             max_turns=5,
         )
@@ -155,7 +158,7 @@ class TestOpenAIModel:
         async for action in self.model.generate_with_tools_stream(
             prompt=question,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
             max_turns=5,
             action_history_manager=action_history_manager,
@@ -253,14 +256,15 @@ class TestKimiModel:
             "between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the "
             "extended price by the discount'"
         )
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         try:
             result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
-                mcp_servers={"sqlite": mcp_server},
+                tools=tools,
                 instruction=instructions,
             )
 
@@ -359,14 +363,15 @@ class TestGeminiModel:
             "between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the "
             "extended price by the discount'"
         )
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         try:
             result = await self.model.generate_with_tools(
                 prompt=question,
                 output_type=str,
-                mcp_servers={"sqlite": mcp_server},
+                tools=tools,
                 instruction=instructions,
             )
 

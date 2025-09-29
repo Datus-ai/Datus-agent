@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.qwen_model import QwenModel
-from datus.tools.mcp_server import MCPServer
+from datus.tools.tools import db_function_tools
 from datus.utils.loggings import get_logger
+from tests.conftest import load_acceptance_config
 
 logger = get_logger(__name__)
 set_tracing_disabled(True)
@@ -113,13 +114,15 @@ class TestQwenModel:
         }"""
 
         question = """database_type='sqlite' task='Find the total number of customers by region in the SSB database'"""
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         result = await self.model.generate_with_tools(
             prompt=question,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
         )
 
@@ -142,14 +145,16 @@ class TestQwenModel:
         }"""
 
         question = "database_type='sqlite' task='Analyze the revenue trends by year from the lineorder table'"
-        ssb_db_path = "tests/data/SSB.db"
-        mcp_server = MCPServer.get_sqlite_mcp_server(db_path=ssb_db_path)
+
+        # Set up agent config for SQLite database
+        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        tools = db_function_tools(agent_config)
 
         action_count = 0
         async for action in self.model.generate_with_tools_stream(
             prompt=question,
             output_type=str,
-            mcp_servers={"sqlite": mcp_server},
+            tools=tools,
             instruction=instructions,
         ):
             action_count += 1

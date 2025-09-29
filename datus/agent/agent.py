@@ -518,24 +518,6 @@ class Agent:
             logger.error(f"Database connection test failed: {namespace} not found in namespaces")
             return {"status": "error", "message": f"{namespace} not found in namespaces"}
 
-    def check_mcp(self):
-        """Check MCP server connectivity for the current namespace."""
-        logger.info("Checking MCP server connectivity")
-
-        try:
-            from datus.tools.mcp_server import MCPServer
-
-            db_config = self.global_config.current_db_config()
-
-            logger.info(f"Checking MCP server for database type: {db_config.type}")
-
-            # Use the encapsulated method to check connectivity
-            return MCPServer.check_connectivity(db_config)
-
-        except Exception as e:
-            logger.error(f"MCP server check failed: {str(e)}")
-            return {"status": "error", "message": f"MCP server check failed: {str(e)}"}
-
     def probe_llm(self):
         """Test LLM model connectivity."""
         logger.info("Testing LLM model connectivity")
