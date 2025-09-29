@@ -62,17 +62,14 @@ class AgenticNode(ABC):
 
         # Initialize the model using agent config
         if agent_config:
-            model_name = None
-            nodes_config = agent_config.nodes if hasattr(agent_config, "nodes") else {}
-
-            # Get node name for config lookup
-            node_name = self.get_node_name()
-
-            # Check for node-specific model configuration
-            if node_name in nodes_config:
-                node_config = nodes_config[node_name]
-                if hasattr(node_config, "model"):
-                    model_name = node_config.model
+            model_name = self.node_config.get("model")
+            if not model_name:
+                nodes_config = agent_config.nodes if hasattr(agent_config, "nodes") else {}
+                node_name = self.get_node_name()
+                if node_name in nodes_config:
+                    node_config = nodes_config[node_name]
+                    if hasattr(node_config, "model"):
+                        model_name = node_config.model
 
             # Create model with node-specific or default model
             self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config)
