@@ -20,7 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 from datus.cli.agent_commands import AgentCommands
-from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer
+from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
 from datus.cli.metadata_commands import MetadataCommands
@@ -246,19 +246,21 @@ class DatusCLI:
 
     # Create combined completer
     def create_combined_completer(self):
-        """Create combined completer: AtReferenceCompleter + SqlCompleter"""
+        """Create combined completer: SubagentCompleter + AtReferenceCompleter + SqlCompleter"""
         from datus.cli.autocomplete import SQLCompleter
 
         sql_completer = SQLCompleter()
         self.at_completer = AtReferenceCompleter(self.agent_config)  # Router completer
+        subagent_completer = SubagentCompleter(self.agent_config)  # Subagent completer
 
-        # Use merge_completers to combine two completers
+        # Use merge_completers to combine completers
         from prompt_toolkit.completion import merge_completers
 
         return merge_completers(
             [
-                self.at_completer,
-                sql_completer,  # SQL keyword completer
+                subagent_completer,  # Subagent completer (highest priority)
+                self.at_completer,  # @ reference completer
+                sql_completer,  # SQL keyword completer (lowest priority)
             ]
         )
 

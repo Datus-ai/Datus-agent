@@ -2,6 +2,7 @@
 Autocomplete module for Datus CLI.
 Provides SQL keyword, table name, and column name autocompletion.
 """
+
 import re
 from abc import abstractmethod
 from typing import Any, Dict, Iterable, List, Tuple, Union
@@ -926,6 +927,69 @@ class AtReferenceCompleter(Completer):
         path_document = Document(rest, len(rest))
         # Route to different completers based on type
         yield from self.completer_dict[type_].get_completions(path_document, complete_event)
+
+
+class SubagentCompleter(Completer):
+    """Completer for /subagent commands."""
+
+    def __init__(self, agent_config: AgentConfig):
+        """Initialize with agent configuration."""
+        self.agent_config = agent_config
+        self._available_subagents = self._load_subagents()
+
+    def _load_subagents(self) -> List[str]:
+        """Load available subagents from configuration."""
+        subagents = []
+        if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
+            for name in self.agent_config.agentic_nodes.keys():
+                if name != "chat":  # Exclude default chat
+                    subagents.append(name)
+        return subagents
+
+    def get_completions(self, document: Document, complete_event=None) -> Iterable[Completion]:
+        """
+        Get completions for subagent commands.
+
+        Args:
+            document: The document to complete
+            complete_event: Complete event (not used)
+
+        Returns:
+            Iterable of completions
+        """
+        text = document.text_before_cursor
+
+        # Only provide completions for slash commands
+        if not text.startswith("/"):
+            return
+
+        # Get the text after the slash
+        slash_content = text[1:]
+
+        # If there's already a space, don't provide subagent completions
+        if " " in slash_content:
+            return
+
+        # Generate completions for available subagents
+        for subagent_name in self._available_subagents:
+            if subagent_name.lower().startswith(slash_content.lower()) or not slash_content:
+                # Choose emoji based on subagent name/type
+                # We can add more if gen_metrics gen_table coder_revier added
+                emoji = "🤖"
+                if "chat" in subagent_name.lower():
+                    emoji = "💬"
+                elif "bot" in subagent_name.lower():
+                    emoji = "🤖"
+
+                display_text = f"{emoji} {subagent_name}"
+                completion_text = f"{subagent_name} "  # Add space after subagent name
+
+                yield Completion(
+                    completion_text,
+                    start_position=-len(slash_content),
+                    display=display_text,
+                    style="class:subagent",
+                )
 
 
 class AtReferenceParser:
