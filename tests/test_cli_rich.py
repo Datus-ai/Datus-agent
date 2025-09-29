@@ -265,4 +265,4 @@ def test_chat_info(mock_args, capsys):
     # print("$$$", stdout)
 
     # Check for "Tool cal" responses
-    assert stdout.strip().endswith("No active chat session.")
+    assert stdout.strip().endswith("No active session.")
