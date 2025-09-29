@@ -6,7 +6,6 @@ from sqlglot import expressions
 from sqlglot.expressions import CTE, Table
 
 from datus.utils.constants import DBType, SQLType
-from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

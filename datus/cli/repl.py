@@ -29,10 +29,10 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.utils.constants import SQLType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_sql_type
-from datus.utils.constants import SQLType
 
 logger = get_logger(__name__)
 
@@ -98,12 +98,8 @@ class DatusCLI:
 
         # Initialize available subagents from agentic_nodes (excluding 'chat')
         self.available_subagents = set()
-        if (hasattr(self.agent_config, 'agentic_nodes') and
-            self.agent_config.agentic_nodes):
-            self.available_subagents = {
-                name for name in self.agent_config.agentic_nodes.keys()
-                if name != "chat"
-            }
+        if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
+            self.available_subagents = {name for name in self.agent_config.agentic_nodes.keys() if name != "chat"}
 
         # Initialize command handlers after cli_context is created
         self.agent_commands = AgentCommands(self, self.cli_context)
@@ -575,7 +571,7 @@ class DatusCLI:
         # Determine if text is SQL or chat using parse_sql_type
         try:
             # Get current database dialect from agent_config.db_type (set from current namespace)
-            dialect = self.agent_config.db_type if self.agent_config.db_type else 'snowflake'
+            dialect = self.agent_config.db_type if self.agent_config.db_type else "snowflake"
             sql_type = parse_sql_type(text, dialect)
 
             # If parse_sql_type returns a valid SQL type (not CONTENT_SET or UNKNOWN), treat as SQL

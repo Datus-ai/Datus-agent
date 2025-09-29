@@ -45,7 +45,7 @@ class ChatCommands:
 
     def update_chat_node_tools(self):
         """Update current node tools when namespace changes."""
-        if self.current_node and hasattr(self.current_node, 'setup_tools'):
+        if self.current_node and hasattr(self.current_node, "setup_tools"):
             self.current_node.setup_tools()
         # Keep backward compatibility
         if self.chat_node:
@@ -62,7 +62,7 @@ class ChatCommands:
 
     def _trigger_compact_for_current_node(self):
         """Trigger compact on current node before switching."""
-        if self.current_node and hasattr(self.current_node, '_manual_compact'):
+        if self.current_node and hasattr(self.current_node, "_manual_compact"):
             try:
                 session_info = self.current_node.get_session_info()
                 if session_info.get("session_id"):
@@ -105,7 +105,9 @@ class ChatCommands:
                 agent_config=self.cli.agent_config,
             )
 
-    def execute_chat_command(self, message: str, plan_mode: bool = False, subagent_name: str = None, compact_when_new_subagent: bool = True):
+    def execute_chat_command(
+        self, message: str, plan_mode: bool = False, subagent_name: str = None, compact_when_new_subagent: bool = True
+    ):
         """Execute a chat command with simplified node management."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
