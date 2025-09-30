@@ -20,6 +20,7 @@ from datus.tools.context_search import ContextSearchTools
 from datus.tools.date_parsing_tools import DateParsingTools
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.mcp_server import MCPServer
+from datus.tools.schema_tools import SchemaTools
 from datus.tools.tools import DBFuncTool
 from datus.utils.loggings import get_logger
 
@@ -74,6 +75,8 @@ class GenSQLAgenticNode(AgenticNode):
         self.db_func_tool: Optional[DBFuncTool] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.date_parsing_tools: Optional[DateParsingTools] = None
+        self.schema_tools: Optional[SchemaTools] = None
+        self.hooks = None
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -101,6 +104,9 @@ class GenSQLAgenticNode(AgenticNode):
 
         logger.info(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
+        # Setup hooks after tools are configured
+        self._setup_hooks()
+
     def _setup_db_tools(self):
         """Setup database tools."""
         try:
@@ -127,6 +133,36 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup date parsing tools: {e}")
 
+    def _setup_schema_tools(self):
+        """Setup schema tools."""
+        try:
+            self.schema_tools = SchemaTools(self.agent_config)
+            self.tools.extend(self.schema_tools.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup schema tools: {e}")
+
+    def _setup_hooks(self):
+        """Setup hooks if configured."""
+        hooks_config = self.node_config.get("hooks", "")
+        if not hooks_config:
+            return
+
+        try:
+            # Import hooks module
+            if hooks_config == "generation_hooks":
+                from rich.console import Console
+
+                from datus.cli.generation_hooks import GenerationHooks
+
+                console = Console()
+                self.hooks = GenerationHooks(console=console, agent_config=self.agent_config)
+                logger.info(f"Setup hooks: {hooks_config}")
+            else:
+                logger.warning(f"Unknown hooks configuration: {hooks_config}")
+
+        except Exception as e:
+            logger.error(f"Failed to setup hooks '{hooks_config}': {e}")
+
     def _setup_tool_pattern(self, pattern: str):
         """Setup tools based on pattern."""
         try:
@@ -139,6 +175,8 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_context_search_tools()
                 elif base_type == "date_parsing_tools":
                     self._setup_date_parsing_tools()
+                elif base_type == "schema_tools":
+                    self._setup_schema_tools()
                 else:
                     logger.warning(f"Unknown tool type: {base_type}")
 
@@ -149,6 +187,8 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_context_search_tools()
             elif pattern == "date_parsing_tools":
                 self._setup_date_parsing_tools()
+            elif pattern == "schema_tools":
+                self._setup_schema_tools()
 
             # Handle specific method patterns (e.g., "db_tools.list_tables")
             elif "." in pattern:
@@ -443,6 +483,7 @@ class GenSQLAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
+                hooks=self.hooks,
             ):
                 yield stream_action
 
