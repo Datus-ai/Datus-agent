@@ -102,10 +102,10 @@ class ContextSearchTools:
                 ).to_pylist()
 
             if sample_values:
-                selected_fields = (
-                    ["identifier", "table_type", "sample_rows", "_distance"]
-                    if simple_sample_data
-                    else [
+                if simple_sample_data:
+                    selected_fields = ["identifier", "table_type", "sample_rows", "_distance"]
+                else:
+                    selected_fields = [
                         "identifier",
                         "catalog_name",
                         "database_name",
@@ -115,7 +115,6 @@ class ContextSearchTools:
                         "sample_rows",
                         "_distance",
                     ]
-                )
                 result_dict["sample_data"] = sample_values.select(selected_fields).to_pylist()
             return FuncToolResult(success=1, error=None, result=result_dict)
         except Exception as e:

@@ -33,20 +33,6 @@ class GenSQLNodeInput(BaseInput):
     agent_description: Optional[str] = Field(default=None, description="Custom agent description override")
     custom_rules: Optional[list[str]] = Field(default=None, description="Additional custom rules for this interaction")
 
-    # Limited context support fields
-    scoped_context: bool = Field(default=False, description="Enable scoped context mode")
-    limited_tables: Optional[list[str]] = Field(default=None, description="Limited set of table names to access")
-    limited_metrics: Optional[list[str]] = Field(default=None, description="Limited set of metric names to access")
-    limited_sql_history: Optional[list[str]] = Field(
-        default=None, description="Limited set of SQL history to reference"
-    )
-
-    # Configuration fields from agent.yml
-    system_prompt: Optional[str] = Field(default=None, description="System prompt type identifier")
-    tools: Optional[str] = Field(default=None, description="Tools configuration pattern")
-    mcp: Optional[str] = Field(default=None, description="MCP server configuration pattern")
-    rules: Optional[list[str]] = Field(default=None, description="Configuration rules for the node")
-
     class Config:
         populate_by_name = True
 

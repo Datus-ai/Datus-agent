@@ -2,11 +2,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
-import pyarrow.compute as pc
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
+from datus.storage.lancedb_conditions import and_, build_where, eq, in_, like
 
 logger = logging.getLogger(__file__)
 
@@ -66,7 +66,7 @@ class SemanticModelStorage(BaseEmbeddingStore):
         """Search all schemas for a given database name."""
 
         search_result = self._search_all(
-            where="" if not database_name else f"database_name='{database_name}'",
+            where=None if not database_name else eq("database_name", database_name),
             select_fields=selected_fields,
         )
         if not selected_fields:
@@ -82,7 +82,8 @@ class SemanticModelStorage(BaseEmbeddingStore):
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        search_result = self.table.search().where(f"id = '{id}'").limit(100).to_list()
+        where_clause = build_where(eq("id", id))
+        search_result = self.table.search().where(where_clause).limit(100).to_list()
         return search_result
 
 
@@ -127,7 +128,7 @@ class MetricStorage(BaseEmbeddingStore):
         self._ensure_table_ready()
 
         return self._search_all(
-            where="" if not semantic_model_name else f"semantic_model_name='{semantic_model_name}'",
+            where=None if not semantic_model_name else eq("semantic_model_name", semantic_model_name),
             select_fields=select_fields,
         )
 
@@ -204,16 +205,28 @@ class SemanticMetricsRAG:
             ]
         )
 
-        semantic_where = f"catalog_database_schema = '{semantic_full_name}'"
-        if "%" in semantic_where:
-            semantic_where = f"catalog_database_schema like '{semantic_full_name}'"
-        logger.info(f"start to search semantic, semantic_where: {semantic_where}, query_text: {query_text}")
+        semantic_condition = (
+            like("catalog_database_schema", semantic_full_name)
+            if "%" in semantic_full_name
+            else eq("catalog_database_schema", semantic_full_name)
+        )
+        semantic_where_clause = build_where(semantic_condition)
+        logger.info(f"start to search semantic, semantic_where: {semantic_where_clause}, query_text: {query_text}")
         semantic_search_results = self.semantic_model_storage.search(
             query_text,
             select_fields=["semantic_model_name"],
             top_n=top_n,
-            where=semantic_where,
+            where=semantic_condition,
         )
+
+        if semantic_search_results is None or semantic_search_results.num_rows == 0:
+            logger.info("No semantic matches found; skipping metric search")
+            return []
+
+        semantic_names = [name for name in semantic_search_results["semantic_model_name"].to_pylist() if name]
+        if not semantic_names:
+            logger.info("Semantic search returned no model names; skipping metric search")
+            return []
 
         metric_full_name: str = qualify_name(
             [
@@ -222,30 +235,32 @@ class SemanticMetricsRAG:
                 layer2,
             ],
         )
-        metric_where = f"domain_layer1_layer2 = '{metric_full_name}'"
-        if "%" in metric_where:
-            metric_where = f"domain_layer1_layer2 like '{metric_full_name}'"
-        logger.info(f"start to search metrics, metric_where: {metric_where}, query_text: {query_text}")
+        metric_condition = (
+            like("domain_layer1_layer2", metric_full_name)
+            if "%" in metric_full_name
+            else eq("domain_layer1_layer2", metric_full_name)
+        )
+        metric_condition = and_(metric_condition, in_("semantic_model_name", semantic_names))
+        metric_where_clause = build_where(metric_condition)
+        logger.info(f"start to search metrics, metric_where: {metric_where_clause}, query_text: {query_text}")
         metric_search_results = self.metric_storage.search(
             query_txt=query_text,
             select_fields=["name", "description", "constraint", "sql_query", "semantic_model_name"],
             top_n=top_n,
-            where=metric_where,
+            where=metric_condition,
         )
 
-        # get the intersection result from semantic_results & metric_results
-        metric_result = []
-        if semantic_search_results and metric_search_results:
-            try:
-                semantic_names_set = semantic_search_results["semantic_model_name"].unique()
+        if metric_search_results is None or metric_search_results.num_rows == 0:
+            logger.info("Metric search returned no results")
+            return []
 
-                return (
-                    metric_search_results.select(
-                        ["name", "description", "constraint", "sql_query", "semantic_model_name"]
-                    ).filter(pc.is_in(metric_search_results["semantic_model_name"], semantic_names_set))
-                ).to_pylist()
-            except Exception as e:
-                logger.warning(f"Failed to get the intersection result, exception: {str(e)}")
+        try:
+            metric_result = metric_search_results.select(
+                ["name", "description", "constraint", "sql_query", "semantic_model_name"]
+            ).to_pylist()
+        except Exception as e:
+            logger.warning(f"Failed to extract metric results, exception: {str(e)}")
+            return []
 
         logger.info(f"Got the metrics result, size: {len(metric_result)}, query_text: {query_text}")
         return metric_result
@@ -258,9 +273,12 @@ class SemanticMetricsRAG:
                 layer2,
             ],
         )
-        metric_where = f"domain_layer1_layer2 = '{metric_full_name}' and name = '{name}'"
+        metric_condition = and_(
+            eq("domain_layer1_layer2", metric_full_name),
+            eq("name", name),
+        )
         search_result = self.metric_storage._search_all(
-            where=metric_where, select_fields=["name", "description", "constraint", "sql_query"]
+            where=metric_condition, select_fields=["name", "description", "constraint", "sql_query"]
         )
         return search_result.to_pylist()
 
@@ -281,7 +299,10 @@ class SemanticMetricsRAG:
             ],
         )
         query_result = self.metric_storage._search_all(
-            f"domain_layer1_layer2 = '{metric_full_name}' and semantic_model_name = '{semantic_model_name}'",
+            and_(
+                eq("domain_layer1_layer2", metric_full_name),
+                eq("semantic_model_name", semantic_model_name),
+            ),
             select_fields=selected_fields,
         )
         if return_distance:

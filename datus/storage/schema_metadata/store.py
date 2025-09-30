@@ -7,8 +7,9 @@ from lancedb.rerankers import Reranker
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import TableSchema, TableValue
-from datus.storage.base import BaseEmbeddingStore
+from datus.storage.base import BaseEmbeddingStore, WhereExpr
 from datus.storage.embedding_models import EmbeddingModel, get_db_embedding_model
+from datus.storage.lancedb_conditions import Node, and_, build_where, eq, or_
 from datus.utils.json_utils import json2csv
 from datus.utils.loggings import get_logger
 
@@ -85,7 +86,7 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         self,
         query_text: str,
         top_n: int = 5,
-        where: str = "",
+        where: WhereExpr = None,
         reranker: Optional[Reranker] = None,
     ) -> pa.Table:
         return self.search(
@@ -200,10 +201,15 @@ class SchemaStorage(BaseMetadataStorage):
             schema_name=schema_name,
             table_type="full",
         )
-        where = f"{where} AND table_name = '{table_name}'"
+        table_condition = eq("table_name", table_name)
+        if where:
+            where_condition = and_(where, table_condition)
+        else:
+            where_condition = table_condition
+        where_clause = build_where(where_condition)
         return (
             self.table.search()
-            .where(where=where)
+            .where(where_clause)
             .select(["catalog_name", "database_name", "schema_name", "table_name", "table_type", "definition"])
             .to_arrow()
         )
@@ -349,25 +355,48 @@ class SchemaWithValueRAG:
         self.value_store._ensure_table_ready()
 
         # Parse table names and build where clause
-        conditions = []
+        table_conditions = []
         for full_table in tables:
             parts = full_table.split(".")
             if len(parts) == 3:
                 # Format: database_name.schema_name.table_name
-                conditions.append(
-                    f"(database_name='{parts[0]}' AND schema_name='{parts[1]}' " f"AND table_name='{parts[2]}')"
+                table_conditions.append(
+                    and_(
+                        eq("database_name", parts[0]),
+                        eq("schema_name", parts[1]),
+                        eq("table_name", parts[2]),
+                    )
                 )
             elif len(parts) == 2:
                 # Format: database_name.table_name(Maybe need fix for other dialects)
-                conditions.append(f"(database_name='{parts[0]}' AND table_name='{parts[1]}')")
+                table_conditions.append(
+                    and_(
+                        eq("database_name", parts[0]),
+                        eq("table_name", parts[1]),
+                    )
+                )
             else:
-                conditions.append(f"(database_name='{database_name}' AND table_name='{full_table}')")
-        where_clause = " OR ".join(conditions)
+                table_conditions.append(
+                    and_(
+                        eq("database_name", database_name),
+                        eq("table_name", full_table),
+                    )
+                )
+
+        if table_conditions:
+            combined_condition = table_conditions[0] if len(table_conditions) == 1 else or_(*table_conditions)
+            where_clause = build_where(combined_condition)
+            schema_query = self.schema_store.table.search().where(where_clause)
+            value_query = self.value_store.table.search().where(where_clause)
+        else:
+            schema_query = self.schema_store.table.search()
+            value_query = self.value_store.table.search()
+
         # Search schemas
-        schema_results = self.schema_store.table.search().where(where_clause).limit(len(tables)).to_arrow()
+        schema_results = schema_query.limit(len(tables)).to_arrow()
         schemas_result = TableSchema.from_arrow(schema_results)
 
-        value_results = self.value_store.table.search().where(where_clause).limit(len(tables)).to_arrow()
+        value_results = value_query.limit(len(tables)).to_arrow()
         values_result = TableValue.from_arrow(value_results)
 
         return schemas_result, values_result
@@ -384,15 +413,16 @@ class SchemaWithValueRAG:
         self.schema_store._ensure_table_ready()
         self.value_store._ensure_table_ready()
 
-        where = _build_where_clause(
+        where_condition = _build_where_clause(
             catalog_name=catalog_name,
             database_name=database_name,
             schema_name=schema_name,
             table_name=table_name,
             table_type=table_type,
         )
-        self.schema_store.table.delete(where)
-        self.value_store.table.delete(where)
+        where_clause = build_where(where_condition) if where_condition else None
+        self.schema_store.table.delete(where_clause)
+        self.value_store.table.delete(where_clause)
 
 
 def _build_where_clause(
@@ -401,19 +431,24 @@ def _build_where_clause(
     schema_name: str = "",
     table_name: str = "",
     table_type: TABLE_TYPE = "table",
-) -> str:
-    where = ""
+) -> Optional[Node]:
+    conditions = []
     if catalog_name:
-        where += f"catalog_name='{catalog_name}'"
+        conditions.append(eq("catalog_name", catalog_name))
     if database_name:
-        where += f" AND database_name='{database_name}'" if where else f"database_name='{database_name}'"
+        conditions.append(eq("database_name", database_name))
     if schema_name:
-        where += f" AND schema_name='{schema_name}'" if where else f"schema_name='{schema_name}'"
+        conditions.append(eq("schema_name", schema_name))
     if table_name:
-        where += f" AND table_name='{table_name}'" if where else f"table_name='{table_name}'"
+        conditions.append(eq("table_name", table_name))
     if table_type and table_type != "full":
-        where += f" AND table_type='{table_type}'" if where else f"table_type='{table_type}'"
-    return where
+        conditions.append(eq("table_type", table_type))
+
+    if not conditions:
+        return None
+    if len(conditions) == 1:
+        return conditions[0]
+    return and_(*conditions)
 
 
 def rag_by_configuration(agent_config: AgentConfig):

@@ -29,34 +29,34 @@ class PromptManager:
             templates_dir: Directory containing template files.
                           Defaults to check ~/.datus/template first, then fallback to 'prompt_templates'.
         """
+        self.user_templates_dir = Path.home() / ".datus" / "template"
         if templates_dir is None:
             # Check user templates directory first
-            user_templates_dir = Path.home() / ".datus" / "template"
             default_templates_dir = Path(__file__).parent / "prompt_templates"
 
-            if user_templates_dir.exists():
-                templates_dir = user_templates_dir
-                logger.info(f"Using user template directory: {user_templates_dir}")
+            if self.user_templates_dir.exists():
+                templates_dir = self.user_templates_dir
+                logger.info(f"Using user template directory: {self.user_templates_dir}")
             else:
                 templates_dir = default_templates_dir
                 logger.info(f"Using default template directory: {default_templates_dir}")
         else:
             logger.info(f"Using custom template directory: {templates_dir}")
-
+        logger.info(f"Using template directory: {templates_dir}")
         self.templates_dir = Path(templates_dir)
         self.default_templates_dir = Path(__file__).parent / "prompt_templates"
         self._env = Environment(loader=FileSystemLoader(str(self.templates_dir)), trim_blocks=True, lstrip_blocks=True)
 
-    def _get_template_filename(self, template_name: str, version: Optional[str] = None) -> str:
+    def _get_template_path(self, template_name: str, version: Optional[str] = None) -> Path:
         """
-        Get the actual filename for a template and version.
+        Get the actual file path for a template and version.
 
         Args:
             template_name: Name of the template (without version suffix)
             version: Version string or None for latest version
 
         Returns:
-            Actual filename with version
+            Actual file_path
         """
         if version is None:
             # Find the latest version
@@ -78,7 +78,7 @@ class PromptManager:
                 loader=FileSystemLoader(str(self.templates_dir)), trim_blocks=True, lstrip_blocks=True
             )
             logger.debug(f"Loading template from user directory: {user_file_path}")
-            return filename
+            return user_file_path
 
         # Fallback to default templates directory
         default_file_path = self.default_templates_dir / filename
@@ -89,12 +89,26 @@ class PromptManager:
                 loader=FileSystemLoader(str(self.templates_dir)), trim_blocks=True, lstrip_blocks=True
             )
             logger.debug(f"Loading template from default directory: {default_file_path}")
-            return filename
+            return default_file_path
 
         raise FileNotFoundError(
             f"Prompt Template file '{filename}' not found in user directory ({user_templates_dir})"
             f" or default directory ({self.default_templates_dir})"
         )
+
+    def _get_template_filename(self, template_name: str, version: Optional[str] = None) -> str:
+        """
+        Get the actual filename for a template and version.
+
+        Args:
+            template_name: Name of the template (without version suffix)
+            version: Version string or None for latest version
+
+        Returns:
+            Actual filename with version
+        """
+        file_path = self._get_template_path(template_name, version)
+        return file_path.name
 
     def load_template(self, template_name: str, version: Optional[str] = None) -> Template:
         """
@@ -299,6 +313,15 @@ class PromptManager:
             "latest_version": latest_version,
             "total_versions": len(versions),
         }
+
+    def copy_to(self, src_name: str, target_name: str, target_version: str = "1.0") -> str:
+        if not self.user_templates_dir.exists():
+            self.user_templates_dir.mkdir(parents=True)
+
+        target_path = str(self.user_templates_dir / f"{target_name}_{target_version}.j2")
+        src_path = self._get_template_path(src_name)
+        shutil.copy2(src_path, target_path)
+        return target_path
 
 
 # Global instance for easy access

@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 
 from datus.configuration.agent_config_loader import ConfigurationManager
 from datus.prompts.prompt_manager import PromptManager, prompt_manager
-from datus.prompts.sub_agent_prompt_template import render_template
 from datus.schemas.agent_models import SubAgentConfig
 from datus.utils.loggings import get_logger
 
@@ -69,7 +68,7 @@ class SubAgentManager:
             "system_prompt": config.system_prompt,
             "prompt_version": config.prompt_version,
             "prompt_language": config.prompt_language,
-            "description": config.description,
+            "agent_description": config.agent_description,
             "tools": config.tools,
             "mcp": config.mcp,
             "rules": list(config.rules or []),
@@ -83,12 +82,9 @@ class SubAgentManager:
         return payload
 
     def _write_prompt_template(self, config: SubAgentConfig) -> str:
-        prompt_content = render_template(self._namespace, config)
         try:
-            file_name = self._prompt_manager.save(
-                config.system_prompt,
-                version=config.prompt_version,
-                prompt_content=prompt_content,
+            file_name = self._prompt_manager.copy_to(
+                "sql_system", f"{config.system_prompt}_system", config.prompt_version
             )
         except IOError as exc:
             logger.error("Failed to write prompt template for '%s': %s", config.system_prompt, exc)

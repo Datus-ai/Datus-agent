@@ -5,6 +5,7 @@ import pyarrow as pa
 
 from datus.storage.base import BaseEmbeddingStore
 from datus.storage.embedding_models import EmbeddingModel, get_document_embedding_model
+from datus.storage.lancedb_conditions import and_, build_where, eq
 
 logger = logging.getLogger(__name__)
 
@@ -103,21 +104,26 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
         Returns:
             List of matching knowledge entries
         """
-        where_conditions = []
+        conditions = []
         if domain:
-            where_conditions.append(f"domain='{domain}'")
+            conditions.append(eq("domain", domain))
         if layer1:
-            where_conditions.append(f"layer1='{layer1}'")
+            conditions.append(eq("layer1", layer1))
         if layer2:
-            where_conditions.append(f"layer2='{layer2}'")
+            conditions.append(eq("layer2", layer2))
 
-        where_clause = " AND ".join(where_conditions) if where_conditions else ""
+        if not conditions:
+            where_condition = None
+        elif len(conditions) == 1:
+            where_condition = conditions[0]
+        else:
+            where_condition = and_(*conditions)
 
         results = self.search(
             query_txt=query_text,
             select_fields=["domain", "layer1", "layer2", "terminology", "explanation", "created_at"],
             top_n=top_n,
-            where=where_clause,
+            where=where_condition,
         )
 
         return results
@@ -141,18 +147,24 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        where_conditions = []
+        conditions = []
         if domain:
-            where_conditions.append(f"domain='{domain}'")
+            conditions.append(eq("domain", domain))
         if layer1:
-            where_conditions.append(f"layer1='{layer1}'")
+            conditions.append(eq("layer1", layer1))
         if layer2:
-            where_conditions.append(f"layer2='{layer2}'")
+            conditions.append(eq("layer2", layer2))
 
-        where_clause = " AND ".join(where_conditions) if where_conditions else ""
+        if not conditions:
+            where_condition = None
+        elif len(conditions) == 1:
+            where_condition = conditions[0]
+        else:
+            where_condition = and_(*conditions)
 
         return self._search_all(
-            where=where_clause, select_fields=["domain", "layer1", "layer2", "terminology", "explanation", "created_at"]
+            where=where_condition,
+            select_fields=["domain", "layer1", "layer2", "terminology", "explanation", "created_at"],
         )
 
     def get_domains(self) -> List[str]:
@@ -168,9 +180,8 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        search_result = (
-            self.table.search().where(f"domain='{domain}'").select(["layer1", "layer2"]).limit(100000).to_list()
-        )
+        where_clause = build_where(eq("domain", domain))
+        search_result = self.table.search().where(where_clause).select(["layer1", "layer2"]).limit(100000).to_list()
 
         unique_layers = set()
         for result in search_result:

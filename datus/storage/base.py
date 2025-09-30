@@ -12,6 +12,7 @@ from lancedb.table import Table
 from pydantic import Field
 
 from datus.storage.embedding_models import EmbeddingModel
+from datus.storage.lancedb_conditions import Node, build_where
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -70,6 +71,9 @@ class BaseModelData(LanceModel):
         arbitrary_types_allowed = True
 
 
+WhereExpr = Union[str, Node, None]
+
+
 class BaseEmbeddingStore(StorageBase):
     """Base class for all embedding stores using LanceDB.
     table_name: the name of the table to store the embedding
@@ -110,12 +114,16 @@ class BaseEmbeddingStore(StorageBase):
         self._table_initialized = True
         logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
 
-    def _search_all(self, where: str = "", select_fields: Optional[List[str]] = None) -> pa.Table:
+    def _search_all(self, where: WhereExpr = None, select_fields: Optional[List[str]] = None) -> pa.Table:
         self._ensure_table_ready()
-        query_builder = self.table.search().where(where)
+        where_clause = self._compile_where(where)
+        query_builder = self.table.search()
+        if where_clause:
+            query_builder = query_builder.where(where_clause)
         if select_fields:
             query_builder = query_builder.select(select_fields)
-        result = query_builder.limit(self.table.count_rows(where if where else None)).to_arrow()
+        row_limit = self.table.count_rows(where_clause) if where_clause else self.table.count_rows()
+        result = query_builder.limit(row_limit).to_arrow()
         if self.vector_column_name in result.column_names:
             result = result.drop([self.vector_column_name])
         return result
@@ -278,7 +286,7 @@ class BaseEmbeddingStore(StorageBase):
         query_txt: str,
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = None,
-        where: str = "",
+        where: WhereExpr = None,
         reranker: Optional[Reranker] = None,
     ) -> pa.Table:
         # Ensure table is ready before searching
@@ -298,15 +306,16 @@ class BaseEmbeddingStore(StorageBase):
         reranker: Reranker,
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = None,
-        where: str = "",
+        where: WhereExpr = None,
     ) -> pa.Table:
+        where_clause = self._compile_where(where)
         try:
             query_builder = self.table.search(
                 query=query_txt, query_type="hybrid", vector_column_name=self.vector_source_name
             )
-            query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where)
+            query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where_clause)
             if not top_n:
-                top_n = self.table.count_rows(where if where else None)
+                top_n = self.table.count_rows(where_clause) if where_clause else self.table.count_rows()
             results = query_builder.limit(top_n * 2).rerank(reranker).to_arrow()
             if len(results) > top_n:
                 results = results[:top_n]
@@ -320,15 +329,16 @@ class BaseEmbeddingStore(StorageBase):
         query_txt: str,
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = None,
-        where: str = "",
+        where: WhereExpr = None,
     ) -> pa.Table:
+        where_clause = self._compile_where(where)
         try:
             query_builder = self.table.search(
                 query=query_txt, query_type="vector", vector_column_name=self.vector_column_name
             )
-            query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where)
+            query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where_clause)
             if not top_n:
-                top_n = self.table.count_rows(where if where else None)
+                top_n = self.table.count_rows(where_clause) if where_clause else self.table.count_rows()
             return query_builder.limit(top_n).to_arrow()
         except Exception as e:
             raise DatusException(
@@ -336,7 +346,7 @@ class BaseEmbeddingStore(StorageBase):
                 message_args={
                     "error_message": str(e),
                     "query": query_txt,
-                    "where_clause": where if where else "(none)",
+                    "where_clause": where_clause if where_clause else "(none)",
                     "top_n": str(top_n or "all"),
                 },
             ) from e
@@ -351,11 +361,20 @@ class BaseEmbeddingStore(StorageBase):
         cls,
         query_builder: LanceQueryBuilder,
         select_fields: Optional[List[str]] = None,
-        where: str = "",
+        where: Optional[str] = None,
     ) -> LanceQueryBuilder:
-        if len(where) > 0:
+        if where:
             query_builder = query_builder.where(where, True)
 
         if select_fields and len(select_fields) > 0:
             query_builder = query_builder.select(select_fields)
         return query_builder
+
+    @staticmethod
+    def _compile_where(where: WhereExpr) -> Optional[str]:
+        if where is None:
+            return None
+        if isinstance(where, str):
+            stripped = where.strip()
+            return stripped or None
+        return build_where(where)

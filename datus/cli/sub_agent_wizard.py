@@ -25,7 +25,7 @@ from prompt_toolkit.widgets import Box, Button, CheckboxList, Dialog, Frame, Lab
 from pygments.lexers.data import YamlLexer
 from pygments.lexers.html import HtmlLexer
 
-from datus.prompts.sub_agent_prompt_template import render_template
+from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.context_search import ContextSearchTools
 from datus.tools.mcp_tools import MCPTool
@@ -60,14 +60,15 @@ class SubAgentWizard:
 
     def __init__(self, cli_instance: "DatusCLI", data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None):
         self.cli_instance = cli_instance
-
         if not data:
-            data = SubAgentConfig(system_prompt="", description="", scoped_context=ScopedContext())
-        if isinstance(data, SubAgentConfig):
-            self.data = data
+            self.prompt_template_name = "sql_system"
+            self.data = SubAgentConfig(system_prompt="", agent_description="", scoped_context=ScopedContext())
         else:
-            self.data: SubAgentConfig = SubAgentConfig.model_validate(data)
-        logger.info(f"$$$ INIT {self.data}")
+            if isinstance(data, SubAgentConfig):
+                self.data = data
+            else:
+                self.data: SubAgentConfig = SubAgentConfig.model_validate(data)
+            self.prompt_template_name = f"{self.data.system_prompt}_system"
         # Keep track of original name for edit-mode validation
         self._original_name: Optional[str] = self.data.system_prompt
         self.step = 0
@@ -155,7 +156,7 @@ class SubAgentWizard:
         except Exception:
             self.name_buffer.text = ""
         try:
-            self.description_area.text = self.data.description or ""
+            self.description_area.text = self.data.agent_description or ""
         except Exception:
             self.description_area.text = ""
 
@@ -788,7 +789,7 @@ class SubAgentWizard:
                 self.cli_instance.at_completer.metric_completer.reload_data()
                 if self.cli_instance.at_completer.metric_completer.flatten_data:
                     for key, meta in self.cli_instance.at_completer.metric_completer.flatten_data.items():
-                        desc = meta.get("description") if isinstance(meta, dict) else None
+                        desc = meta.get("agent_description") if isinstance(meta, dict) else None
                         disp = f"{key} - {desc}" if desc else key
                         if len(disp) > 80:
                             disp = disp[:77] + "..."
@@ -1436,7 +1437,7 @@ class SubAgentWizard:
     def _collect_data(self):
         """Collect data from all steps into self.data (SubAgentConfig)."""
         self.data.system_prompt = self.name_buffer.text.strip()
-        self.data.description = self.description_area.text.strip()
+        self.data.agent_description = self.description_area.text.strip()
         # Build native tools string with category awareness
         native_parts: List[str] = []
         for entry in getattr(self, "native_category_entries", []):
@@ -1521,7 +1522,7 @@ class SubAgentWizard:
         res: Dict[str, Any] = {
             "system_prompt": self.data.system_prompt or "your_agent_name",
             "prompt_version": self.data.prompt_version,
-            "description": self.data.description,
+            "agent_description": self.data.agent_description,
             "prompt_language": self.data.prompt_language,
             "tools": self.data.tools,
             "mcp": self.data.mcp,
@@ -1560,10 +1561,14 @@ class SubAgentWizard:
             pass  # Ignore errors during preview update
 
         # Generate prompt preview using sub-agent prompt template
-        prompt_text = render_template(
-            self.cli_instance.agent_config.current_namespace,
-            self.data,
+        prompt_context = prepare_template_context(
+            node_config=self.data,
+            agent_config=self.cli_instance.agent_config,
+            workspace_root=self.cli_instance.agent_config.workspace_root,
         )
+        from datus.prompts.prompt_manager import prompt_manager
+
+        prompt_text = prompt_manager.render_template(self.prompt_template_name, **prompt_context)
         try:
             self.prompt_preview_buffer.text = prompt_text
         except Exception:

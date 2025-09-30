@@ -7,13 +7,14 @@ and flexible configuration through agent.yml.
 """
 
 import os
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Optional, Union
 
 from agents.mcp import MCPServerStdio
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.tools.context_search import ContextSearchTools
 from datus.tools.date_parsing_tools import DateParsingTools
@@ -304,59 +305,8 @@ class GenSQLAgenticNode(AgenticNode):
 
         return mcp_servers
 
-    def _prepare_template_context(self, user_input: GenSQLNodeInput) -> dict:
-        """
-        Prepare template context variables for the gen_sql_system template.
-
-        Args:
-            user_input: User input containing limited context settings
-
-        Returns:
-            Dictionary of template variables
-        """
-        context = {}
-
-        # Tool detection flags
-        context["has_db_tools"] = bool(self.db_func_tool)
-        context["has_mcp_filesystem"] = "filesystem" in self.mcp_servers
-        context["has_mf_tools"] = any("metricflow" in k for k in self.mcp_servers.keys())
-        context["has_context_search_tools"] = bool(self.context_search_tools)
-        context["has_date_parsing_tools"] = bool(self.date_parsing_tools)
-
-        # Tool name lists for template display
-        context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
-        context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
-
-        # Limited context support
-        context["scoped_context"] = user_input.scoped_context if user_input.scoped_context else False
-
-        if context["scoped_context"]:
-            # Filter and format limited context data
-            context["tables"] = ", ".join(user_input.limited_tables) if user_input.limited_tables else "None"
-            context["metrics"] = ", ".join(user_input.limited_metrics) if user_input.limited_metrics else "None"
-            context["sql_history"] = (
-                ", ".join(user_input.limited_sql_history) if user_input.limited_sql_history else "None"
-            )
-
-        # Add rules from configuration
-        context["rules"] = self.node_config.get("rules", [])
-
-        # Add agent description from configuration or input
-        context["agent_description"] = user_input.agent_description or self.node_config.get("agent_description", "")
-
-        # Add namespace and workspace info
-        if self.agent_config:
-            context["namespace"] = getattr(self.agent_config, "current_namespace", None)
-            context["workspace_root"] = self._resolve_workspace_root()
-
-        logger.debug(f"Prepared template context: {context}")
-        return context
-
     def _get_system_prompt(
-        self,
-        conversation_summary: Optional[str] = None,
-        prompt_version: Optional[str] = None,
-        template_context: Optional[dict] = None,
+        self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
     ) -> str:
         """
         Get the system prompt for this SQL generation node using enhanced template context.
@@ -369,40 +319,32 @@ class GenSQLAgenticNode(AgenticNode):
         Returns:
             System prompt string loaded from the template
         """
-        # Get prompt version from parameter, fallback to node config, then agent config
-        version = prompt_version
-        if version is None:
-            version = self.node_config.get("prompt_version")
+        context = prepare_template_context(
+            node_config=self.node_config,
+            has_db_tools=bool(self.db_func_tool),
+            has_mcp_filesystem="filesystem" in self.mcp_servers,
+            has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
+            has_context_search_tools=bool(self.context_search_tools),
+            has_parsing_tools=bool(self.date_parsing_tools),
+            agent_config=self.agent_config,
+            workspace_root=self._resolve_workspace_root(),
+        )
+        context["conversation_summary"] = conversation_summary
+
+        version = prompt_version or self.node_config.prompt_version
+
         if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
             version = self.agent_config.prompt_version
 
-        # Use shared workspace_root resolution logic
-        root_path = self._resolve_workspace_root()
-
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
-        system_prompt_name = self.node_config.get("system_prompt")
-        if system_prompt_name:
-            template_name = f"{system_prompt_name}_system"
-        else:
-            template_name = f"{self.get_node_name()}_system"
+        system_prompt_name = self.node_config.system_prompt or self.get_node_name()
+        template_name = f"{system_prompt_name}_system"
 
         try:
-            # Prepare template variables
-            template_vars = {
-                "agent_config": self.agent_config,
-                "namespace": getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
-                "workspace_root": root_path,
-                "conversation_summary": conversation_summary,
-            }
-
-            # Add template context if provided
-            if template_context:
-                template_vars.update(template_context)
-
             # Use prompt manager to render the template
             from datus.prompts.prompt_manager import prompt_manager
 
-            return prompt_manager.render_template(template_name=template_name, version=version, **template_vars)
+            return prompt_manager.render_template(template_name=template_name, version=version, **context)
 
         except FileNotFoundError as e:
             # Template not found - throw DatusException
@@ -456,12 +398,7 @@ class GenSQLAgenticNode(AgenticNode):
             # Get or create session and any available summary
             session, conversation_summary = self._get_or_create_session()
 
-            # Prepare enhanced template context with tool detection and limited context
-            template_context = self._prepare_template_context(user_input)
-
-            # Get system instruction from template with enhanced context
-            prompt_version = user_input.prompt_version or self.node_config.get("prompt_version")
-            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
+            system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)
 
             # Add context to user message if provided
             enhanced_message = user_input.user_message
@@ -709,3 +646,65 @@ class GenSQLAgenticNode(AgenticNode):
         """
         sql_content, _ = self._extract_sql_and_output_from_response(output)
         return sql_content
+
+
+def prepare_template_context(
+    node_config: Union[Dict[str, Any], SubAgentConfig],
+    has_db_tools: bool = True,
+    has_mcp_filesystem: bool = True,
+    has_mf_tools: bool = True,
+    has_context_search_tools: bool = True,
+    has_parsing_tools: bool = True,
+    agent_config: Optional[AgentConfig] = None,
+    workspace_root: Optional[str] = None,
+) -> dict:
+    """
+    Prepare template context variables for the gen_sql_system template.
+
+    Args:
+        user_input: User input containing limited context settings
+
+    Returns:
+        Dictionary of template variables
+    """
+    context: Dict[str, Any] = {
+        "has_db_tools": has_db_tools,
+        "has_mcp_filesystem": has_mcp_filesystem,
+        "has_mf_tools": has_mf_tools,
+        "has_context_search_tools": has_context_search_tools,
+        "has_parsing_tools": has_parsing_tools,
+    }
+    if isinstance(node_config, Dict):
+        node_config = SubAgentConfig.model_validate(node_config)
+
+    # Tool name lists for template display
+    context["native_tools"] = node_config.tools
+    context["mcp_tools"] = node_config.mcp
+    # Limited context support
+    has_scoped_context = False
+
+    scoped_context = node_config.scoped_context
+    if scoped_context:
+        has_scoped_context = scoped_context.tables or scoped_context.metrics or scoped_context.sqls
+
+    context["scoped_context"] = has_scoped_context
+
+    if has_scoped_context:
+        # Filter and format limited context data
+        context["tables"] = scoped_context.tables
+        context["metrics"] = scoped_context.metrics
+        context["sql_history"] = scoped_context.sqls
+
+    # Add rules from configuration
+    context["rules"] = node_config.rules or []
+
+    # Add agent description from configuration or input
+    context["agent_description"] = node_config.agent_description
+
+    # Add namespace and workspace info
+    if agent_config:
+        context["agent_config"] = agent_config
+        context["namespace"] = getattr(agent_config, "current_namespace", None)
+        context["workspace_root"] = workspace_root or agent_config.workspace_root
+    logger.debug(f"Prepared template context: {context}")
+    return context

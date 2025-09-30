@@ -6,6 +6,7 @@ import pyarrow as pa
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
+from datus.storage.lancedb_conditions import and_, build_where, eq, like
 
 logger = logging.getLogger(__file__)
 
@@ -60,7 +61,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
     def search_all(self, domain: str = "") -> List[Dict[str, Any]]:
         """Search all SQL history entries for a given domain."""
         search_result = self._search_all(
-            where="" if not domain else f"domain='{domain}'",
+            where=None if not domain else eq("domain", domain),
             select_fields=["id", "name", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags"],
         )
         return [
@@ -84,7 +85,8 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        search_result = self.table.search().where(f"id = '{id}'").limit(100).to_list()
+        where_clause = build_where(eq("id", id))
+        search_result = self.table.search().where(where_clause).limit(100).to_list()
         return search_result
 
     def filter_by_domain_layers(self, domain: str = "", layer1: str = "", layer2: str = "") -> List[Dict[str, Any]]:
@@ -92,20 +94,20 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        where_conditions = []
+        conditions = []
         if domain:
-            where_conditions.append(f"domain = '{domain}'")
+            conditions.append(eq("domain", domain))
         if layer1:
-            where_conditions.append(f"layer1 = '{layer1}'")
+            conditions.append(eq("layer1", layer1))
         if layer2:
-            where_conditions.append(f"layer2 = '{layer2}'")
+            conditions.append(eq("layer2", layer2))
 
-        where_clause = " AND ".join(where_conditions) if where_conditions else ""
-
-        if where_clause:
-            search_result = self.table.search().where(where_clause).limit(1000).to_list()
-        else:
+        if not conditions:
             search_result = self.table.search().limit(1000).to_list()
+        else:
+            where_condition = conditions[0] if len(conditions) == 1 else and_(*conditions)
+            where_clause = build_where(where_condition)
+            search_result = self.table.search().where(where_clause).limit(1000).to_list()
 
         return search_result
 
@@ -176,7 +178,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        where_clause = f"filepath LIKE '%{filepath_pattern}%'"
+        where_clause = build_where(like("filepath", f"%{filepath_pattern}%"))
         search_result = self.table.search().where(where_clause).limit(1000).to_list()
         return search_result
 
@@ -208,21 +210,29 @@ class SqlHistoryRAG:
         self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
     ) -> List[Dict[str, Any]]:
         """Search SQL history by summary using vector search."""
-        where_conditions = []
+        conditions = []
         if domain:
-            where_conditions.append(f"domain = '{domain}'")
+            conditions.append(eq("domain", domain))
         if layer1:
-            where_conditions.append(f"layer1 = '{layer1}'")
+            conditions.append(eq("layer1", layer1))
         if layer2:
-            where_conditions.append(f"layer2 = '{layer2}'")
+            conditions.append(eq("layer2", layer2))
 
-        where_clause = " AND ".join(where_conditions) if where_conditions else ""
+        if not conditions:
+            where_condition = None
+            where_clause = ""
+        elif len(conditions) == 1:
+            where_condition = conditions[0]
+            where_clause = build_where(where_condition)
+        else:
+            where_condition = and_(*conditions)
+            where_clause = build_where(where_condition)
 
         logger.info(f"Searching SQL history by summary: {query_text}, where: {where_clause}")
         search_results = self.sql_history_storage.search(
             query_text,
             top_n=top_n,
-            where=where_clause,
+            where=where_condition,
         )
 
         if search_results:

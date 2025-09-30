@@ -33,7 +33,7 @@ class SearchMetricsTool(BaseTool):
     def _search_hybrid_metrics(self, input_param: SearchMetricsInput) -> SearchMetricsResult:
         sql_task = input_param.sql_task
         metric_results = self.store.search_hybrid_metrics(
-            query_text=sql_task.query_text,
+            query_text=sql_task.task,
             domain=sql_task.domain,
             layer1=sql_task.layer1,
             layer2=sql_task.layer2,

@@ -4,17 +4,25 @@ import pytest
 
 from datus.schemas.node_models import Metric, SqlTask
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
-from datus.storage.metric.store import qualify_name
+from datus.storage.metric.store import SemanticMetricsRAG, qualify_name, rag_by_configuration
 from datus.tools.metric_tools.search_metrics import SearchMetricsTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
+from tests.conftest import load_acceptance_config
 
 logger = get_logger(__name__)
 
 
+@pytest.fixture(scope="module")
+def metrics_rag() -> SemanticMetricsRAG:
+    agent_config = load_acceptance_config(namespace="bird_school")
+    agent_config.rag_base_path = "tests/data"
+    return rag_by_configuration(agent_config)
+
+
 @pytest.fixture
-def search_metrics_tool() -> SearchMetricsTool:
-    return SearchMetricsTool()
+def search_metrics_tool(metrics_rag: SemanticMetricsRAG) -> SearchMetricsTool:
+    return SearchMetricsTool(store=metrics_rag)
 
 
 @pytest.fixture
@@ -77,13 +85,15 @@ def test_empty_vector_and_scalar_query(search_metrics_tool, build_empty_pure_sca
 
 
 def test_pure_scalar_query(search_metrics_tool):
+    search_metrics_tool.store.semantic_model_storage._ensure_table_ready()
     result = (
         search_metrics_tool.store.semantic_model_storage.table.search()
         .where("catalog_database_schema like '%_%_%'")
         .to_list()
     )
-    print(f"result: {result}")
     assert len(result) > 0
+    search_metrics_tool.store.metric_storage._ensure_table_ready()
+
     result = (
         search_metrics_tool.store.metric_storage.table.search().where("domain_layer1_layer2 like '%_%_%'").to_list()
     )
@@ -104,7 +114,7 @@ def test_invalid_input(search_metrics_tool):
     logger.info("Testing missing SearchMetricsInput parameter")
 
     # Test missing SearchMetricsInput
-    with pytest.raises(AttributeError, match="'dict' object has no attribute 'input_text'"):
+    with pytest.raises(AttributeError, match="'dict' object has no attribute 'sql_task'"):
         search_metrics_tool.execute({})
 
 
