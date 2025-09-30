@@ -67,10 +67,37 @@ class DateParserNode(Node):
     def _execute_date_parsing(self) -> DateParserResult:
         """Execute date parsing action using DateParserTool."""
         try:
+            from datus.utils.time_utils import get_default_current_date
+
+            # Extract dates using DateParserTool
             tool = DateParserTool(language=self._get_language_setting())
-            result = tool.execute(self.input, self.model)
-            logger.info(f"Date parsing result: {result.success}")
-            return result
+            task_text = self.input.sql_task.task
+            current_date = get_default_current_date(self.input.sql_task.current_date)
+            extracted_dates = tool.execute(task_text, current_date, self.model)
+
+            # Generate date context for SQL generation
+            date_context = tool.generate_date_context(extracted_dates)
+
+            # Create enriched task with date information
+            enriched_task_data = self.input.sql_task.model_dump()
+
+            # Store date ranges directly in sql_task.date_ranges
+            if date_context:
+                enriched_task_data["date_ranges"] = date_context
+                # Also add to external knowledge for backward compatibility
+                if enriched_task_data.get("external_knowledge"):
+                    enriched_task_data["external_knowledge"] += f"\n\n{date_context}"
+                else:
+                    enriched_task_data["external_knowledge"] = date_context
+
+            from datus.schemas.node_models import SqlTask
+
+            enriched_task = SqlTask.model_validate(enriched_task_data)
+
+            logger.info(f"Date parsing result: success with {len(extracted_dates)} expressions")
+            return DateParserResult(
+                success=True, extracted_dates=extracted_dates, enriched_task=enriched_task, date_context=date_context
+            )
         except Exception as e:
             logger.error(f"Date parsing tool execution failed: {e}")
             return DateParserResult(
@@ -79,5 +106,5 @@ class DateParserNode(Node):
 
     async def execute_stream(self, action_history_manager=None):
         """Empty streaming implementation - not needed for date parsing."""
-        return
         yield
+        return

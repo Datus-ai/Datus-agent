@@ -4,10 +4,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from datus.models.base import LLMBaseModel
 from datus.prompts.extract_dates import get_date_extraction_prompt, parse_date_extraction_response
 from datus.prompts.prompt_manager import prompt_manager
-from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult, ExtractedDate
+from datus.schemas.date_parser_node_models import ExtractedDate
 from datus.tools import BaseTool
 from datus.utils.loggings import get_logger
-from datus.utils.time_utils import get_default_current_date
 
 logger = get_logger(__name__)
 
@@ -22,50 +21,29 @@ class DateParserTool(BaseTool):
         super().__init__(**kwargs)
         self.language = language
 
-    def execute(self, input_param: DateParserInput, model: LLMBaseModel) -> DateParserResult:
-        """Execute date parsing operations."""
-        return self._parse_temporal_expressions(input_param, model)
+    def execute(self, task_text: str, current_date: str, model: LLMBaseModel) -> List[ExtractedDate]:
+        """
+        Execute date parsing operations.
 
-    def _parse_temporal_expressions(self, input_param: DateParserInput, model: LLMBaseModel) -> DateParserResult:
-        """Core date parsing logic."""
+        Args:
+            task_text: The text to extract dates from
+            current_date: Reference date for relative expressions (YYYY-MM-DD format)
+            model: LLM model for parsing
+
+        Returns:
+            List of ExtractedDate objects
+        """
         try:
-            # Extract and parse temporal expressions
             extracted_dates = self.extract_and_parse_dates(
-                text=input_param.sql_task.task,
-                current_date=get_default_current_date(input_param.sql_task.current_date),
+                text=task_text,
+                current_date=current_date,
                 model=model,
             )
-
-            # Generate date context for SQL generation
-            date_context = self.generate_date_context(extracted_dates)
-
-            # Create enriched task with date information
-            enriched_task_data = input_param.sql_task.model_dump()
-
-            # Store date ranges directly in sql_task.date_ranges
-            if date_context:
-                enriched_task_data["date_ranges"] = date_context
-                # Also add to external knowledge for backward compatibility
-                if enriched_task_data.get("external_knowledge"):
-                    enriched_task_data["external_knowledge"] += f"\n\n{date_context}"
-                else:
-                    enriched_task_data["external_knowledge"] = date_context
-
-            from datus.schemas.node_models import SqlTask
-
-            enriched_task = SqlTask.model_validate(enriched_task_data)
-
             logger.info(f"Date parsing completed: {len(extracted_dates)} expressions found")
-
-            return DateParserResult(
-                success=True, extracted_dates=extracted_dates, enriched_task=enriched_task, date_context=date_context
-            )
-
+            return extracted_dates
         except Exception as e:
             logger.error(f"Date parsing execution error: {str(e)}")
-            return DateParserResult(
-                success=False, error=str(e), extracted_dates=[], enriched_task=input_param.sql_task, date_context=""
-            )
+            return []
 
     def extract_and_parse_dates(
         self, text: str, current_date: Optional[str] = None, model: LLMBaseModel = None
