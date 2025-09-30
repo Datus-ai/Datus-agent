@@ -63,6 +63,8 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Any, Iterable, Sequence, Union
 
+from datus.utils.exceptions import DatusException, ErrorCode
+
 
 # ---------- Operators ----------
 class Op(str, Enum):
@@ -140,11 +142,14 @@ def _escape_identifier(name: str) -> str:
     """
     safe = name.strip()
     if not safe:
-        raise ValueError("Identifier cannot be empty")
+        raise DatusException(ErrorCode.COMMON_FIELD_INVALID, message="Identifier cannot be empty")
 
     first_char_requires_quote = not (safe[0].isalpha() or safe[0] == "_")
     needs_quote = first_char_requires_quote or any(c in safe for c in ' "().-+/\\|&*[]=<>!')
-    return f'"{safe}"' if needs_quote else safe
+    if needs_quote:
+        escaped = safe.replace('"', '""')
+        return f'"{escaped}"'
+    return safe
 
 
 def _escape_value(v: Any) -> str:

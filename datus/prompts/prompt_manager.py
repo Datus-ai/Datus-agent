@@ -5,7 +5,6 @@ Manages prompt templates with simple file-based versioning.
 Template files follow the pattern: {template_name}_{version}.j2
 No configuration file needed - versions are determined by scanning files.
 """
-import os.path
 import re
 import shutil
 from pathlib import Path
@@ -138,15 +137,6 @@ class PromptManager:
         """
         template = self.load_template(template_name, version)
         return template.render(**kwargs)
-
-    def save(self, template_name: str, version: str, prompt_content: str) -> str:
-        """
-        Save a template with the given variables.
-        """
-        file_name = f"{template_name}_{version}.j2"
-        with open(os.path.join(self.templates_dir, file_name), "w") as f:
-            f.write(prompt_content)
-        return file_name
 
     def get_raw_template(self, template_name: str, version: Optional[str] = None) -> str:
         """

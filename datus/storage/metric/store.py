@@ -298,11 +298,14 @@ class SemanticMetricsRAG:
                 layer2,
             ],
         )
-        query_result = self.metric_storage._search_all(
-            and_(
-                eq("domain_layer1_layer2", metric_full_name),
+        conditions = eq("domain_layer1_layer2", metric_full_name)
+        if semantic_model_name:
+            conditions = and_(
+                conditions,
                 eq("semantic_model_name", semantic_model_name),
-            ),
+            )
+        query_result = self.metric_storage._search_all(
+            conditions,
             select_fields=selected_fields,
         )
         if return_distance:

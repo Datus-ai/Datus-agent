@@ -368,16 +368,13 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
 
     first_statement = _first_statement(stripped_sql)
     dialect_name = parse_dialect(dialect)
-    try:
-        parsed_expression = sqlglot.parse_one(
-            first_statement, dialect=dialect_name, error_level=sqlglot.ErrorLevel.IGNORE
-        )
-    except Exception:
+    parsed_expression = sqlglot.parse_one(first_statement, dialect=dialect_name, error_level=sqlglot.ErrorLevel.IGNORE)
+    if parsed_expression is None:
         if dialect_name == DBType.STARROCKS.value and _metadata_pattern().match(first_statement):
             return SQLType.METADATA_SHOW
-
         # Return UNKNOWN instead of raising exception for CLI usage
         return SQLType.UNKNOWN
+
     if isinstance(parsed_expression, expressions.Select):
         return SQLType.SELECT
     elif isinstance(parsed_expression, expressions.Values):
@@ -422,6 +419,4 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
     ):
         return SQLType.CONTENT_SET
     else:
-        # Current conclusion: coverage is good for the primary SQL workflows; specialised dialect commands still work
-        # via the catch-all path, so an UNKNOWN enum entry isn’t necessary at this stage.
-        return SQLType.CONTENT_SET
+        return SQLType.UNKNOWN

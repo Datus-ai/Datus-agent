@@ -53,7 +53,7 @@ class TestDeepSeekModel:
 
     def test_initialization_deepseek_v3(self, agent_config: AgentConfig):
         """Test initialization with DeepSeek V3 model."""
-        model = DeepSeekModel(agent_config["deepseek"])
+        model = DeepSeekModel(agent_config.models["deepseek"])
 
         result = model.generate("Hello", max_tokens=50)
 

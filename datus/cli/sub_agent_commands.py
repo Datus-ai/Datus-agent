@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from rich.console import Console
 from rich.syntax import Syntax
@@ -90,11 +90,7 @@ class SubAgentCommands:
         table.add_column("Rules", style="blue")
 
         for name, config in agents.items():
-            scoped_context = config.get("scoped_context", {})
-            if scoped_context:
-                scoped_context = ""
-            else:
-                scoped_context = ""
+            scoped_context = self._format_scoped_context(config.get("scoped_context"))
             tools = config.get("tools") or ""
             mcps = config.get("mcp") or ""
             rules = config.get("rules", [])
@@ -103,6 +99,27 @@ class SubAgentCommands:
             )
 
         console.print(table)
+
+    @staticmethod
+    def _format_scoped_context(value: Any) -> Union[str, Syntax]:
+        """Pretty print scoped context for table display."""
+        if not value:
+            return ""
+
+        if isinstance(value, (Syntax, str)):
+            return value
+
+        if not isinstance(value, dict):
+            return str(value)
+
+        lines: List[str] = []
+        for key in ("tables", "metrics", "sqls"):
+            lines.append(f"{key}: {value.get(key)}")
+
+        if not lines:
+            return ""
+
+        return Syntax("\n".join(lines), "yaml", word_wrap=True)
 
     def _remove_agent(self, agent_name: str):
         """Removes a sub-agent's configuration from agent.yml."""

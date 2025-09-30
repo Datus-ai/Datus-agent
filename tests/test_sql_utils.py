@@ -1,7 +1,4 @@
-import pytest
-
 from datus.utils.constants import DBType, SQLType
-from datus.utils.exceptions import DatusException
 from datus.utils.json_utils import llm_result2json
 from datus.utils.sql_utils import extract_table_names, parse_metadata, parse_sql_type, parse_table_name_parts
 
@@ -531,8 +528,7 @@ def test_parse_sqlite_select():
     SELECT CAST(COUNT(CASE WHEN element = 'h' THEN atom_id ELSE NULL END) AS REAL) / (CASE WHEN COUNT(atom_id) = 0
     THEN NULL ELSE COUNT(atom_id) END) AS ratio, label FROM SubQuery GROUP BY label"""
     tables = extract_table_names(sql, dialect=DBType.SQLITE)
-    print(tables)
-    assert tables == ["atom", "molecule"]
+    assert set(tables) == {"atom", "molecule"}
 
 
 def test_parse_full_tables():
@@ -580,8 +576,7 @@ FROM gold_vs_bitcoin"""
         == SQLType.SELECT
     )
 
-    with pytest.raises(DatusException):
-        parse_sql_type("   ", dialect=DBType.DUCKDB)
+    assert parse_sql_type("   ", dialect=DBType.DUCKDB) == SQLType.UNKNOWN
 
     merge_sql = (
         "MERGE INTO target USING source ON target.id = source.id WHEN MATCHED THEN UPDATE SET value = source.value"

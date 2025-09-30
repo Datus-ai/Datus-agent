@@ -674,7 +674,7 @@ def prepare_template_context(
         "has_context_search_tools": has_context_search_tools,
         "has_parsing_tools": has_parsing_tools,
     }
-    if isinstance(node_config, Dict):
+    if not isinstance(node_config, SubAgentConfig):
         node_config = SubAgentConfig.model_validate(node_config)
 
     # Tool name lists for template display
