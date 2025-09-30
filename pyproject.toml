@@ -50,6 +50,7 @@ dependencies = [
     "pyarrow<19.0.0",
     "rich==14.0.0",
     "prompt_toolkit>=3.0.51",
+    "pygments>=2.18.0",
     "textual[syntax]==5.1.1",
     "anthropic==0.51.0",
     "duckdb-engine>=0.17.0",
