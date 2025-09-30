@@ -332,10 +332,6 @@ class GenSQLAgenticNode(AgenticNode):
         context["conversation_summary"] = conversation_summary
 
         version = prompt_version or self.node_config.get("prompt_version", "")
-
-        if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
-            version = self.agent_config.prompt_version
-
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
         template_name = f"{system_prompt_name}_system"
@@ -685,7 +681,7 @@ def prepare_template_context(
 
     scoped_context = node_config.scoped_context
     if scoped_context:
-        has_scoped_context = scoped_context.tables or scoped_context.metrics or scoped_context.sqls
+        has_scoped_context = bool(scoped_context.tables or scoped_context.metrics or scoped_context.sqls)
 
     context["scoped_context"] = has_scoped_context
 
