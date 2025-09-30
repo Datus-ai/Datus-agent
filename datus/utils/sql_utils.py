@@ -372,7 +372,7 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
         parsed_expression = sqlglot.parse_one(
             first_statement, dialect=dialect_name, error_level=sqlglot.ErrorLevel.IGNORE
         )
-    except Exception as exc:
+    except Exception:
         if dialect_name == DBType.STARROCKS.value and _metadata_pattern().match(first_statement):
             return SQLType.METADATA_SHOW
 
