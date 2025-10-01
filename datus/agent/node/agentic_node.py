@@ -397,6 +397,7 @@ class AgenticNode(ABC):
             "prompt_language",
             "tools",
             "mcp",
+            "hooks",
             "rules",
             "max_turns",
             "workspace_root",
