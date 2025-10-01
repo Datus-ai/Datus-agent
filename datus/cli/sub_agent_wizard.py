@@ -132,11 +132,11 @@ class SubAgentWizard:
         except Exception:
             return set()
 
-        reserved = {name for name in templates if name.endswith("_system") or name.endswith("_system_zh")}
+        reserved = {name for name in templates if name.endswith("_system") or "_system_" in name}
 
         if self._original_name:
-            reserved.discard(f"{self._original_name}_system")
-            reserved.discard(f"{self._original_name}_system_zh")
+            base = f"{self._original_name}_system"
+            reserved = {name for name in reserved if not (name == base or name.startswith(f"{base}_"))}
 
         return reserved
 
@@ -1406,13 +1406,13 @@ class SubAgentWizard:
 
             is_original_name = self._original_name is not None and name == self._original_name
             if not is_original_name and self._reserved_template_names:
-                conflicts: List[str] = []
-                if f"{name}_system" in self._reserved_template_names:
-                    conflicts.append(f"{name}_system_<version>.j2")
-                if f"{name}_system_zh" in self._reserved_template_names:
-                    conflicts.append(f"{name}_system_zh_<version>.j2")
+                conflicts: List[str] = [
+                    template
+                    for template in sorted(self._reserved_template_names)
+                    if template == f"{name}_system" or template.startswith(f"{name}_system_")
+                ]
                 if conflicts:
-                    conflict_list = ", ".join(conflicts)
+                    conflict_list = ", ".join(f"{template}_<version>.j2" for template in conflicts)
                     self._show_error_dialog(
                         (
                             f"Agent name '{name}' conflicts with existing prompt template(s): {conflict_list}. "
