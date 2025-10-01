@@ -103,22 +103,15 @@ class SubAgentManager:
             raise
         return str(self._prompt_manager.templates_dir / file_name)
 
-    def _remove_prompt_template(self, agent_name: str, prompt_version: str) -> None:
+    def _remove_prompt_template(self, agent_name: str, prompt_version: str):
         file_name = f"{agent_name}_system_{prompt_version}.j2"
-        candidate_dirs = {
-            getattr(self._prompt_manager, "user_templates_dir", None),
-            getattr(self._prompt_manager, "default_templates_dir", None),
-            getattr(self._prompt_manager, "templates_dir", None),
-        }
-        for directory in candidate_dirs:
-            if not directory:
-                continue
-            path = Path(directory) / file_name
-            if not path.exists():
-                continue
-            try:
-                path.unlink()
-            except OSError as exc:  # pragma: no cover - defensive logging
-                logger.warning("Failed to delete prompt template '%s': %s", path, exc)
-            else:
-                return
+        file_path = self._prompt_manager.user_templates_dir / file_name
+
+        if not file_path.exists():
+            return
+        try:
+            file_path.unlink()
+        except OSError as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to delete prompt template '%s': %s", file_path, exc)
+        else:
+            return
