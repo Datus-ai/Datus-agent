@@ -52,7 +52,7 @@ class SubAgentManager:
             return False
         sub_agent = agents[agent_name]
         try:
-            prompt_name = f"{agent_name}_{sub_agent['prompt_version']}.j2"
+            prompt_name = f"{agent_name}_system_{sub_agent['prompt_version']}.j2"
             prompt_path = self._prompt_manager.templates_dir / prompt_name
 
             self._configuration_manager.remove_item_recursively("agentic_nodes", agent_name)
