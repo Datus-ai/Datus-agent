@@ -5,7 +5,7 @@ with side-by-side input and preview panes.
 """
 
 import re
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union
 
 import yaml
 from prompt_toolkit.application import Application
@@ -26,6 +26,7 @@ from pygments.lexers.data import YamlLexer
 from pygments.lexers.html import HtmlLexer
 
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
+from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.context_search import ContextSearchTools
 from datus.tools.mcp_tools import MCPTool
@@ -71,6 +72,7 @@ class SubAgentWizard:
             self.prompt_template_name = f"{self.data.system_prompt}_system"
         # Keep track of original name for edit-mode validation
         self._original_name: Optional[str] = self.data.system_prompt
+        self._reserved_template_names = self._load_reserved_template_names()
         self.step = 0
         self.done = False
         self.error_dialog = None
@@ -123,6 +125,21 @@ class SubAgentWizard:
             self._update_previews()
 
     # ------------------ Edit Mode Prefill Helpers ------------------
+    def _load_reserved_template_names(self) -> Set[str]:
+        """Collect template base names that would conflict with agent names."""
+        try:
+            templates = prompt_manager.list_templates()
+        except Exception:
+            return set()
+
+        reserved = {name for name in templates if name.endswith("_system") or name.endswith("_system_zh")}
+
+        if self._original_name:
+            reserved.discard(f"{self._original_name}_system")
+            reserved.discard(f"{self._original_name}_system_zh")
+
+        return reserved
+
     def _split_comma_tokens(self, value: Any) -> List[str]:
         """Split comma-delimited values (recursively) into normalized tokens."""
         if value is None:
@@ -1387,6 +1404,23 @@ class SubAgentWizard:
                 self._show_error_dialog(f"Agent '{name}' already exists. Please choose a different name.")
                 return False
 
+            is_original_name = self._original_name is not None and name == self._original_name
+            if not is_original_name and self._reserved_template_names:
+                conflicts: List[str] = []
+                if f"{name}_system" in self._reserved_template_names:
+                    conflicts.append(f"{name}_system_<version>.j2")
+                if f"{name}_system_zh" in self._reserved_template_names:
+                    conflicts.append(f"{name}_system_zh_<version>.j2")
+                if conflicts:
+                    conflict_list = ", ".join(conflicts)
+                    self._show_error_dialog(
+                        (
+                            f"Agent name '{name}' conflicts with existing prompt template(s): {conflict_list}. "
+                            "Please choose a different name."
+                        )
+                    )
+                    return False
+
         if self.step == 1:
             # Must pick at least one native tool or one MCP tool
             if not (self.data.tools and self.data.tools.strip()) and not (self.data.mcp and self.data.mcp.strip()):
@@ -1566,8 +1600,6 @@ class SubAgentWizard:
             agent_config=self.cli_instance.agent_config,
             workspace_root=self.cli_instance.agent_config.workspace_root,
         )
-        from datus.prompts.prompt_manager import prompt_manager
-
         prompt_text = prompt_manager.render_template(self.prompt_template_name, **prompt_context)
         try:
             self.prompt_preview_buffer.text = prompt_text
