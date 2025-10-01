@@ -32,10 +32,18 @@ class SubAgentManager:
         config = agents.get(agent_name)
         return deepcopy(config) if config else None
 
-    def save_agent(self, config: SubAgentConfig) -> Dict[str, str]:
+    def save_agent(self, config: SubAgentConfig, previous_name: Optional[str] = None) -> Dict[str, str]:
+        """Persist the given sub-agent configuration.
+
+        Args:
+            config: New configuration to persist.
+            previous_name: Existing agent name when updating/renaming.
+        """
         agent_payload = self._build_agent_payload(config)
 
         agents = dict(self.list_agents())
+        if previous_name and previous_name != config.system_prompt:
+            agents.pop(previous_name, None)
         agents[config.system_prompt] = agent_payload
 
         self._configuration_manager.update_item("agentic_nodes", agents, delete_old_key=True)

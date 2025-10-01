@@ -73,7 +73,7 @@ class SubAgentCommands:
         if existing is None:
             console.print("[bold red]Error:[/] Agent not found.")
             return
-        self._do_update_agent(existing)
+        self._do_update_agent(existing, original_name=sub_agent_name)
 
     def _list_agents(self):
         """Lists all configured sub-agents from agent.yml."""
@@ -135,7 +135,9 @@ class SubAgentCommands:
             return
         console.print(f"- Removed agent '[bold green]{agent_name}[/]' from configuration.")
 
-    def _do_update_agent(self, data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None):
+    def _do_update_agent(
+        self, data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None, original_name: Optional[str] = None
+    ):
         try:
             result = run_wizard(self.cli_instance, data)
         except Exception as e:
@@ -145,9 +147,14 @@ class SubAgentCommands:
         if result is None:
             console.print(f"Agent cancelled {'creation' if not data else 'modification'}.", style="yellow")
             return
+        if original_name is None and data is not None:
+            if isinstance(data, SubAgentConfig):
+                original_name = data.system_prompt
+            elif isinstance(data, dict):
+                original_name = data.get("system_prompt")
         agent_name = result.system_prompt
         try:
-            save_result = self.sub_agent_manager.save_agent(result)
+            save_result = self.sub_agent_manager.save_agent(result, previous_name=original_name)
         except Exception as exc:
             console.print(f"[bold red]Failed to persist sub-agent:[/] {exc}")
             logger.error("Failed to persist sub-agent '%s': %s", agent_name, exc)
