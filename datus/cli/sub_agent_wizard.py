@@ -132,11 +132,12 @@ class SubAgentWizard:
         except Exception:
             return set()
 
-        reserved = {name for name in templates if name.endswith("_system") or "_system_" in name}
+        system_pattern = re.compile(r".*_system(?:_.+)?$")
+        reserved = {name for name in templates if system_pattern.match(name)}
 
         if self._original_name:
-            base = f"{self._original_name}_system"
-            reserved = {name for name in reserved if not (name == base or name.startswith(f"{base}_"))}
+            original_pattern = re.compile(rf"^{re.escape(self._original_name)}_system(?:_.+)?$")
+            reserved = {name for name in reserved if not original_pattern.match(name)}
 
         return reserved
 
@@ -1406,10 +1407,9 @@ class SubAgentWizard:
 
             is_original_name = self._original_name is not None and name == self._original_name
             if not is_original_name and self._reserved_template_names:
+                conflict_pattern = re.compile(rf"^{re.escape(name)}_system(?:_.+)?$")
                 conflicts: List[str] = [
-                    template
-                    for template in sorted(self._reserved_template_names)
-                    if template == f"{name}_system" or template.startswith(f"{name}_system_")
+                    template for template in sorted(self._reserved_template_names) if conflict_pattern.match(template)
                 ]
                 if conflicts:
                     conflict_list = ", ".join(f"{template}_<version>.j2" for template in conflicts)
