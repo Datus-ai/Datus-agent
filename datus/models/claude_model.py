@@ -650,10 +650,13 @@ class ClaudeModel(LLMBaseModel):
             if tools:
                 agent_kwargs["tools"] = tools
 
+            if hooks:
+                agent_kwargs["hooks"] = hooks
+
             agent = Agent(**agent_kwargs)
 
             try:
-                result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session, hooks=hooks)
+                result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
             except MaxTurnsExceeded as e:
                 logger.error(f"Max turns exceeded: {str(e)}")
                 from datus.utils.exceptions import DatusException, ErrorCode
@@ -755,10 +758,13 @@ class ClaudeModel(LLMBaseModel):
             if tools:
                 agent_kwargs["tools"] = tools
 
+            if hooks:
+                agent_kwargs["hooks"] = hooks
+
             agent = Agent(**agent_kwargs)
 
             try:
-                result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session, hooks=hooks)
+                result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
 
                 while not result.is_complete:
                     async for event in result.stream_events():
@@ -915,7 +921,7 @@ class ClaudeModel(LLMBaseModel):
         action = ActionHistory(
             action_id=action_id,
             role=ActionRole.TOOL,
-            messages="Tool call",
+            messages=f"Tool call: {function_name}" if function_name else "Tool call",
             action_type=function_name or "unknown",
             input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
             status=ActionStatus.PROCESSING,

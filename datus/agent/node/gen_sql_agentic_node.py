@@ -19,6 +19,7 @@ from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNod
 from datus.tools.context_search import ContextSearchTools
 from datus.tools.date_parsing_tools import DateParsingTools
 from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.filesystem_tools.filesystem_tool import FilesystemFuncTool
 from datus.tools.mcp_server import MCPServer
 from datus.tools.schema_tools import SchemaTools
 from datus.tools.tools import DBFuncTool
@@ -73,11 +74,15 @@ class GenSQLAgenticNode(AgenticNode):
 
         # Setup tools based on configuration
         self.db_func_tool: Optional[DBFuncTool] = None
+        self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.schema_tools: Optional[SchemaTools] = None
         self.hooks = None
         self.setup_tools()
+
+        # Debug: log hooks status after setup
+        logger.info(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
 
     def get_node_name(self) -> str:
         """
@@ -117,6 +122,15 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
 
+    def _setup_filesystem_tools(self):
+        """Setup filesystem tools."""
+        try:
+            root_path = self._resolve_workspace_root()
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.tools.extend(self.filesystem_func_tool.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup filesystem tools: {e}")
+
     def _setup_context_search_tools(self):
         """Setup context search tools."""
         try:
@@ -144,6 +158,7 @@ class GenSQLAgenticNode(AgenticNode):
     def _setup_hooks(self):
         """Setup hooks if configured."""
         hooks_config = self.node_config.get("hooks", "")
+        logger.info(f"Hooks config: {hooks_config}, node_config: {self.node_config}")
         if not hooks_config:
             return
 
@@ -171,6 +186,8 @@ class GenSQLAgenticNode(AgenticNode):
                 base_type = pattern[:-2]  # Remove ".*"
                 if base_type == "db_tools":
                     self._setup_db_tools()
+                elif base_type == "filesystem_tools":
+                    self._setup_filesystem_tools()
                 elif base_type == "context_search_tools":
                     self._setup_context_search_tools()
                 elif base_type == "date_parsing_tools":
@@ -183,6 +200,8 @@ class GenSQLAgenticNode(AgenticNode):
             # Handle exact type patterns (e.g., "db_tools")
             elif pattern == "db_tools":
                 self._setup_db_tools()
+            elif pattern == "filesystem_tools":
+                self._setup_filesystem_tools()
             elif pattern == "context_search_tools":
                 self._setup_context_search_tools()
             elif pattern == "date_parsing_tools":
@@ -247,6 +266,38 @@ class GenSQLAgenticNode(AgenticNode):
                 logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem MCP server: {e}")
+        return None
+
+    def _setup_metricflow_mcp(self) -> Optional[MCPServerStdio]:
+        """Setup metricflow MCP server.
+
+        Args:
+            database_name: Database name for metricflow configuration
+
+        Returns:
+            MCPServerStdio instance or None if setup fails
+        """
+        try:
+            if not self.agent_config:
+                logger.warning("Agent config not available for metricflow MCP setup")
+                return None
+
+            # Get current database config
+            db_config = self.agent_config.current_db_config()
+            if not db_config:
+                logger.warning("Database config not found")
+                return None
+
+            metricflow_server = MCPServer.get_metricflow_mcp_server(
+                database_name=db_config.database, db_config=db_config
+            )
+            if metricflow_server:
+                logger.info(f"Added metricflow MCP server for database: {db_config.database}")
+                return metricflow_server
+            else:
+                logger.warning(f"Failed to create metricflow MCP server for db_config: {db_config}")
+        except Exception as e:
+            logger.error(f"Failed to setup metricflow MCP server: {e}")
         return None
 
     def _resolve_workspace_root(self) -> str:
@@ -327,6 +378,12 @@ class GenSQLAgenticNode(AgenticNode):
                     server = self._setup_filesystem_mcp()
                     if server:
                         mcp_servers["filesystem_mcp"] = server
+
+                # Handle metricflow_mcp
+                elif server_name == "metricflow_mcp":
+                    server = self._setup_metricflow_mcp()
+                    if server:
+                        mcp_servers["metricflow_mcp"] = server
 
                 # Handle MCP servers from conf/.mcp.json using mcp_manager
                 else:
@@ -473,6 +530,7 @@ class GenSQLAgenticNode(AgenticNode):
 
             logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
+            logger.info(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
 
             # Stream response using the model's generate_with_tools_stream
             async for stream_action in self.model.generate_with_tools_stream(

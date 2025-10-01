@@ -228,7 +228,10 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                     if "error" in data:
                         result.append(Label(f"[bold red]Execute Failed: {data['error']}[/]"))
                     else:
-                        result.append(TextArea(json.dumps(data, indent=2), language="json", theme="monokai"))
+                        serializable_data = self._make_serializable(data)
+                        result.append(
+                            TextArea(json.dumps(serializable_data, indent=2), language="json", theme="monokai")
+                        )
                     return result
             if function_name == "read_query":
                 #  original_rows, original_columns, is_compressed, and compressed_data
@@ -270,7 +273,9 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         elif "result" in data:
             items = data["result"]
         else:
-            result.append(TextArea(json.dumps(data, indent=2), language="json", theme="monokai"))
+            # Convert FuncToolResult objects to dict for JSON serialization
+            serializable_data = self._make_serializable(data)
+            result.append(TextArea(json.dumps(serializable_data, indent=2), language="json", theme="monokai"))
             return result
 
         if not items:
@@ -404,6 +409,24 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             data = data.strip()
             return data.startswith("[") or data.startswith("{") or data.startswith("```json")
         return False
+
+    def _make_serializable(self, obj):
+        """Convert FuncToolResult objects and other non-serializable types to JSON-serializable format"""
+        if hasattr(obj, "model_dump"):
+            # Handle Pydantic models like FuncToolResult
+            return obj.model_dump()
+        elif hasattr(obj, "__dict__"):
+            # Handle other objects with __dict__
+            return {k: self._make_serializable(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
+        elif isinstance(obj, dict):
+            return {k: self._make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_serializable(item) for item in obj]
+        elif isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        else:
+            # Fallback for other types
+            return str(obj)
 
     def generate_collapsible_actions(self, actions: List[ActionHistory]) -> List[Widget]:
         """Generate list of Collapsible widgets for actions"""

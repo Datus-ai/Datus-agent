@@ -9,6 +9,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 
+from datus.cli.blocking_input_manager import blocking_input_manager
+from datus.cli.execution_state import execution_controller
 from datus.cli.yaml_editor import edit_yaml_in_editor
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
@@ -45,80 +47,73 @@ class GenerationHooks(AgentHooks):
     @optional_traceable(name="on_tool_end", run_type="chain")
     async def on_tool_end(self, context, agent, tool, result) -> None:
         """Handle generation tool completion."""
+        # Wait if execution is paused
+        await execution_controller.wait_for_resume()
+
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
 
         # Debug: log all tool calls
-        logger.info(f"on_tool_end called - tool_name: {tool_name}, result type: {type(result)}")
+        logger.info(f"=== TOOL END: {tool_name}, type: {type(result)} ===")
         logger.debug(f"Result content: {result}")
 
-        # Intercept MCP filesystem tools (write_file, edit_file)
+        # Intercept filesystem tools (native tools only)
         if tool_name in ["write_file", "edit_file"]:
-            logger.info(f"MCP tool '{tool_name}' matched, processing result...")
-            await self._handle_mcp_file_generation(tool_name, result)
+            logger.info(f"=== FILESYSTEM TOOL DETECTED: {tool_name} ===")
+            await self._handle_file_generation(tool_name, result)
         else:
             logger.debug(f"Tool '{tool_name}' not in target list [write_file, edit_file], skipping")
 
     async def on_tool_start(self, context, agent, tool) -> None:
-        pass
+        # Wait if execution is paused
+        await execution_controller.wait_for_resume()
 
     async def on_handoff(self, context, agent, source) -> None:
-        pass
+        # Wait if execution is paused
+        await execution_controller.wait_for_resume()
 
     async def on_agent_end(self, context, agent, output) -> None:
-        pass
+        # Wait if execution is paused
+        await execution_controller.wait_for_resume()
 
     async def on_end(self, context, agent, output) -> None:
+        # Wait if execution is paused
+        await execution_controller.wait_for_resume()
         logger.info("Generation end")
 
     @optional_traceable(name="on_error", run_type="chain")
     async def on_error(self, context, agent, error) -> None:
         pass
 
-    @optional_traceable(name="_handle_mcp_file_generation", run_type="chain")
-    async def _handle_mcp_file_generation(self, tool_name: str, result):
+    @optional_traceable(name="_handle_file_generation", run_type="chain")
+    async def _handle_file_generation(self, tool_name: str, result):
         """
-        Handle MCP file generation (write_file/edit_file) result with user interaction.
+        Handle file generation (write_file/edit_file) result with user interaction.
+        Supports native filesystem tools only.
 
         Args:
-            tool_name: Name of the MCP tool (write_file or edit_file)
-            result: Tool result from MCP
+            tool_name: Name of the tool (write_file or edit_file)
+            result: Tool result from filesystem tool
         """
         try:
-            # Extract file path from MCP result
-            # Try multiple possible formats
+            logger.info(f"=== HANDLE FILE GENERATION START: {tool_name} ===")
+            # Extract file path from FuncToolResult object
             file_path = ""
 
-            if isinstance(result, dict):
-                # Format 1: {"path": "...", "content": "..."}
-                file_path = result.get("path", "")
-
-                # Format 2: {"content": {"path": "..."}}
-                if not file_path and "content" in result:
-                    content = result["content"]
-                    if isinstance(content, dict):
-                        file_path = content.get("path", "")
-                    elif isinstance(content, str):
-                        # Try to parse as path if it looks like a file path
-                        if content.endswith((".yml", ".yaml")):
-                            file_path = content
-
-                # Format 3: Result might be a ToolResult object
-                if not file_path and hasattr(result, "content"):
-                    if isinstance(result.content, dict):
-                        file_path = result.content.get("path", "")
-                    elif isinstance(result.content, str):
-                        if result.content.endswith((".yml", ".yaml")):
-                            file_path = result.content
-
-            elif isinstance(result, str):
-                # Direct string result might be the file path
-                if result.endswith((".yml", ".yaml")):
-                    file_path = result
+            # Handle FuncToolResult object (native tools)
+            if hasattr(result, "result") and hasattr(result, "success"):
+                # Access FuncToolResult attributes directly
+                result_value = result.result
+                if isinstance(result_value, str) and ":" in result_value:
+                    # Extract path from message like "File written successfully: /path/to/file.yml"
+                    potential_path = result_value.split(":", 1)[1].strip()
+                    if potential_path.endswith((".yml", ".yaml")):
+                        file_path = potential_path
+                        logger.info(f"=== EXTRACTED FILE PATH: {file_path} ===")
 
             logger.info(f"Extracted file_path: {file_path} from result type: {type(result)}")
 
             if not file_path:
-                logger.warning(f"Could not extract file path from MCP {tool_name} result: {result}")
+                logger.warning(f"Could not extract file path from {tool_name} result: {result}")
                 return
 
             # Only handle YAML files
@@ -155,35 +150,82 @@ class GenerationHooks(AgentHooks):
         except GenerationCancelledException:
             self.console.print("[yellow]Generation workflow cancelled[/]")
         except Exception as e:
-            logger.error(f"Error handling MCP file generation: {e}", exc_info=True)
+            logger.error(f"Error handling file generation: {e}", exc_info=True)
             self.console.print(f"[red]Error: {e}[/]")
+
+    async def _clear_output_and_show_prompt(self):
+        """Clear output buffers and show user input prompt."""
+        import sys
+
+        # Ensure all pending output is flushed
+        await asyncio.sleep(0.2)
+        for _ in range(3):
+            sys.stdout.flush()
+            sys.stderr.flush()
+            await asyncio.sleep(0.05)
+
+        # Show clear separator
+        self.console.print("\n" + "=" * 80)
+        self.console.print("[bold red]⚠ USER INPUT REQUIRED ⚠[/]")
+        self.console.print("=" * 80)
+
+        self.console.print("\n" + "=" * 60)
+        self.console.print("[bold cyan]CHOOSE ACTION:[/]")
+        self.console.print("")
+        self.console.print("  1. Accept - Save to RAG storage")
+        self.console.print("  2. Edit - Modify YAML in editor")
+        self.console.print("  3. Cancel - Discard changes")
+        self.console.print("")
+
+    async def _clear_output_and_show_edit_prompt(self):
+        """Clear output buffers and show edit prompt."""
+        import sys
+
+        await asyncio.sleep(0.2)
+        for _ in range(2):
+            sys.stdout.flush()
+            sys.stderr.flush()
+            await asyncio.sleep(0.05)
+
+        self.console.print("\n" + "=" * 60)
+        self.console.print("[bold cyan]What next?[/]")
+        self.console.print("  1. Save to RAG storage")
+        self.console.print("  2. Edit again")
+        self.console.print("  3. Cancel")
 
     @optional_traceable(name="_get_user_action", run_type="chain")
     async def _get_user_action(self, yaml_content: str, file_path: str):
         """
-        Get user action on generated YAML.
+        Get user action on generated YAML with proper flow control.
 
         Args:
             yaml_content: Generated YAML content
             file_path: Path where YAML was saved
         """
-        import sys
-
         try:
-            await asyncio.sleep(0.2)
-            sys.stdout.flush()
-            sys.stderr.flush()
+            logger.info("=== Starting user interaction for YAML file ===")
 
-            self.console.print("\n" + "=" * 60)
-            self.console.print("[bold cyan]CHOOSE ACTION:[/]")
-            self.console.print("")
-            self.console.print("  1. Accept - Save to RAG storage")
-            self.console.print("  2. Edit - Modify YAML in editor")
-            self.console.print("  3. Cancel - Discard changes")
-            self.console.print("")
+            # Stop the live display if active
+            live_was_stopped = execution_controller.stop_live_display()
+            logger.info(f"=== Live display stopped: {live_was_stopped} ===")
 
-            loop = asyncio.get_event_loop()
-            choice = await loop.run_in_executor(None, lambda: input("Your choice (1-3) [1]: ").strip() or "1")
+            # Use execution control first, but don't suppress output yet
+            async with execution_controller.pause_execution():
+                logger.info("=== Execution paused, showing prompt ===")
+                # Clear buffers and show prompt normally
+                await self._clear_output_and_show_prompt()
+
+                # Now suppress output ONLY during the actual input()
+                def get_user_input():
+                    logger.info("=== About to call input() ===")
+                    result = blocking_input_manager.get_blocking_input(
+                        lambda: input("Your choice (1-3) [1]: ").strip() or "1"
+                    )
+                    logger.info(f"=== Got user input: {result} ===")
+                    return result
+
+                choice = await execution_controller.request_user_input(get_user_input)
+                logger.info(f"=== User choice processed: {choice} ===")
 
             if choice == "1":
                 # Accept and sync
@@ -202,9 +244,19 @@ class GenerationHooks(AgentHooks):
                 self.console.print("[red]Invalid choice, please try again[/]")
                 await self._get_user_action(yaml_content, file_path)
 
+            # Resume live display after user interaction completes
+            logger.info("=== Resuming live display ===")
+            execution_controller.resume_live_display()
+
         except (KeyboardInterrupt, EOFError):
             self.console.print("\n[yellow]Generation workflow cancelled[/]")
+            # Resume live display even on error
+            execution_controller.resume_live_display()
             raise GenerationCancelledException("User interrupted")
+        except Exception as e:
+            # Resume live display on any error
+            execution_controller.resume_live_display()
+            raise e
 
     @optional_traceable(name="_handle_edit", run_type="chain")
     async def _handle_edit(self, yaml_content: str, file_path: str):
@@ -249,26 +301,34 @@ class GenerationHooks(AgentHooks):
     @optional_traceable(name="_after_edit_action", run_type="chain")
     async def _after_edit_action(self, edited_content: str, file_path: str):
         """
-        Handle action after editing.
+        Handle action after editing with proper flow control.
 
         Args:
             edited_content: Edited YAML content
             file_path: File path
         """
-        self.console.print("\n[bold cyan]What next?[/]")
-        self.console.print("  1. Save to RAG storage")
-        self.console.print("  2. Edit again")
-        self.console.print("  3. Cancel")
+        # Use execution control but allow output for the prompt
+        async with execution_controller.pause_execution():
+            await self._clear_output_and_show_edit_prompt()
 
-        loop = asyncio.get_event_loop()
-        choice = await loop.run_in_executor(None, lambda: input("Your choice (1-3) [1]: ").strip() or "1")
+            def get_user_input():
+                return blocking_input_manager.get_blocking_input(
+                    lambda: input("Your choice (1-3) [1]: ").strip() or "1"
+                )
+
+            choice = await execution_controller.request_user_input(get_user_input)
 
         if choice == "1":
             await self._sync_to_storage(edited_content, file_path)
+            # Resume live display after sync
+            execution_controller.resume_live_display()
         elif choice == "2":
             await self._handle_edit(edited_content, file_path)
+            # Live display will be resumed in nested calls
         elif choice == "3":
             self.console.print("[yellow]Changes saved to file but not synced to RAG[/]")
+            # Resume live display before raising
+            execution_controller.resume_live_display()
             raise GenerationCancelledException("User cancelled sync")
         else:
             self.console.print("[red]Invalid choice[/]")
@@ -431,7 +491,7 @@ class GenerationHooks(AgentHooks):
 
             # Store to LanceDB
             storage = rag_by_configuration(self.agent_config)
-            storage.semantic_model_storage.store(semantic_model_dict)
+            storage.semantic_model_storage.store([semantic_model_dict])
 
             logger.info(f"Successfully synced semantic model {table_name} to LanceDB")
             return {"success": True, "message": f"Synced semantic model: {table_name}"}
@@ -490,7 +550,7 @@ class GenerationHooks(AgentHooks):
                     "sql_query": metric_doc.get("sql_query", ""),
                     "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
-                storage.metric_storage.store(metric_dict)
+                storage.metric_storage.store([metric_dict])
                 synced_count += 1
 
             logger.info(f"Successfully synced {synced_count} metrics to LanceDB")
