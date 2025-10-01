@@ -1,11 +1,10 @@
 from enum import Enum
 from typing import Dict
 
-from .base_app import BaseApp
-from .catalog_screen import CatalogScreen
-from .context_screen import WorkloadContextScreen
-from .sql_history_screen import HistoricalSqlScreen
-from .subject_screen import SubjectScreen
+from datus.cli.screen.base_app import BaseApp
+from datus.cli.screen.catalog_screen import CatalogScreen
+from datus.cli.screen.context_screen import WorkloadContextScreen
+from datus.cli.screen.subject_screen import SubjectScreen
 
 
 class ScreenType(str, Enum):
@@ -14,7 +13,6 @@ class ScreenType(str, Enum):
     SUBJECT = "subject"
     WORKFLOW_CONTEXT = "workflow_context"
     CATALOGS = "catalogs"
-    HISTORICAL_SQL = "historical_sql"
 
 
 class ContextApp(BaseApp):
@@ -44,8 +42,6 @@ class ContextApp(BaseApp):
             self.push_screen(WorkloadContextScreen(self.title, self.data, self.inject_callback))
         elif self.screen_type == ScreenType.CATALOGS:
             self.push_screen(CatalogScreen(self.title, self.data, self.inject_callback))
-        elif self.screen_type == ScreenType.HISTORICAL_SQL:
-            self.push_screen(HistoricalSqlScreen(self.title, self.data, self.inject_callback))
 
 
 def show_subject_screen(title: str, data: Dict):
@@ -96,7 +92,3 @@ def show_catalog_screen(title: str, data: Dict, inject_callback=None, run_new_lo
         data: Catalogs data to display
     """
     _show_screen(ScreenType.CATALOGS, title, data, inject_callback=inject_callback, run_new_loop=run_new_loop)
-
-
-def show_historical_sql_screen(title: str, data: Dict, inject_callback=None, run_new_loop=False):
-    _show_screen(ScreenType.HISTORICAL_SQL, title, data, inject_callback=inject_callback, run_new_loop=run_new_loop)

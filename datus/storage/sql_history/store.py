@@ -1,12 +1,12 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
-from datus.storage.lancedb_conditions import and_, build_where, eq, like
+from datus.storage.lancedb_conditions import And, build_where, eq, like
 
 logger = logging.getLogger(__file__)
 
@@ -58,27 +58,33 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         # Create full-text search index
         self.create_fts_index(["sql", "name", "comment", "summary", "tags"])
 
-    def search_all(self, domain: str = "") -> List[Dict[str, Any]]:
+    def search_all(self, domain: str = "", selected_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Search all SQL history entries for a given domain."""
+
+        if not selected_fields:
+            selected_fields = [
+                "id",
+                "name",
+                "sql",
+                "comment",
+                "summary",
+                "filepath",
+                "domain",
+                "layer1",
+                "layer2",
+                "tags",
+            ]
         search_result = self._search_all(
             where=None if not domain else eq("domain", domain),
-            select_fields=["id", "name", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags"],
+            select_fields=selected_fields,
         )
-        return [
-            {
-                "id": search_result["id"][i].as_py(),
-                "name": search_result["name"][i].as_py(),
-                "sql": search_result["sql"][i].as_py(),
-                "comment": search_result["comment"][i].as_py(),
-                "summary": search_result["summary"][i].as_py(),
-                "filepath": search_result["filepath"][i].as_py(),
-                "domain": search_result["domain"][i].as_py(),
-                "layer1": search_result["layer1"][i].as_py(),
-                "layer2": search_result["layer2"][i].as_py(),
-                "tags": search_result["tags"][i].as_py(),
-            }
-            for i in range(search_result.num_rows)
-        ]
+        result = []
+        for i in range(search_result.num_rows):
+            item_data = {}
+            for field in selected_fields:
+                item_data[field] = search_result[field][i].as_py()
+            result.append(item_data)
+        return result
 
     def filter_by_id(self, id: str) -> List[Dict[str, Any]]:
         """Filter SQL history by ID."""
@@ -105,7 +111,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         if not conditions:
             search_result = self.table.search().limit(1000).to_list()
         else:
-            where_condition = conditions[0] if len(conditions) == 1 else and_(*conditions)
+            where_condition = conditions[0] if len(conditions) == 1 else And(conditions)
             where_clause = build_where(where_condition)
             search_result = self.table.search().where(where_clause).limit(1000).to_list()
 
@@ -194,9 +200,11 @@ class SqlHistoryRAG:
         logger.info(f"store sql history items: {len(sql_history_items)} items")
         self.sql_history_storage.store_batch(sql_history_items)
 
-    def search_all_sql_history(self, domain: str = "") -> List[Dict[str, Any]]:
+    def search_all_sql_history(
+        self, domain: str = "", selected_fields: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Search all SQL history items."""
-        return self.sql_history_storage.search_all(domain)
+        return self.sql_history_storage.search_all(domain, selected_fields)
 
     def after_init(self):
         """Initialize indices after data loading."""
@@ -225,7 +233,7 @@ class SqlHistoryRAG:
             where_condition = conditions[0]
             where_clause = build_where(where_condition)
         else:
-            where_condition = and_(*conditions)
+            where_condition = And(conditions)
             where_clause = build_where(where_condition)
 
         logger.info(f"Searching SQL history by summary: {query_text}, where: {where_clause}")
@@ -244,6 +252,12 @@ class SqlHistoryRAG:
         else:
             logger.info(f"No SQL history results found for query: {query_text}")
             return []
+
+    def get_sql_history_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
+        return self.sql_history_storage._search_all(
+            And([eq("domain", domain), eq("layer1", layer1), eq("layer2", layer2)]),
+            ["name", "summary", "comment", "tags", "sql"],
+        ).to_pylist()
 
 
 def sql_history_rag_by_configuration(agent_config: AgentConfig):

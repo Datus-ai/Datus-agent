@@ -167,11 +167,14 @@ class SemanticMetricsRAG:
         search_result = self.metric_storage.search_all(semantic_model_name, select_fields=select_fields)
         if select_fields:
             # Only return selected fields
-            return [{field: search_result[field][i] for field in select_fields} for i in range(search_result.num_rows)]
+            return [
+                {field: search_result[field][i].as_py() for field in select_fields}
+                for i in range(search_result.num_rows)
+            ]
         else:
             # Return all fields
             return [
-                {field: search_result[field][i] for field in search_result.column_names}
+                {field: search_result[field][i].as_py() for field in search_result.column_names}
                 for i in range(search_result.num_rows)
             ]
 

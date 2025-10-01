@@ -109,9 +109,39 @@ def test_get_tables(connector: SnowflakeConnector):
     assert len(connector.get_tables()) > 0
 
 
+def test_get_tables_with_ddl(connector: SnowflakeConnector):
+    connector.switch_context(database_name="BBC", schema_name="BBC_NEWS")
+    tables = connector.get_tables_with_ddl(database_name="BBC", schema_name="BBC_NEWS")
+
+    if not tables:
+        pytest.skip("No tables available in BBC.BBC_NEWS to verify DDL retrieval")
+    for table in tables:
+        assert table["table_name"]
+        assert table["definition"].strip()
+        assert table["table_type"] == "table"
+        assert table["database_name"] == "BBC"
+        assert table["schema_name"] == "BBC_NEWS"
+        assert table["catalog_name"] == ""
+        identifier_parts = table["identifier"].split(".")
+        assert len(identifier_parts) == 3
+        assert identifier_parts[0] == "BBC"
+        assert identifier_parts[1] == "BBC_NEWS"
+        assert identifier_parts[2] == table["table_name"]
+
+    sample_table = tables[0]["table_name"]
+    filtered = connector.get_tables_with_ddl(
+        database_name="BBC",
+        schema_name="BBC_NEWS",
+        tables=[sample_table],
+    )
+
+    assert len(filtered) == 1
+    assert filtered[0]["table_name"] == sample_table
+
+
 class TestExceptions:
     def test_syntax(self, connector: SnowflakeConnector):
-        res = connector.execute({"sql_query": "SELC * FROM PATENTS_GOOGLE.PATENTS_GOOGLE.DISCLOSURES_13"})
+        res = connector.execute({"sql_query": "SELECT * FROM_ PATENTS_GOOGLE.PATENTS_GOOGLE.DISCLOSURES_13"})
         assert res.success
         assert "syntax" in res.error
 

@@ -1,19 +1,24 @@
+import json
 from functools import lru_cache
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from rich import box
+from rich.console import Group
 from rich.table import Table
+from rich.text import Text
 from textual import events, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Label, Static
+from textual.widgets import Footer, Header, Static
 from textual.widgets import Tree as TextualTree
 from textual.widgets._tree import TreeNode
 from textual.worker import get_current_worker
 
 from datus.cli.screen.context_screen import ContextScreen
+from datus.storage.lancedb_conditions import and_, eq
+from datus.storage.metric.store import SemanticModelStorage
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -49,31 +54,54 @@ class CatalogScreen(ContextScreen):
     CSS = """
         /* Main layout containers */
         #tree-container {
+            width: 35%;
             height: 100%;
             background: $surface;
-            # overflow-y: scroll
+            overflow: hidden;
         }
 
         #details-container {
             height: 100%;
             background: $surface-lighten-1;
+            overflow: hidden;
+        }
+
+        #columns-panel-container {
+            width: 100%;
+            height: 65%;
+            background: $surface;
+            color: $text;
             overflow-y: auto;
             overflow-x: hidden;
         }
 
-        #properties-panel {
+        #semantic-panel-container {
             width: 100%;
-            height: 30%;
+            height: 35%;
+            background: $surface;
+            color: $text;
             overflow-y: auto;
-            overflow-x: auto;
+            overflow-x: hidden;
+        }
+
+        #semantic-model-panel {
+            width: 100%;
+            padding: 1 1;
+        }
+
+        #panel-divider {
+            height: 1;
+            background: $surface-darken-1;
+            margin: 0;
         }
 
         /* Tree styling - minimal borders */
         #catalogs-tree {
             width: 100%;
+            height: 1fr;
             background: $surface;
             border: none;
-            # padding: 1;
+            overflow-y: auto;
         }
 
         #catalogs-tree > .tree--guides {
@@ -107,18 +135,12 @@ class CatalogScreen(ContextScreen):
         }
 
         /* Table styling enhancements */
-        #properties-panel {
-            background: $surface;
-            color: $text;
-            height: 30%;
-            overflow-y: auto;
-        }
-
         #columns-panel {
             width: 100%;
             height: auto;
             background: $surface;
             color: $text;
+            padding: 1 1;
         }
 
         /* Fullscreen mode */
@@ -177,7 +199,7 @@ class CatalogScreen(ContextScreen):
             inject_callback: Callback for injecting data into the CLI
         """
         super().__init__(title=title, context_data=context_data, inject_callback=inject_callback)
-        self.db_type = context_data.get("db_type", DBType.SQLITE)
+        self.db_type: DBType = context_data.get("db_type", DBType.SQLITE)
         self.catalog_name = context_data.get("catalog_name", "")
         self.database_name = context_data.get("database_name", "")
         self.inject_callback = inject_callback
@@ -187,6 +209,11 @@ class CatalogScreen(ContextScreen):
         self.current_node_data = None
         self.is_fullscreen = False
         self.db_connector: BaseSqlConnector = context_data.get("db_connector")
+        rag = context_data.get("rag")
+        semantic_storage = context_data.get("semantic_model_storage")
+        if not semantic_storage and rag is not None:
+            semantic_storage = getattr(rag, "semantic_model_storage", None)
+        self.semantic_model_storage: Optional[SemanticModelStorage] = semantic_storage
         self.loading_nodes = set()  # Track which nodes are currently loading
         self._current_loading_task = None  # Track current async task
         self.timeout_seconds = context_data.get("timeout_seconds", 30)  # Default 30 seconds timeout
@@ -203,13 +230,26 @@ class CatalogScreen(ContextScreen):
 
             # Right side: Details panel with split layout
             with Vertical(id="details-container", classes="details-panel"):
-                # Upper section: Table properties
-                # yield Static("[bold cyan]Table Properties[/bold cyan]", id="properties-header")
-                yield Static("Select a table and press Enter to view details", id="properties-panel")
+                # Upper section: Columns
+                yield ScrollableContainer(
+                    Static(
+                        "Select a table and press Enter to view columns",
+                        id="columns-panel",
+                    ),
+                    id="columns-panel-container",
+                )
 
-                # Lower section: Columns
-                # yield Static("[bold cyan]Columns[/bold cyan]", id="columns-header")
-                yield ScrollableContainer(Label("", id="columns-panel"))
+                # Divider between panels
+                yield Static(id="panel-divider")
+
+                # Lower section: Semantic model details
+                yield ScrollableContainer(
+                    Static(
+                        "Select a table to view semantic model information",
+                        id="semantic-model-panel",
+                    ),
+                    id="semantic-panel-container",
+                )
 
         yield Footer()
 
@@ -234,7 +274,7 @@ class CatalogScreen(ContextScreen):
             tree = self.query_one("#catalogs-tree", TextualTree)
             tree.root.expand()
             if not self.db_connector:
-                self.query_one("#properties-panel", Static).update("[red]Error:[/] No database connection selected")
+                self.query_one("#semantic-model-panel", Static).update("[red]Error:[/] No database connection selected")
                 return
 
             # Clear existing tree
@@ -254,7 +294,7 @@ class CatalogScreen(ContextScreen):
                 # MySQL: show databases with lazy loading for tables
                 self._load_databases_lazy(tree)
             elif self.db_type == DBType.DUCKDB:
-                self._add_db_name(tree, self.database_name, support_schema=True)
+                self._add_db_name(tree, self.database_name)
             elif self.db_type in [DBType.POSTGRES, DBType.POSTGRESQL]:
                 # DuckDB/PostgreSQL: show databases with lazy loading for schemas
                 self._load_databases_lazy(tree)
@@ -277,7 +317,9 @@ class CatalogScreen(ContextScreen):
         except Exception as e:
             logger.error(f"Failed to load catalog data: {str(e)}")
             self.query_one("#tree-help", Static).update(f"[red]Error:[/] Failed to load catalog data: {str(e)}")
-            self.query_one("#properties-panel", Static).update(f"[red]Error:[/] Failed to load catalog data: {str(e)}")
+            self.query_one("#semantic-model-panel", Static).update(
+                f"[red]Error:[/] Failed to load catalog data: {str(e)}"
+            )
 
     def populate_tree(self, tree: TextualTree, data: Dict) -> None:
         """Populate the tree with catalog data."""
@@ -361,19 +403,19 @@ class CatalogScreen(ContextScreen):
 
     @work(thread=True)
     async def load_table_details_async(self, table_info: Dict[str, Any]) -> None:
-        """Async worker to load table details without blocking UI."""
+        """Async worker to load table details and semantic model without blocking UI."""
         get_current_worker()  # Get worker context
 
-        try:
-            properties_panel = self.query_one("#properties-panel", Static)
-            columns_panel = self.query_one("#columns-panel", Label)
+        semantic_panel = self.query_one("#semantic-model-panel", Static)
+        columns_panel = self.query_one("#columns-panel", Static)
 
+        try:
             if not self.db_connector:
-                self.app.call_from_thread(properties_panel.update, "[red]No database connection available[/red]")
+                self.app.call_from_thread(semantic_panel.update, "[red]No database connection available[/red]")
                 self.app.call_from_thread(columns_panel.update, "")
                 return
 
-            # Clear previous details and show loading animation
+            # Extract identifiers for downstream lookups
             catalog_name = table_info.get("catalog_name", "")
             database_name = table_info.get("database_name", "")
             schema_name = table_info.get("schema_name", "")
@@ -382,16 +424,18 @@ class CatalogScreen(ContextScreen):
 
             # Show loading state
             self.app.call_from_thread(
-                properties_panel.update,
+                semantic_panel.update,
                 f"[bold cyan]⏳ Loading[/bold cyan] [yellow]{full_name}[/yellow]\n\n"
-                f"[dim]Fetching table properties...[/dim]",
+                f"[dim]Fetching semantic model information...[/dim]",
             )
             self.app.call_from_thread(
                 columns_panel.update,
                 "[bold cyan]⏳ Loading[/bold cyan] [yellow]Columns[/yellow]\n\n[dim]Fetching column schema...[/dim]",
             )
 
-            # Get schema with LRU cache
+            # Load schema information (cached)
+            columns_renderable: Any
+
             table_schema = self._get_cached_schema(
                 catalog_name=catalog_name,
                 database_name=database_name,
@@ -399,49 +443,62 @@ class CatalogScreen(ContextScreen):
                 table_name=table_name,
             )
 
-            if not table_schema:
-                self.app.call_from_thread(
-                    properties_panel.update, f"[yellow]No schema information available for {full_name}[/yellow]"
-                )
-                self.app.call_from_thread(columns_panel.update, "")
-                return
-
-            # Validate schema data
-            if not isinstance(table_schema, list):
-                self.app.call_from_thread(properties_panel.update, f"[red]Invalid schema format for {full_name}[/red]")
-                self.app.call_from_thread(columns_panel.update, "")
-                return
-
-            # Build properties display efficiently
-            properties_content = self._build_properties_content(
-                full_name, catalog_name, database_name, schema_name, table_name, len(table_schema)
-            )
-            self.app.call_from_thread(properties_panel.update, properties_content)
-
-            # Build columns display with optimized rendering
             if len(table_schema) == 0:
-                self.app.call_from_thread(columns_panel.update, "[dim]No columns found[/dim]")
-                return
+                columns_renderable = f"[yellow]No schema information available for {full_name}[/yellow]"
+            else:
+                columns_renderable = self._create_optimized_table(table_schema, full_name)
 
-            # Use optimized table rendering
-            columns_table = self._create_optimized_table(table_schema, full_name)
-            self.app.call_from_thread(columns_panel.update, columns_table)
+            self.app.call_from_thread(columns_panel.update, columns_renderable)
 
-        except Exception as e:
+            # Load semantic model details, if storage is available
+            semantic_records: List[Dict[str, Any]] = []
+            semantic_message: Optional[str] = None
+            semantic_message_style = "dim"
+
+            if not self.semantic_model_storage:
+                semantic_message = "Semantic model storage is not configured."
+            else:
+                try:
+                    semantic_records = self._fetch_semantic_model_record(
+                        catalog_name=catalog_name,
+                        database_name=database_name,
+                        schema_name=schema_name,
+                        table_name=table_name,
+                    )
+                    if not semantic_records:
+                        semantic_message = "No semantic model found for this table."
+                except Exception as storage_error:  # pragma: no cover - defensive logging
+                    semantic_message = f"Failed to load semantic model: {storage_error}"
+                    semantic_message_style = "red"
+                    logger.error(
+                        (
+                            f"Failed to load semantic model: catalog_name={catalog_name}, "
+                            f"database_name={database_name}, schema_name={schema_name}, table_name={table_name}, "
+                            f"error_msg = {storage_error}"
+                        )
+                    )
+
+            semantic_renderable = self._build_semantic_panel_content(
+                semantic_records=semantic_records,
+                semantic_message=semantic_message,
+                semantic_message_style=semantic_message_style,
+            )
+
+            self.app.call_from_thread(semantic_panel.update, semantic_renderable)
+
+        except Exception as e:  # pragma: no cover - defensive logging for UI thread
             logger.error(f"Failed to load table details: {str(e)}")
             error_msg = str(e)
-            if "timeout" in error_msg.lower():
-                self.app.call_from_thread(
-                    self.query_one("#properties-panel", Static).update,
-                    f"[yellow]⏱️ Timeout:[/] Failed to load table details (press 'r' to retry)\n\n"
-                    f"[dim]Error: {error_msg}[/dim]",
+            message = (
+                (
+                    "[yellow]⏱️ Timeout:[/] Failed to load table details (press 'r' to retry)\n\n[dim]"
+                    f"Error: {error_msg}[/dim]"
                 )
-            else:
-                self.app.call_from_thread(
-                    self.query_one("#properties-panel", Static).update,
-                    f"[red]❌ Error:[/] Failed to display table details: {error_msg}",
-                )
-            self.app.call_from_thread(self.query_one("#columns-panel", Static).update, "")
+                if "timeout" in error_msg.lower()
+                else f"[red]❌ Error:[/] Failed to display table details: {error_msg}"
+            )
+            self.app.call_from_thread(semantic_panel.update, message)
+            self.app.call_from_thread(columns_panel.update, "")
 
     def action_load_details(self) -> None:
         """Load table details when Enter or Right arrow is pressed on a table."""
@@ -463,24 +520,6 @@ class CatalogScreen(ContextScreen):
         """Get cached schema data using LRU cache."""
         return _fetch_schema_with_cache(self.db_connector, catalog_name, database_name, schema_name, table_name)
 
-    def _build_properties_content(
-        self,
-        full_name: str,
-        catalog_name: str,
-        database_name: str,
-        schema_name: str,
-        table_name: str,
-        column_count: int,
-    ) -> str:
-        """Build properties display content efficiently."""
-        return f"""[bold cyan]📋 Table Properties[/bold cyan]
-[bold]Full Name:[/] [yellow]{full_name}[/yellow]
-[bold]Catalog:[/] [green]{catalog_name or 'N/A'}[/green]
-[bold]Database:[/] [green]{database_name or 'N/A'}[/green]
-[bold]Schema:[/] [green]{schema_name or 'N/A'}[/green]
-[bold]Table:[/] [yellow]{table_name}[/yellow]
-[bold]Total Columns:[/] [magenta]{column_count}[/magenta]"""
-
     def _create_optimized_table(self, table_schema: list, full_name: str) -> Table:
         """Create optimized Rich table with performance considerations."""
         # Use simpler styling for performance
@@ -494,12 +533,12 @@ class CatalogScreen(ContextScreen):
             padding=(0, 1),
         )
 
-        table.add_column("#", style="dim", width=3, justify="right")
+        table.add_column("#", style="dim", width=3, justify="left")
         table.add_column("Column", style="bright_cyan", min_width=15, max_width=25)
         table.add_column("Type", style="bright_magenta", min_width=8, max_width=15)
-        table.add_column("Null", style="yellow", width=3, justify="center")
+        table.add_column("Null", style="yellow", width=3, justify="left")
         table.add_column("Default", style="green", min_width=5, max_width=12)
-        table.add_column("PK", style="red", width=2, justify="center")
+        table.add_column("PK", style="red", width=2, justify="left")
 
         # Batch add rows for better performance
         # max_columns = min(len(table_schema), 100)  # Limit for very large schemas
@@ -524,6 +563,173 @@ class CatalogScreen(ContextScreen):
         #     table.add_row("...", f"+{len(table_schema) - max_columns} more", "", "", "", "")
 
         return table
+
+    def _fetch_semantic_model_record(
+        self,
+        *,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_name: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Fetch all semantic model records for the given table identifiers."""
+        if not self.semantic_model_storage:
+            return []
+
+        results = self.semantic_model_storage._search_all(
+            where=and_(
+                eq("catalog_name", catalog_name or ""),
+                eq("database_name", database_name or ""),
+                eq("schema_name", schema_name or ""),
+                eq("table_name", table_name or ""),
+            ),
+            select_fields=[
+                "semantic_model_name",
+                "domain",
+                "layer1",
+                "layer2",
+                "semantic_model_desc",
+                "identifiers",
+                "dimensions",
+                "measures",
+                "semantic_file_path",
+                "catalog_name",
+                "database_name",
+                "schema_name",
+                "table_name",
+            ],
+        )
+        if results is None or results.num_rows == 0:
+            return []
+
+        try:
+            return results.to_pylist()
+        except AttributeError:
+            return []
+
+    def _build_semantic_panel_content(
+        self,
+        *,
+        semantic_records: List[Dict[str, Any]],
+        semantic_message: Optional[str],
+        semantic_message_style: str,
+    ) -> Group:
+        """Build the semantic model panel content."""
+        from rich import box
+
+        sections: List[Table] = []
+
+        if semantic_records:
+            total = len(semantic_records)
+            for idx, record in enumerate(semantic_records, 1):
+                table = Table(
+                    title=(
+                        f"[bold cyan]📋 Semantic Model #{idx} of {total}: "
+                        f"{record.get('semantic_model_name', 'Unnamed')}[/]"
+                    ),
+                    show_header=False,
+                    box=box.SIMPLE,
+                    border_style="blue",
+                    expand=True,
+                    padding=(0, 1),
+                )
+
+                table.add_column("Key", style="bright_cyan", ratio=1)
+                table.add_column("Value", style="yellow", justify="left", ratio=3, no_wrap=False)
+
+                table.add_row("Semantic Model Name", record.get("semantic_model_name", "") or "[dim]N/A[/dim]")
+                table.add_row("Domain", record.get("domain", "") or "[dim]N/A[/dim]")
+                table.add_row("Layer1", record.get("layer1", "") or "[dim]N/A[/dim]")
+                table.add_row("Layer2", record.get("layer2", "") or "[dim]N/A[/dim]")
+                table.add_row(
+                    "Semantic File",
+                    record.get("semantic_file_path", "") or "[dim]N/A[/dim]",
+                )
+                table.add_row("Description", record.get("semantic_model_desc", "") or "[dim]N/A[/dim]")
+                table.add_row("Identifiers", self._create_nested_table_for_json(record.get("identifiers")))
+                table.add_row("Dimensions", self._create_nested_table_for_json(record.get("dimensions")))
+                table.add_row("Measures", self._create_nested_table_for_json(record.get("measures")))
+
+                sections.append(table)
+        else:
+            table = Table(
+                title="[bold cyan]📋 Semantic Models[/bold cyan]",
+                show_header=False,
+                box=box.SIMPLE,
+                border_style="blue",
+                expand=True,
+                padding=(0, 1),
+            )
+            table.add_column("Semantic Model", style="bright_cyan")
+            table.add_row(
+                Text(
+                    semantic_message or "No semantic model information available for this table.",
+                    style=semantic_message_style or "dim",
+                )
+            )
+            sections.append(table)
+
+        return Group(*sections)
+
+    def _create_nested_table_for_json(self, field_value: Any) -> Any:
+        """Create nested table for JSON field values."""
+        from rich import box
+
+        if not field_value or field_value == "N/A":
+            return "[dim]N/A[/dim]"
+
+        # Parse JSON string if needed
+        parsed_data = field_value
+        if isinstance(field_value, str):
+            try:
+                parsed_data = json.loads(field_value)
+            except (json.JSONDecodeError, TypeError):
+                # If not valid JSON, return as simple colored text
+                if field_value.startswith("[") and field_value.endswith("]"):
+                    return f"[bright_green]{field_value}[/bright_green]"
+                if field_value.startswith("{") and field_value.endswith("}"):
+                    return f"[bright_blue]{field_value}[/bright_blue]"
+                return str(field_value)
+
+        # Create nested table based on data type
+        if isinstance(parsed_data, list):
+            if not parsed_data:
+                return "[dim]Empty list[/dim]"
+
+            nested_table = Table(show_header=True, box=box.ROUNDED, border_style="dim", padding=(0, 0), expand=True)
+            if parsed_data and isinstance(parsed_data[0], dict):
+                for key in parsed_data[0].keys():
+                    nested_table.add_column(str(key), style="dim cyan", justify="center")
+
+                for item in parsed_data:
+                    values = [str(value) for value in item.values()]
+                    nested_table.add_row(*values)
+            else:
+                nested_table.add_column("Value", style="dim cyan")
+                for item in parsed_data:
+                    nested_table.add_row(str(item))
+
+            return nested_table
+
+        if isinstance(parsed_data, dict):
+            if not parsed_data:
+                return "[dim]Empty object[/dim]"
+
+            nested_table = Table(show_header=True, box=box.ROUNDED, border_style="dim", padding=(0, 1), expand=True)
+            nested_table.add_column("Property", style="bright_cyan", width=15)
+            nested_table.add_column("Value", style="bright_yellow")
+
+            for key, value in parsed_data.items():
+                if isinstance(value, (dict, list)):
+                    value_str = json.dumps(value, indent=1, ensure_ascii=False)
+                else:
+                    value_str = str(value)
+                nested_table.add_row(str(key), value_str)
+
+            return nested_table
+
+        # For simple values, return as formatted string
+        return f"[bright_white]{str(parsed_data)}[/bright_white]"
 
     def action_cursor_down(self) -> None:
         """Move cursor down."""
@@ -843,8 +1049,8 @@ class CatalogScreen(ContextScreen):
                 schema_node.add_leaf("❌ Error loading tables", data={"type": "error"})
 
     def _clear_table_details(self):
-        self.query_one("#properties-panel", Static).update("Select a table and press Enter to view details")
-        self.query_one("#columns-panel", Static).update("")
+        self.query_one("#columns-panel", Static).update("Select a table and press Enter to view columns")
+        self.query_one("#semantic-model-panel", Static).update("Select a table to view semantic model information")
 
 
 class NavigationHelpScreen(ModalScreen):

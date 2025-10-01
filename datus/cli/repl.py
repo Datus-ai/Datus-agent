@@ -132,7 +132,6 @@ class DatusCLI:
             # catalog commands
             "@catalog": self.context_commands.cmd_catalog,
             "@subject": self.context_commands.cmd_subject,
-            "@sql": self.context_commands.cmd_historical_sql,
             # interal commands
             ".clear": self.chat_commands.cmd_clear_chat,
             ".chat_info": self.chat_commands.cmd_chat_info,

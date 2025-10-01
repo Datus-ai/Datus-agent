@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Literal, Sequence, Set, override
+import json
+from typing import Any, Dict, List, Literal, Optional, Sequence, Set, override
 
 import pyarrow as pa
 from pandas import DataFrame
@@ -265,90 +266,78 @@ class SnowflakeConnector(BaseSqlConnector):
         if not table_name:
             return []
 
-        with self.connection.cursor() as cursor:
-            # Build the query to get column information from INFORMATION_SCHEMA
-            catalog_name = catalog_name or self.catalog_name
-            database_name = database_name or self.database_name
-            schema_name = schema_name or self.schema_name
-            full_name = self.full_name(
-                catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
-            )
+        catalog_name = catalog_name or self.catalog_name
+        database_name = database_name or self.database_name
+        schema_name = schema_name or self.schema_name
 
-            table_type = table_type.upper()
+        full_name = self.full_name(
+            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
+        )
 
-            # Initialize primary key columns - only for base tables
-            pk_columns = set()
-            if table_type == "TABLE":
-                try:
-                    # Get primary key information using SHOW PRIMARY KEYS command
-                    cursor.execute(f"""SHOW PRIMARY KEYS IN TABLE {full_name}""")
-                    pk_results = cursor.fetchall()
-                    # Extract column names that are primary keys
-                    # The column name is in position 4 (0-indexed) according to Snowflake documentation
-                    pk_columns = set(row[4] for row in pk_results)
-                except Exception as e:
-                    # If SHOW PRIMARY KEYS fails (e.g., for views), skip primary key detection
-                    logger.debug(f"Failed to get primary keys for {full_name}: {e}")
+        describe_target = {
+            "VIEW": "VIEW",
+            "MATERIALIZED VIEW": "MATERIALIZED VIEW",
+            "MATERIALIZED_VIEW": "MATERIALIZED VIEW",
+            "MV": "MATERIALIZED VIEW",
+        }.get(table_type.upper(), "TABLE")
 
-            columns_table_name = (
-                "INFORMATION_SCHEMA.COLUMNS" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.COLUMNS'
-            )
-            # Get column information
-            columns_query = f"""
-                SELECT
-                    ordinal_position,
-                    column_name,
-                    data_type,
-                    is_nullable,
-                    column_default,
-                    comment
-                FROM {columns_table_name}
-                WHERE table_name = '{table_name}'
-            """
+        describe_sql = f"DESCRIBE {describe_target} {full_name}"
 
-            if schema_name:
-                columns_query += f" AND table_schema = '{schema_name}'"
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(describe_sql)
+                describe_results = cursor.fetchall()
+                column_names = [col[0].lower() for col in cursor.description]
+        except Exception as e:
+            raise _handle_snowflake_exception(e, describe_sql) from e
 
-            columns_query += " ORDER BY ordinal_position"
+        def _row_map(row: Sequence[Any]) -> Dict[str, Any]:
+            return {column_names[idx]: row[idx] for idx in range(min(len(column_names), len(row)))}
 
-            cursor.execute(columns_query)
-            columns_results = cursor.fetchall()
+        schemas: List[Dict[str, Any]] = []
+        columns_list: List[Dict[str, Any]] = []
+        column_index = 0
 
-            # Process column information
-            schemas: List[Dict[str, Any]] = []
-            columns_list = []
+        for row in describe_results:
+            row_info = _row_map(row)
+            kind = (row_info.get("kind") or "COLUMN").upper()
+            if "COLUMN" not in kind:
+                # Skip metadata rows such as constraints output
+                continue
 
-            for row in columns_results:
-                ordinal_position = row[0]
-                column_name = row[1]
-                data_type = row[2]
-                is_nullable = row[3]
-                column_default = row[4]
-                comment = row[5]
+            column_name = row_info.get("name")
+            if not column_name:
+                continue
 
-                column_info = {
-                    "cid": ordinal_position - 1,  # Convert to 0-based index
-                    "name": column_name,
-                    "type": data_type,
-                    "nullable": is_nullable.upper() == "YES",
-                    "pk": column_name in pk_columns,
-                    "default_value": column_default,
-                    "comment": comment,
-                }
+            data_type = row_info.get("type", "")
+            nullable_flag = str(row_info.get("null?") or row_info.get("null? ") or "").upper()
+            default_value = row_info.get("default")
+            comment = row_info.get("comment")
+            pk_flag = str(row_info.get("primary key") or "").upper()
 
-                schemas.append(column_info)
-                columns_list.append({"name": column_name, "type": data_type})
+            column_info = {
+                "cid": column_index,
+                "name": column_name,
+                "type": data_type,
+                "nullable": nullable_flag == "Y",
+                "pk": pk_flag == "Y" and table_type == "TABLE",
+                "default_value": default_value,
+                "comment": comment,
+            }
 
-            # Add table information with type
-            schemas.append(
-                {
-                    "table": table_name,
-                    "columns": columns_list,
-                    "table_type": table_type.lower(),
-                }
-            )
+            schemas.append(column_info)
+            columns_list.append({"name": column_name, "type": data_type})
+            column_index += 1
 
-            return schemas
+        schemas.append(
+            {
+                "table": table_name,
+                "columns": columns_list,
+                "table_type": table_type.lower(),
+            }
+        )
+
+        return schemas
 
     def execute_query_to_df(
         self,
@@ -488,6 +477,188 @@ class SnowflakeConnector(BaseSqlConnector):
                 return [item for item in df["TABLE_NAME"]]
             except Exception as e:
                 raise _handle_snowflake_exception(e, sql) from e
+
+    @override
+    def get_tables_with_ddl(
+        self,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        tables: Optional[List[str]] = None,
+    ) -> List[Dict[str, str]]:
+        """Return table metadata together with their DDL definitions."""
+
+        database_name = database_name or self.database_name
+        schema_name = schema_name or self.schema_name
+
+        filter_tables = self._reset_filter_tables(
+            tables=tables,
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+        )
+
+        show_sql: str
+        if schema_name:
+            if database_name:
+                show_sql = f'SHOW TERSE TABLES IN SCHEMA "{database_name}"."{schema_name}"'
+            else:
+                show_sql = f'SHOW TERSE TABLES IN SCHEMA "{schema_name}"'
+        elif database_name:
+            show_sql = f'SHOW TERSE TABLES IN DATABASE "{database_name}"'
+        else:
+            show_sql = "SHOW TERSE TABLES"
+
+        column_names: List[str] = []
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(show_sql)
+                show_results = cursor.fetchall()
+                if cursor.description:
+                    column_names = [col[0].lower() for col in cursor.description]
+        except Exception as e:
+            raise _handle_snowflake_exception(e, show_sql) from e
+
+        table_entries: List[Dict[str, str]] = []
+        seen: Set[tuple[str, str, str]] = set()
+        for row in show_results:
+            row_dict = {
+                column_names[idx]: row[idx] for idx in range(min(len(column_names), len(row))) if column_names[idx]
+            }
+
+            table_name = row_dict.get("name") or row_dict.get("table_name")
+            if not table_name and len(row) > 1:
+                table_name = row[1]
+            if not table_name:
+                continue
+
+            row_database = row_dict.get("database_name") or database_name or ""
+            row_schema = row_dict.get("schema_name") or schema_name or ""
+
+            full_name = self.full_name(database_name=row_database, schema_name=row_schema, table_name=table_name)
+
+            if filter_tables and full_name not in filter_tables:
+                continue
+
+            key = (row_database or "", row_schema or "", table_name)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            table_entries.append(
+                {
+                    "catalog_name": catalog_name or "",
+                    "database_name": row_database or "",
+                    "schema_name": row_schema or "",
+                    "table_name": table_name,
+                    "full_name": full_name,
+                }
+            )
+
+        if not table_entries:
+            return []
+
+        ddl_batch_sql = """
+            SELECT
+                value:database_name::string AS database_name,
+                value:schema_name::string AS schema_name,
+                value:table_name::string AS table_name,
+                GET_DDL('TABLE', value:full_name::string) AS ddl
+            FROM TABLE(FLATTEN(INPUT => PARSE_JSON(%s)))
+        """
+
+        results: List[Dict[str, str]] = []
+        batch_size = 10
+
+        for start in range(0, len(table_entries), batch_size):
+            batch = table_entries[start : start + batch_size]
+            payload = json.dumps(batch)
+            batch_lookup = {
+                (entry["database_name"], entry["schema_name"], entry["table_name"]): entry for entry in batch
+            }
+
+            try:
+                with self.connection.cursor() as cursor:
+                    cursor.execute(ddl_batch_sql, (payload,))
+                    ddl_rows = cursor.fetchall()
+            except Exception as e:
+                logger.warning("Bulk GET_DDL failed for Snowflake tables, falling back to per-table requests: %s", e)
+                ddl_rows = self._fetch_table_ddls_individually(batch)
+                # _fetch_table_ddls_individually already returns tuples, skip further processing
+                for db_name, sch_name, tbl_name, ddl in ddl_rows:
+                    entry = batch_lookup.get((db_name, sch_name, tbl_name))
+                    if not entry:
+                        continue
+                    results.append(
+                        {
+                            "identifier": self.identifier(
+                                database_name=db_name,
+                                schema_name=sch_name,
+                                table_name=tbl_name,
+                            ),
+                            "catalog_name": entry.get("catalog_name", ""),
+                            "database_name": db_name,
+                            "schema_name": sch_name,
+                            "table_name": tbl_name,
+                            "definition": ddl,
+                            "table_type": "table",
+                        }
+                    )
+                continue
+
+            for row in ddl_rows:
+                db_name = (row[0] or "").strip()
+                sch_name = (row[1] or "").strip()
+                tbl_name = (row[2] or "").strip()
+                ddl = row[3] if len(row) > 3 and row[3] else ""
+
+                entry = batch_lookup.get((db_name, sch_name, tbl_name))
+                if not entry:
+                    continue
+
+                results.append(
+                    {
+                        "identifier": self.identifier(
+                            database_name=db_name,
+                            schema_name=sch_name,
+                            table_name=tbl_name,
+                        ),
+                        "catalog_name": entry.get("catalog_name", ""),
+                        "database_name": db_name,
+                        "schema_name": sch_name,
+                        "table_name": tbl_name,
+                        "definition": ddl,
+                        "table_type": "table",
+                    }
+                )
+
+        return results
+
+    def _fetch_table_ddls_individually(self, entries: List[Dict[str, str]]):
+        """Fallback to retrieve table DDLs one by one when bulk retrieval fails."""
+
+        results = []
+        with self.connection.cursor() as cursor:
+            for entry in entries:
+                full_name = entry["full_name"]
+                try:
+                    cursor.execute("SELECT GET_DDL('TABLE', %s)", (full_name,))
+                    row = cursor.fetchone()
+                    ddl = row[0] if row else ""
+                except Exception as e:  # pragma: no cover - depends on permissions/state
+                    logger.warning("Failed to get DDL for %s: %s", full_name, e)
+                    ddl = f"-- DDL not available for {full_name}: {e}"
+
+                results.append(
+                    (
+                        entry.get("database_name", ""),
+                        entry.get("schema_name", ""),
+                        entry.get("table_name", ""),
+                        ddl,
+                    )
+                )
+
+        return results
 
     def get_type(self) -> str:
         return DBType.SNOWFLAKE
