@@ -105,16 +105,19 @@ class InteractiveInit:
             console.print("Let's set up your environment step by step.\n")
 
             # Step 1: Configure LLM
-            if not self._configure_llm():
-                return 1
+            while not self._configure_llm():
+                if not Confirm.ask("Re-enter LLM configuration?", default=True):
+                    return 1
 
             # Step 2: Configure Namespace
-            if not self._configure_namespace():
-                return 1
+            while not self._configure_namespace():
+                if not Confirm.ask("Re-enter database configuration?", default=True):
+                    return 1
 
             # Step 3: Configure Workspace
-            if not self._configure_workspace():
-                return 1
+            while not self._configure_workspace():
+                if not Confirm.ask("Re-enter workspace configuration?", default=True):
+                    return 1
 
             if not self._save_configuration():
                 return 1
@@ -362,7 +365,7 @@ class InteractiveInit:
     def _display_completion(self):
         """Display completion message."""
         console.print(f"\nYou are ready to run `datus-cli --namespace {self.namespace_name}` 🚀")
-        console.print(f"\nCheck the document at https://docs.datus.ai/ for more details.")
+        console.print("\nCheck the document at https://docs.datus.ai/ for more details.")
 
     def _test_llm_connectivity(self) -> tuple[bool, str]:
         """Test LLM model connectivity."""
