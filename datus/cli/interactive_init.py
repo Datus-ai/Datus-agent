@@ -161,7 +161,7 @@ class InteractiveInit:
             },
         }
 
-        provider = Prompt.ask("- Which LLM provider?", choices=list(providers.keys()), default="deepseek")
+        provider = Prompt.ask("- Which LLM provider?", choices=list(providers.keys()), default="openai")
 
         # API key input
         api_key = getpass("- Enter your API key: ")
@@ -187,11 +187,12 @@ class InteractiveInit:
 
         # Test LLM connectivity
         console.print("→ Testing LLM connectivity...")
-        if self._test_llm_connectivity():
+        success, error_msg = self._test_llm_connectivity()
+        if success:
             console.print("✔ LLM model test successful\n")
             return True
         else:
-            console.print("❌ LLM connectivity test failed\n")
+            console.print(f"❌ LLM connectivity test failed: {error_msg}\n")
             return False
 
     def _configure_namespace(self) -> bool:
@@ -206,7 +207,7 @@ class InteractiveInit:
 
         # Database type selection
         db_types = ["sqlite", "duckdb", "snowflake", "mysql", "postgresql", "starrocks"]
-        db_type = Prompt.ask("- Database type", choices=db_types, default="starrocks")
+        db_type = Prompt.ask("- Database type", choices=db_types, default="duckdb")
 
         # Connection configuration based on database type
         if db_type in ["starrocks", "mysql"]:
@@ -255,7 +256,11 @@ class InteractiveInit:
             }
         else:
             # For other database types (sqlite, duckdb, postgresql), use connection string
-            conn_string = Prompt.ask("- Connection string")
+            if db_type == "duckdb":
+                default_conn_string = str(self.sample_dir / "duckdb-demo.duckdb")
+                conn_string = Prompt.ask("- Connection string", default=default_conn_string)
+            else:
+                conn_string = Prompt.ask("- Connection string")
 
             self.config["agent"]["namespace"][self.namespace_name] = {
                 "type": db_type,
@@ -264,11 +269,12 @@ class InteractiveInit:
             }
         # Test database connectivity
         console.print("→ Testing database connectivity...")
-        if self._test_db_connectivity():
+        success, error_msg = self._test_db_connectivity()
+        if success:
             console.print("✔ Database connection test successful\n")
             return True
         else:
-            console.print("❌ Database connectivity test failed\n")
+            console.print(f"❌ Database connectivity test failed: {error_msg}\n")
             return False
 
     def _configure_workspace(self) -> bool:
@@ -356,8 +362,9 @@ class InteractiveInit:
     def _display_completion(self):
         """Display completion message."""
         console.print(f"\nYou are ready to run `datus-cli --namespace {self.namespace_name}` 🚀")
+        console.print(f"\nCheck the document at https://docs.datus.ai/ for more details.")
 
-    def _test_llm_connectivity(self) -> bool:
+    def _test_llm_connectivity(self) -> tuple[bool, str]:
         """Test LLM model connectivity."""
         try:
             # Test LLM connectivity by creating the specific model directly
@@ -387,8 +394,9 @@ class InteractiveInit:
             }
 
             if model_type not in type_map:
-                logger.error(f"Unsupported model type: {model_type}")
-                return False
+                error_msg = f"Unsupported model type: {model_type}"
+                logger.error(error_msg)
+                return False, error_msg
 
             class_name = type_map[model_type]
             module = __import__(f"datus.models.{model_type}_model", fromlist=[class_name])
@@ -399,13 +407,17 @@ class InteractiveInit:
 
             # Simple test - try to generate a response
             response = llm_model.generate("Hi")
-            return response is not None and len(response.strip()) > 0
+            if response is not None and len(response.strip()) > 0:
+                return True, ""
+            else:
+                return False, "Empty response from model"
 
         except Exception as e:
-            logger.error(f"LLM connectivity test failed: {e}")
-            return False
+            error_msg = str(e)
+            logger.error(f"LLM connectivity test failed: {error_msg}")
+            return False, error_msg
 
-    def _test_db_connectivity(self) -> bool:
+    def _test_db_connectivity(self) -> tuple[bool, str]:
         """Test database connectivity."""
         try:
             # Test database connectivity using connector's built-in method
@@ -451,15 +463,18 @@ class InteractiveInit:
 
             # Handle different return types from different connectors
             if isinstance(test_result, bool):
-                return test_result
+                return (test_result, "") if test_result else (False, "Connection test failed")
             elif isinstance(test_result, dict):
-                return test_result.get("success", False)
+                success = test_result.get("success", False)
+                error_msg = test_result.get("error", "Connection test failed") if not success else ""
+                return success, error_msg
             else:
-                return False
+                return False, "Unknown connection test result format"
 
         except Exception as e:
-            logger.error(f"Database connectivity test failed: {e}")
-            return False
+            error_msg = str(e)
+            logger.error(f"Database connectivity test failed: {error_msg}")
+            return False, error_msg
 
     def _create_bootstrap_args(self, components: list, **kwargs):
         """Create common args namespace for bootstrap operations."""
