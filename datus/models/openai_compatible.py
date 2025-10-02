@@ -886,8 +886,10 @@ class OpenAICompatibleModel(LLMBaseModel):
         return {
             # OpenAI Models
             "gpt-5": {"context_length": 400000, "max_tokens": 128000},
+            "gpt-4.1": {"context_length": 400000, "max_tokens": 128000},
             "gpt-4o": {"context_length": 128000, "max_tokens": 16384},
-            "gpt-03": {"context_length": 200000, "max_tokens": 200000},
+            "o3": {"context_length": 200000, "max_tokens": 200000},
+            "o4": {"context_length": 200000, "max_tokens": 200000},
             # DeepSeek Models
             "deepseek-chat": {"context_length": 65535, "max_tokens": 8192},
             "deepseek-v3": {"context_length": 65535, "max_tokens": 8192},
