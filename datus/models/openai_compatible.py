@@ -894,7 +894,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             "deepseek-reasoner": {"context_length": 65535, "max_tokens": 65535},
             "deepseek-r1": {"context_length": 65535, "max_tokens": 65535},
             # Moonshot (Kimi) Models
-            "kimi-k2": {"context_length": 128000, "max_tokens": 8192},
+            "kimi-k2": {"context_length": 256000, "max_tokens": 8192},
             # Qwen Models
             "qwen3-coder": {"context_length": 128000, "max_tokens": 8192},
             # Gemini Models
