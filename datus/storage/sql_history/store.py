@@ -255,7 +255,7 @@ class SqlHistoryRAG:
 
     def get_sql_history_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
         return self.sql_history_storage._search_all(
-            And([eq("domain", domain), eq("layer1", layer1), eq("layer2", layer2)]),
+            And([eq("domain", domain), eq("layer1", layer1), eq("layer2", layer2), eq("name", name)]),
             ["name", "summary", "comment", "tags", "sql"],
         ).to_pylist()
 

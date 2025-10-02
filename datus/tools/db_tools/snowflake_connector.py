@@ -273,13 +273,15 @@ class SnowflakeConnector(BaseSqlConnector):
         full_name = self.full_name(
             catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
         )
+        table_type = table_type.upper()
 
         describe_target = {
+            "TABLE": "TABLE",
             "VIEW": "VIEW",
             "MATERIALIZED VIEW": "MATERIALIZED VIEW",
             "MATERIALIZED_VIEW": "MATERIALIZED VIEW",
             "MV": "MATERIALIZED VIEW",
-        }.get(table_type.upper(), "TABLE")
+        }.get(table_type, "TABLE")
 
         describe_sql = f"DESCRIBE {describe_target} {full_name}"
 
