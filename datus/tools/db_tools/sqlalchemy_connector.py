@@ -70,7 +70,11 @@ class SQLAlchemyConnector(BaseSqlConnector):
         if isinstance(e, DatusException):
             return e
         """Map SQLAlchemy exceptions to specific Datus ErrorCode values."""
-        error_message = str(e)
+        # Use .orig attribute to get original database error without SQLAlchemy's background links
+        if hasattr(e, 'orig') and e.orig is not None:
+            error_message = str(e.orig)
+        else:
+            error_message = str(e)
         message_args = {"error_message": error_message, "sql": sql}
 
         error_msg_lower = error_message.lower()
