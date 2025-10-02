@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.2.0rc3" # this is a alpha version, use for testing only
+version = "0.2.0" # this is a alpha version, use for testing only
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -85,7 +85,7 @@ Repository = "https://github.com/datus-ai/datus-agent"
 datus-agent = "datus.main:main"
 datus-cli = "datus.cli.main:main"
 datus = "datus.cli.main:main"
-datus-init = "datus.cli.init:main"
+#datus-init = "datus.cli.init:main"
 
 [build-system]
 requires = ["setuptools>=80.9.0", "wheel"]
