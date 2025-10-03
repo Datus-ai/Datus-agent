@@ -560,6 +560,7 @@ class ClaudeModel(LLMBaseModel):
         """
         return {
             # Claude Models
+            "claude-sonnet-4-5": {"context_length": 1048576, "max_tokens": 65536},
             "claude-opus-4-1": {"context_length": 200000, "max_tokens": 32000},
             "claude-opus-4": {"context_length": 200000, "max_tokens": 32000},
             "claude-sonnet-4": {"context_length": 1048576, "max_tokens": 65536},  # 1M for beta 25/08

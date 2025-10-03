@@ -153,14 +153,34 @@ class InteractiveInit:
 
         # Provider selection
         providers = {
-            "openai": {"type": "openai", "base_url": "https://api.openai.com/v1", "model": "gpt-4o"},
-            "deepseek": {"type": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-chat"},
-            "claude": {"type": "claude", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-20250514"},
-            "kimi": {"type": "openai", "base_url": "https://api.moonshot.cn/v1", "model": "kimi-k2-turbo-preview"},
+            "openai": {
+                "type": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-4.1",
+                "options": ["gpt-4o", "gpt-4.1", "o3", "o4-mini", "gpt-5"],
+            },
+            "deepseek": {
+                "type": "deepseek",
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-chat",
+            },
+            "claude": {
+                "type": "claude",
+                "base_url": "https://api.anthropic.com",
+                "model": "claude-sonnet-4-20250514",
+                "options": ["claude-sonnet-4-5", "claude-sonnet-4", "claude-opus-4-1", "claude-opus-4"],
+            },
+            "kimi": {
+                "type": "openai",
+                "base_url": "https://api.moonshot.cn/v1",
+                "model": "kimi-k2-turbo-preview",
+                "options": ["kimi-k2", "kimi-k2-turbo-preview"],
+            },
             "qwen": {
                 "type": "openai",
                 "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "model": "qwen3-coder",
+                "model": "qwen-plus",
+                "options": ["qwen3-max", "qwen3-coder", "qwen-plus", "qwen-flash"],
             },
         }
 
@@ -175,7 +195,10 @@ class InteractiveInit:
         # Base URL (with default)
         base_url = Prompt.ask("- Enter your base URL", default=providers[provider]["base_url"])
 
-        # Model name (with default)
+        # Model name (with default and options hint)
+        if "options" in providers[provider]:
+            options_hint = ", ".join(providers[provider]["options"])
+            console.print(f"  [dim]reference options: {options_hint}[/dim]")
         model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"])
 
         # Store configuration
