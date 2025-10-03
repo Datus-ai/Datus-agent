@@ -20,8 +20,8 @@ from datus.tools.context_search import ContextSearchTools
 from datus.tools.date_parsing_tools import DateParsingTools
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.filesystem_tools.filesystem_tool import FilesystemFuncTool
+from datus.tools.generation_tools import GenerationTools
 from datus.tools.mcp_server import MCPServer
-from datus.tools.schema_tools import SchemaTools
 from datus.tools.tools import DBFuncTool
 from datus.utils.loggings import get_logger
 
@@ -77,7 +77,7 @@ class GenSQLAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.date_parsing_tools: Optional[DateParsingTools] = None
-        self.schema_tools: Optional[SchemaTools] = None
+        self.generation_tools: Optional[GenerationTools] = None
         self.hooks = None
         self.setup_tools()
 
@@ -147,13 +147,13 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup date parsing tools: {e}")
 
-    def _setup_schema_tools(self):
-        """Setup schema tools."""
+    def _setup_generation_tools(self):
+        """Setup generation tools."""
         try:
-            self.schema_tools = SchemaTools(self.agent_config)
-            self.tools.extend(self.schema_tools.available_tools())
+            self.generation_tools = GenerationTools(self.agent_config)
+            self.tools.extend(self.generation_tools.available_tools())
         except Exception as e:
-            logger.error(f"Failed to setup schema tools: {e}")
+            logger.error(f"Failed to setup generation tools: {e}")
 
     def _setup_hooks(self):
         """Setup hooks if configured."""
@@ -192,8 +192,8 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_context_search_tools()
                 elif base_type == "date_parsing_tools":
                     self._setup_date_parsing_tools()
-                elif base_type == "schema_tools":
-                    self._setup_schema_tools()
+                elif base_type == "generation_tools":
+                    self._setup_generation_tools()
                 else:
                     logger.warning(f"Unknown tool type: {base_type}")
 
@@ -206,8 +206,8 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_context_search_tools()
             elif pattern == "date_parsing_tools":
                 self._setup_date_parsing_tools()
-            elif pattern == "schema_tools":
-                self._setup_schema_tools()
+            elif pattern == "generation_tools":
+                self._setup_generation_tools()
 
             # Handle specific method patterns (e.g., "db_tools.list_tables")
             elif "." in pattern:
@@ -233,6 +233,15 @@ class GenSQLAgenticNode(AgenticNode):
                     conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
                     self.db_func_tool = DBFuncTool(conn)
                 tool_instance = self.db_func_tool
+            elif tool_type == "generation_tools":
+                if not hasattr(self, "generation_tools") or not self.generation_tools:
+                    self.generation_tools = GenerationTools(self.agent_config)
+                tool_instance = self.generation_tools
+            elif tool_type == "filesystem_tools":
+                if not hasattr(self, "filesystem_func_tool") or not self.filesystem_func_tool:
+                    root_path = self._resolve_workspace_root()
+                    self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+                tool_instance = self.filesystem_func_tool
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
                 return

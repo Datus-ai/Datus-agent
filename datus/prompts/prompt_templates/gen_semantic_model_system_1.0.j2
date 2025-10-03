@@ -25,11 +25,10 @@ Please strictly follow the instructions below:
 
 3. **Generate semantic model YAML**:
    - Create a semantic model following the specification below
-   - Use `data_source` as the root node (MetricFlow format)
    - Include all measures, dimensions, and identifiers
 
 4. **Save YAML file**:
-   - Use `write_file` tool from filesystem_mcp to store the semantic model
+   - Use `write_file` tool to store the semantic model
    - File naming: `{table_name}.yml`
    - If semantic model already exists, update it with `edit_file` if anything changed
 
@@ -37,9 +36,13 @@ Please strictly follow the instructions below:
    - Use `mf validate-configs` tool from metricflow_mcp to validate the semantic model
    - If there is any error, fix it and try again
 
-6. **IMPORTANT - Language Preservation**:
-   - If the input table definition, column names, or business context contains Chinese characters, keep them in Chinese
-   - Do NOT translate Chinese content to English as this will negatively impact vector search and semantic matching capabilities
+6. **Complete generation** (REQUIRED):
+   - After validation succeeds, MUST call `end_generation` tool with the absolute filepath
+   - This step is mandatory to properly register the generated semantic model
+
+7. **Language Preservation**:
+   - Keep Chinese content in original Chinese - do NOT translate
+   - This preserves vector search and semantic matching capabilities
 
 ## MetricFlow Semantic Model Structure Specification
 

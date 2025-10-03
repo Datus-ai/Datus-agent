@@ -730,6 +730,7 @@ class ClaudeModel(LLMBaseModel):
                 role=ActionRole.ASSISTANT,
                 action_type="final_response",
                 messages=response,
+                input_data={"prompt": prompt},
                 output_data={"content": response},
                 status=ActionStatus.SUCCESS,
             )
@@ -806,6 +807,7 @@ class ClaudeModel(LLMBaseModel):
                     role=ActionRole.ASSISTANT,
                     action_type="error",
                     messages=f"Max turns exceeded: {str(e)}",
+                    input_data={},
                     output_data={"error": str(e)},
                     status=ActionStatus.FAILED,
                 )

@@ -151,9 +151,9 @@ class SqlHistoryStorage(BaseEmbeddingStore):
 
             if layer2 := layer2_column[i].as_py():
                 layer2_categories.add((layer2, layer1 or ""))
-            if tags := tags_column[i].as_py():
+            if row_tags := tags_column[i].as_py():
                 # Split tags by comma if they are stored as comma-separated string
-                item_tags = [tag.strip() for tag in str(tags).split(",") if tag.strip()]
+                item_tags = [tag.strip() for tag in str(row_tags).split(",") if tag.strip()]
                 tags.update(item_tags)
 
         # Format into taxonomy structure
