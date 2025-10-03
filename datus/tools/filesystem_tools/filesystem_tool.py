@@ -71,6 +71,7 @@ class FilesystemFuncTool:
             self.read_file,
             self.read_multiple_files,
             self.write_file,
+            self.write_file_sql_history,
             self.edit_file,
             self.create_directory,
             self.list_directory,
@@ -218,6 +219,33 @@ class FilesystemFuncTool:
         except Exception as e:
             logger.error(f"Error writing file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
+
+    def write_file_sql_history(self, path: str, content: str) -> FuncToolResult:
+        """
+        Create a new SQL history file or overwrite an existing one.
+
+        This method is identical to write_file but has a distinct name for hooks interception.
+        Hooks will intercept this method to display YAML and get user confirmation before writing.
+
+        Args:
+            path: The path of the SQL history file to write
+            content: The YAML content to write to the file
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[str]): Success message on success.
+        """
+        # Use the same logic as write_file but return a SQL history specific message
+        result = self.write_file(path, content)
+
+        if result.success == 1:
+            # Modify the success message for SQL history context
+            return FuncToolResult(result=f"SQL history file written successfully: {result.result}")
+        else:
+            # Return the error as-is
+            return result
 
     def edit_file(self, path: str, edits: List[EditOperation]) -> FuncToolResult:
         """

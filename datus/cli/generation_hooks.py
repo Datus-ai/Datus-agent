@@ -6,12 +6,10 @@ import os
 
 from agents.lifecycle import AgentHooks
 from rich.console import Console
-from rich.panel import Panel
 from rich.syntax import Syntax
 
 from datus.cli.blocking_input_manager import blocking_input_manager
 from datus.cli.execution_state import execution_controller
-from datus.cli.yaml_editor import edit_yaml_in_editor
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
@@ -37,6 +35,8 @@ class GenerationHooks(AgentHooks):
         """
         self.console = console
         self.agent_config = agent_config
+        self.processed_files = set()  # Track files that have been processed to avoid duplicates
+        logger.info(f"Console: {self.console}, Agent config: {self.agent_config}")
 
     async def on_agent_start(self, context, agent) -> None:
         logger.info("Generation agent start")
@@ -52,16 +52,14 @@ class GenerationHooks(AgentHooks):
 
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
 
-        # Debug: log all tool calls
-        logger.info(f"=== TOOL END: {tool_name}, type: {type(result)} ===")
-        logger.debug(f"Result content: {result}")
+        logger.debug(f"Tool end: {tool_name}, result type: {type(result)}")
 
-        # Intercept filesystem tools (native tools only)
-        if tool_name in ["write_file", "edit_file"]:
-            logger.info(f"=== FILESYSTEM TOOL DETECTED: {tool_name} ===")
-            await self._handle_file_generation(tool_name, result)
-        else:
-            logger.debug(f"Tool '{tool_name}' not in target list [write_file, edit_file], skipping")
+        # Intercept end_generation tool (for semantic models and metrics)
+        if tool_name == "end_generation":
+            await self._handle_end_generation(result)
+        # Intercept write_file_sql_history tool (for SQL history)
+        elif tool_name == "write_file_sql_history":
+            await self._handle_write_file_sql_history_result(result)
 
     async def on_tool_start(self, context, agent, tool) -> None:
         # Wait if execution is paused
@@ -84,48 +82,41 @@ class GenerationHooks(AgentHooks):
     async def on_error(self, context, agent, error) -> None:
         pass
 
-    @optional_traceable(name="_handle_file_generation", run_type="chain")
-    async def _handle_file_generation(self, tool_name: str, result):
+    @optional_traceable(name="_handle_end_generation", run_type="chain")
+    async def _handle_end_generation(self, result):
         """
-        Handle file generation (write_file/edit_file) result with user interaction.
-        Supports native filesystem tools only.
+        Handle end_generation tool result with user interaction.
 
         Args:
-            tool_name: Name of the tool (write_file or edit_file)
-            result: Tool result from filesystem tool
+            result: Tool result from end_generation
         """
         try:
-            logger.info(f"=== HANDLE FILE GENERATION START: {tool_name} ===")
-            # Extract file path from FuncToolResult object
+            # Extract filepath from result (dict or FuncToolResult object)
             file_path = ""
 
-            # Handle FuncToolResult object (native tools)
-            if hasattr(result, "result") and hasattr(result, "success"):
-                # Access FuncToolResult attributes directly
-                result_value = result.result
-                if isinstance(result_value, str) and ":" in result_value:
-                    # Extract path from message like "File written successfully: /path/to/file.yml"
-                    potential_path = result_value.split(":", 1)[1].strip()
-                    if potential_path.endswith((".yml", ".yaml")):
-                        file_path = potential_path
-                        logger.info(f"=== EXTRACTED FILE PATH: {file_path} ===")
+            if isinstance(result, dict):
+                # Handle dict result
+                result_dict = result.get("result", {})
+                if isinstance(result_dict, dict):
+                    file_path = result_dict.get("filepath", "")
+            elif hasattr(result, "result") and hasattr(result, "success"):
+                # Handle FuncToolResult object
+                result_dict = result.result
+                if isinstance(result_dict, dict):
+                    file_path = result_dict.get("filepath", "")
 
-            logger.info(f"Extracted file_path: {file_path} from result type: {type(result)}")
+            logger.debug(f"Extracted file_path: {file_path}")
 
             if not file_path:
-                logger.warning(f"Could not extract file path from {tool_name} result: {result}")
+                logger.warning(f"Could not extract file path from end_generation result: {result}")
                 return
 
-            # Only handle YAML files
-            if not file_path.endswith((".yml", ".yaml")):
-                logger.debug(f"Non-YAML file {file_path}, skipping interception")
-                return
-
-            # Read the file content that was just written
+            # Check if file exists
             if not os.path.exists(file_path):
-                logger.warning(f"File {file_path} does not exist after {tool_name}")
+                logger.warning(f"File {file_path} does not exist")
                 return
 
+            # Read the file content
             with open(file_path, "r", encoding="utf-8") as f:
                 yaml_content = f.read()
 
@@ -133,7 +124,25 @@ class GenerationHooks(AgentHooks):
                 logger.warning(f"Empty YAML content in {file_path}")
                 return
 
-            # Display generated YAML
+            # Skip processing if this is a SQL history file (handled by write_file_sql_history)
+            if self._is_sql_history_yaml(yaml_content):
+                logger.info(f"Skipping end_generation processing for SQL history file: {file_path}")
+                # Don't show any message to avoid confusion, just return silently
+                return
+
+            # Skip processing if this file has already been processed
+            if file_path in self.processed_files:
+                logger.info(f"File {file_path} already processed, skipping end_generation")
+                return
+
+            # Mark file as processed
+            self.processed_files.add(file_path)
+
+            # Stop live display BEFORE showing YAML content
+            execution_controller.stop_live_display()
+            await asyncio.sleep(0.2)
+
+            # Display generated YAML for all file types
             self.console.print("\n" + "=" * 60)
             self.console.print(f"[bold green]Generated YAML: {os.path.basename(file_path)}[/]")
             self.console.print(f"[dim]Path: {file_path}[/]")
@@ -141,115 +150,190 @@ class GenerationHooks(AgentHooks):
 
             # Display YAML with syntax highlighting
             syntax = Syntax(yaml_content, "yaml", theme="monokai", line_numbers=True)
-            panel = Panel(syntax, title="Generated YAML", border_style="green")
-            self.console.print(panel)
+            self.console.print(syntax)
+            await asyncio.sleep(0.3)
 
-            # Get user action
-            await self._get_user_action(yaml_content, file_path)
+            # Get user confirmation to sync
+            await self._get_sync_confirmation(yaml_content, file_path)
 
         except GenerationCancelledException:
             self.console.print("[yellow]Generation workflow cancelled[/]")
         except Exception as e:
-            logger.error(f"Error handling file generation: {e}", exc_info=True)
+            logger.error(f"Error handling end_generation: {e}", exc_info=True)
             self.console.print(f"[red]Error: {e}[/]")
 
-    async def _clear_output_and_show_prompt(self):
-        """Clear output buffers and show user input prompt."""
+    async def _clear_output_and_show_sync_prompt(self):
+        """Show sync confirmation prompt."""
         import sys
 
-        # Ensure all pending output is flushed
-        await asyncio.sleep(0.2)
-        for _ in range(3):
-            sys.stdout.flush()
-            sys.stderr.flush()
-            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.3)
+        sys.stdout.flush()
+        sys.stderr.flush()
 
-        # Show clear separator
         self.console.print("\n" + "=" * 80)
-        self.console.print("[bold red]⚠ USER INPUT REQUIRED ⚠[/]")
-        self.console.print("=" * 80)
-
-        self.console.print("\n" + "=" * 60)
-        self.console.print("[bold cyan]CHOOSE ACTION:[/]")
+        self.console.print("[bold red]⚠ USER INPUT REQUIRED ⚠[/]", justify="center")
+        self.console.print("=" * 80 + "\n")
+        self.console.print("=" * 60)
+        self.console.print("[bold cyan]SYNC TO LANCEDB?[/]", justify="center")
         self.console.print("")
-        self.console.print("  1. Accept - Save to RAG storage")
-        self.console.print("  2. Edit - Modify YAML in editor")
-        self.console.print("  3. Cancel - Discard changes")
+        self.console.print("  [bold green]1.[/bold green] Yes - Save to LanceDB")
+        self.console.print("  [bold yellow]2.[/bold yellow] No - Keep file only")
         self.console.print("")
 
-    async def _clear_output_and_show_edit_prompt(self):
-        """Clear output buffers and show edit prompt."""
-        import sys
-
-        await asyncio.sleep(0.2)
-        for _ in range(2):
-            sys.stdout.flush()
-            sys.stderr.flush()
-            await asyncio.sleep(0.05)
-
-        self.console.print("\n" + "=" * 60)
-        self.console.print("[bold cyan]What next?[/]")
-        self.console.print("  1. Save to RAG storage")
-        self.console.print("  2. Edit again")
-        self.console.print("  3. Cancel")
-
-    @optional_traceable(name="_get_user_action", run_type="chain")
-    async def _get_user_action(self, yaml_content: str, file_path: str):
+    @optional_traceable(name="_handle_write_file_sql_history_result", run_type="chain")
+    async def _handle_write_file_sql_history_result(self, result):
         """
-        Get user action on generated YAML with proper flow control.
+        Handle write_file_sql_history tool result.
+
+        Args:
+            result: Tool result from write_file_sql_history
+        """
+        try:
+            # Extract file path from result
+            file_path = ""
+            if isinstance(result, dict):
+                result_msg = result.get("result", "")
+                if "File written successfully" in str(result_msg) or "SQL history file written successfully" in str(
+                    result_msg
+                ):
+                    parts = str(result_msg).split(": ")
+                    if len(parts) > 1:
+                        file_path = parts[-1].strip()
+            elif hasattr(result, "result"):
+                result_msg = result.result
+                if "File written successfully" in str(result_msg) or "SQL history file written successfully" in str(
+                    result_msg
+                ):
+                    parts = str(result_msg).split(": ")
+                    if len(parts) > 1:
+                        file_path = parts[-1].strip()
+
+            logger.debug(f"Extracted file_path: {file_path}")
+
+            if not file_path or not os.path.exists(file_path):
+                logger.warning(f"Could not extract or find file path from result: {result}")
+                return
+
+            # Skip processing if this file has already been processed
+            if file_path in self.processed_files:
+                logger.info(f"File {file_path} already processed, skipping write_file_sql_history")
+                return
+
+            # Mark file as processed
+            self.processed_files.add(file_path)
+
+            # Read the file content
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    yaml_content = f.read()
+            except Exception as read_error:
+                logger.error(f"Failed to read file {file_path}: {read_error}")
+                return
+
+            if not yaml_content:
+                logger.warning(f"Empty content in {file_path}")
+                return
+
+            # Stop live display BEFORE showing YAML content
+            execution_controller.stop_live_display()
+            await asyncio.sleep(0.2)
+
+            # Display generated YAML with syntax highlighting
+            self.console.print("\n" + "=" * 60)
+            self.console.print("[bold green]Generated SQL History YAML[/]")
+            self.console.print(f"[dim]File: {file_path}[/]")
+            self.console.print("=" * 60)
+
+            syntax = Syntax(yaml_content, "yaml", theme="monokai", line_numbers=True)
+            self.console.print(syntax)
+            await asyncio.sleep(0.3)
+
+            # Get user confirmation to sync
+            await self._get_sync_confirmation(yaml_content, file_path)
+
+        except GenerationCancelledException:
+            raise
+        except Exception as e:
+            logger.error(f"Error handling write_file_sql_history result: {e}", exc_info=True)
+            self.console.print(f"[red]Error: {e}[/]")
+
+    async def _sync_sql_history_to_storage(self, yaml_content: str, file_path: str):
+        """
+        Sync SQL history content to RAG storage.
+
+        Args:
+            yaml_content: YAML content to sync
+            file_path: File path
+        """
+        if not self.agent_config:
+            self.console.print("[red]Agent configuration not available, cannot sync to RAG[/]")
+            self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
+            return
+
+        try:
+            self.console.print("[cyan]Syncing SQL history to LanceDB...[/]")
+
+            # Sync to LanceDB
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, self._sync_sql_history_to_db, file_path)
+
+            if result.get("success"):
+                self.console.print("[bold green]✓ Successfully synced SQL history to LanceDB[/]")
+                message = result.get("message", "")
+                if message:
+                    self.console.print(f"[dim]{message}[/]")
+                self.console.print(f"[dim]File: {file_path}[/]")
+            else:
+                error = result.get("error", "Unknown error")
+                self.console.print(f"[red]Sync failed: {error}[/]")
+                self.console.print(f"[yellow]YAML kept in file: {file_path}[/]")
+
+        except Exception as e:
+            logger.error(f"Error syncing SQL history to storage: {e}")
+            self.console.print(f"[red]Sync error: {e}[/]")
+            self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
+
+    async def _get_sync_confirmation(self, yaml_content: str, file_path: str):
+        """
+        Get user confirmation to sync to LanceDB.
 
         Args:
             yaml_content: Generated YAML content
             file_path: Path where YAML was saved
         """
         try:
-            logger.info("=== Starting user interaction for YAML file ===")
-
             # Stop the live display if active
             live_was_stopped = execution_controller.stop_live_display()
-            logger.info(f"=== Live display stopped: {live_was_stopped} ===")
 
-            # Use execution control first, but don't suppress output yet
+            # Use execution control to prevent output interference
             async with execution_controller.pause_execution():
-                logger.info("=== Execution paused, showing prompt ===")
-                # Clear buffers and show prompt normally
-                await self._clear_output_and_show_prompt()
+                await self._clear_output_and_show_sync_prompt()
 
-                # Now suppress output ONLY during the actual input()
+                self.console.print("[bold yellow]Please enter your choice:[/bold yellow] ", end="")
+
                 def get_user_input():
-                    logger.info("=== About to call input() ===")
-                    result = blocking_input_manager.get_blocking_input(
-                        lambda: input("Your choice (1-3) [1]: ").strip() or "1"
-                    )
-                    logger.info(f"=== Got user input: {result} ===")
-                    return result
+                    return blocking_input_manager.get_blocking_input(lambda: input("[1/2] ").strip() or "1")
 
                 choice = await execution_controller.request_user_input(get_user_input)
-                logger.info(f"=== User choice processed: {choice} ===")
 
-            if choice == "1":
-                # Accept and sync
-                await self._sync_to_storage(yaml_content, file_path)
-
-            elif choice == "2":
-                # Edit
-                await self._handle_edit(yaml_content, file_path)
-
-            elif choice == "3":
-                # Cancel
-                self.console.print("[yellow]Changes discarded[/]")
-                raise GenerationCancelledException("User cancelled")
-
-            else:
-                self.console.print("[red]Invalid choice, please try again[/]")
-                await self._get_user_action(yaml_content, file_path)
+                if choice == "1":
+                    # Sync to LanceDB
+                    self.console.print("[bold green]✓ Syncing to LanceDB...[/]")
+                    await self._sync_to_storage(yaml_content, file_path)
+                elif choice == "2":
+                    # Keep file only
+                    self.console.print(f"[yellow]✓ YAML saved to file only: {file_path}[/]")
+                else:
+                    self.console.print("[red]✗ Invalid choice. Please enter 1 or 2.[/]")
+                    self.console.print("[dim]Please try again...[/]\n")
+                    await self._get_sync_confirmation(yaml_content, file_path)
 
             # Resume live display after user interaction completes
-            logger.info("=== Resuming live display ===")
-            execution_controller.resume_live_display()
+            if live_was_stopped:
+                execution_controller.resume_live_display()
 
         except (KeyboardInterrupt, EOFError):
-            self.console.print("\n[yellow]Generation workflow cancelled[/]")
+            self.console.print("\n[yellow]✗ Sync cancelled by user[/]")
             # Resume live display even on error
             execution_controller.resume_live_display()
             raise GenerationCancelledException("User interrupted")
@@ -257,82 +341,6 @@ class GenerationHooks(AgentHooks):
             # Resume live display on any error
             execution_controller.resume_live_display()
             raise e
-
-    @optional_traceable(name="_handle_edit", run_type="chain")
-    async def _handle_edit(self, yaml_content: str, file_path: str):
-        """
-        Handle YAML editing flow.
-
-        Args:
-            yaml_content: Current YAML content
-            file_path: File path
-        """
-        try:
-            self.console.print("[cyan]Opening editor...[/]")
-            loop = asyncio.get_event_loop()
-
-            # Run editor in executor
-            edited_content, confirmed = await loop.run_in_executor(None, edit_yaml_in_editor, yaml_content)
-
-            if not confirmed:
-                self.console.print("[yellow]Edit cancelled, returning to menu[/]")
-                await self._get_user_action(yaml_content, file_path)
-                return
-
-            # Save edited content
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(edited_content)
-
-            self.console.print(f"[green]Changes saved to: {file_path}[/]")
-
-            # Show diff summary
-            original_lines = yaml_content.count("\n") + 1
-            edited_lines = edited_content.count("\n") + 1
-            self.console.print(f"[dim]Lines: {original_lines} → {edited_lines}[/]")
-
-            # Ask to sync or re-edit
-            await self._after_edit_action(edited_content, file_path)
-
-        except Exception as e:
-            logger.error(f"Error during edit: {e}")
-            self.console.print(f"[red]Edit error: {e}[/]")
-            await self._get_user_action(yaml_content, file_path)
-
-    @optional_traceable(name="_after_edit_action", run_type="chain")
-    async def _after_edit_action(self, edited_content: str, file_path: str):
-        """
-        Handle action after editing with proper flow control.
-
-        Args:
-            edited_content: Edited YAML content
-            file_path: File path
-        """
-        # Use execution control but allow output for the prompt
-        async with execution_controller.pause_execution():
-            await self._clear_output_and_show_edit_prompt()
-
-            def get_user_input():
-                return blocking_input_manager.get_blocking_input(
-                    lambda: input("Your choice (1-3) [1]: ").strip() or "1"
-                )
-
-            choice = await execution_controller.request_user_input(get_user_input)
-
-        if choice == "1":
-            await self._sync_to_storage(edited_content, file_path)
-            # Resume live display after sync
-            execution_controller.resume_live_display()
-        elif choice == "2":
-            await self._handle_edit(edited_content, file_path)
-            # Live display will be resumed in nested calls
-        elif choice == "3":
-            self.console.print("[yellow]Changes saved to file but not synced to RAG[/]")
-            # Resume live display before raising
-            execution_controller.resume_live_display()
-            raise GenerationCancelledException("User cancelled sync")
-        else:
-            self.console.print("[red]Invalid choice[/]")
-            await self._after_edit_action(edited_content, file_path)
 
     @optional_traceable(name="_sync_to_storage", run_type="chain")
     async def _sync_to_storage(self, yaml_content: str, file_path: str):
@@ -354,13 +362,10 @@ class GenerationHooks(AgentHooks):
             # Determine file type based on path and call appropriate sync method
             loop = asyncio.get_event_loop()
 
-            if "semantic_model" in file_path or self._is_semantic_model_yaml(yaml_content):
-                result = await loop.run_in_executor(None, self._sync_semantic_models_to_db, file_path)
-                item_type = "semantic model"
-            elif "metric" in file_path or self._is_metric_yaml(yaml_content):
-                result = await loop.run_in_executor(None, self._sync_metrics_to_db, file_path)
-                item_type = "metric"
-            elif "sql_history" in file_path or self._is_sql_history_yaml(yaml_content):
+            if self._is_semantic_model_or_metric_yaml(yaml_content):
+                result = await loop.run_in_executor(None, self._sync_semantic_to_db, file_path)
+                item_type = "semantic model and metrics"
+            elif self._is_sql_history_yaml(yaml_content):
                 result = await loop.run_in_executor(None, self._sync_sql_history_to_db, file_path)
                 item_type = "SQL history"
             else:
@@ -384,23 +389,15 @@ class GenerationHooks(AgentHooks):
             self.console.print(f"[red]Sync error: {e}[/]")
             self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
 
-    def _is_semantic_model_yaml(self, yaml_content: str) -> bool:
-        """Check if YAML content is a semantic model (contains data_source)."""
+    def _is_semantic_model_or_metric_yaml(self, yaml_content: str) -> bool:
+        """Check if YAML content contains semantic model (data_source) or metrics."""
         import yaml
 
         try:
             docs = list(yaml.safe_load_all(yaml_content))
-            return any("data_source" in doc for doc in docs if doc)
-        except Exception:
-            return False
-
-    def _is_metric_yaml(self, yaml_content: str) -> bool:
-        """Check if YAML content is a metric (contains metric)."""
-        import yaml
-
-        try:
-            docs = list(yaml.safe_load_all(yaml_content))
-            return any("metric" in doc for doc in docs if doc)
+            has_data_source = any("data_source" in doc for doc in docs if doc)
+            has_metric = any("metric" in doc for doc in docs if doc)
+            return has_data_source or has_metric
         except Exception:
             return False
 
@@ -423,12 +420,15 @@ class GenerationHooks(AgentHooks):
         except Exception:
             return False
 
-    def _sync_semantic_models_to_db(self, file_path: str) -> dict:
+    def _sync_semantic_to_db(self, file_path: str) -> dict:
         """
-        Sync semantic model YAML file to LanceDB.
+        Sync semantic model and metrics from YAML file to LanceDB.
+
+        This function handles both data_source (semantic model) and metric definitions
+        in the same file. It checks for existing entries and only stores new ones.
 
         Args:
-            file_path: Path to the semantic model YAML file
+            file_path: Path to the YAML file containing semantic model and/or metrics
 
         Returns:
             dict: Sync result with success, error, and message fields
@@ -436,128 +436,152 @@ class GenerationHooks(AgentHooks):
         try:
             import json
             from datetime import datetime
+            from typing import Set
 
             import yaml
 
-            from datus.storage.metric.init_utils import gen_semantic_model_id
+            from datus.configuration.agent_config import MetricMeta
+            from datus.storage.metric.init_utils import gen_metric_id, gen_semantic_model_id
             from datus.storage.metric.store import rag_by_configuration
 
             # Load YAML file
             with open(file_path, "r", encoding="utf-8") as f:
                 docs = list(yaml.safe_load_all(f))
 
+            # Extract data_source and metrics
             data_source = None
+            metrics_list = []
             for doc in docs:
                 if doc and "data_source" in doc:
                     data_source = doc["data_source"]
-                    break
-
-            if not data_source:
-                return {"success": False, "error": "No data_source found in YAML file"}
-
-            # Get database config
-            current_db_config = self.agent_config.current_db_config()
-
-            # Extract table name from sql_table or infer from data_source name
-            table_name = data_source.get("name", "")
-            if "sql_table" in data_source:
-                # Parse table name from sql_table (e.g., "schema.table" or "table")
-                sql_table = data_source["sql_table"]
-                table_name = sql_table.split(".")[-1] if "." in sql_table else sql_table
-
-            # Build semantic model dict
-            semantic_model_dict = {
-                "id": gen_semantic_model_id(
-                    current_db_config.catalog, current_db_config.database, current_db_config.schema, table_name
-                ),
-                "catalog_name": current_db_config.catalog or "",
-                "database_name": current_db_config.database or "",
-                "schema_name": current_db_config.schema or "",
-                "table_name": table_name,
-                "catalog_database_schema": (
-                    f"{current_db_config.catalog}_{current_db_config.database}_{current_db_config.schema}"
-                ),
-                "domain": "",  # Will be filled if available in config
-                "layer1": "",
-                "layer2": "",
-                "semantic_file_path": file_path,
-                "semantic_model_name": data_source.get("name", ""),
-                "semantic_model_desc": data_source.get("description", ""),
-                "identifiers": json.dumps(data_source.get("identifiers", []), ensure_ascii=False),
-                "dimensions": json.dumps(data_source.get("dimensions", []), ensure_ascii=False),
-                "measures": json.dumps(data_source.get("measures", []), ensure_ascii=False),
-                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-
-            # Store to LanceDB
-            storage = rag_by_configuration(self.agent_config)
-            storage.semantic_model_storage.store([semantic_model_dict])
-
-            logger.info(f"Successfully synced semantic model {table_name} to LanceDB")
-            return {"success": True, "message": f"Synced semantic model: {table_name}"}
-
-        except Exception as e:
-            logger.error(f"Error syncing semantic model to DB: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
-
-    def _sync_metrics_to_db(self, file_path: str) -> dict:
-        """
-        Sync metrics YAML file to LanceDB.
-
-        Args:
-            file_path: Path to the metrics YAML file
-
-        Returns:
-            dict: Sync result with success, error, and message fields
-        """
-        try:
-            from datetime import datetime
-
-            import yaml
-
-            from datus.storage.metric.init_utils import gen_metric_id
-            from datus.storage.metric.store import rag_by_configuration
-
-            # Load YAML file
-            with open(file_path, "r", encoding="utf-8") as f:
-                docs = list(yaml.safe_load_all(f))
-
-            metrics_list = []
-            for doc in docs:
-                if doc and "metric" in doc:
+                elif doc and "metric" in doc:
                     metrics_list.append(doc["metric"])
 
-            if not metrics_list:
-                return {"success": False, "error": "No metrics found in YAML file"}
+            if not data_source and not metrics_list:
+                return {"success": False, "error": "No data_source or metrics found in YAML file"}
 
             # Get storage
             storage = rag_by_configuration(self.agent_config)
 
-            # Store each metric
+            # Get existing semantic models and metrics
+            existing_semantic_models: Set[str] = set()
+            existing_metrics: Set[str] = set()
+
+            for semantic_model in storage.search_all_semantic_models("", selected_fields=["id", "semantic_model_name"]):
+                existing_semantic_models.add(str(semantic_model["id"]))
+
+            for metric in storage.search_all_metrics("", select_fields=["id"]):
+                existing_metrics.add(str(metric["id"]))
+
+            # Get database config
+            current_db_config = self.agent_config.current_db_config()
+
+            # Get domain/layer info - use default MetricMeta if not configured
+            if hasattr(self.agent_config, "metric_meta") and self.agent_config.metric_meta:
+                # Use the first available metric_meta
+                first_meta_name = next(iter(self.agent_config.metric_meta.keys()))
+                current_metric_meta = self.agent_config.metric_meta[first_meta_name]
+            else:
+                # Use default values
+                current_metric_meta = MetricMeta()
+
+            domain = current_metric_meta.domain
+            layer1 = current_metric_meta.layer1
+            layer2 = current_metric_meta.layer2
+
             synced_count = 0
+            skipped_count = 0
+            message_parts = []
+
+            # Process semantic model (data_source)
+            if data_source:
+                # Extract table name from sql_table or infer from data_source name
+                table_name = data_source.get("name", "")
+                if "sql_table" in data_source:
+                    # Parse table name from sql_table (e.g., "schema.table" or "table")
+                    sql_table = data_source["sql_table"]
+                    table_name = sql_table.split(".")[-1] if "." in sql_table else sql_table
+
+                semantic_model_id = gen_semantic_model_id(
+                    current_db_config.catalog, current_db_config.database, current_db_config.schema, table_name
+                )
+
+                # Check if semantic model already exists
+                if semantic_model_id not in existing_semantic_models:
+                    # Build semantic model dict
+                    semantic_model_dict = {
+                        "id": semantic_model_id,
+                        "catalog_name": current_db_config.catalog or "",
+                        "database_name": current_db_config.database or "",
+                        "schema_name": current_db_config.schema or "",
+                        "table_name": table_name,
+                        "catalog_database_schema": (
+                            f"{current_db_config.catalog}_{current_db_config.database}_{current_db_config.schema}"
+                        ),
+                        "domain": domain,
+                        "layer1": layer1,
+                        "layer2": layer2,
+                        "semantic_file_path": file_path,
+                        "semantic_model_name": data_source.get("name", ""),
+                        "semantic_model_desc": data_source.get("description", ""),
+                        "identifiers": json.dumps(data_source.get("identifiers", []), ensure_ascii=False),
+                        "dimensions": json.dumps(data_source.get("dimensions", []), ensure_ascii=False),
+                        "measures": json.dumps(data_source.get("measures", []), ensure_ascii=False),
+                        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+
+                    storage.semantic_model_storage.store([semantic_model_dict])
+                    existing_semantic_models.add(semantic_model_id)
+                    synced_count += 1
+                    logger.info(f"Synced semantic model: {table_name}")
+                    message_parts.append(f"semantic model '{table_name}'")
+                else:
+                    skipped_count += 1
+                    logger.info(f"Semantic model {table_name} already exists, skipped")
+
+            # Process metrics
+            semantic_model_name = data_source.get("name", "") if data_source else ""
             for metric_doc in metrics_list:
                 metric_name = metric_doc.get("name", "")
-                metric_dict = {
-                    "id": gen_metric_id("", "", "", "", metric_name),  # Simple ID generation
-                    "semantic_model_name": "",
-                    "domain": "",
-                    "layer1": "",
-                    "layer2": "",
-                    "domain_layer1_layer2": "__",
-                    "name": metric_name,
-                    "description": metric_doc.get("description", ""),
-                    "constraint": metric_doc.get("constraint", ""),
-                    "sql_query": metric_doc.get("sql_query", ""),
-                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
-                storage.metric_storage.store([metric_dict])
-                synced_count += 1
+                metric_id = gen_metric_id(domain, layer1, layer2, semantic_model_name, metric_name)
 
-            logger.info(f"Successfully synced {synced_count} metrics to LanceDB")
-            return {"success": True, "message": f"Synced {synced_count} metric(s)"}
+                # Check if metric already exists
+                if metric_id not in existing_metrics:
+                    metric_dict = {
+                        "id": metric_id,
+                        "semantic_model_name": semantic_model_name,
+                        "domain": domain,
+                        "layer1": layer1,
+                        "layer2": layer2,
+                        "domain_layer1_layer2": f"{domain}_{layer1}_{layer2}",
+                        "name": metric_name,
+                        "description": metric_doc.get("description", ""),
+                        "constraint": metric_doc.get("constraint", ""),
+                        "sql_query": "",  # YAML metrics don't have SQL queries
+                        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    storage.metric_storage.store([metric_dict])
+                    existing_metrics.add(metric_id)
+                    synced_count += 1
+                    logger.info(f"Synced metric: {metric_name}")
+                    message_parts.append(f"metric '{metric_name}'")
+                else:
+                    skipped_count += 1
+                    logger.info(f"Metric {metric_name} already exists, skipped")
+
+            # Build result message
+            if synced_count > 0:
+                message = f"Synced {synced_count} item(s): {', '.join(message_parts)}"
+                if skipped_count > 0:
+                    message += f" (skipped {skipped_count} existing item(s))"
+                return {"success": True, "message": message}
+            elif skipped_count > 0:
+                return {"success": True, "message": f"All {skipped_count} item(s) already exist, nothing to sync"}
+            else:
+                return {"success": False, "error": "No items to sync"}
 
         except Exception as e:
-            logger.error(f"Error syncing metrics to DB: {e}", exc_info=True)
+            logger.error(f"Error syncing semantic model and metrics to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
     def _sync_sql_history_to_db(self, file_path: str) -> dict:
@@ -573,7 +597,7 @@ class GenerationHooks(AgentHooks):
         try:
             import yaml
 
-            from datus.storage.sql_history.init_utils import gen_sql_history_id
+            from datus.storage.sql_history.init_utils import exists_sql_history, gen_sql_history_id
             from datus.storage.sql_history.store import sql_history_rag_by_configuration
 
             # Load YAML file
@@ -598,6 +622,18 @@ class GenerationHooks(AgentHooks):
                 item_id = gen_sql_history_id(sql_query, comment)
                 sql_history_data["id"] = item_id
 
+            # Get storage and check if item already exists
+            storage = sql_history_rag_by_configuration(self.agent_config)
+            existing_ids = exists_sql_history(storage, build_mode="incremental")
+
+            # Check for duplicate
+            if item_id in existing_ids:
+                logger.info(f"SQL history {item_id} already exists in LanceDB, skipping")
+                return {
+                    "success": True,
+                    "message": f"SQL history '{sql_history_data.get('name', '')}' already exists, skipped",
+                }
+
             # Ensure all required fields are present
             sql_history_dict = {
                 "id": item_id,
@@ -613,7 +649,6 @@ class GenerationHooks(AgentHooks):
             }
 
             # Store to LanceDB
-            storage = sql_history_rag_by_configuration(self.agent_config)
             storage.store_batch([sql_history_dict])
 
             logger.info(f"Successfully synced SQL history {item_id} to LanceDB")

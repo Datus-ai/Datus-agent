@@ -31,7 +31,7 @@ agentic_nodes:
     model: deepseek
     system_prompt: gen_semantic_model
     prompt_version: "1.0"
-    tools: db_tools.*, schema_tools.*
+    tools: db_tools.*, generation_tools.*
     hooks: generation_hooks.GenerationHooks  # 关键：使用 Hooks 实现交互式编辑
     mcp: filesystem_mcp
     workspace_root: ${MF_MODEL_PATH}
@@ -337,7 +337,7 @@ AI> 完成！已生成 SQL 摘要并同步到数据库。数据库当前共有 1
    │  GenerationHooks     │    │   Tools + MCP Servers       │
    │ (Hooks 拦截层)       │    │                             │
    │                      │    │  [gen_semantic_model]       │
-   │  on_tool_end():      │◄───│  • schema_tools.*           │
+   │  on_tool_end():      │◄───│  • generation_tools.*           │
    │  1. 拦截 MCP 返回结果│    │  • db_tools.*              │
    │  2. 展示 YAML        │    │                             │
    │  3. 用户交互选择     │    │  [gen_metrics / gen_sql_summary]│
@@ -360,16 +360,16 @@ AI> 完成！已生成 SQL 摘要并同步到数据库。数据库当前共有 1
 
 ### 3.2 Native Tools API 设计
 
-**SchemaTools 类 (参考 ContextSearchTools)：**
+**GenerationTools 类 (参考 ContextSearchTools)：**
 ```python
-# datus/tools/schema_tools.py
+# datus/tools/generation_tools.py
 from typing import List
 from agents import Tool
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import rag_by_configuration
 from datus.tools.tools import FuncToolResult, trans_to_function_tool
 
-class SchemaTools:
+class GenerationTools:
     def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
         self.metrics_rag = rag_by_configuration(agent_config)
@@ -381,7 +381,7 @@ class SchemaTools:
         注意：
         - get_table_ddl 已在 DBFuncTool (datus/tools/tools.py) 中实现
         - gen_semantic_model 通过 db_tools.* 访问 get_table_ddl
-        - SchemaTools 只负责语义模型存在性检查
+        - GenerationTools 只负责语义模型存在性检查
         """
         return [
             trans_to_function_tool(func)
@@ -461,9 +461,9 @@ class DBFuncTool:
 **gen_semantic_model 配置使用方式：**
 ```yaml
 gen_semantic_model:
-  tools: db_tools.*, schema_tools.*
+  tools: db_tools.*, generation_tools.*
   # db_tools.* 包含 get_table_ddl
-  # schema_tools.* 包含 check_semantic_model_exists
+  # generation_tools.* 包含 check_semantic_model_exists
 ```
 
 ### 3.3 与现有代码集成
@@ -852,7 +852,7 @@ pygments = "^2.0.0"        # 语法高亮
 **需要的改动：**
 
 1. **新增核心文件：**
-   - `datus/tools/schema_tools.py` - 新的 SchemaTools 类
+   - `datus/tools/generation_tools.py` - 新的 GenerationTools 类
    - `datus/cli/generation_hooks.py` - GenerationHooks 类
    - `datus/cli/yaml_editor.py` - 多行 YAML 编辑器
    - `datus/prompts/gen_semantic_model_system.j2` - 简化的系统提示词
@@ -861,12 +861,12 @@ pygments = "^2.0.0"        # 语法高亮
 
 2. **agent.yml 配置：**
    - 在 `agentic_nodes` 下添加三个新条目
-   - gen_semantic_model: `tools: db_tools.*, schema_tools.*`
+   - gen_semantic_model: `tools: db_tools.*, generation_tools.*`
    - gen_metrics: `tools: ""`
    - gen_sql_summary: `tools: ""`
 
 3. **GenSQLAgenticNode 扩展：**
-   - 在 `_setup_tool_pattern` 中添加 `schema_tools` 的处理
+   - 在 `_setup_tool_pattern` 中添加 `generation_tools` 的处理
    - 添加 hooks 加载和集成逻辑
 
 4. **现有 Node 保留：**
@@ -883,7 +883,7 @@ pygments = "^2.0.0"        # 语法高亮
 ## 5. 实施步骤
 
 ### 阶段 1: 实现核心组件
-- 创建 `datus/tools/schema_tools.py`
+- 创建 `datus/tools/generation_tools.py`
   - 实现 `check_semantic_model_exists` 工具
   - 实现 `get_table_ddl` 工具
 - 创建 `datus/cli/generation_hooks.py`
@@ -1045,7 +1045,7 @@ AI> 找到 5 个相关查询，常见模式：DATE_TRUNC('month', ...) 和 GROUP
 
 - **旧架构：** 每个功能是独立的 Node (generate_semantic_model_node.py, generate_metrics_node.py)
 - **新架构：**
-  - gen_semantic_model: SchemaTools + MCP Servers + Hooks
+  - gen_semantic_model: GenerationTools + MCP Servers + Hooks
   - gen_metrics/gen_sql_summary: 纯 LLM 生成 + MCP Servers + Hooks
 - **优势：**
   - 交互式对话体验
