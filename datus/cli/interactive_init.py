@@ -163,7 +163,6 @@ class InteractiveInit:
                 "type": "deepseek",
                 "base_url": "https://api.deepseek.com",
                 "model": "deepseek-chat",
-                "options": ["deepseek-chat"],
             },
             "claude": {
                 "type": "claude",
@@ -197,8 +196,9 @@ class InteractiveInit:
         base_url = Prompt.ask("- Enter your base URL", default=providers[provider]["base_url"])
 
         # Model name (with default and options hint)
-        options_hint = ", ".join(providers[provider]["options"])
-        console.print(f"  [dim]Available options: {options_hint}[/dim]")
+        if "options" in providers[provider]:
+            options_hint = ", ".join(providers[provider]["options"])
+            console.print(f"  [dim]reference options: {options_hint}[/dim]")
         model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"])
 
         # Store configuration
