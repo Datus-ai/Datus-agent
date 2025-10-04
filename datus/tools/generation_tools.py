@@ -131,9 +131,12 @@ class GenerationTools:
         """
         try:
             # Search for existing metrics by name
-            all_metrics = self.metrics_rag.metric_storage.search(
+            all_metrics_table = self.metrics_rag.metric_storage.search(
                 query_txt=metric_name, select_fields=["name", "description"], top_n=10
             )
+
+            # Convert PyArrow Table to list of dicts
+            all_metrics = all_metrics_table.to_pylist()
 
             # Filter by exact metric name match
             for metric in all_metrics:

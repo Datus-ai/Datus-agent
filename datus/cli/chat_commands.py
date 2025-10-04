@@ -89,14 +89,33 @@ class ChatCommands:
     def _create_new_node(self, subagent_name: str = None):
         """Create new node based on subagent_name."""
         if subagent_name:
-            # Create GenSQLAgenticNode for subagent
-            from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+            # Use SemanticAgenticNode for gen_semantic_model and gen_metrics
+            if subagent_name in ["gen_semantic_model", "gen_metrics"]:
+                from datus.agent.node.semantic_agentic_node import SemanticAgenticNode
 
-            self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
-            return GenSQLAgenticNode(
-                node_name=subagent_name,
-                agent_config=self.cli.agent_config,
-            )
+                self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
+                return SemanticAgenticNode(
+                    node_name=subagent_name,
+                    agent_config=self.cli.agent_config,
+                )
+            # Use SqlSummaryAgenticNode for gen_sql_summary
+            elif subagent_name == "gen_sql_summary":
+                from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+
+                self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
+                return SqlSummaryAgenticNode(
+                    node_name=subagent_name,
+                    agent_config=self.cli.agent_config,
+                )
+            else:
+                # Create GenSQLAgenticNode for other subagents
+                from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+                self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
+                return GenSQLAgenticNode(
+                    node_name=subagent_name,
+                    agent_config=self.cli.agent_config,
+                )
         else:
             # Create ChatAgenticNode for default chat
             self.console.print("[dim]Creating new chat session...[/]")
@@ -145,8 +164,36 @@ class ChatCommands:
 
             # Create appropriate input based on current node type
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+            from datus.agent.node.semantic_agentic_node import SemanticAgenticNode
+            from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
-            if isinstance(current_node, GenSQLAgenticNode):
+            if isinstance(current_node, SemanticAgenticNode):
+                # Semantic input for SemanticAgenticNode (gen_semantic_model, gen_metrics)
+                from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+                node_input = SemanticNodeInput(
+                    user_message=message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    prompt_version="1.0",
+                    prompt_language="en",
+                )
+                node_type = "semantic"
+            elif isinstance(current_node, SqlSummaryAgenticNode):
+                # SQL Summary input for SqlSummaryAgenticNode (gen_sql_summary)
+                from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
+
+                node_input = SqlSummaryNodeInput(
+                    user_message=message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    prompt_version="1.0",
+                    prompt_language="en",
+                )
+                node_type = "sql_summary"
+            elif isinstance(current_node, GenSQLAgenticNode):
                 # GenSQL input for GenSQLAgenticNode (subagent)
                 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 
@@ -192,8 +239,6 @@ class ChatCommands:
                     async def run_chat_stream():
                         async for action in current_node.execute_stream(node_input, self.cli.actions):
                             incremental_actions.append(action)
-                            # Add delay to make the streaming visible
-                            await asyncio.sleep(0.5)
 
                     # Execute the streaming chat
                     asyncio.run(run_chat_stream())
@@ -219,8 +264,6 @@ class ChatCommands:
                     # Parse response to extract clean SQL and output
                     sql = None
                     clean_output = None
-
-                    logger.debug(f"DEBUG: final_action.output: {final_action.output}")
 
                     # First check if SQL and response are directly available
                     sql = final_action.output.get("sql")
@@ -397,10 +440,8 @@ class ChatCommands:
                 # Handle escaped quotes in the JSON string
                 unescaped_content = content.replace("\\'", "'").replace('\\"', '"')
                 json_content = json.loads(unescaped_content)
-                logger.debug(f"DEBUG: Successfully parsed JSON: {json_content}")
                 sql = json_content.get("sql")
                 output = json_content.get("output") or json_content.get("raw_output")
-                logger.debug(f"DEBUG: Extracted sql={sql}, output={output} (type: {type(output)})")
                 if output and isinstance(output, str):
                     output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
                 return sql, output
