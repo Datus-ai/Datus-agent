@@ -93,19 +93,49 @@ def generate_metrics_with_mcp(
         prompt_version=input_data.prompt_version,
     )
     try:
-        exec_result = asyncio.run(
-            model.generate_with_tools(
-                prompt=prompt,
-                mcp_servers={
-                    "metricflow_mcp_server": metricflow_mcp_server,
-                    "filesystem_mcp_server": filesystem_mcp_server,
-                },
-                tools=tools,
-                instruction=instruction,
-                output_type=str,
-                max_turns=max_turns,
+        import concurrent.futures
+
+        # Handle async execution properly
+        try:
+            # Check if we're in an event loop
+            asyncio.get_running_loop()
+            # We're in an event loop, run in a separate thread
+            logger.debug("Running generate_with_tools in separate thread")
+
+            def run_in_thread():
+                return asyncio.run(
+                    model.generate_with_tools(
+                        prompt=prompt,
+                        mcp_servers={
+                            "metricflow_mcp_server": metricflow_mcp_server,
+                            "filesystem_mcp_server": filesystem_mcp_server,
+                        },
+                        tools=tools,
+                        instruction=instruction,
+                        output_type=str,
+                        max_turns=max_turns,
+                    )
+                )
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_in_thread)
+                exec_result = future.result()
+
+        except RuntimeError:
+            # No running loop, safe to use asyncio.run directly
+            exec_result = asyncio.run(
+                model.generate_with_tools(
+                    prompt=prompt,
+                    mcp_servers={
+                        "metricflow_mcp_server": metricflow_mcp_server,
+                        "filesystem_mcp_server": filesystem_mcp_server,
+                    },
+                    tools=tools,
+                    instruction=instruction,
+                    output_type=str,
+                    max_turns=max_turns,
+                )
             )
-        )
 
         try:
             logger.debug(f"exec_result: {exec_result['content']}")

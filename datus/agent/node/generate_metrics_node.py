@@ -199,18 +199,26 @@ class GenerateMetricsNode(Node):
                 if missing_tables:
                     logger.info(f"Missing semantic model files for tables: {missing_tables}")
 
-                    # Run async method in sync context
+                    # Run async method properly
                     import asyncio
+                    import concurrent.futures
 
+                    error_msg = None
                     try:
-                        # If we're already in an async context, we need to handle it specially
+                        # Check if we're in an event loop
                         asyncio.get_running_loop()
-                        # We're in a running loop, need to use a different approach
-                        # For now, let's skip semantic model generation in sync context
-                        logger.warning("Cannot generate semantic models in sync context within running event loop")
-                        error_msg = "Cannot generate semantic models in synchronous execution within event loop"
+                        # We're in an event loop, run the async code in a new thread with its own loop
+                        logger.info("Running semantic model generation in separate thread")
+
+                        def run_in_thread():
+                            return asyncio.run(self._generate_missing_semantic_models(missing_tables))
+
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(run_in_thread)
+                            error_msg = future.result()
+
                     except RuntimeError:
-                        # No running loop, safe to use asyncio.run
+                        # No running loop, safe to use asyncio.run directly
                         error_msg = asyncio.run(self._generate_missing_semantic_models(missing_tables))
 
                     if error_msg:
