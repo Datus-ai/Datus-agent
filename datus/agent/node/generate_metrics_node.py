@@ -190,7 +190,34 @@ class GenerateMetricsNode(Node):
 
         try:
             # Check and generate semantic models if needed
-            table_names = extract_table_names(self.input.sql_query, self.input.sql_task.database_type)
+            # Fix SQL: quote identifiers that contain hyphens to avoid parse errors
+            import re
+
+            from datus.utils.constants import DBType
+
+            sql_query = self.input.sql_query
+            db_type = self.input.sql_task.database_type
+
+            # Determine quote character based on database type
+            if db_type in [DBType.MYSQL, DBType.STARROCKS]:
+                quote_char = "`"
+            elif db_type == DBType.MSSQL:
+                quote_char = "["  # Will need special handling for closing bracket
+            else:  # DuckDB, PostgreSQL, SQLite, Snowflake
+                quote_char = '"'
+
+            # Match identifiers with hyphens and add quotes if not already quoted
+            if quote_char == "[":
+                # SQL Server uses [identifier]
+                sql_query = re.sub(r"\b([a-zA-Z_][a-zA-Z0-9_]*-[a-zA-Z0-9_-]*)\b(?![\"\'\`\]])", r"[\1]", sql_query)
+            else:
+                sql_query = re.sub(
+                    r"\b([a-zA-Z_][a-zA-Z0-9_]*-[a-zA-Z0-9_-]*)\b(?![\"\'\`\]])",
+                    f"{quote_char}\\1{quote_char}",
+                    sql_query,
+                )
+
+            table_names = extract_table_names(sql_query, self.input.sql_task.database_type)
             logger.info(f"Extracted table names from SQL: {table_names}")
 
             if table_names:
