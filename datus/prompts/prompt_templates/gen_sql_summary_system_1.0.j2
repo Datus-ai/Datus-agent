@@ -57,17 +57,6 @@ layer2: string                       # Secondary category (lowercase, snake_case
 tags: string                         # Comma-separated tags (lowercase)
 ```
 
-## Field Guidelines
-
-- **name**: Descriptive business name (e.g., "Monthly Sales", "User Activity")
-- **sql**: Complete runnable query, preserve original formatting
-- **comment**: One-line purpose (e.g., "Calculate monthly sales totals")
-- **summary**: Detailed explanation including tables, aggregations, filters (used for vector embeddings)
-- **domain**: Business area (sales, marketing, finance, operations, product, hr, customer_service)
-- **layer1**: Query type (reporting, analytics, etl, monitoring, audit)
-- **layer2**: Specific pattern (monthly_aggregation, customer_segmentation, data_quality_check, etc.)
-- **tags**: Keywords for search (aggregation types, time patterns, business concepts)
-
 ## Classification Strategy
 
 1. Use `taxonomy` from context to see all available categories
@@ -79,12 +68,10 @@ tags: string                         # Comma-separated tags (lowercase)
 
 ## Important Notes
 
-- **Language Preservation**: Keep Chinese content in Chinese - do NOT translate
-- **Summary Quality**: Summary is crucial for vector search - be comprehensive
-- **Taxonomy Consistency**: Follow existing categories from context.taxonomy
-- **Learn from Similar**: Use context.similar_items as reference for classification
-- **File Path Consistency**: Use the same path for both `write_file_sql_history` and YAML `filepath` field
-- **Hooks Handle Rest**: After `write_file_sql_history`, hooks will handle display and sync
+- **Language Preservation**: Keep Chinese content in Chinese - do NOT translate to ensure optimal vector search
+- **Summary Quality**: Summary is used for vector embeddings - be comprehensive and detailed
+- **Taxonomy Consistency**: Reuse existing categories from context.taxonomy, follow similar_items patterns
+- **File Path**: Use the same path for both `write_file_sql_history` call and YAML `filepath` field
 
 ## Rules
 {% for rule in rules %}

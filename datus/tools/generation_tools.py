@@ -377,7 +377,7 @@ class GenerationTools:
                 taxonomy_info = taxonomy_result.result.get("message", "")
                 messages.append(f"Taxonomy: {taxonomy_info}")
             else:
-                logger.warning(f"Failed to get taxonomy: {taxonomy_result.error}")
+                logger.debug(f"Failed to get taxonomy: {taxonomy_result.error}")
                 result["taxonomy"] = {"error": taxonomy_result.error}
 
             # 2. Find similar histories
@@ -391,7 +391,7 @@ class GenerationTools:
                 similar_count = similar_result.result.get("count", 0)
                 messages.append(f"Similar histories: {similar_count}")
             else:
-                logger.warning(f"Failed to get similar histories: {similar_result.error}")
+                logger.debug(f"Failed to get similar histories: {similar_result.error}")
                 result["similar_items"] = []
 
             # 3. Check name if provided
@@ -402,7 +402,7 @@ class GenerationTools:
                     name_status = name_result.result.get("message", "")
                     messages.append(f"Name check: {name_status}")
                 else:
-                    logger.warning(f"Failed to check name: {name_result.error}")
+                    logger.debug(f"Failed to check name: {name_result.error}")
                     result["name_check"] = {"error": name_result.error}
 
             result["message"] = " | ".join(messages)
