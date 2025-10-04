@@ -123,12 +123,6 @@ class GenerationHooks(AgentHooks):
                 logger.warning(f"Empty YAML content in {file_path}")
                 return
 
-            # Skip processing if this is a SQL history file (handled by write_file_sql_history)
-            if self._is_sql_history_yaml(yaml_content):
-                logger.info(f"Skipping end_generation processing for SQL history file: {file_path}")
-                # Don't show any message to avoid confusion, just return silently
-                return
-
             # Skip processing if this file has already been processed
             if file_path in self.processed_files:
                 logger.info(f"File {file_path} already processed, skipping end_generation")
@@ -165,17 +159,17 @@ class GenerationHooks(AgentHooks):
         """Show sync confirmation prompt."""
         import sys
 
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
         sys.stdout.flush()
         sys.stderr.flush()
 
         self.console.print("\n" + "=" * 80)
-        self.console.print("[bold red]⚠ USER INPUT REQUIRED ⚠[/]", justify="center")
+        self.console.print("[bold yellow]⚠ USER INPUT REQUIRED ⚠[/]", justify="center")
         self.console.print("=" * 80 + "\n")
         self.console.print("=" * 60)
-        self.console.print("[bold cyan]SYNC TO LANCEDB?[/]", justify="center")
+        self.console.print("[bold cyan]SYNC TO KNOWLEDGE BASE?[/]", justify="center")
         self.console.print("")
-        self.console.print("  [bold green]1.[/bold green] Yes - Save to LanceDB")
+        self.console.print("  [bold green]1.[/bold green] Yes - Save to Knowledge Base")
         self.console.print("  [bold yellow]2.[/bold yellow] No - Keep file only")
         self.console.print("")
 
@@ -258,7 +252,7 @@ class GenerationHooks(AgentHooks):
 
     async def _get_sync_confirmation(self, yaml_content: str, file_path: str):
         """
-        Get user confirmation to sync to LanceDB.
+        Get user confirmation to sync to Knowledge Base.
 
         Args:
             yaml_content: Generated YAML content
@@ -280,8 +274,8 @@ class GenerationHooks(AgentHooks):
                 choice = await execution_controller.request_user_input(get_user_input)
 
                 if choice == "1":
-                    # Sync to LanceDB
-                    self.console.print("[bold green]✓ Syncing to LanceDB...[/]")
+                    # Sync to Knowledge Base
+                    self.console.print("[bold green]✓ Syncing to Knowledge Base...[/]")
                     await self._sync_to_storage(yaml_content, file_path)
                 elif choice == "2":
                     # Keep file only
@@ -297,10 +291,7 @@ class GenerationHooks(AgentHooks):
             self.console.print("=" * 80 + "\n")
 
             # Add delay to ensure message is visible before any new output
-            await asyncio.sleep(0.3)
-
-            # DO NOT resume live display here - let agent control it naturally
-            # This prevents action stream from overwriting the completion message
+            await asyncio.sleep(0.1)
 
         except (KeyboardInterrupt, EOFError):
             self.console.print("\n[yellow]✗ Sync cancelled by user[/]")
@@ -329,7 +320,7 @@ class GenerationHooks(AgentHooks):
             # Determine file type based on path and call appropriate sync method
             loop = asyncio.get_event_loop()
 
-            if self._is_semantic_model_or_metric_yaml(yaml_content):
+            if self._is_semantic_yaml(yaml_content):
                 result = await loop.run_in_executor(None, self._sync_semantic_to_db, file_path)
                 item_type = "semantic model and metrics"
             elif self._is_sql_history_yaml(yaml_content):
@@ -341,7 +332,7 @@ class GenerationHooks(AgentHooks):
                 return
 
             if result.get("success"):
-                self.console.print(f"[bold green]✓ Successfully synced {item_type} to LanceDB[/]")
+                self.console.print(f"[bold green]✓ Successfully synced {item_type} to Knowledge Base[/]")
                 message = result.get("message", "")
                 if message:
                     self.console.print(f"[dim]{message}[/]")
@@ -356,7 +347,7 @@ class GenerationHooks(AgentHooks):
             self.console.print(f"[red]Sync error: {e}[/]")
             self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
 
-    def _is_semantic_model_or_metric_yaml(self, yaml_content: str) -> bool:
+    def _is_semantic_yaml(self, yaml_content: str) -> bool:
         """Check if YAML content contains semantic model (data_source) or metrics."""
         import yaml
 
@@ -389,7 +380,7 @@ class GenerationHooks(AgentHooks):
 
     def _sync_semantic_to_db(self, file_path: str) -> dict:
         """
-        Sync semantic model and metrics from YAML file to LanceDB.
+        Sync semantic model and metrics from YAML file to Knowledge Base.
 
         This function handles both data_source (semantic model) and metric definitions
         in the same file. It checks for existing entries and only stores new ones.
@@ -553,7 +544,7 @@ class GenerationHooks(AgentHooks):
 
     def _sync_sql_history_to_db(self, file_path: str) -> dict:
         """
-        Sync SQL history YAML file to LanceDB.
+        Sync SQL history YAML file to Knowledge Base.
 
         Args:
             file_path: Path to the SQL history YAML file
@@ -595,7 +586,7 @@ class GenerationHooks(AgentHooks):
 
             # Check for duplicate
             if item_id in existing_ids:
-                logger.info(f"SQL history {item_id} already exists in LanceDB, skipping")
+                logger.info(f"SQL history {item_id} already exists in Knowledge Base, skipping")
                 return {
                     "success": True,
                     "message": f"SQL history '{sql_history_data.get('name', '')}' already exists, skipped",
@@ -615,10 +606,10 @@ class GenerationHooks(AgentHooks):
                 "tags": sql_history_data.get("tags", ""),
             }
 
-            # Store to LanceDB
+            # Store to Knowledge Base
             storage.store_batch([sql_history_dict])
 
-            logger.info(f"Successfully synced SQL history {item_id} to LanceDB")
+            logger.info(f"Successfully synced SQL history {item_id} to Knowledge Base")
             return {"success": True, "message": f"Synced SQL history: {sql_history_dict['name']}"}
 
         except Exception as e:

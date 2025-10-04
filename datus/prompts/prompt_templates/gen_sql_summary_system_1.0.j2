@@ -48,13 +48,13 @@ id: string                            # Use generate_sql_history_id() to generat
 name: string                         # Max 20 chars, descriptive
 sql: |                               # Complete query (use | for multi-line)
   SELECT ...
-comment: string                      # Brief one-line description
+comment: string                      # user's input message or create a brief one-line description
 summary: string                      # Detailed explanation (for vector search)
 filepath: string                     # Actual file path where this YAML is saved
-domain: string                       # Business domain (lowercase, snake_case)
-layer1: string                       # Primary category: reporting/analytics/etl/monitoring/audit
-layer2: string                       # Secondary category (lowercase, snake_case)
-tags: string                         # Comma-separated tags (lowercase)
+domain: string                       # Business domain, use the same language as comment
+layer1: string                       # Primary category, use the same language as comment
+layer2: string                       # Secondary category, use the same language as comment
+tags: string                         # Comma-separated tags
 ```
 
 ## Classification Strategy
@@ -68,7 +68,7 @@ tags: string                         # Comma-separated tags (lowercase)
 
 ## Important Notes
 
-- **Language Preservation**: Keep Chinese content in Chinese - do NOT translate to ensure optimal vector search
+- **Language Preservation**: Keep the same language as the comment - if the comment is in Chinese, generate name in Chinese; if in English, use English. Do NOT translate between languages
 - **Summary Quality**: Summary is used for vector embeddings - be comprehensive and detailed
 - **Taxonomy Consistency**: Reuse existing categories from context.taxonomy, follow similar_items patterns
 - **File Path**: Use the same path for both `write_file_sql_history` call and YAML `filepath` field
