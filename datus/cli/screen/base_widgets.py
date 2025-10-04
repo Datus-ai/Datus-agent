@@ -108,7 +108,8 @@ class InputWithLabel(Widget):
     DEFAULT_CSS = """
     InputWithLabel {
         layout: horizontal;
-        height: auto;
+        min-height: 4;
+        max-height: 20%;
         align: center middle;
     }
     InputWithLabel Label {
@@ -119,9 +120,6 @@ class InputWithLabel(Widget):
     }
     InputWithLabel TextArea {
         width: 1fr;
-        # border: round $accent;
-        # padding-left: 1;
-        # padding-right: 1;
     }
     InputWithLabel Input {
         width: 1fr;

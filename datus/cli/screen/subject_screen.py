@@ -50,7 +50,7 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
 
     CSS = """
     InputWithLabel{
-        height: 4;
+        height: 10%;
     }
     #tree-edit-dialog {
         layout: vertical;
@@ -69,8 +69,8 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
         margin-bottom: 1;
     }
     #tree-parent-selector {
-        height: 10;
         overflow-y: auto;
+        height: 90%;
     }
     """
 
@@ -95,9 +95,7 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
 
     def compose(self) -> ComposeResult:
         with Container():
-            with Container(id="tree-edit-dialog"):
-                # yield Label("Name", id="tree-edit-name-label")
-                # yield Input(value=self.current_name, id="tree-edit-name-input")
+            with Vertical(id="tree-edit-dialog"):
                 input_widget = InputWithLabel(
                     label=self.level.title(),
                     value=self.current_name,
@@ -1137,15 +1135,17 @@ class SubjectScreen(ContextScreen):
                 self.app.notify("No changes")
                 return
             where = [eq(k, v) for k, v in old_path.items()]
-            unique_filter = [eq("name", new_path["name"])]
-            for k, v in old_path.items():
-                if k != "name":
-                    unique_filter.append(eq(k, v))
-            self.metrics_rag.metric_storage.update(
-                where=And(where), update_values=new_path, unique_filter=unique_filter
+            destination_filter = And(
+                [
+                    eq("domain", new_path["domain"]),
+                    eq("layer1", new_path["layer1"]),
+                    eq("layer2", new_path["layer2"]),
+                    eq("name", new_path["name"]),
+                ]
             )
+            self.metrics_rag.update_metrics(where=And(where), update_values=new_path, unique_filter=destination_filter)
             self.sql_rag.sql_history_storage.update(
-                where=And(where), update_values=new_path, unique_filter=unique_filter
+                where=And(where), update_values=new_path, unique_filter=destination_filter
             )
             self._show_subject_details(new_path)
         else:
@@ -1153,7 +1153,7 @@ class SubjectScreen(ContextScreen):
                 self.app.notify("No changes")
                 return
             where = [eq(k, v) for k, v in old_path.items()]
-            self.metrics_rag.metric_storage.update(where=And(where), update_values=new_path)
+            self.metrics_rag.update_metrics(where=And(where), update_values=new_path)
             self.sql_rag.sql_history_storage.update(where=And(where), update_values=new_path)
         moved_payload = self._apply_tree_edit(node_type, old_path, new_path)
         if moved_payload is None:

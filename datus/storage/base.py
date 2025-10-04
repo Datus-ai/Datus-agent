@@ -368,9 +368,22 @@ class BaseEmbeddingStore(StorageBase):
         return query_builder
 
     def update(self, where: WhereExpr, update_values: Dict[str, Any], unique_filter: Optional[WhereExpr] = None):
+        self._ensure_table_ready()
         if not update_values:
             return
         final_where = build_where(where)
         if not final_where:
             return
+        unique_where = build_where(unique_filter)
+        if unique_where:
+            existing = self.table.count_rows(unique_where)
+            if existing:
+                raise DatusException(
+                    ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                    message_args={
+                        "operation": "update",
+                        "table_name": self.table_name,
+                        "error_message": f"Conflicting rows already match {unique_where}",
+                    },
+                )
         self.table.update(where=final_where, values=update_values)

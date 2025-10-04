@@ -307,8 +307,10 @@ class SemanticMetricsRAG:
                 return query_result.remove_column(columns.index("_distance")).to_pylist()
             return query_result.to_pylist()
 
-    def update_metrics(self, where: WhereExpr, set_values: Dict[str, Any], unique_fileter: Optional[WhereExpr] = None):
-        self.metric_storage.update(where, set_values, unique_filter=unique_fileter)
+    def update_metrics(
+        self, where: WhereExpr, update_values: Dict[str, Any], unique_filter: Optional[WhereExpr] = None
+    ):
+        self.metric_storage.update(where, update_values, unique_filter=unique_filter)
 
 
 def rag_by_configuration(agent_config: AgentConfig):
