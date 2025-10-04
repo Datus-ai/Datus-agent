@@ -36,13 +36,13 @@ class GenerationHooks(AgentHooks):
         self.console = console
         self.agent_config = agent_config
         self.processed_files = set()  # Track files that have been processed to avoid duplicates
-        logger.info(f"Console: {self.console}, Agent config: {self.agent_config}")
+        logger.debug(f"GenerationHooks initialized with config: {agent_config is not None}")
 
     async def on_agent_start(self, context, agent) -> None:
-        logger.info("Generation agent start")
+        pass
 
     async def on_start(self, context, agent) -> None:
-        logger.info("Generation start")
+        pass
 
     @optional_traceable(name="on_tool_end", run_type="chain")
     async def on_tool_end(self, context, agent, tool, result) -> None:
@@ -76,7 +76,6 @@ class GenerationHooks(AgentHooks):
     async def on_end(self, context, agent, output) -> None:
         # Wait if execution is paused
         await execution_controller.wait_for_resume()
-        logger.info("Generation end")
 
     @optional_traceable(name="on_error", run_type="chain")
     async def on_error(self, context, agent, error) -> None:
@@ -140,7 +139,7 @@ class GenerationHooks(AgentHooks):
 
             # Stop live display BEFORE showing YAML content
             execution_controller.stop_live_display()
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.1)
 
             # Display generated YAML for all file types
             self.console.print("\n" + "=" * 60)
@@ -151,7 +150,7 @@ class GenerationHooks(AgentHooks):
             # Display YAML with syntax highlighting
             syntax = Syntax(yaml_content, "yaml", theme="monokai", line_numbers=True)
             self.console.print(syntax)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
 
             # Get user confirmation to sync
             await self._get_sync_confirmation(yaml_content, file_path)
@@ -166,7 +165,7 @@ class GenerationHooks(AgentHooks):
         """Show sync confirmation prompt."""
         import sys
 
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.2)
         sys.stdout.flush()
         sys.stderr.flush()
 
@@ -236,7 +235,7 @@ class GenerationHooks(AgentHooks):
 
             # Stop live display BEFORE showing YAML content
             execution_controller.stop_live_display()
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.1)
 
             # Display generated YAML with syntax highlighting
             self.console.print("\n" + "=" * 60)
@@ -246,7 +245,7 @@ class GenerationHooks(AgentHooks):
 
             syntax = Syntax(yaml_content, "yaml", theme="monokai", line_numbers=True)
             self.console.print(syntax)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
 
             # Get user confirmation to sync
             await self._get_sync_confirmation(yaml_content, file_path)
@@ -256,42 +255,6 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error handling write_file_sql_history result: {e}", exc_info=True)
             self.console.print(f"[red]Error: {e}[/]")
-
-    async def _sync_sql_history_to_storage(self, yaml_content: str, file_path: str):
-        """
-        Sync SQL history content to RAG storage.
-
-        Args:
-            yaml_content: YAML content to sync
-            file_path: File path
-        """
-        if not self.agent_config:
-            self.console.print("[red]Agent configuration not available, cannot sync to RAG[/]")
-            self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
-            return
-
-        try:
-            self.console.print("[cyan]Syncing SQL history to LanceDB...[/]")
-
-            # Sync to LanceDB
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, self._sync_sql_history_to_db, file_path)
-
-            if result.get("success"):
-                self.console.print("[bold green]✓ Successfully synced SQL history to LanceDB[/]")
-                message = result.get("message", "")
-                if message:
-                    self.console.print(f"[dim]{message}[/]")
-                self.console.print(f"[dim]File: {file_path}[/]")
-            else:
-                error = result.get("error", "Unknown error")
-                self.console.print(f"[red]Sync failed: {error}[/]")
-                self.console.print(f"[yellow]YAML kept in file: {file_path}[/]")
-
-        except Exception as e:
-            logger.error(f"Error syncing SQL history to storage: {e}")
-            self.console.print(f"[red]Sync error: {e}[/]")
-            self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
 
     async def _get_sync_confirmation(self, yaml_content: str, file_path: str):
         """
@@ -303,7 +266,7 @@ class GenerationHooks(AgentHooks):
         """
         try:
             # Stop the live display if active
-            live_was_stopped = execution_controller.stop_live_display()
+            execution_controller.stop_live_display()
 
             # Use execution control to prevent output interference
             async with execution_controller.pause_execution():
@@ -328,18 +291,24 @@ class GenerationHooks(AgentHooks):
                     self.console.print("[dim]Please try again...[/]\n")
                     await self._get_sync_confirmation(yaml_content, file_path)
 
-            # Resume live display after user interaction completes
-            if live_was_stopped:
-                execution_controller.resume_live_display()
+            # Print completion separator to prevent action stream from overwriting
+            self.console.print("\n" + "=" * 80)
+            self.console.print("[bold green]✓ Generation workflow completed[/]", justify="center")
+            self.console.print("=" * 80 + "\n")
+
+            # Add delay to ensure message is visible before any new output
+            await asyncio.sleep(0.3)
+
+            # DO NOT resume live display here - let agent control it naturally
+            # This prevents action stream from overwriting the completion message
 
         except (KeyboardInterrupt, EOFError):
             self.console.print("\n[yellow]✗ Sync cancelled by user[/]")
-            # Resume live display even on error
-            execution_controller.resume_live_display()
             raise GenerationCancelledException("User interrupted")
+        except GenerationCancelledException:
+            raise
         except Exception as e:
-            # Resume live display on any error
-            execution_controller.resume_live_display()
+            logger.error(f"Error in sync confirmation: {e}", exc_info=True)
             raise e
 
     @optional_traceable(name="_sync_to_storage", run_type="chain")
@@ -357,8 +326,6 @@ class GenerationHooks(AgentHooks):
             return
 
         try:
-            self.console.print("[cyan]Syncing to LanceDB...[/]")
-
             # Determine file type based on path and call appropriate sync method
             loop = asyncio.get_event_loop()
 

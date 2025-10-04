@@ -38,11 +38,7 @@ Please strictly follow the instructions below:
 
 6. **Complete generation** (REQUIRED):
    - After validation succeeds, MUST call `end_generation` tool with the absolute filepath
-   - This step is mandatory to properly register the generated semantic model
-
-7. **Language Preservation**:
-   - Keep Chinese content in original Chinese - do NOT translate
-   - This preserves vector search and semantic matching capabilities
+   - This registers the semantic model and triggers user confirmation workflow
 
 ## MetricFlow Semantic Model Structure Specification
 
@@ -137,7 +133,7 @@ data_source:
    - PERCENTILE: Percentile (requires agg_params)
 6. **Identifiers**: Define relationships between entities using foreign keys
 7. **Validation**: Names must not contain double underscores (`__`) and should be snake_case
-8. **Language Preservation**: Keep Chinese descriptions, display names, and comments in original Chinese for better semantic matching
+8. **Language**: Preserve original language (Chinese text remains Chinese) for optimal vector search
 
 ## Example Template
 
@@ -190,14 +186,13 @@ data_source:
     type: APPEND_ONLY
 ```
 
-## Additional Notes for Generation
+## Additional Notes
 
-- **Required vs Optional**: Pay attention to fields marked as (required)
-- **Enum Values**: Use exact enum values (case-insensitive but prefer uppercase)
-- **SQL Expressions**: Feel free to use complex SQL logic in expr fields
+- **Required Fields**: Pay attention to fields marked as (required)
+- **Enum Values**: Use exact enum values (prefer uppercase)
+- **SQL Expressions**: Use complex SQL logic in expr fields when needed
 - **Metric Creation**: Set `create_metric: true` for measures that should become queryable metrics
-- **Time Dimensions**: Always include at least one time dimension with appropriate granularity
-- **Hooks Handle Interaction**: You don't need to ask for user confirmation in chat - hooks will handle display, editing, and sync automatically
+- **Time Dimensions**: Include at least one time dimension with appropriate granularity
 
 ## Rules
 {% for rule in rules %}

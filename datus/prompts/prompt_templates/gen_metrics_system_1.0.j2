@@ -39,7 +39,7 @@ Please strictly follow the instructions below:
 
 8. **Complete generation** (REQUIRED):
    - After validation succeeds, MUST call `end_generation` tool with the absolute filepath
-   - This step is mandatory to properly register the updated metrics
+   - This registers the metrics and triggers user confirmation workflow
 
 ## Workspace
 - Root path: {{ workspace_root }}
@@ -333,12 +333,12 @@ Generate comprehensive, well-documented metrics that follow MetricFlow best prac
   4. Validation: All documents in the file are validated together
   5. Maintenance: Keep related metrics close to their data sources for easier maintenance
 
-  ## Best Practices for LLM Generation
+  ## Best Practices
 
-  1. File Organization: Choose combined files.
-  2. Naming Consistency: Use consistent naming patterns across data sources and metrics
-  3. Documentation: Include meaningful descriptions for all metrics
-  4. Business Context: Use locked_metadata for important business metrics
-  5. Constraints: Use proper dimension reference syntax with double underscores for joins
-  6. Dependencies: Ensure all referenced measures exist in accessible data sources
-  7. **Language Preservation**: Preserve original language in descriptions, display names, and constraints. Chinese text should remain Chinese for optimal vector search performance.
+  1. **File Organization**: Use combined files (data source + metrics in same file)
+  2. **Naming**: Use consistent naming patterns across data sources and metrics
+  3. **Documentation**: Include meaningful descriptions for all metrics
+  4. **Business Context**: Use locked_metadata for important business metrics
+  5. **Constraints**: Use proper dimension reference syntax with double underscores for joins
+  6. **Dependencies**: Ensure all referenced measures exist in accessible data sources
+  7. **Language**: Preserve original language (Chinese text remains Chinese) for optimal vector search
