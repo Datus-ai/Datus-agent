@@ -76,12 +76,11 @@ class CatalogScreen(ContextScreen):
         }
 
         #semantic-panel-container {
-            width: 100%;
             height: 35%;
             background: $surface;
             color: $text;
             overflow-y: auto;
-            overflow-x: hidden;
+            overflow-x: auto;
         }
 
         #semantic-model-panel {

@@ -6,7 +6,7 @@ import pyarrow as pa
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
-from datus.storage.lancedb_conditions import and_, build_where, eq, in_, like
+from datus.storage.lancedb_conditions import And, WhereExpr, and_, build_where, eq, in_, like
 
 logger = logging.getLogger(__file__)
 
@@ -269,17 +269,15 @@ class SemanticMetricsRAG:
         return metric_result
 
     def get_metrics_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
-        metric_full_name: str = qualify_name(
+        metric_condition = And(
             [
-                domain,
-                layer1,
-                layer2,
-            ],
+                eq("domain", domain),
+                eq("layer1", layer1),
+                eq("layer2", layer2),
+                eq("name", name),
+            ]
         )
-        metric_condition = and_(
-            eq("domain_layer1_layer2", metric_full_name),
-            eq("name", name),
-        )
+
         search_result = self.metric_storage._search_all(
             where=metric_condition, select_fields=["name", "description", "constraint", "sql_query"]
         )
@@ -294,21 +292,11 @@ class SemanticMetricsRAG:
         selected_fields: Optional[List[str]] = None,
         return_distance: bool = False,
     ) -> List[Dict[str, Any]]:
-        metric_full_name: str = qualify_name(
-            [
-                domain,
-                layer1,
-                layer2,
-            ],
-        )
-        conditions = eq("domain_layer1_layer2", metric_full_name)
+        conditions = [eq("domain", domain), eq("layer1", layer1), eq("layer2", layer2)]
         if semantic_model_name:
-            conditions = and_(
-                conditions,
-                eq("semantic_model_name", semantic_model_name),
-            )
+            conditions.append(eq("semantic_model_name", semantic_model_name))
         query_result = self.metric_storage._search_all(
-            conditions,
+            And(conditions),
             select_fields=selected_fields,
         )
         if return_distance:
@@ -318,6 +306,9 @@ class SemanticMetricsRAG:
             if "_distance" in columns:
                 return query_result.remove_column(columns.index("_distance")).to_pylist()
             return query_result.to_pylist()
+
+    def update_metrics(self, where: WhereExpr, set_values: Dict[str, Any], unique_fileter: Optional[WhereExpr] = None):
+        self.metric_storage.update(where, set_values, unique_filter=unique_fileter)
 
 
 def rag_by_configuration(agent_config: AgentConfig):

@@ -61,7 +61,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Iterable, Sequence, Union
+from typing import Any, Iterable, Optional, Sequence, Union
 
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -242,7 +242,10 @@ def _compile_node(node: Node) -> str:
     raise TypeError(f"Unknown node type: {type(node)}")
 
 
-def build_where(node: Node) -> str:
+WhereExpr = Union[str, Node, None]
+
+
+def build_where(where: WhereExpr) -> Optional[str]:
     """
     Compile a structured AST into a LanceDB-compatible where clause.
 
@@ -254,7 +257,12 @@ def build_where(node: Node) -> str:
         build_where(expr)
         -> "(status = 'active' AND (role = 'admin' OR role = 'owner'))"
     """
-    return _compile_node(node)
+    if where is None:
+        return None
+    if isinstance(where, str):
+        stripped = where.strip()
+        return stripped or None
+    return _compile_node(where)
 
 
 # ---------- Convenience Constructors ----------

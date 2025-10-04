@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 class ContextScreen(Screen):
     """Base screen for context exploration."""
 
-    def __init__(self, title: str, context_data: Dict, inject_callback=None):
+    def __init__(self, title: str, context_data: Dict, inject_callback=None, **kwargs):
         """
         Initialize the context screen.
 
@@ -30,7 +30,7 @@ class ContextScreen(Screen):
             context_data: Data to display in the context screen
             inject_callback: Callback for injecting data into the workflow
         """
-        super().__init__()
+        super().__init__(**kwargs)
         self.title = title
         self.context_data = context_data
         self.inject_callback = inject_callback
