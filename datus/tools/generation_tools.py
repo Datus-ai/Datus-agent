@@ -36,7 +36,7 @@ class GenerationTools:
                 self.check_semantic_model_exists,
                 self.check_metric_exists,
                 self.prepare_sql_summary_context,
-                self.generate_sql_history_id,
+                self.generate_sql_summary_id,
                 self.end_generation,
             )
         ]
@@ -446,12 +446,12 @@ class GenerationTools:
             logger.error(f"Error completing generation: {e}")
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
 
-    def generate_sql_history_id(self, sql_query: str, comment: str = "") -> FuncToolResult:
+    def generate_sql_summary_id(self, sql_query: str, comment: str = "") -> FuncToolResult:
         """
-        Generate a unique ID for SQL history based on SQL query and comment.
+        Generate a unique ID for SQL summary based on SQL query and comment.
 
-        This tool helps create consistent, unique IDs for SQL history entries.
-        Use this tool when you need to generate an ID for a new SQL history entry.
+        This tool helps create consistent, unique IDs for SQL summary entries.
+        Use this tool when you need to generate an ID for a new SQL summary entry.
 
         Args:
             sql_query: The SQL query that will be used to generate the ID
@@ -464,7 +464,7 @@ class GenerationTools:
                   - 'result' (str): The generated unique ID
 
         Example:
-            result = generate_sql_history_id(
+            result = generate_sql_summary_id(
                 sql_query="SELECT * FROM users WHERE active = 1",
                 comment="Active users query"
             )

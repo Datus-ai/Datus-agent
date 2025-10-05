@@ -26,23 +26,17 @@ from datus.utils.traceable_utils import create_openai_client
 
 logger = get_logger(__name__)
 
-# Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue
+# Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue in openai-agents 0.3.2
 try:
     from agents.models.chatcmpl_stream_handler import ResponseTextDeltaEvent
-    from pydantic import Field
 
-    # Get the original fields and make logprobs optional
-    original_fields = ResponseTextDeltaEvent.model_fields.copy()
-    if "logprobs" in original_fields:
-        # Create a new field annotation that allows None
-        original_fields["logprobs"] = Field(default=None)
-
-        # Rebuild the model with optional logprobs
-        ResponseTextDeltaEvent.__annotations__["logprobs"] = Optional[Any]
-        ResponseTextDeltaEvent.model_fields["logprobs"] = Field(default=None)
-        ResponseTextDeltaEvent.model_rebuild()
-
-        logger.debug("Successfully patched ResponseTextDeltaEvent to make logprobs optional")
+    # Modify the model field annotation to accept both list and None
+    if hasattr(ResponseTextDeltaEvent, "__annotations__") and "logprobs" in ResponseTextDeltaEvent.__annotations__:
+        # Make logprobs accept list or None
+        ResponseTextDeltaEvent.__annotations__["logprobs"] = Union[list, None]
+        # Rebuild the pydantic model with new annotations
+        ResponseTextDeltaEvent.model_rebuild(force=True)
+        logger.debug("Successfully patched ResponseTextDeltaEvent to accept logprobs as list or None")
 except ImportError:
     logger.warning("Could not import ResponseTextDeltaEvent - patch not applied")
 except Exception as e:

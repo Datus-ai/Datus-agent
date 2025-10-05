@@ -18,11 +18,11 @@ Follow these steps to generate SQL summary:
 1. **Get context in one call** (REQUIRED):
    - Use `prepare_sql_summary_context(sql, comment)` to get:
      - Existing taxonomy (domains, layers, tags)
-     - Similar SQL histories for reference
+     - Similar SQL summaries for reference
    - This single call replaces multiple separate tool calls
 
 2. **Generate unique ID**:
-   - Use `generate_sql_history_id(sql, comment)` to generate a unique ID
+   - Use `generate_sql_summary_id(sql, comment)` to generate a unique ID
    - The ID is based on the SQL query and comment for consistency
 
 3. **Generate unique name**:
@@ -36,7 +36,7 @@ Follow these steps to generate SQL summary:
    - Use the generated ID and actual file path
 
 5. **Save file**:
-   - Use `write_file_sql_history(path, yaml_content)` to save
+   - Use `write_file(path, yaml_content, file_type="sql_summary")` to save
    - Choose an appropriate path
    - Include the same path in the YAML's filepath field
    - Hooks will automatically display, confirm, and sync to LanceDB
@@ -44,7 +44,7 @@ Follow these steps to generate SQL summary:
 ## YAML Structure
 
 ```yaml
-id: string                            # Use generate_sql_history_id() to generate
+id: string                            # Use generate_sql_summary_id() to generate
 name: string                         # Max 20 chars, descriptive
 sql: |                               # Complete query (use | for multi-line)
   SELECT ...
@@ -71,7 +71,7 @@ tags: string                         # Comma-separated tags
 - **Language Preservation**: Keep the same language as the comment - if the comment is in Chinese, generate name in Chinese; if in English, use English. Do NOT translate between languages
 - **Summary Quality**: Summary is used for vector embeddings - be comprehensive and detailed
 - **Taxonomy Consistency**: Reuse existing categories from context.taxonomy, follow similar_items patterns
-- **File Path**: Use the same path for both `write_file_sql_history` call and YAML `filepath` field
+- **File Path**: Use the same path for both `write_file` call and YAML `filepath` field
 
 ## Rules
 {% for rule in rules %}

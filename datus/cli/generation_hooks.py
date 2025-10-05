@@ -38,9 +38,6 @@ class GenerationHooks(AgentHooks):
         self.processed_files = set()  # Track files that have been processed to avoid duplicates
         logger.debug(f"GenerationHooks initialized with config: {agent_config is not None}")
 
-    async def on_agent_start(self, context, agent) -> None:
-        pass
-
     async def on_start(self, context, agent) -> None:
         pass
 
@@ -57,9 +54,11 @@ class GenerationHooks(AgentHooks):
         # Intercept end_generation tool (for semantic models and metrics)
         if tool_name == "end_generation":
             await self._handle_end_generation(result)
-        # Intercept write_file_sql_history tool (for SQL history)
-        elif tool_name == "write_file_sql_history":
-            await self._handle_write_file_sql_history_result(result)
+        # Intercept write_file tool and check if it's SQL summary
+        elif tool_name == "write_file":
+            # Check if this is a SQL summary file by examining tool arguments
+            if self._is_sql_summary_tool_call(context):
+                await self._handle_sql_summary_result(result)
 
     async def on_tool_start(self, context, agent, tool) -> None:
         # Wait if execution is paused
@@ -69,17 +68,9 @@ class GenerationHooks(AgentHooks):
         # Wait if execution is paused
         await execution_controller.wait_for_resume()
 
-    async def on_agent_end(self, context, agent, output) -> None:
-        # Wait if execution is paused
-        await execution_controller.wait_for_resume()
-
     async def on_end(self, context, agent, output) -> None:
         # Wait if execution is paused
         await execution_controller.wait_for_resume()
-
-    @optional_traceable(name="on_error", run_type="chain")
-    async def on_error(self, context, agent, error) -> None:
-        pass
 
     @optional_traceable(name="_handle_end_generation", run_type="chain")
     async def _handle_end_generation(self, result):
@@ -173,13 +164,13 @@ class GenerationHooks(AgentHooks):
         self.console.print("  [bold yellow]2.[/bold yellow] No - Keep file only")
         self.console.print("")
 
-    @optional_traceable(name="_handle_write_file_sql_history_result", run_type="chain")
-    async def _handle_write_file_sql_history_result(self, result):
+    @optional_traceable(name="_handle_sql_summary_result", run_type="chain")
+    async def _handle_sql_summary_result(self, result):
         """
-        Handle write_file_sql_history tool result.
+        Handle sql_summary tool result.
 
         Args:
-            result: Tool result from write_file_sql_history
+            result: Tool result from sql_summary
         """
         try:
             # Extract file path from result
@@ -346,6 +337,38 @@ class GenerationHooks(AgentHooks):
             logger.error(f"Error syncing to storage: {e}")
             self.console.print(f"[red]Sync error: {e}[/]")
             self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
+
+    def _is_sql_summary_tool_call(self, context) -> bool:
+        """
+        Check if write_file tool call is for SQL summary.
+
+        Examines tool arguments to determine if this is a SQL summary file write.
+
+        Args:
+            context: ToolContext with tool_arguments field (JSON string)
+
+        Returns:
+            bool: True if this is a SQL summary write operation
+        """
+        try:
+            import json
+
+            if hasattr(context, "tool_arguments"):
+                if context.tool_arguments:
+                    tool_args = json.loads(context.tool_arguments)
+
+                    # Check if file_type indicates SQL summary
+                    if isinstance(tool_args, dict):
+                        if tool_args.get("file_type") == "sql_summary":
+                            logger.debug(f"Detected SQL summary write_file call with args: {tool_args}")
+                            return True
+
+            logger.debug("Not a SQL summary write_file call")
+            return False
+
+        except Exception as e:
+            logger.debug(f"Error checking tool arguments: {e}")
+            return False
 
     def _is_semantic_yaml(self, yaml_content: str) -> bool:
         """Check if YAML content contains semantic model (data_source) or metrics."""

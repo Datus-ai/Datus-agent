@@ -464,7 +464,7 @@ class ChatAgenticNode(AgenticNode):
                 plan_instruction = (
                     base_instruction
                     + "\n\nEXECUTION steps:\n"
-                    + "For each todo step: todo_update_pending(id) → execute task → todo_update_completed(id)\n"
+                    + "For each todo step: todo_update(id, 'pending') → execute task → todo_update(id, 'completed')\n"
                     + "Always follow this exact sequence for every step."
                 )
             else:

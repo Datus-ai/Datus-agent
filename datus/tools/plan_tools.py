@@ -106,9 +106,7 @@ class PlanTool:
         methods_to_convert = [
             self.todo_read,
             self.todo_write,
-            self.todo_update_pending,
-            self.todo_update_completed,
-            self.todo_update_failed,
+            self.todo_update,
         ]
 
         bound_tools = []
@@ -196,42 +194,23 @@ class PlanTool:
         else:
             return FuncToolResult(success=0, error="Failed to save todo list to storage")
 
-    def todo_update_pending(self, todo_id: str) -> FuncToolResult:
-        """Mark a todo item as 'pending' (about to be executed).
+    def todo_update(self, todo_id: str, status: str) -> FuncToolResult:
+        """Update a todo item's status.
+
+        Execution flow:
+        1. todo_update(todo_id, "pending") - Mark as about to be executed
+        2. [execute task]
+        3. todo_update(todo_id, "completed") - Mark as successfully executed
+           OR todo_update(todo_id, "failed") - Mark as failed
 
         Args:
-            todo_id: The ID of the todo item to mark as pending
+            todo_id: The ID of the todo item to update
+            status: New status - must be 'pending', 'completed', or 'failed'
 
         Returns:
             FuncToolResult: Success/error status
         """
-        return self._update_todo_status(todo_id, "pending")
-
-    def todo_update_completed(self, todo_id: str) -> FuncToolResult:
-        """Mark a todo item as 'completed' (successfully executed).
-
-        Execution steps: todo_update_pending -> [execute task] -> todo_update_completed
-
-        Args:
-            todo_id: The ID of the todo item to mark as completed
-
-        Returns:
-            FuncToolResult: Success/error status
-        """
-        return self._update_todo_status(todo_id, "completed")
-
-    def todo_update_failed(self, todo_id: str) -> FuncToolResult:
-        """Mark a todo item as 'failed' (execution failed).
-
-        Execution steps: todo_update_pending -> [execute task] -> todo_update_failed (if failed)
-
-        Args:
-            todo_id: The ID of the todo item to mark as failed
-
-        Returns:
-            FuncToolResult: Success/error status
-        """
-        return self._update_todo_status(todo_id, "failed")
+        return self._update_todo_status(todo_id, status)
 
     def _update_todo_status(
         self, todo_id: str, status: str, execution_output: Optional[str] = None, error_message: Optional[str] = None
