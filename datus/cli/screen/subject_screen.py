@@ -70,7 +70,6 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
     }
     #tree-parent-selector {
         overflow-y: auto;
-        height: 90%;
     }
     """
 
@@ -532,7 +531,6 @@ class SubjectScreen(ContextScreen):
 
     def compose(self) -> ComposeResult:
         header = Header(show_clock=True, name="Metrics & SQL")
-        header.tall = True
         yield header
 
         with Horizontal():
@@ -996,19 +994,29 @@ class SubjectScreen(ContextScreen):
             domain = node_data.get("domain")
             if not domain or domain not in self.tree_data:
                 return None, [], None
-            layer1_map = self.tree_data.get(domain, {})
-            nodes = [
-                {
-                    "label": layer1_name,
-                    "data": {
-                        "selection_type": "layer1",
-                        "domain": domain,
-                        "layer1": layer1_name,
-                    },
-                    "expand": False,
+            nodes: List[Dict[str, Any]] = []
+            for domain_name, layer1_map in sorted(self.tree_data.items()):
+                layer1_children = []
+                for layer1_name in sorted(layer1_map.keys()):
+                    layer1_children.append(
+                        {
+                            "label": layer1_name,
+                            "data": {
+                                "selection_type": "layer1",
+                                "domain": domain_name,
+                                "layer1": layer1_name,
+                            },
+                        }
+                    )
+
+                node_entry: Dict[str, Any] = {
+                    "label": domain_name,
+                    "data": {"selection_type": "domain", "domain": domain_name},
+                    "expand": domain_name == domain,
                 }
-                for layer1_name in sorted(layer1_map.keys())
-            ]
+                if layer1_children:
+                    node_entry["children"] = layer1_children
+                nodes.append(node_entry)
             current_layer1 = node_data.get("layer1")
             current = (
                 {
@@ -1026,31 +1034,46 @@ class SubjectScreen(ContextScreen):
             if not domain:
                 return None, [], None
             choices: List[Dict[str, Any]] = []
-            domain_bucket = self.tree_data.get(domain, {})
-            for layer1_name, layer2_map in sorted(domain_bucket.items()):
-                layer1_node = {
-                    "label": layer1_name,
-                    "data": {
-                        "selection_type": "layer1-context",
-                        "domain": domain,
-                        "layer1": layer1_name,
-                    },
-                    "expand": True,
-                    "children": [],
-                }
-                for layer2_name in sorted(layer2_map.keys()):
-                    layer1_node["children"].append(
+            for domain_name, layer1_map in sorted(self.tree_data.items()):
+                layer1_children: List[Dict[str, Any]] = []
+                for layer1_name, layer2_map in sorted(layer1_map.items()):
+                    layer2_children = [
                         {
                             "label": layer2_name,
                             "data": {
                                 "selection_type": "layer2",
-                                "domain": domain,
+                                "domain": domain_name,
                                 "layer1": layer1_name,
                                 "layer2": layer2_name,
                             },
                         }
+                        for layer2_name in sorted(layer2_map.keys())
+                    ]
+
+                    layer1_children.append(
+                        {
+                            "label": layer1_name,
+                            "data": {
+                                "selection_type": "layer1-context",
+                                "domain": domain_name,
+                                "layer1": layer1_name,
+                            },
+                            "expand": domain_name == domain and layer1_name == node_data.get("layer1"),
+                            "children": layer2_children,
+                        }
                     )
-                choices.append(layer1_node)
+
+                choices.append(
+                    {
+                        "label": domain_name,
+                        "data": {
+                            "selection_type": "domain",
+                            "domain": domain_name,
+                        },
+                        "expand": domain_name == domain,
+                        "children": layer1_children,
+                    }
+                )
 
             current = (
                 {

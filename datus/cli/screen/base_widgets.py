@@ -4,7 +4,10 @@ from typing import Any, Dict, List, Optional
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Container
+from textual.events import Key
 from textual.message import Message
+from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Input, Label, Static, TextArea, Tree
 from textual.widgets._tree import TreeNode
@@ -21,6 +24,7 @@ class SelectableTree(Tree):
         Binding("enter", "toggle_or_select", "Choose", show=True),
         Binding("right", "toggle_node", "Toggle", show=True),
         Binding("left", "toggle_node", "Toggle", show=True),
+        Binding("ctrl+a", "add_node", "Add", show=True, priority=True),
     ]
 
     def __init__(self, *args, **kwargs):
@@ -28,11 +32,49 @@ class SelectableTree(Tree):
         self.selected_leaf = None  # Store the currently selected leaf node
 
     def is_leaf_node(self, node: TreeNode) -> bool:
-        """Determine whether it is a leaf node"""
-        return not node.children
+        """Determine whether it is a selectable leaf node"""
+        if node is None:
+            return False
+
+        # Branch nodes (allow_expand=True) are not leaves even if not populated yet
+        if getattr(node, "allow_expand", True):
+            return False
+
+        return self._get_node_level(node) == self._get_max_level()
+
+    def _get_node_level(self, node: TreeNode) -> int:
+        """Return the depth level of a node relative to the root"""
+        level = 0
+        current = node
+        while current is not None and current.parent is not None:
+            level += 1
+            current = current.parent
+        return level
+
+    def _get_max_level(self) -> int:
+        """Compute the deepest level currently present in the tree"""
+        max_level = 0
+        stack: list[tuple[TreeNode, int]] = [(self.root, 0)]
+        while stack:
+            current, level = stack.pop()
+            if level > max_level:
+                max_level = level
+            for child in current.children:
+                stack.append((child, level + 1))
+        return max_level
+
+    def _ensure_selected_leaf_valid(self) -> None:
+        """Remove selection marker if cached node is no longer selectable"""
+        if self.selected_leaf and not self.is_leaf_node(self.selected_leaf):
+            old_label = str(self.selected_leaf.label).replace("✓ ", "")
+            self.selected_leaf.set_label(old_label)
+            self.selected_leaf = None
 
     def action_toggle_or_select(self):
         # Only leaf nodes can be selected
+        if self.cursor_node is None:
+            return
+
         if not self.is_leaf_node(self.cursor_node):
             self.cursor_node.toggle()
             return
@@ -43,8 +85,13 @@ class SelectableTree(Tree):
         if self.cursor_node is None:
             return
 
+        # Ensure previous selection is still valid before proceeding
+        self._ensure_selected_leaf_valid()
+
         # Only leaf nodes can be selected
         if not self.is_leaf_node(self.cursor_node):
+            if self.app:
+                self.app.notify("Only deepest leaf nodes can be selected", severity="warning")
             return
 
         # Cancel the previously selected node
@@ -57,7 +104,8 @@ class SelectableTree(Tree):
         new_label = f"✓ {self.cursor_node.label}"
         self.cursor_node.set_label(new_label)
 
-        self.app.notify(f"Selected: {self.cursor_node.label}", severity="information")
+        if self.app:
+            self.app.notify(f"Selected: {self.cursor_node.label}", severity="information")
 
     def set_default_selection(self, node_path: list[str]) -> None:
         """Set the default selected node
@@ -97,6 +145,111 @@ class SelectableTree(Tree):
         while node and node != self.root:
             node.expand()
             node = node.parent
+
+    def action_add_node(self) -> None:
+        """Prompt for a node name and insert it under the current cursor node"""
+        target = self.cursor_node or self.root
+
+        if target is None:
+            return
+
+        if not getattr(target, "allow_expand", True):
+            if self.app:
+                self.app.notify("Cannot add children to a leaf node", severity="warning")
+            return
+
+        prompt = _NodeNamePrompt()
+
+        def _after_submit(result: Optional[str]) -> None:
+            if not result:
+                return
+            self._add_child_node(target, result)
+
+        if self.app:
+            self.app.push_screen(prompt, callback=_after_submit)
+
+    def _add_child_node(self, parent: TreeNode, label: str) -> None:
+        """Create a new child node under the given parent"""
+        clean_label = label.strip()
+        if not clean_label:
+            if self.app:
+                self.app.notify("Node name cannot be empty", severity="warning")
+            return
+
+        # Prevent duplicate names under the same parent
+        for child in parent.children:
+            if str(child.label) == clean_label:
+                if self.app:
+                    self.app.notify("A node with this name already exists", severity="warning")
+                self.move_cursor(child)
+                return
+
+        max_level = self._get_max_level()
+        parent_level = self._get_node_level(parent)
+        new_level = parent_level + 1
+        is_new_leaf = new_level >= max_level
+
+        if is_new_leaf:
+            new_node = parent.add_leaf(clean_label)
+        else:
+            new_node = parent.add(clean_label, expand=False)
+
+        parent.expand()
+        self.move_cursor(new_node)
+        self._on_node_added(parent, new_node, is_new_leaf)
+        self._ensure_selected_leaf_valid()
+        if self.app:
+            self.app.notify(f"Added node: {clean_label}", severity="information")
+        self.refresh(layout=True)
+
+    def _on_node_added(self, parent: TreeNode, new_node: TreeNode, is_leaf: bool) -> None:
+        """Hook for subclasses to react to dynamically added nodes"""
+        # Default implementation does nothing. Subclasses can override.
+        return
+
+
+class _NodeNamePrompt(ModalScreen[Optional[str]]):
+    """Simple modal prompt that asks user for a node name"""
+
+    DEFAULT_CSS = """
+    _NodeNamePrompt {
+        align: center middle;
+    }
+    _NodeNamePrompt Container {
+        width: 60%;
+        max-width: 60;
+        border: round $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    _NodeNamePrompt Label {
+        padding-bottom: 1;
+    }
+    _NodeNamePrompt Input {
+        width: 100%;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("Please enter the node name")
+            yield Input(placeholder="After entering, press Enter to confirm", id="node-name-input")
+
+    def on_mount(self) -> None:
+        input_widget = self.query_one("#node-name-input", Input)
+        self.call_after_refresh(input_widget.focus)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        value = event.value.strip()
+        if not value:
+            if self.app:
+                self.app.notify("Node name cannot be empty", severity="warning")
+            return
+        self.dismiss(value)
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
 
 
 class InputWithLabel(Widget):
@@ -341,9 +494,11 @@ class ParentSelectionTree(SelectableTree):
         for child in children:
             label = child.get("label", "")
             data = child.get("data", {})
+            children_payload = child.get("children")
+            force_branch = child.get("force_branch", False)
 
             # Check if this node has children to determine if it should be a branch or leaf
-            has_children = bool(child.get("children"))
+            has_children = bool(children_payload) or force_branch
 
             if has_children:
                 node = parent.add(label, data=data)
@@ -353,8 +508,8 @@ class ParentSelectionTree(SelectableTree):
             if child.get("expand", False):
                 node.expand()
 
-            if has_children:
-                self._populate(node, child.get("children", []))
+            if children_payload:
+                self._populate(node, children_payload)
 
     def _focus_current_selection(self) -> None:
         """Focus on the currently selected node"""
@@ -407,13 +562,15 @@ class ParentSelectionTree(SelectableTree):
 
         # Check if it's a leaf node
         if not self.is_leaf_node(self.cursor_node):
-            self.app.notify("Only leaf nodes can be selected!", severity="warning")
+            if self.app:
+                self.app.notify("Only leaf nodes can be selected!", severity="warning")
             return
 
         # Check if the selection_type matches allowed_type
         data = self.cursor_node.data or {}
         if data.get("selection_type") != self.allowed_type:
-            self.app.notify(f"Only nodes of type '{self.allowed_type}' can be selected!", severity="warning")
+            if self.app:
+                self.app.notify(f"Only nodes of type '{self.allowed_type}' can be selected!", severity="warning")
             return
 
         # Cancel the previously selected node
@@ -431,7 +588,8 @@ class ParentSelectionTree(SelectableTree):
         """Handle tree node selection event (for mouse clicks)"""
         data = event.node.data or {}
         if data.get("selection_type") != self.allowed_type:
-            self.app.notify(f"Only nodes of type '{self.allowed_type}' can be selected!", severity="warning")
+            if self.app:
+                self.app.notify(f"Only nodes of type '{self.allowed_type}' can be selected!", severity="warning")
             return
 
         if not self.is_leaf_node(event.node):
@@ -440,3 +598,94 @@ class ParentSelectionTree(SelectableTree):
         # Trigger the selection action
         self.focus(event.node)
         self.action_select_node()
+
+    def _on_node_added(self, parent: TreeNode, new_node: TreeNode, is_leaf: bool) -> None:
+        if not hasattr(self, "nodes"):
+            return
+
+        label = str(new_node.label)
+        level = self._get_node_level(new_node)
+        context = self._collect_context(parent)
+
+        if level == 1:
+            new_data = {"selection_type": "domain", "domain": label}
+        elif level == 2:
+            domain_name = context.get("domain") or str(parent.label)
+            selection_type = "layer1" if self.allowed_type == "layer1" else "layer1-context"
+            new_data = {
+                "selection_type": selection_type,
+                "domain": domain_name,
+                "layer1": label,
+            }
+        else:
+            domain_name = context.get("domain")
+            layer1_name = context.get("layer1") or str(parent.label)
+            new_data = {
+                "selection_type": "layer2",
+                "domain": domain_name,
+                "layer1": layer1_name,
+                "layer2": label,
+            }
+
+        new_node.data = new_data
+        self._upsert_node_metadata(parent, label, new_data, is_leaf)
+
+    def _collect_context(self, node: TreeNode) -> Dict[str, Any]:
+        context: Dict[str, Any] = {}
+        current = node
+        while current and current is not self.root:
+            data = current.data or {}
+            if "domain" in data and "domain" not in context:
+                context["domain"] = data["domain"]
+            if "layer1" in data and "layer1" not in context:
+                context["layer1"] = data["layer1"]
+            current = current.parent
+        return context
+
+    def _label_path(self, node: TreeNode) -> List[str]:
+        path: List[str] = []
+        current = node
+        while current and current is not self.root:
+            path.append(str(current.label))
+            current = current.parent
+        path.reverse()
+        return path
+
+    def _upsert_node_metadata(
+        self,
+        parent: TreeNode,
+        label: str,
+        data: Dict[str, Any],
+        is_leaf: bool,
+    ) -> None:
+        path = self._label_path(parent)
+        bucket = self.nodes
+
+        for ancestor_label in path:
+            entry = next((child for child in bucket if child.get("label") == ancestor_label), None)
+            if entry is None:
+                entry = {"label": ancestor_label, "data": {}, "children": []}
+                bucket.append(entry)
+            bucket = entry.setdefault("children", [])
+
+        existing = next((child for child in bucket if child.get("label") == label), None)
+        entry_payload: Dict[str, Any] = {"label": label, "data": data}
+
+        if not is_leaf:
+            entry_payload["children"] = existing.get("children", []) if existing else []
+            entry_payload["force_branch"] = True
+        elif existing:
+            entry_payload.update({k: existing[k] for k in ("children",) if k in existing})
+
+        if existing:
+            existing.update(entry_payload)
+            if is_leaf:
+                existing.pop("children", None)
+                existing.pop("force_branch", None)
+        else:
+            if is_leaf:
+                entry_payload.pop("force_branch", None)
+            else:
+                entry_payload.setdefault("children", [])
+            bucket.append(entry_payload)
+            bucket.sort(key=lambda item: str(item.get("label")))
