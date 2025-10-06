@@ -457,15 +457,31 @@ class DatusCLI:
         else:
             display_columns = all_columns_list
 
+        # Calculate dynamic column width based on number of columns
+        # With folding enabled, we can use narrower columns and fit more on screen
+        num_display_columns = len([col for col in display_columns if col != "..."])
+        if num_display_columns <= 2:
+            # For 1-2 columns, use moderate width (content will fold if needed)
+            dynamic_column_width = max(25, self.console.width // max(2, num_display_columns) - 4)
+        elif num_display_columns <= 4:
+            # For 3-4 columns, use compact width
+            dynamic_column_width = max(20, self.console.width // num_display_columns - 3)
+        elif num_display_columns <= 8:
+            # For 5-8 columns, use narrow width (content will fold if needed)
+            dynamic_column_width = max(18, self.console.width // num_display_columns - 2)
+        else:
+            # For many columns, use the default compact width
+            dynamic_column_width = self.console_column_width
+
         table = Table(show_header=True, header_style="bold green")
 
-        # Add columns with width constraints
+        # Add columns with width constraints and folding for overflow
         for col in display_columns:
             if col == "...":
                 table.add_column(col, width=5, justify="center")
             else:
-                # Calculate optimal column width based on terminal width
-                table.add_column(col, width=self.console_column_width)
+                # Use dynamic column width with folding enabled for long content
+                table.add_column(col, width=dynamic_column_width, overflow="fold", no_wrap=False)
 
         # Add rows with truncated content
         for row in data:
