@@ -6,7 +6,7 @@ import pyarrow as pa
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
-from datus.storage.lancedb_conditions import And, and_, build_where, eq, in_, like
+from datus.storage.lancedb_conditions import And, build_where, eq, in_, like
 
 logger = logging.getLogger(__file__)
 
@@ -230,20 +230,15 @@ class SemanticMetricsRAG:
         if not semantic_names:
             logger.info("Semantic search returned no model names; skipping metric search")
             return []
+        conditions = [in_("semantic_model_name", semantic_names)]
+        if domain:
+            conditions.append(eq("domain", domain))
+        if layer1:
+            conditions.append(eq("layer1", layer1))
+        if layer2:
+            conditions.append(eq("layer2", layer2))
 
-        metric_full_name: str = qualify_name(
-            [
-                domain,
-                layer1,
-                layer2,
-            ],
-        )
-        metric_condition = (
-            like("domain_layer1_layer2", metric_full_name)
-            if "%" in metric_full_name
-            else eq("domain_layer1_layer2", metric_full_name)
-        )
-        metric_condition = and_(metric_condition, in_("semantic_model_name", semantic_names))
+        metric_condition = And(conditions)
         metric_where_clause = build_where(metric_condition)
         logger.info(f"start to search metrics, metric_where: {metric_where_clause}, query_text: {query_text}")
         metric_search_results = self.metric_storage.search(
@@ -340,6 +335,12 @@ class SemanticMetricsRAG:
                 where_conditions.append(eq(k, old_values[k]))
 
         where = And(where_conditions)
+        update_payload = dict(update_values)
+        domain_value = update_payload.get("domain", old_values.get("domain"))
+        layer1_value = update_payload.get("layer1", old_values.get("layer1"))
+        layer2_value = update_payload.get("layer2", old_values.get("layer2"))
+        if domain_value and layer1_value and layer2_value:
+            update_payload["domain_layer1_layer2"] = qualify_name([domain_value, layer1_value, layer2_value])
         self.metric_storage.update(where, update_values, unique_filter=unique_filter)
 
     def update_semantic_model(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):

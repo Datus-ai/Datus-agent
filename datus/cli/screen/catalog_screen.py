@@ -620,7 +620,10 @@ class CatalogScreen(ContextScreen):
                 has_change = True
                 break
         if not has_change:
-            pass
+            panel.set_readonly(True)
+            self._reset_to_readonly()
+            self.app.notify("No changes detected.", severity="warning")
+            return
         self.metrics_rag.update_semantic_model(old_values, new_values)
         panel.set_readonly(True)
         panel.update_data(new_values)
