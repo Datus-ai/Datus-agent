@@ -55,7 +55,14 @@ class GenSQLAgenticNode(AgenticNode):
         self.configured_node_name = node_name
         self.max_turns = max_turns
 
-        # Call parent constructor first to set up node_config
+        # Initialize tool attributes BEFORE calling parent constructor
+        # This is required because parent's __init__ calls _get_system_prompt()
+        # which may reference these attributes
+        self.db_func_tool: Optional[DBFuncTool] = None
+        self.context_search_tools: Optional[ContextSearchTools] = None
+        self.date_parsing_tools: Optional[DateParsingTools] = None
+
+        # Call parent constructor to set up node_config
         super().__init__(
             tools=[],
             mcp_servers={},  # Initialize empty, will setup after parent init
@@ -71,9 +78,6 @@ class GenSQLAgenticNode(AgenticNode):
         )
 
         # Setup tools based on configuration
-        self.db_func_tool: Optional[DBFuncTool] = None
-        self.context_search_tools: Optional[ContextSearchTools] = None
-        self.date_parsing_tools: Optional[DateParsingTools] = None
         self.setup_tools()
 
     def get_node_name(self) -> str:

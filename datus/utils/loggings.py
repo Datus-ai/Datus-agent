@@ -15,12 +15,40 @@ fileno = False
 _log_manager = None
 
 
+def _is_source_environment() -> bool:
+    """Check if running from source code directory (development mode).
+
+    Returns:
+        True if running from source directory, False if packaged/installed
+    """
+    try:
+        # Get the directory where this module is located
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # Navigate up to project root (from datus/utils/ to project root)
+        project_root = os.path.dirname(os.path.dirname(current_dir))
+
+        # Check for source code markers: pyproject.toml and datus/ directory
+        has_pyproject = os.path.exists(os.path.join(project_root, "pyproject.toml"))
+        has_datus_dir = os.path.exists(os.path.join(project_root, "datus"))
+
+        return has_pyproject and has_datus_dir
+    except Exception:
+        return False
+
+
 class DynamicLogManager:
     """Dynamic log manager that supports switching log output targets at runtime"""
 
-    def __init__(self, debug=False, log_dir="~/.datus/logs"):
+    def __init__(self, debug=False, log_dir=None):
         self.debug = debug
-        self.log_dir = os.path.expanduser(log_dir)
+        # Auto-detect log directory if not specified
+        if log_dir is None:
+            if _is_source_environment():
+                log_dir = "./logs"
+            else:
+                log_dir = "~/.datus/logs"
+        # Expand user directory and convert to absolute path
+        self.log_dir = os.path.abspath(os.path.expanduser(log_dir))
         self.root_logger = logging.getLogger()
         self.file_handler = None
         self.console_handler = None
@@ -120,19 +148,28 @@ def get_log_manager() -> DynamicLogManager:
     return _log_manager
 
 
-def configure_logging(debug=False, log_dir="~/.datus/logs", console_output=True) -> DynamicLogManager:
+def configure_logging(debug=False, log_dir=None, console_output=True) -> DynamicLogManager:
     """Configure logging with the specified debug level.
     Args:
         debug: If True, set log level to DEBUG
-        log_dir: Directory for log files
+        log_dir: Directory for log files. If None, automatically determine:
+                 - "./logs" for source code environment
+                 - "~/.datus/logs" for packaged installation
         console_output: If False, disable logging to console
     """
     global fileno
     fileno = debug
 
+    # Auto-detect log directory if not specified
+    if log_dir is None:
+        if _is_source_environment():
+            log_dir = "./logs"
+        else:
+            log_dir = "~/.datus/logs"
+
     # Create or get log manager with specified parameters
     global _log_manager
-    _log_manager = DynamicLogManager(debug=debug, log_dir=os.path.expanduser(log_dir))
+    _log_manager = DynamicLogManager(debug=debug, log_dir=log_dir)
 
     # Set output target based on console_output parameter
     if console_output:
@@ -168,18 +205,27 @@ def get_logger(name: str) -> structlog.BoundLogger:
     return structlog.get_logger(name)
 
 
-def setup_web_chatbot_logging(debug=False, log_dir="~/.datus/logs"):
+def setup_web_chatbot_logging(debug=False, log_dir=None):
     """Setup simplified logging for web chatbot using same format as agent.log
 
     Args:
         debug: Enable debug logging
-        log_dir: Directory for log files
+        log_dir: Directory for log files. If None, automatically determine:
+                 - "./logs" for source code environment
+                 - "~/.datus/logs" for packaged installation
 
     Returns:
         structlog.BoundLogger: Configured logger for web chatbot
     """
-    # Create log directory if it doesn't exist
-    log_dir = os.path.expanduser(log_dir)
+    # Auto-detect log directory if not specified
+    if log_dir is None:
+        if _is_source_environment():
+            log_dir = "./logs"
+        else:
+            log_dir = "~/.datus/logs"
+
+    # Expand user directory and convert to absolute path
+    log_dir = os.path.abspath(os.path.expanduser(log_dir))
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
