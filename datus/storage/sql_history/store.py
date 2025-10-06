@@ -259,6 +259,31 @@ class SqlHistoryRAG:
             ["name", "summary", "comment", "tags", "sql"],
         ).to_pylist()
 
+    def update(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):
+        """
+        Currently, only two update scenarios are supported:
+            - Update domain, layer 1, layer 2, and name
+            - Update detail fields
+        """
+        if "name" in update_values:
+            unique_filter = And(
+                [
+                    eq("domain", update_values["domain"]),
+                    eq("layer1", update_values["layer1"]),
+                    eq("layer2", update_values["layer2"]),
+                    eq("name", update_values["name"]),
+                ]
+            )
+        else:
+            unique_filter = None
+        where_conditions = []
+        for k in ("domain", "layer1", "layer2", "name"):
+            if k in old_values:
+                where_conditions.append(eq(k, old_values[k]))
+
+        where = And(where_conditions)
+        self.sql_history_storage.update(where, update_values, unique_filter=unique_filter)
+
 
 def sql_history_rag_by_configuration(agent_config: AgentConfig):
     """Create SqlHistoryRAG instance from agent configuration."""

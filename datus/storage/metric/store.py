@@ -6,7 +6,7 @@ import pyarrow as pa
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
-from datus.storage.lancedb_conditions import And, WhereExpr, and_, build_where, eq, in_, like
+from datus.storage.lancedb_conditions import And, and_, build_where, eq, in_, like
 
 logger = logging.getLogger(__file__)
 
@@ -279,7 +279,17 @@ class SemanticMetricsRAG:
         )
 
         search_result = self.metric_storage._search_all(
-            where=metric_condition, select_fields=["name", "description", "constraint", "sql_query"]
+            where=metric_condition,
+            select_fields=[
+                "domain",
+                "layer1",
+                "layer2",
+                "name",
+                "semantic_model_name",
+                "description",
+                "constraint",
+                "sql_query",
+            ],
         )
         return search_result.to_pylist()
 
@@ -307,10 +317,51 @@ class SemanticMetricsRAG:
                 return query_result.remove_column(columns.index("_distance")).to_pylist()
             return query_result.to_pylist()
 
-    def update_metrics(
-        self, where: WhereExpr, update_values: Dict[str, Any], unique_filter: Optional[WhereExpr] = None
-    ):
+    def update_metrics(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):
+        """
+        Currently, only two update scenarios are supported:
+            - Update domain, layer 1, layer 2, and name
+            - Update detail fields
+        """
+        if "name" in update_values:
+            unique_filter = And(
+                [
+                    eq("domain", update_values["domain"]),
+                    eq("layer1", update_values["layer1"]),
+                    eq("layer2", update_values["layer2"]),
+                    eq("name", update_values["name"]),
+                ]
+            )
+        else:
+            unique_filter = None
+        where_conditions = []
+        for k in ("domain", "layer1", "layer2", "name"):
+            if k in old_values:
+                where_conditions.append(eq(k, old_values[k]))
+
+        where = And(where_conditions)
         self.metric_storage.update(where, update_values, unique_filter=unique_filter)
+
+    def update_semantic_model(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):
+        unique_filter = And(
+            [
+                eq("catalog_name", update_values.get("catalog_name") or old_values["catalog_name"]),
+                eq("database_name", update_values.get("database_name") or old_values["database_name"]),
+                eq("schema_name", update_values.get("schema_name") or old_values["schema_name"]),
+                eq("table_name", update_values.get("table_name") or old_values["table_name"]),
+                eq("semantic_model_name", update_values["semantic_model_name"]),
+            ]
+        )
+        where = And(
+            [
+                eq("catalog_name", old_values["catalog_name"]),
+                eq("database_name", old_values["database_name"]),
+                eq("schema_name", old_values["schema_name"]),
+                eq("table_name", old_values["table_name"]),
+                eq("semantic_model_name", old_values["semantic_model_name"]),
+            ]
+        )
+        self.semantic_model_storage.update(where, update_values, unique_filter=unique_filter)
 
 
 def rag_by_configuration(agent_config: AgentConfig):

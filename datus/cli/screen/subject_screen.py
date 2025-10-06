@@ -19,7 +19,6 @@ from textual.worker import get_current_worker
 from datus.cli.screen.base_widgets import EditableTree, FocusableStatic, InputWithLabel, ParentSelectionTree
 from datus.cli.screen.context_screen import ContextScreen
 from datus.cli.subject_rich_utils import build_historical_sql_tags
-from datus.storage.lancedb_conditions import And, eq
 from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.sql_history import SqlHistoryRAG
 from datus.utils.loggings import get_logger
@@ -185,10 +184,20 @@ class MetricsPanel(Vertical):
     def compose(self) -> ComposeResult:
         metric_name = self.entry.get("name", "Unnamed Metric")
         yield Label(f"📊 [bold cyan]Metric: {metric_name}[/]")
+        semantic_model_field = InputWithLabel(
+            "Semantic Model Name",
+            self.entry.get("semantic_model_name", ""),
+            lines=1,
+            readonly=self.readonly,
+            language="markdown",
+        )
+        self.fields.append(semantic_model_field)
+        yield semantic_model_field
+
         description_field = InputWithLabel(
             "Description",
             self.entry.get("description", ""),
-            lines=3,
+            lines=2,
             readonly=self.readonly,
             language="markdown",
         )
@@ -197,7 +206,7 @@ class MetricsPanel(Vertical):
         constraint_field = InputWithLabel(
             "Constraint",
             self.entry.get("constraint", ""),
-            lines=3,
+            lines=2,
             readonly=self.readonly,
         )
         self.fields.append(constraint_field)
@@ -205,7 +214,7 @@ class MetricsPanel(Vertical):
         sql_field = InputWithLabel(
             "SQL",
             self.entry.get("sql_query", ""),
-            lines=3,
+            lines=2,
             readonly=self.readonly,
             language="sql",
         )
@@ -213,9 +222,10 @@ class MetricsPanel(Vertical):
         yield sql_field
 
     def _fill_data(self):
-        self.fields[0].set_value(self.entry.get("description", ""))
-        self.fields[1].set_value(self.entry.get("constraint", ""))
-        self.fields[2].set_value(self.entry.get("sql_query", ""))
+        self.fields[0].set_value(self.entry.get("semantic_model_field", ""))
+        self.fields[1].set_value(self.entry.get("description", ""))
+        self.fields[2].set_value(self.entry.get("constraint", ""))
+        self.fields[3].set_value(self.entry.get("sql_query", ""))
 
     def set_readonly(self, readonly: bool) -> None:
         """
@@ -248,6 +258,8 @@ class MetricsPanel(Vertical):
             # The SQL field in metrics maps to ``sql_query`` in storage.
             if key == "sql":
                 key = "sql_query"
+            if key == "semantic model name":
+                key = "semantic_model_name"
             values[key] = field.get_value()
         return values
 
@@ -283,19 +295,19 @@ class SqlHistoryPanel(Vertical):
         sql_name = self.entry.get("name", "Unnamed")
         yield Label(f"📝 [bold cyan]SQL: {sql_name}[/]")
         summary_field = InputWithLabel(
-            "Summary", self.entry.get("summary", ""), lines=3, readonly=self.readonly, language="markdown"
+            "Summary", self.entry.get("summary", ""), lines=2, readonly=self.readonly, language="markdown"
         )
         self.fields.append(summary_field)
         yield summary_field
         comment_field = InputWithLabel(
-            "Comment", self.entry.get("comment", ""), lines=3, readonly=self.readonly, language="markdown"
+            "Comment", self.entry.get("comment", ""), lines=2, readonly=self.readonly, language="markdown"
         )
         self.fields.append(comment_field)
         yield comment_field
         tags_field = InputWithLabel(
             "Tags",
             self.entry.get("tags", ""),
-            lines=3,
+            lines=2,
             readonly=self.readonly,
         )
         self.fields.append(tags_field)
@@ -421,28 +433,6 @@ class SubjectScreen(ContextScreen):
             color: $primary-lighten-2;
         }
 
-        /* Highlight the metrics panel when focused or any child is focused */
-        .metrics-panel:focus,
-        .metrics-panel:focus-within {
-            background: $foreground 10%;
-            color: $text;
-            # margin: 0 0;
-            # padding: 0 0;
-        }
-        /* Highlight the SQL history panel when focused or any child is focused */
-        .sql-history-panel:focus,
-        .sql-history-panel:focus-within {
-            background: $foreground 10%;
-            color: $text;
-            margin: 0 0;
-            padding: 0 0;
-        }
-        FocusableStatic:focus,
-        FocusableStatic:focus-within {
-            background: $foreground 10%;
-            color: $text;
-        }
-
         #metrics-panel-container,
         #sql-panel-container {
             width: 100%;
@@ -540,15 +530,15 @@ class SubjectScreen(ContextScreen):
 
             with Vertical(id="details-container", classes="details-panel"):
                 yield ScrollableContainer(
-                    FocusableStatic("Select a node to view metrics", id="metrics-panel"),
+                    Static("Select a node to view metrics", id="metrics-panel"),
                     id="metrics-panel-container",
-                    can_focus=True,
+                    can_focus=False,
                 )
-                yield FocusableStatic(id="panel-divider", classes="hidden")
+                yield Static(id="panel-divider", classes="hidden")
                 yield ScrollableContainer(
                     Label("Select a node to view SQL history", id="sql-panel"),
                     id="sql-panel-container",
-                    can_focus=True,
+                    can_focus=False,
                 )
 
         yield Footer()
@@ -825,19 +815,11 @@ class SubjectScreen(ContextScreen):
 
         if modified:
             panel.update_data(data)
-            where = And(
-                [
-                    eq("domain", self.selected_data["domain"]),
-                    eq("layer1", self.selected_data["layer1"]),
-                    eq("layer2", self.selected_data["layer2"]),
-                    eq("name", self.selected_data["name"]),
-                ]
-            )
             if component == "sql":
-                self.sql_rag.sql_history_storage.update(where, data)
+                self.sql_rag.update(self.selected_data, data)
                 _sql_details_cache.cache_clear()
             elif component == "metrics":
-                self.metrics_rag.update_metrics(where, data)
+                self.metrics_rag.update_metrics(self.selected_data, data)
                 _fetch_metrics_with_cache.cache_clear()
         else:
             self.app.notify(f"No changes detected in {component}.", severity="warning")
@@ -911,13 +893,9 @@ class SubjectScreen(ContextScreen):
         for child in list(sql_container.children):
             child.remove()
 
-        # Ensure highlight classes live on the containers (works with :focus-within)
-        metrics_container.add_class("metrics-panel")
-        sql_container.add_class("sql-history-panel")
-
         if metrics:
-            group = self._create_metrics_panel_content(metrics, subject_info.get("layer2", ""))
-            metrics_container.mount(FocusableStatic(group))
+            name = self._create_metrics_panel_content(metrics, subject_info.get("name", ""))
+            metrics_container.mount(FocusableStatic(name))
             self._toggle_visibility(metrics_container, True)
         else:
             metrics_container.mount(Static("[dim]No metrics for this item[/dim]"))
@@ -941,10 +919,6 @@ class SubjectScreen(ContextScreen):
             child.remove()
         for child in list(sql_container.children):
             child.remove()
-
-        # Ensure highlight classes live on the containers
-        metrics_container.add_class("metrics-panel")
-        sql_container.add_class("sql-history-panel")
 
         if metrics:
             metrics_panel = MetricsPanel(metrics[0], readonly=False)
@@ -1152,32 +1126,18 @@ class SubjectScreen(ContextScreen):
                 new_path["domain"] = parent_value.get("domain", new_path.get("domain", ""))
                 new_path["layer1"] = parent_value.get("layer1", new_path.get("layer1", ""))
                 new_path["layer2"] = parent_value.get("layer2", new_path.get("layer2", ""))
-
         if node_type == "subject_entry":
             if old_path == new_path:
                 self.app.notify("No changes")
                 return
-            where = [eq(k, v) for k, v in old_path.items()]
-            destination_filter = And(
-                [
-                    eq("domain", new_path["domain"]),
-                    eq("layer1", new_path["layer1"]),
-                    eq("layer2", new_path["layer2"]),
-                    eq("name", new_path["name"]),
-                ]
-            )
-            self.metrics_rag.update_metrics(where=And(where), update_values=new_path, unique_filter=destination_filter)
-            self.sql_rag.sql_history_storage.update(
-                where=And(where), update_values=new_path, unique_filter=destination_filter
-            )
-            self._show_subject_details(new_path)
         else:
             if old_path[node_type] == new_path[node_type]:
                 self.app.notify("No changes")
                 return
-            where = [eq(k, v) for k, v in old_path.items()]
-            self.metrics_rag.update_metrics(where=And(where), update_values=new_path)
-            self.sql_rag.sql_history_storage.update(where=And(where), update_values=new_path)
+        self.metrics_rag.update_metrics(old_path, update_values=new_path)
+        self.sql_rag.update(old_path, update_values=new_path)
+        self._show_subject_details(new_path)
+
         moved_payload = self._apply_tree_edit(node_type, old_path, new_path)
         if moved_payload is None:
             self.app.notify("Failed to update tree data", severity="error")
@@ -1358,13 +1318,14 @@ class SubjectScreen(ContextScreen):
         else:
             widget.add_class("hidden")
 
-    def _create_metrics_panel_content(self, metrics: List[Dict[str, Any]], group_name: str) -> Group:
+    def _create_metrics_panel_content(self, metrics: List[Dict[str, Any]], metrics_name: str) -> Group:
         sections: List[Table] = []
         for idx, metric in enumerate(metrics, 1):
             if not isinstance(metric, dict):
                 continue
 
-            metric_name = str(metric.get("name", "Unnamed Metric"))
+            metric_name = str(metric.get("name", ""))
+            semantic_model_name = str(metric.get("semantic_model_name", ""))
             description = str(metric.get("description", ""))
             constraint = str(metric.get("constraint", ""))
             sql_query = str(metric.get("sql_query", ""))
@@ -1377,11 +1338,13 @@ class SubjectScreen(ContextScreen):
                 expand=True,
                 padding=(0, 1),
             )
-            table.add_column("Key", style="bright_cyan", width=16)
+            table.add_column("Key", style="bright_cyan", width=20)
             table.add_column("Value", style="yellow", ratio=1)
 
-            if group_name:
-                table.add_row("Group", group_name)
+            if metrics_name:
+                table.add_row("Name", metrics_name)
+            if semantic_model_name:
+                table.add_row("Semantic Model Name", semantic_model_name)
             if description:
                 table.add_row("Description", description)
             if constraint:
@@ -1572,7 +1535,7 @@ class NavigationHelpScreen(ModalScreen):
                 "• F5 - Select and exit\n"
                 "• Ctrl+e - Enter edit mode\n"
                 "• Ctrl+w - Save and exit edit mode\n"
-                "• Esc - Exit without selection\n\n"
+                "• Esc - Exit editing mode or application\n\n"
                 "Press any key to close this help.",
                 id="navigation-help-content",
             ),

@@ -262,13 +262,12 @@ class InputWithLabel(Widget):
     InputWithLabel {
         layout: horizontal;
         min-height: 4;
-        max-height: 20%;
-        align: center middle;
+        height: auto;
+        # align: center ;
     }
     InputWithLabel Label {
         padding: 1;
-        min-width: 12;
-        max-width: 20;
+        width: 10%;
         text-align: right;
     }
     InputWithLabel TextArea {
@@ -318,24 +317,18 @@ class InputWithLabel(Widget):
     def compose(self) -> ComposeResult:
         label_widget = Label(Text(f"{self.label_text}:", style=self.label_color))
         yield label_widget
-        if self.lines <= 1:
-            input_widget = Input(value=self.original_value)
-            input_widget.disabled = self.readonly
-            input_widget.styles.margin = 0
-            self.input_widget = input_widget
-            yield input_widget
-        else:
-            text_area = TextArea(
-                text=self.original_value,
-                language=self.language,
-                show_line_numbers=False,
-                compact=True,
-                read_only=self.readonly,
-            )
-            text_area.styles.margin = 0
-            text_area.styles.height = self.lines * 2
-            self.input_widget = text_area
-            yield text_area
+
+        text_area = TextArea(
+            text=self.original_value,
+            language=self.language,
+            show_line_numbers=False,
+            compact=True,
+            read_only=self.readonly,
+        )
+        text_area.styles.margin = 0
+        text_area.styles.height = self.lines * 2
+        self.input_widget = text_area
+        yield text_area
 
     def set_readonly(self, readonly: bool) -> None:
         """
@@ -380,13 +373,13 @@ class InputWithLabel(Widget):
             event.input.cursor_position = min(self._last_cursor_location, len(self._last_valid))
         event.stop()
 
-    async def on_textarea_changed(self, event: TextArea.Changed) -> None:
+    async def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """
         Handle changes to the multi‑line TextArea. Works similarly to the Input handler.
         """
         if event.text_area is not self.input_widget or not self.regex:
             return
-
+        last_cursor = event.text_area.cursor_location
         current_text = event.text_area.text
         current_cursor = event.text_area.cursor_location
         if self.regex.fullmatch(current_text) or current_text == "":
@@ -395,7 +388,7 @@ class InputWithLabel(Widget):
         else:
             event.text_area.text = self._last_valid
             if hasattr(event.text_area, "cursor_location"):
-                event.text_area.cursor_location = min(self._last_cursor_location, len(self._last_valid))
+                event.text_area.cursor_location = last_cursor or (0, 0)
         event.stop()
 
     def restore(self) -> None:
@@ -436,6 +429,13 @@ class InputWithLabel(Widget):
 
 class FocusableStatic(Static):
     can_focus = True
+    DEFAULT_CSS = """
+    FocusableStatic:focus,
+    FocusableStatic:focus-within {
+        background: $foreground 10%;
+        color: $text;
+    }
+    """
 
 
 class EditableTree(Tree):
