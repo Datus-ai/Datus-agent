@@ -246,7 +246,6 @@ class GenerateMetricsNode(Node):
             # Check and generate semantic models if needed
             db_type = self.input.sql_task.database_type
             sql_query = quote_hyphenated_identifiers(self.input.sql_query, db_type)
-
             table_names = extract_table_names(sql_query, self.input.sql_task.database_type)
             logger.info(f"Extracted table names from SQL: {table_names}")
 
@@ -318,7 +317,9 @@ class GenerateMetricsNode(Node):
 
         try:
             # Check and generate semantic models if needed
-            table_names = extract_table_names(self.input.sql_query, self.input.sql_task.database_type)
+            db_type = self.input.sql_task.database_type
+            sql_query = quote_hyphenated_identifiers(self.input.sql_query, db_type)
+            table_names = extract_table_names(sql_query, self.input.sql_task.database_type)
             logger.info(f"Extracted table names from SQL: {table_names}")
 
             if table_names:
