@@ -15,13 +15,16 @@ from datus.schemas.node_models import HistoricalSql, Metric, TableSchema
 
 class ChatNodeInput(BaseInput):
     """
-    Input model for ChatAgenticNode interactions.
+    Input model for CliChatAgenticNode interactions.
     """
 
     user_message: str = Field(..., description="User's chat message input")
     catalog: Optional[str] = Field(default=None, description="Database catalog for context")
     database: Optional[str] = Field(default=None, description="Database name for context")
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")
+    domain: Optional[str] = Field(default=None, description="Business domain for semantic context")
+    layer1: Optional[str] = Field(default=None, description="Semantic layer 1 for context")
+    layer2: Optional[str] = Field(default=None, description="Semantic layer 2 for context")
     max_turns: int = Field(default=30, description="Maximum conversation turns per interaction")
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
     prompt_version: str = Field(default="1.0", description="Version for prompt")

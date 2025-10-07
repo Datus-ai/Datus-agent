@@ -197,147 +197,30 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup {tool_type}.{method_name}: {e}")
 
-    def _setup_filesystem_mcp(self) -> Optional[MCPServerStdio]:
-        """Setup filesystem MCP server."""
-        try:
-            root_path = self._resolve_workspace_root()
-            # Handle relative vs absolute paths
-            if root_path and os.path.isabs(root_path):
-                filesystem_path = root_path
-            else:
-                filesystem_path = os.path.join(os.getcwd(), root_path)
-
-            filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
-            if filesystem_server:
-                logger.info(f"Added filesystem MCP server at path: {filesystem_path}")
-                return filesystem_server
-            else:
-                logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
-        except Exception as e:
-            logger.error(f"Failed to setup filesystem MCP server: {e}")
-        return None
-
-    def _resolve_workspace_root(self) -> str:
-        """
-        Resolve workspace_root with priority: node-specific > global storage > legacy > default.
-
-        Returns:
-            Resolved workspace_root path
-        """
-        # Priority: node-specific workspace_root > global storage.workspace_root > legacy > default "."
-        node_workspace_root = self.node_config.get("workspace_root")
-        if node_workspace_root:
-            logger.debug(f"Using node-specific workspace_root: {node_workspace_root}")
-            return node_workspace_root
-
-        if (
-            self.agent_config
-            and hasattr(self.agent_config, "storage")
-            and hasattr(self.agent_config.storage, "workspace_root")
-        ):
-            global_workspace_root = self.agent_config.storage.workspace_root
-            if global_workspace_root:
-                logger.debug(f"Using global workspace_root: {global_workspace_root}")
-                return global_workspace_root
-
-        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
-            # Fallback to old workspace_root location
-            workspace_root = self.agent_config.workspace_root
-            if workspace_root is not None:
-                logger.debug(f"Using legacy workspace_root: {workspace_root}")
-                return workspace_root
-
-        logger.debug("Using default workspace_root: .")
-        return "."
-
-    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
-        """Setup MCP server from conf/.mcp.json using mcp_manager."""
-        try:
-            from datus.tools.mcp_tools.mcp_manager import MCPManager
-
-            # Use MCPManager to get server config
-            mcp_manager = MCPManager()
-            server_config = mcp_manager.get_server_config(server_name)
-
-            if not server_config:
-                logger.warning(f"MCP server '{server_name}' not found in configuration")
-                return None
-
-            # Create server instance using the manager
-            server_instance, details = mcp_manager._create_server_instance(server_config)
-
-            if server_instance:
-                logger.info(f"Added MCP server '{server_name}' from configuration: {details}")
-                return server_instance
-            else:
-                error_msg = details.get("error", "Unknown error")
-                logger.warning(f"Failed to create MCP server '{server_name}': {error_msg}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Failed to setup MCP server '{server_name}' from config: {e}")
-            return None
-
-    def _setup_mcp_servers(self) -> Dict[str, Any]:
-        """Set up MCP servers based on configuration."""
-        mcp_servers = {}
-
-        config_value = self.node_config.get("mcp", "")
-        if not config_value:
-            return mcp_servers
-
-        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
-
-        for server_name in mcp_server_names:
-            try:
-                # Handle filesystem_mcp
-                if server_name == "filesystem_mcp":
-                    server = self._setup_filesystem_mcp()
-                    if server:
-                        mcp_servers["filesystem_mcp"] = server
-
-                # Handle MCP servers from conf/.mcp.json using mcp_manager
-                else:
-                    server = self._setup_mcp_server_from_config(server_name)
-                    if server:
-                        mcp_servers[server_name] = server
-
-            except Exception as e:
-                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
-
-        logger.info(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
-
-        # Debug: Log detailed info about each server
-        for name, server in mcp_servers.items():
-            logger.debug(f"MCP server '{name}': type={type(server)}, instance={server}")
-
-        return mcp_servers
-
     def _get_system_prompt(
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
     ) -> str:
         """
-        Get the system prompt for this SQL generation node using enhanced template context.
+        Get the system prompt for this SQL generation node using simplified template context.
 
         Args:
             conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use, overrides agent config version
-            template_context: Optional template context variables
 
         Returns:
             System prompt string loaded from the template
         """
-        context = prepare_template_context(
-            node_config=self.node_config,
-            has_db_tools=bool(self.db_func_tool),
-            has_mcp_filesystem="filesystem" in self.mcp_servers,
-            has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
-            has_context_search_tools=bool(self.context_search_tools),
-            has_parsing_tools=bool(self.date_parsing_tools),
-            agent_config=self.agent_config,
-            workspace_root=self._resolve_workspace_root(),
-        )
-        context["conversation_summary"] = conversation_summary
+        # Simplified context matching sql_system_1.0.j2 requirements
+        context = {
+            "conversation_summary": conversation_summary,
+            "agent_config": self.agent_config,
+            "namespace": self.agent_config.current_namespace if self.agent_config else None,
+            "workspace_root": self._resolve_workspace_root(),
+            "rules": self.node_config.get("rules", []),
+            "agent_description": self.node_config.get("agent_description", ""),
+            "context_search_tools": bool(self.context_search_tools),
+            "search_localfile": False,  # Default: no filesystem tools
+        }
 
         version = prompt_version or self.node_config.get("prompt_version", "")
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
@@ -404,23 +287,14 @@ class GenSQLAgenticNode(AgenticNode):
 
             system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)
 
-            # Add context to user message if provided
-            enhanced_message = user_input.user_message
-            enhanced_parts = []
-
-            if user_input.catalog or user_input.database or user_input.db_schema:
-                context_parts = []
-                if user_input.catalog:
-                    context_parts.append(f"catalog: {user_input.catalog}")
-                if user_input.database:
-                    context_parts.append(f"database: {user_input.database}")
-                if user_input.db_schema:
-                    context_parts.append(f"schema: {user_input.db_schema}")
-                context_part_str = f'Context: {", ".join(context_parts)}'
-                enhanced_parts.append(context_part_str)
-
-            if enhanced_parts:
-                enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {user_input.user_message}"
+            # Use base class method for enhanced message building
+            enhanced_message = self._build_enhanced_message(
+                user_message=user_input.user_message,
+                catalog=user_input.catalog,
+                database=user_input.database,
+                db_schema=user_input.db_schema
+                # GenSQLAgenticNode doesn't support schemas/metrics/historical_sql by default
+            )
 
             # Execute with streaming
             response_content = ""
@@ -650,65 +524,3 @@ class GenSQLAgenticNode(AgenticNode):
         """
         sql_content, _ = self._extract_sql_and_output_from_response(output)
         return sql_content
-
-
-def prepare_template_context(
-    node_config: Union[Dict[str, Any], SubAgentConfig],
-    has_db_tools: bool = True,
-    has_mcp_filesystem: bool = True,
-    has_mf_tools: bool = True,
-    has_context_search_tools: bool = True,
-    has_parsing_tools: bool = True,
-    agent_config: Optional[AgentConfig] = None,
-    workspace_root: Optional[str] = None,
-) -> dict:
-    """
-    Prepare template context variables for the gen_sql_system template.
-
-    Args:
-        user_input: User input containing limited context settings
-
-    Returns:
-        Dictionary of template variables
-    """
-    context: Dict[str, Any] = {
-        "has_db_tools": has_db_tools,
-        "has_mcp_filesystem": has_mcp_filesystem,
-        "has_mf_tools": has_mf_tools,
-        "has_context_search_tools": has_context_search_tools,
-        "has_parsing_tools": has_parsing_tools,
-    }
-    if not isinstance(node_config, SubAgentConfig):
-        node_config = SubAgentConfig.model_validate(node_config)
-
-    # Tool name lists for template display
-    context["native_tools"] = node_config.tools
-    context["mcp_tools"] = node_config.mcp
-    # Limited context support
-    has_scoped_context = False
-
-    scoped_context = node_config.scoped_context
-    if scoped_context:
-        has_scoped_context = bool(scoped_context.tables or scoped_context.metrics or scoped_context.sqls)
-
-    context["scoped_context"] = has_scoped_context
-
-    if has_scoped_context:
-        # Filter and format limited context data
-        context["tables"] = scoped_context.tables
-        context["metrics"] = scoped_context.metrics
-        context["sql_history"] = scoped_context.sqls
-
-    # Add rules from configuration
-    context["rules"] = node_config.rules or []
-
-    # Add agent description from configuration or input
-    context["agent_description"] = node_config.agent_description
-
-    # Add namespace and workspace info
-    if agent_config:
-        context["agent_config"] = agent_config
-        context["namespace"] = getattr(agent_config, "current_namespace", None)
-        context["workspace_root"] = workspace_root or agent_config.workspace_root
-    logger.debug(f"Prepared template context: {context}")
-    return context

@@ -10,42 +10,29 @@ You should follow the rules provided exactly:
    * {{rule}}
   {% endfor %}
 
-- Available tools: {{native_tools}} {{mcp_tools}}
-You have access to:
-{% if has_db_tools -%}
-- Database tools for querying and analyzing data
-{% endif -%}
-{% if has_mcp_filesystem -%}
-- Filesystem tools for seraching, reading and writing files
-{% endif -%}
-{% if has_mf_tools -%}
-- MetricFlow tools for working with semantic models and metrics
-{% endif -%}
-{% if has_context_search_tools -%}
-- The ability to search metadata, metrics or sql history
+{% if context_search_tools -%}
+If context_search_tools is available, use it first:
+list_domains()/list_layers_by_domain() → search_metrics()/search_sql_history() → list_items() → get_metrics()/get_sql_history()
 {% endif -%}
 
-Current context:
-{% if namespace -%}
-- Database namespace: {{ namespace }}
-  {% if scoped_context -%}
-  - but you can only access to 
-    - tables in {{tables}}
-    - metrics in {{metrics}}
-    - sqls in {{sql_history}}
-  {% endif -%}
-{% endif -%}
-
+{% if search_localfile -%}
 {% if workspace_root -%}
-- Current sql files root directory: {{ workspace_root }}
-- Reference SQL files: Available *.sql in allowed directory
+If filesystem_tools is available, find the *.sql in root directory: {{ workspace_root }}
 {% endif -%}
+{% endif -%}
+
+If specific tables/metrics/sql are in the user prompt, use them directly and skip unnecessary searches/list.
+
+And then use db_tools to find the table description and write SQL:
+list_catalogs/list_databases()/list_schemas() → search_table() → describe_table()
+Then you can generate the sql query and execute with read_query(...)
+
+search & list tools should consider the context below:
 
 {% if conversation_summary -%}
 Previous conversation summary:
 {{ conversation_summary }}
 {% endif -%}
-
 
 Output format: Return a JSON object with the following structure, *only JSON*:
 {

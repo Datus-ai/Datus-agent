@@ -357,6 +357,172 @@ class AgenticNode(ABC):
             logger.error(f"Auto-compact check failed: {e}")
             return False
 
+    def _build_enhanced_message(
+        self,
+        user_message: str,
+        catalog: str = None,
+        database: str = None,
+        db_schema: str = None,
+        domain: str = None,
+        layer1: str = None,
+        layer2: str = None,
+        schemas=None,
+        metrics=None,
+        historical_sql=None
+    ) -> str:
+        """
+        Build enhanced message with context enrichment.
+
+        Args:
+            user_message: Original user message
+            catalog: Catalog name
+            database: Database name
+            db_schema: Schema name
+            domain: Business domain
+            layer1: Semantic layer 1
+            layer2: Semantic layer 2
+            schemas: List of TableSchema objects
+            metrics: List of Metric objects
+            historical_sql: List of SQLHistory objects
+
+        Returns:
+            Enhanced message string with context prepended
+        """
+        enhanced_parts = []
+
+        # Add database & semantic context
+        if catalog or database or db_schema or domain or layer1 or layer2:
+            context_parts = []
+            if hasattr(self.agent_config, 'db_type'):
+                context_parts.append(f"dialect: {self.agent_config.db_type}")
+            if catalog:
+                context_parts.append(f"catalog: {catalog}")
+            if database:
+                context_parts.append(f"database: {database}")
+            if db_schema:
+                context_parts.append(f"schema: {db_schema}")
+            if domain:
+                context_parts.append(f"domain: {domain}")
+            if layer1:
+                context_parts.append(f"layer1: {layer1}")
+            if layer2:
+                context_parts.append(f"layer2: {layer2}")
+            enhanced_parts.append(f'Context: {", ".join(context_parts)}')
+
+        # Add table schemas
+        if schemas:
+            from datus.schemas.node_models import TableSchema
+            table_schemas_str = TableSchema.list_to_prompt(
+                schemas, dialect=getattr(self.agent_config, 'db_type', 'generic')
+            )
+            enhanced_parts.append(f"Table Schemas: \n{table_schemas_str}")
+
+        # Add metrics
+        if metrics:
+            import json
+            enhanced_parts.append(f"Metrics: \n{json.dumps([item.model_dump() for item in metrics])}")
+
+        # Add historical SQL
+        if historical_sql:
+            import json
+            enhanced_parts.append(f"Historical SQL: \n{json.dumps([item.model_dump() for item in historical_sql])}")
+
+        if enhanced_parts:
+            return f'{chr(10).join(enhanced_parts)}\n\nUser question: {user_message}'
+        return user_message
+
+    def _setup_mcp_servers(self) -> Dict[str, "MCPServerStdio"]:
+        """
+        Setup MCP servers from node configuration (excluding filesystem_mcp).
+
+        Filesystem MCP should be handled via internal FilesystemFuncTool instead.
+
+        Returns:
+            Dictionary of MCP servers
+        """
+        mcp_servers = {}
+        config_value = self.node_config.get("mcp", "")
+        if not config_value:
+            return mcp_servers
+
+        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
+
+        for server_name in mcp_server_names:
+            if server_name == "filesystem_mcp":
+                # Skip filesystem_mcp - use internal FilesystemFuncTool instead
+                logger.info("Skipping filesystem_mcp - use internal FilesystemFuncTool instead")
+                continue
+
+            try:
+                server = self._setup_mcp_server_from_config(server_name)
+                if server:
+                    mcp_servers[server_name] = server
+            except Exception as e:
+                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
+
+        logger.info(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
+        return mcp_servers
+
+    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
+        """
+        Setup MCP server from conf/.mcp.json using mcp_manager.
+
+        Args:
+            server_name: Name of the MCP server from configuration
+
+        Returns:
+            MCP server instance or None if setup failed
+        """
+        try:
+            from datus.tools.mcp_tools.mcp_manager import MCPManager
+
+            mcp_manager = MCPManager()
+            server_config = mcp_manager.get_server_config(server_name)
+
+            if not server_config:
+                logger.warning(f"MCP server '{server_name}' not found in configuration")
+                return None
+
+            server_instance, details = mcp_manager._create_server_instance(server_config)
+
+            if server_instance:
+                logger.info(f"Added MCP server '{server_name}': {details}")
+                return server_instance
+            else:
+                logger.warning(f"Failed to create MCP server '{server_name}': {details.get('error', 'Unknown error')}")
+                return None
+        except Exception as e:
+            logger.error(f"Failed to setup MCP server '{server_name}': {e}")
+            return None
+
+    def _resolve_workspace_root(self) -> str:
+        """
+        Resolve workspace_root with priority: node-specific > global storage > default '.'.
+
+        Simplified version without legacy workspace_root fallback.
+
+        Returns:
+            Resolved workspace_root path
+        """
+        # Priority 1: node-specific workspace_root
+        node_workspace_root = self.node_config.get("workspace_root")
+        if node_workspace_root:
+            logger.debug(f"Using node-specific workspace_root: {node_workspace_root}")
+            return node_workspace_root
+
+        # Priority 2: global storage workspace_root
+        if (self.agent_config and
+            hasattr(self.agent_config, "storage") and
+            hasattr(self.agent_config.storage, "workspace_root")):
+            global_workspace_root = self.agent_config.storage.workspace_root
+            if global_workspace_root:
+                logger.debug(f"Using global workspace_root: {global_workspace_root}")
+                return global_workspace_root
+
+        # Priority 3: default
+        logger.debug("Using default workspace_root: .")
+        return "."
+
     def _parse_node_config(self, agent_config: Optional[AgentConfig], node_name: str) -> dict:
         """
         Parse node configuration from agent.yml.

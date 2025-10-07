@@ -23,6 +23,11 @@ class CliContext:
     current_catalog: Optional[str] = None
     current_schema: Optional[str] = None
 
+    # Semantic layer info
+    current_domain: Optional[str] = None
+    current_layer1: Optional[str] = None
+    current_layer2: Optional[str] = None
+
     # Current SQL task
     current_sql_task: Optional[SqlTask] = None
 
@@ -91,7 +96,14 @@ class CliContext:
         return last_context.sql_query if last_context else None
 
     def update_database_context(
-        self, db_name: str = None, catalog: str = None, schema: str = None, db_logic_name: str = None
+        self,
+        db_name: str = None,
+        catalog: str = None,
+        schema: str = None,
+        db_logic_name: str = None,
+        domain: str = None,
+        layer1: str = None,
+        layer2: str = None
     ):
         """Update current database context."""
         if db_name is not None:
@@ -106,6 +118,15 @@ class CliContext:
         if db_logic_name:
             self.current_logic_db_name = db_logic_name
             logger.debug(f"Updated current logic db name: {db_logic_name}")
+        if domain is not None:
+            self.current_domain = domain
+            logger.debug(f"Updated current domain: {domain}")
+        if layer1 is not None:
+            self.current_layer1 = layer1
+            logger.debug(f"Updated current layer1: {layer1}")
+        if layer2 is not None:
+            self.current_layer2 = layer2
+            logger.debug(f"Updated current layer2: {layer2}")
 
     def set_current_sql_task(self, sql_task: SqlTask):
         """Set the current SQL task."""

@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
-from datus.agent.node.chat_agentic_node import ChatAgenticNode
+from datus.agent.node.cli_chat_agentic_node import CliChatAgenticNode
 from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
@@ -38,8 +38,8 @@ class ChatCommands:
         self.console = cli_instance.console
 
         # Chat state management - unified node management
-        self.current_node: ChatAgenticNode | None = None  # Can be ChatAgenticNode or GenSQLAgenticNode
-        self.chat_node: ChatAgenticNode | None = None  # Kept for backward compatibility
+        self.current_node: CliChatAgenticNode | None = None  # Can be CliChatAgenticNode or GenSQLAgenticNode
+        self.chat_node: CliChatAgenticNode | None = None  # Kept for backward compatibility
         self.current_subagent_name: str | None = None  # Track current subagent name
         self.chat_history = []
         self.last_actions = []
@@ -118,10 +118,10 @@ class ChatCommands:
                     agent_config=self.cli.agent_config,
                 )
         else:
-            # Create ChatAgenticNode for default chat
+            # Create CliChatAgenticNode for default chat
             self.console.print("[dim]Creating new chat session...[/]")
-            return ChatAgenticNode(
-                namespace=self.cli.agent_config.current_namespace,
+            return CliChatAgenticNode(
+                node_name="sql",  # Matches sql_system_1.0.j2 template
                 agent_config=self.cli.agent_config,
             )
 
@@ -212,12 +212,15 @@ class ChatCommands:
                 )
                 node_type = "gensql"
             else:
-                # Chat input for ChatAgenticNode (default chat)
+                # Chat input for CliChatAgenticNode (default chat)
                 node_input = ChatNodeInput(
                     user_message=message,
                     catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
                     database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
                     db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    domain=self.cli.cli_context.current_domain if self.cli.cli_context.current_domain else None,
+                    layer1=self.cli.cli_context.current_layer1 if self.cli.cli_context.current_layer1 else None,
+                    layer2=self.cli.cli_context.current_layer2 if self.cli.cli_context.current_layer2 else None,
                     schemas=at_tables,
                     metrics=at_metrics,
                     historical_sql=at_sqls,
