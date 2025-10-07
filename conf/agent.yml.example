@@ -74,7 +74,8 @@ agent:
       account: ${SNOWFLAKE_ACCOUNT}  # Use environment variables or real values
       username: ${SNWOFLAKE_USER}
       password: ${SNOWFLAKE_PASSWORD}
-      # database: FINANCE__ECONOMICS
+      # database: BBC
+      # schema: BBC_NEWS
     # bird_sqlite: # This section is configured for the bird-dev benchmarking, you should download the database file and unzip it before you can continue
     #   type: sqlite
     #   # just support glob pattern. Ensure that the corresponding database files exist in the configuration directory.
