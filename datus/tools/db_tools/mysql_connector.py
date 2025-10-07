@@ -1,3 +1,4 @@
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional, Set, override
 from urllib.parse import quote_plus
 
@@ -92,12 +93,15 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         result = []
         for i in range(len(query_result)):
             catalog = self.reset_catalog_to_default(str(query_result["TABLE_CATALOG"][i]))
+            db_name = query_result["TABLE_SCHEMA"][i]
+            tb_name = query_result["TABLE_NAME"][i]
             result.append(
                 {
+                    "identifier": self.identifier(catalog, database_name=db_name, table_name=tb_name),
                     "catalog_name": catalog,
                     "schema_name": "",
-                    "database_name": query_result["TABLE_SCHEMA"][i],
-                    "table_name": query_result["TABLE_NAME"][i],
+                    "database_name": database_name,
+                    "table_name": tb_name,
                     "table_type": inner_table_type,
                 }
             )
@@ -113,6 +117,9 @@ class MySQLConnectorBase(SQLAlchemyConnector):
 
     def default_catalog(self) -> str:
         return ""
+
+    def support_catalog(self):
+        return bool(self.default_catalog())
 
     def get_schema(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
@@ -302,6 +309,113 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         else:
             return f"-- DDL not available for table {full_name}"
 
+    def _get_meta_per_db(self, catalog_name: str = "", inner_table_type: TABLE_TYPE = "table") -> List[Dict[str, str]]:
+        dbs = self.get_databases(catalog_name=catalog_name)
+        if not dbs:
+            return []
+        result = []
+        for db in dbs:
+            result.extend(
+                self._get_single_db_metas(catalog_name=catalog_name, database_name=db, table_type=inner_table_type)
+            )
+        return result
+
+    def _get_single_db_metas(self, catalog_name: str, database_name: str, table_type: TABLE_TYPE = "table"):
+        table_metadata = []
+        if table_type == "full":
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
+            )
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="view")
+            )
+            if self.support_mv():
+                table_metadata.extend(
+                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="mv")
+                )
+        elif table_type == "table":
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
+            )
+        elif table_type == "view":
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="view")
+            )
+        elif self.support_mv():
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="mv")
+            )
+        return table_metadata
+
+    def get_sample_rows(
+        self,
+        tables: Optional[List[str]] = None,
+        top_n: int = 5,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_type: TABLE_TYPE = "table",
+    ) -> List[Dict[str, str]]:
+        """Get sample values from tables."""
+        self.connect()
+        catalog_name = self.reset_catalog_to_default(catalog_name) or self.catalog_name
+        database_name = database_name or self.database_name
+        result = []
+        if tables:
+            for table_name in tables:
+                full_table_name = self.full_name(
+                    catalog_name=catalog_name, database_name=database_name, table_name=table_name
+                )
+
+                sql = f"SELECT * FROM {full_table_name} LIMIT {top_n}"
+                res = self._execute_pandas(sql)
+                if not res.empty:
+                    result.append(
+                        {
+                            "identifier": self.identifier(
+                                catalog_name=catalog_name,
+                                database_name=database_name,
+                                table_name=table_name,
+                            ),
+                            "catalog_name": self.reset_catalog_to_default(catalog_name),
+                            "database_name": database_name,
+                            "schema_name": "",
+                            "table_name": table_name,
+                            "sample_rows": res.to_csv(index=False),
+                        }
+                    )
+            return result
+        if database_name:
+            table_metadata = self._get_single_db_metas(
+                catalog_name=catalog_name, database_name=database_name, table_type=table_type
+            )
+        else:
+            table_metadata = self._get_meta_per_db(catalog_name=catalog_name, inner_table_type=table_type)
+        for table in table_metadata:
+            full_name = self.full_name(
+                catalog_name=table["catalog_name"],
+                database_name=table["database_name"],
+                table_name=table["table_name"],
+            )
+            sql = f"SELECT * FROM {full_name} LIMIT {top_n}"
+            res = self._execute_pandas(sql)
+            if not res.empty:
+                result.append(
+                    {
+                        "identifier": table["identifier"],
+                        "catalog_name": table["catalog_name"],
+                        "database_name": table["database_name"],
+                        "schema_name": "",
+                        "table_name": table["table_name"],
+                        "sample_rows": res.to_csv(index=False),
+                    }
+                )
+        return result
+
+    @abstractmethod
+    def support_mv(self) -> bool:
+        raise NotImplementedError()
+
 
 class MySQLConnector(MySQLConnectorBase):
     def __init__(self, host: str, port: int, user: str, password: str, database: str):
@@ -323,54 +437,5 @@ class MySQLConnector(MySQLConnectorBase):
             )
         ]
 
-    @override
-    def get_sample_rows(
-        self,
-        tables: Optional[List[str]] = None,
-        top_n: int = 5,
-        catalog_name: str = "",
-        database_name: str = "",
-        schema_name: str = "",
-        table_type: TABLE_TYPE = "table",
-    ) -> List[Dict[str, str]]:
-        self.connect()
-
-        result = []
-        if tables:
-            for table in tables:
-                full_name = self.full_name(database_name=database_name, table_name=table)
-                sql = f"select * from {full_name} limit {top_n}"
-                res = self._execute_pandas(sql)
-                if not res.empty:
-                    result.append(
-                        {
-                            "identifier": self.identifier(
-                                database_name=database_name,
-                                table_name=table,
-                            ),
-                            "catalog_name": "",
-                            "database_name": schema_name if schema_name else "",
-                            "schema_name": "",
-                            "table_name": table,
-                            "sample_rows": res.to_csv(index=False),
-                        }
-                    )
-        else:
-            for t in self._get_metadata(
-                meta_table_name="TABLES",
-                inner_table_type=table_type,
-                database_name=database_name,
-            ):
-                sql = f"select * from `{t['database_name']}`.`{t['table_name']}` limit {top_n}"
-                res = self._execute_pandas(sql)
-                if not res.empty:
-                    result.append(
-                        {
-                            "catalog_name": "",
-                            "database_name": t["database_name"],
-                            "schema_name": "",
-                            "table_name": t["table_name"],
-                            "sample_rows": res.to_csv(index=False),
-                        }
-                    )
-        return result
+    def support_mv(self) -> bool:
+        return False

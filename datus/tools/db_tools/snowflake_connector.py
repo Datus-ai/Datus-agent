@@ -451,7 +451,7 @@ class SnowflakeConnector(BaseSqlConnector):
                     result=result,
                     database_name=db,
                     catalog_name=catalog_name,
-                    schema_name=catalog_name,
+                    schema_name=schema_name,
                     tables=tables,
                     table_type=table_type,
                 )
@@ -460,7 +460,7 @@ class SnowflakeConnector(BaseSqlConnector):
                 result=result,
                 database_name=database_name,
                 catalog_name=catalog_name,
-                schema_name=catalog_name,
+                schema_name=schema_name,
                 tables=tables,
                 table_type=table_type,
             )
@@ -475,21 +475,21 @@ class SnowflakeConnector(BaseSqlConnector):
         tables: Optional[List[str]] = None,
         table_type: TABLE_TYPE = "",
     ):
-        if table_type == "table" or table_type == "full":
+        if table_type in ("table", "full"):
             db_tables = self._do_get_metas(
                 database_name=database_name, schema_name=schema_name, tables=tables, meta_name="TABLES"
             )
             result.extend(self._metadata_to_dict(db_tables, "table", catalog_name))
-        if table_type == "view" or table_type == "full":
+        if table_type in ("view", "full"):
             db_tables = self._do_get_metas(
                 database_name=database_name, schema_name=schema_name, tables=tables, meta_name="VIEWS"
             )
             result.extend(self._metadata_to_dict(db_tables, "view", catalog_name))
-        if table_type == "mv" or table_type == "full":
+        if table_type in ("mv", "full"):
             db_tables = self._do_get_metas(
                 database_name=database_name, schema_name=schema_name, tables=tables, meta_name="MATERIALIZED VIEWS"
             )
-            result.extend(self._metadata_to_dict(db_tables, "view", catalog_name))
+            result.extend(self._metadata_to_dict(db_tables, "mv", catalog_name))
 
     def _do_get_metas(
         self,
@@ -631,17 +631,19 @@ class SnowflakeConnector(BaseSqlConnector):
                         table_name=table,
                     )
                     sql = f"select * from {full_name} limit {top_n}"
-                    res = cursor.execute(sql).fetch_pandas_all(True)
-                    if res.empty:
+                    res = cursor.execute(sql).fetch_pandas_all()
+                    if not res.empty:
                         result.append(
                             {
                                 "identifier": self.identifier(
+                                    catalog_name=catalog_name,
                                     database_name=database_name,
+                                    schema_name=schema_name,
                                     table_name=table,
                                 ),
                                 "catalog_name": catalog_name,
-                                "database_name": schema_name if schema_name else "",
-                                "schema_name": "",
+                                "database_name": database_name,
+                                "schema_name": schema_name,
                                 "table_name": table,
                                 "table_type": table_type,
                                 "sample_rows": res.to_csv(index=False),
@@ -662,6 +664,7 @@ class SnowflakeConnector(BaseSqlConnector):
                     if not res.empty:
                         result.append(
                             {
+                                "identifier": t["identifier"],
                                 "catalog_name": t["catalog_name"],
                                 "database_name": t["database_name"],
                                 "schema_name": t["schema_name"],

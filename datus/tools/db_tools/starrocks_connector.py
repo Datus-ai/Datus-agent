@@ -1,9 +1,8 @@
 import atexit
 import threading
 import weakref
-from typing import Any, Dict, List, Optional, override
+from typing import Any, Dict, List, override
 
-from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.mysql_connector import MySQLConnectorBase, list_to_in_str
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -147,88 +146,6 @@ class StarRocksConnector(MySQLConnectorBase):
             )
         return view_list
 
-    def get_sample_rows(
-        self,
-        tables: Optional[List[str]] = None,
-        top_n: int = 5,
-        catalog_name: str = "",
-        database_name: str = "",
-        schema_name: str = "",
-        table_type: TABLE_TYPE = "table",
-    ) -> List[Dict[str, str]]:
-        """Get sample values from tables."""
-        self.connect()
-        catalog_name = self.reset_catalog_to_default(catalog_name)
-        result = []
-        if tables:
-            for table_name in tables:
-                if catalog_name:
-                    if database_name:
-                        full_table_name = f"`{catalog_name}`.`{database_name}`.`{table_name}`"
-                    else:
-                        full_table_name = f"`{table_name}`"
-                else:
-                    full_table_name = f"`{database_name}`.`{table_name}`" if database_name else f"`{table_name}`"
-
-                sql = f"SELECT * FROM {full_table_name} LIMIT {top_n}"
-                res = self._execute_pandas(sql)
-                if not res.empty:
-                    result.append(
-                        {
-                            "identifier": self.identifier(
-                                catalog_name=catalog_name,
-                                database_name=database_name,
-                                table_name=table_name,
-                            ),
-                            "catalog_name": self.reset_catalog_to_default(catalog_name),
-                            "database_name": database_name,
-                            "schema_name": "",
-                            "table_name": table_name,
-                            "sample_rows": res.to_csv(index=False),
-                        }
-                    )
-        else:
-            table_metadata = []
-            if table_type == "full":
-                table_metadata.extend(
-                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
-                )
-                table_metadata.extend(
-                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="view")
-                )
-                table_metadata.extend(
-                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="mv")
-                )
-            elif table_type == "table":
-                table_metadata.extend(
-                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
-                )
-            elif table_type == "view":
-                table_metadata.extend(
-                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="view")
-                )
-            else:
-                table_metadata.extend(
-                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
-                )
-            for table in tables:
-                sql = (
-                    f"SELECT * FROM `{table['catalog_name']}`.`{table['database_name']}`.`{table['table_name']}` "
-                    "LIMIT {top_n}"
-                )
-                res = self._execute_pandas(sql)
-                if not res.empty:
-                    result.append(
-                        {
-                            "catalog_name": table["catalog_name"],
-                            "database_name": table["database_name"],
-                            "schema_name": "",
-                            "table_name": table["table_name"],
-                            "sample_rows": res.to_csv(index=False),
-                        }
-                    )
-        return result
-
     @override
     def get_catalogs(self) -> List[str]:
         result = self._execute_pandas("SHOW CATALOGS")
@@ -322,3 +239,6 @@ class StarRocksConnector(MySQLConnectorBase):
                 _starrocks_connections.discard(self)
             except BaseException as e:
                 logger.warning(f"StarRocks connection close error: {e}")
+
+    def support_mv(self) -> bool:
+        return True

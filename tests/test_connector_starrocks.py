@@ -267,3 +267,42 @@ def test_execute_delete_round_trip(connector: StarRocksConnector):
         ]
     finally:
         connector.execute_ddl(drop_sql)
+
+
+def test_get_sample_rows(connector: StarRocksConnector):
+    sample_rows = connector.get_sample_rows(catalog_name="default_catalog", database_name="quickstart")
+    assert len(sample_rows) > 0
+
+    sample_rows = connector.get_sample_rows(database_name="quickstart")
+    assert len(sample_rows) > 0
+
+    sample_rows = connector.get_sample_rows()
+    assert len(sample_rows) > 0
+
+    sample_rows = connector.get_sample_rows(
+        catalog_name="default_catalog",
+        database_name="quickstart",
+        table_type="table",
+        tables=["crashdata"],
+    )
+    assert len(sample_rows) > 0
+    print(sample_rows)
+    assert len(sample_rows) == 1
+
+    sample_rows = connector.get_sample_rows(
+        catalog_name="default_catalog",
+        database_name="quickstart",
+        table_type="table",
+        tables=["crashdata", "weatherdata"],
+    )
+    assert len(sample_rows) > 0
+    print(sample_rows)
+    assert len(sample_rows) == 2
+
+    first_item = sample_rows[0]
+    assert first_item["database_name"]
+    assert first_item["table_name"]
+    assert first_item["catalog_name"]
+    assert not first_item["schema_name"]
+    assert first_item["identifier"]
+    assert len(first_item["identifier"].split(".")) == 3

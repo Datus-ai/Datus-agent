@@ -457,7 +457,7 @@ class DynamicAtReferenceCompleter(Completer):
 
     @abstractmethod
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def reload_data(self):
         self._data = self.load_data()

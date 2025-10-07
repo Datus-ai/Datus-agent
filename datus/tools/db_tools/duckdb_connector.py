@@ -224,11 +224,11 @@ class DuckdbConnector(SQLAlchemyConnector):
                 tables_with_ddl = []
                 if table_type == "mv":
                     return []
-                if table_type == "full" or table_type == "table":
+                if table_type in ("full", "table"):
                     tables_with_ddl.extend(
                         self.get_tables_with_ddl(database_name=database_name, schema_name=schema_name)
                     )
-                if table_type == "full" or table_type == "table":
+                if table_type in ("full", "view"):
                     tables_with_ddl.extend(
                         self.get_views_with_ddl(database_name=database_name, schema_name=schema_name)
                     )
