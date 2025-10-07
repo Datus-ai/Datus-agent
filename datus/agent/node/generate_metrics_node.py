@@ -1,6 +1,7 @@
 import json
 import os
-from typing import AsyncGenerator, Dict, List, Optional
+import re
+from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
@@ -10,10 +11,63 @@ from datus.schemas.generate_semantic_model_node_models import GenerateSemanticMo
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.llms_tools import LLMTool
 from datus.tools.llms_tools.generate_metrics import generate_metrics_with_mcp_stream
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names, parse_table_name_parts
 
 logger = get_logger(__name__)
+
+
+def _quote_pair_for_db(db_type: str) -> Tuple[str, str]:
+    """Return the opening and closing quote characters for a DB type."""
+
+    normalized = (db_type or "").lower()
+    if normalized in {DBType.MYSQL.value, DBType.STARROCKS.value}:
+        return "`", "`"
+    if normalized in {DBType.MSSQL.value, DBType.SQLSERVER.value}:
+        return "[", "]"
+    return '"', '"'
+
+
+_STRING_LITERAL_PATTERN = re.compile(r"""('(?:''|[^'])*'|"(?:""|[^"])*")""")
+_HYPHEN_IDENTIFIER_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*-[A-Za-z0-9_-]*)\b")
+
+
+def _quote_segment(segment: str, left_quote: str, right_quote: str) -> str:
+    """Quote hyphenated identifiers inside a non-string segment."""
+
+    def repl(match: re.Match[str]) -> str:
+        identifier = match.group(1)
+        start, end = match.span(1)
+        prev_char = segment[start - 1] if start > 0 else ""
+        next_char = segment[end] if end < len(segment) else ""
+
+        # Check for already-quoted identifiers (handle boundaries gracefully)
+        if prev_char == left_quote and next_char == right_quote:
+            return identifier
+        if prev_char in {"`", '"'} and next_char == prev_char:
+            return identifier
+        if prev_char == "[" and next_char == "]":
+            return identifier
+
+        return f"{left_quote}{identifier}{right_quote}"
+
+    return _HYPHEN_IDENTIFIER_PATTERN.sub(repl, segment)
+
+
+def quote_hyphenated_identifiers(sql: str, db_type: str) -> str:
+    """Quote unquoted identifiers that contain hyphens; strings are left untouched."""
+
+    if not sql or "-" not in sql:
+        return sql
+
+    left_quote, right_quote = _quote_pair_for_db(db_type)
+    segments = _STRING_LITERAL_PATTERN.split(sql)
+
+    for idx in range(0, len(segments), 2):
+        segments[idx] = _quote_segment(segments[idx], left_quote, right_quote)
+
+    return "".join(segments)
 
 
 class GenerateMetricsNode(Node):
@@ -190,7 +244,9 @@ class GenerateMetricsNode(Node):
 
         try:
             # Check and generate semantic models if needed
-            table_names = extract_table_names(self.input.sql_query, self.input.sql_task.database_type)
+            db_type = self.input.sql_task.database_type
+            sql_query = quote_hyphenated_identifiers(self.input.sql_query, db_type)
+            table_names = extract_table_names(sql_query, self.input.sql_task.database_type)
             logger.info(f"Extracted table names from SQL: {table_names}")
 
             if table_names:
@@ -199,18 +255,26 @@ class GenerateMetricsNode(Node):
                 if missing_tables:
                     logger.info(f"Missing semantic model files for tables: {missing_tables}")
 
-                    # Run async method in sync context
+                    # Run async method properly
                     import asyncio
+                    import concurrent.futures
 
+                    error_msg = None
                     try:
-                        # If we're already in an async context, we need to handle it specially
+                        # Check if we're in an event loop
                         asyncio.get_running_loop()
-                        # We're in a running loop, need to use a different approach
-                        # For now, let's skip semantic model generation in sync context
-                        logger.warning("Cannot generate semantic models in sync context within running event loop")
-                        error_msg = "Cannot generate semantic models in synchronous execution within event loop"
+                        # We're in an event loop, run the async code in a new thread with its own loop
+                        logger.info("Running semantic model generation in separate thread")
+
+                        def run_in_thread():
+                            return asyncio.run(self._generate_missing_semantic_models(missing_tables))
+
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(run_in_thread)
+                            error_msg = future.result()
+
                     except RuntimeError:
-                        # No running loop, safe to use asyncio.run
+                        # No running loop, safe to use asyncio.run directly
                         error_msg = asyncio.run(self._generate_missing_semantic_models(missing_tables))
 
                     if error_msg:
@@ -253,7 +317,9 @@ class GenerateMetricsNode(Node):
 
         try:
             # Check and generate semantic models if needed
-            table_names = extract_table_names(self.input.sql_query, self.input.sql_task.database_type)
+            db_type = self.input.sql_task.database_type
+            sql_query = quote_hyphenated_identifiers(self.input.sql_query, db_type)
+            table_names = extract_table_names(sql_query, self.input.sql_task.database_type)
             logger.info(f"Extracted table names from SQL: {table_names}")
 
             if table_names:

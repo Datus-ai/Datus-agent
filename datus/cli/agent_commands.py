@@ -130,10 +130,12 @@ class AgentCommands:
             )
 
         elif node_type == NodeType.TYPE_GENERATE_METRICS:
+            sql_query = self.cli.prompt_input(
+                "Enter SQL query to generate metrics from", default=self.cli_context.get_last_sql() or ""
+            )
             return GenerateMetricsInput(
                 sql_task=sql_task,
-                database_type=sql_task.database_type,
-                table_schemas=self.cli_context.get_recent_tables(),
+                sql_query=sql_query,
             )
 
         elif node_type == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
