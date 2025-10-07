@@ -280,11 +280,11 @@ class CatalogScreen(ContextScreen):
         # Binding("f3", "preview_details", "Preview"),
         Binding("f4", "show_path", "Show Path"),
         Binding("f5", "exit_with_selection", "Select"),
-        Binding("escape", "", "Exit", show=False),
+        Binding("escape", "exit_or_cancel", "Exit", show=False),
         Binding("ctrl+r", "retry_current_node", "Retry", show=False),
         Binding("ctrl+e", "start_edit", "Edit", show=True, priority=True),
         Binding("ctrl+w", "save_edit", "Save", show=True, priority=True),
-        Binding("ctrl+q", "cancel_edit", "Cancel", show=True, priority=True),
+        Binding("ctrl+q", "exit_or_cancel", "Cancel", show=True, priority=True),
     ]
 
     def __init__(self, title: str, context_data: Dict, inject_callback=None):
@@ -366,7 +366,6 @@ class CatalogScreen(ContextScreen):
             event.prevent_default()
             event.stop()
             return
-            self.action_exit_without_selection()
         else:
             await super()._on_key(event)
 
@@ -624,7 +623,11 @@ class CatalogScreen(ContextScreen):
             self._reset_to_readonly()
             self.app.notify("No changes detected.", severity="warning")
             return
-        self.metrics_rag.update_semantic_model(old_values, new_values)
+        try:
+            self.metrics_rag.update_semantic_model(old_values, new_values)
+        except Exception as e:
+            self.app.notify(f"Failed to save changes: {e}", severity="error")
+            return
         panel.set_readonly(True)
         panel.update_data(new_values)
         self._semantic_current_record = dict(self._semantic_current_record or {})

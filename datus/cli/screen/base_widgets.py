@@ -596,7 +596,8 @@ class ParentSelectionTree(SelectableTree):
             return
 
         # Trigger the selection action
-        self.focus(event.node)
+        self.move_cursor(event.node)
+        self.focus()
         self.action_select_node()
 
     def _on_node_added(self, parent: TreeNode, new_node: TreeNode, is_leaf: bool) -> None:

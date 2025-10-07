@@ -163,8 +163,8 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
                 # Reset internal selection then focus the original
                 self.parent_selector._selected = self.current_parent
                 self.parent_selector._focus_current_selection()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to restore parent selection: {e}")
         self.dismiss(None)
 
 
@@ -1461,12 +1461,13 @@ class SubjectScreen(ContextScreen):
         if self._active_dialog is not None:
             try:
                 self._active_dialog.cancel_and_close()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to restore dialog state: {e}")
                 # Fall back to closing the dialog without extra restore
                 try:
                     self._active_dialog.dismiss(None)
-                except Exception:
-                    pass
+                except Exception as e2:
+                    logger.warning(f"Failed to dismiss dialog: {e2}")
             self._active_dialog = None
             return
 
@@ -1477,8 +1478,8 @@ class SubjectScreen(ContextScreen):
             if panel is not None:
                 try:
                     panel.restore()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to restore panel state: {e}")
                 panel.set_readonly(True)
             # Reset edit state
             self._editing_component = None
@@ -1491,11 +1492,12 @@ class SubjectScreen(ContextScreen):
         # Case 3: default behavior (exit)
         try:
             self.action_exit_without_selection()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to exit without selection: {e}")
             try:
                 self.app.pop_screen()
-            except Exception:
-                pass
+            except Exception as e2:
+                logger.warning(f"Failed to pop screen: {e2}")
 
     def on_unmount(self) -> None:
         self.clear_cache()

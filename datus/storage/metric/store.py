@@ -7,6 +7,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
 from datus.storage.lancedb_conditions import And, build_where, eq, in_, like
+from datus.utils.exceptions import DatusException, ErrorCode
 
 logger = logging.getLogger(__file__)
 
@@ -321,9 +322,9 @@ class SemanticMetricsRAG:
         if "name" in update_values:
             unique_filter = And(
                 [
-                    eq("domain", update_values["domain"]),
-                    eq("layer1", update_values["layer1"]),
-                    eq("layer2", update_values["layer2"]),
+                    eq("domain", update_values.get("domain", old_values.get("domain"))),
+                    eq("layer1", update_values.get("layer1", old_values.get("layer1"))),
+                    eq("layer2", update_values.get("layer2", old_values.get("layer2"))),
                     eq("name", update_values["name"]),
                 ]
             )
@@ -335,21 +336,30 @@ class SemanticMetricsRAG:
                 where_conditions.append(eq(k, old_values[k]))
 
         where = And(where_conditions)
+        if not where_conditions:
+            raise DatusException(
+                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                message_args={
+                    "operation": "update",
+                    "table_name": self.metric_storage.table_name,
+                    "error_message": "Missing WHERE for metrics update",
+                },
+            )
         update_payload = dict(update_values)
         domain_value = update_payload.get("domain", old_values.get("domain"))
         layer1_value = update_payload.get("layer1", old_values.get("layer1"))
         layer2_value = update_payload.get("layer2", old_values.get("layer2"))
         if domain_value and layer1_value and layer2_value:
             update_payload["domain_layer1_layer2"] = qualify_name([domain_value, layer1_value, layer2_value])
-        self.metric_storage.update(where, update_values, unique_filter=unique_filter)
+        self.metric_storage.update(where, update_payload, unique_filter=unique_filter)
 
     def update_semantic_model(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):
         unique_filter = And(
             [
-                eq("catalog_name", update_values.get("catalog_name") or old_values["catalog_name"]),
-                eq("database_name", update_values.get("database_name") or old_values["database_name"]),
-                eq("schema_name", update_values.get("schema_name") or old_values["schema_name"]),
-                eq("table_name", update_values.get("table_name") or old_values["table_name"]),
+                eq("catalog_name", update_values.get("catalog_name", old_values["catalog_name"])),
+                eq("database_name", update_values.get("database_name", old_values["database_name"])),
+                eq("schema_name", update_values.get("schema_name", old_values["schema_name"])),
+                eq("table_name", update_values.get("table_name", old_values["table_name"])),
                 eq("semantic_model_name", update_values["semantic_model_name"]),
             ]
         )

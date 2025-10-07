@@ -7,6 +7,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
 from datus.storage.lancedb_conditions import And, build_where, eq, like
+from datus.utils.exceptions import DatusException, ErrorCode
 
 logger = logging.getLogger(__file__)
 
@@ -268,9 +269,9 @@ class SqlHistoryRAG:
         if "name" in update_values:
             unique_filter = And(
                 [
-                    eq("domain", update_values["domain"]),
-                    eq("layer1", update_values["layer1"]),
-                    eq("layer2", update_values["layer2"]),
+                    eq("domain", update_values.get("domain", old_values.get("domain"))),
+                    eq("layer1", update_values.get("layer1", old_values.get("layer1"))),
+                    eq("layer2", update_values.get("layer2", old_values.get("layer2"))),
                     eq("name", update_values["name"]),
                 ]
             )
@@ -280,7 +281,15 @@ class SqlHistoryRAG:
         for k in ("domain", "layer1", "layer2", "name"):
             if k in old_values:
                 where_conditions.append(eq(k, old_values[k]))
-
+        if not where_conditions:
+            raise DatusException(
+                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                message_args={
+                    "operation": "update",
+                    "table_name": self.sql_history_storage.table_name,
+                    "error_message": "Missing WHERE for metrics update",
+                },
+            )
         where = And(where_conditions)
         self.sql_history_storage.update(where, update_values, unique_filter=unique_filter)
 
