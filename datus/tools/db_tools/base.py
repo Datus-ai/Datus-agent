@@ -3,6 +3,7 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Set, Tuple
 
 from pyarrow import Table as ArrowTable
 
+from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
 from datus.utils.constants import SQLType
 from datus.utils.loggings import get_logger
@@ -313,6 +314,7 @@ class BaseSqlConnector(ABC):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        table_type: TABLE_TYPE = "table",
     ) -> List[Dict[str, Any]]:
         """
         Get sample values for each table from the database.
@@ -321,7 +323,10 @@ class BaseSqlConnector(ABC):
         Args:
             tables: List of table names to sample from. If None, sample from all tables.
             top_n: Number of sample rows to retrieve per table.
-            **kwargs: Additional namespace parameters for database selection.
+            catalog_name: The Catalog of database
+            database_name: The Database of table
+            schema_name:
+            table_type: table/view/mv(Abbreviated Materialized View)
         Returns:
             A list of dictionaries containing sample values for each table.
         """

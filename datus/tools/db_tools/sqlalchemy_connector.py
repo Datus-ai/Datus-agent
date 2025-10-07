@@ -10,6 +10,7 @@ from sqlalchemy.exc import (
     IntegrityError,
     InterfaceError,
     InternalError,
+    NoSuchTableError,
     NotSupportedError,
     OperationalError,
     ProgrammingError,
@@ -17,6 +18,7 @@ from sqlalchemy.exc import (
     TimeoutError,
 )
 
+from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.constants import DBType, SQLType
@@ -67,11 +69,14 @@ class SQLAlchemyConnector(BaseSqlConnector):
     def _trans_sqlalchemy_exception(
         self, e: Exception, sql: str = None, operation: str = "SQL execution"
     ) -> DatusException:
+        """Map SQLAlchemy exceptions to specific Datus ErrorCode values."""
         if isinstance(e, DatusException):
             return e
-        """Map SQLAlchemy exceptions to specific Datus ErrorCode values."""
+
         # Use .orig attribute to get original database error without SQLAlchemy's background links
-        if hasattr(e, "orig") and e.orig is not None:
+        if hasattr(e, "detail") and e.detail:
+            error_message = str(e.detail) if not isinstance(e.detail, list) else "\n".join(e.detail)
+        elif hasattr(e, "orig") and e.orig is not None:
             error_message = str(e.orig)
         else:
             error_message = str(e)
@@ -84,6 +89,8 @@ class SQLAlchemyConnector(BaseSqlConnector):
                 message_args=message_args,
             )
         # Connection-related errors
+        if isinstance(e, NoSuchTableError):
+            return DatusException(ErrorCode.DB_TABLE_NOT_EXISTS, message_args={"table_name": str(e)})
         if isinstance(e, (OperationalError, InterfaceError)):
             # Handle transaction rollback errors specifically
             if any(
@@ -523,10 +530,23 @@ class SQLAlchemyConnector(BaseSqlConnector):
         try:
             self.connect()
             res = self.connection.execute(text(sql))
+            # Prefer inserted primary key (if available), then lastrowid, otherwise fall back to rowcount
+            inserted_pk = None
+            try:
+                if hasattr(res, "inserted_primary_key") and res.inserted_primary_key:
+                    inserted_pk = res.inserted_primary_key
+            except Exception:
+                inserted_pk = None
+
+            safe_lastrowid = getattr(res, "lastrowid", None)
+            safe_return = (
+                inserted_pk if inserted_pk else (safe_lastrowid if safe_lastrowid is not None else res.rowcount)
+            )
+
             return ExecuteSQLResult(
                 success=True,
                 sql_query=sql,
-                sql_return=str(res.lastrowid),
+                sql_return=str(safe_return),
                 row_count=res.rowcount,
             )
         except Exception as e:
@@ -705,7 +725,16 @@ class SQLAlchemyConnector(BaseSqlConnector):
         else:
             query = query.strip().lower()
             if query.startswith("insert"):
-                return result.lastrowid
+                inserted_pk = None
+                try:
+                    if hasattr(result, "inserted_primary_key") and result.inserted_primary_key:
+                        inserted_pk = result.inserted_primary_key
+                except Exception:
+                    inserted_pk = None
+                safe_lastrowid = getattr(result, "lastrowid", None)
+                return (
+                    inserted_pk if inserted_pk else (safe_lastrowid if safe_lastrowid is not None else result.rowcount)
+                )
             elif query.startswith("update") or query.startswith("delete"):
                 return result.rowcount
             else:
@@ -770,22 +799,10 @@ class SQLAlchemyConnector(BaseSqlConnector):
                         "default_value": col["default"],
                     }
                 )
-            # schemas.append(
-            #     {
-            #         "table": table_name,
-            #         "columns": [{"name": col["name"], "type": str(col["type"])} for col in columns],
-            #     }
-            # )
 
             return schemas
         except Exception as e:
-            raise DatusException(
-                ErrorCode.DB_FAILED,
-                message_args={
-                    "operation": "get_schema",
-                    "error_message": str(e),
-                },
-            ) from e
+            raise self._trans_sqlalchemy_exception(e, sql="", operation="Get Schema")
 
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of views in the database."""
@@ -843,6 +860,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        table_type: TABLE_TYPE = "table",
     ) -> List[Dict[str, str]]:
         """
         Get sample values from tables.
@@ -852,9 +870,28 @@ class SQLAlchemyConnector(BaseSqlConnector):
         try:
             samples = []
             if not tables:
-                tables = self.get_tables(
-                    catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
-                )
+                tables = []
+                if table_type == "table" or table_type == "full":
+                    tables.extend(
+                        self.get_tables(
+                            catalog_name=catalog_name,
+                            database_name=database_name,
+                            schema_name=schema_name,
+                        )
+                    )
+                if table_type == "view" or table_type == "full":
+                    tables.extend(
+                        self.get_views(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name)
+                    )
+                if table_type == "mv" or table_type == "full":
+                    try:
+                        tables.extend(
+                            self.get_materialized_views(
+                                catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
+                            )
+                        )
+                    except Exception as e:
+                        logger.info(f"Materialized views are not supported for {self.dialect}: {e}")
             logger.info(f"Getting sample data from tables {tables} LIMIT {top_n}")
             for table_name in tables:
                 full_table_name = self.full_name(
@@ -878,6 +915,7 @@ class SQLAlchemyConnector(BaseSqlConnector):
                             "database_name": database_name,
                             "schema_name": schema_name,
                             "table_name": table_name,
+                            "table_type": TABLE_TYPE,
                             "sample_rows": result.to_csv(index=False),
                         }
                     )

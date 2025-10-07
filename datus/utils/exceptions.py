@@ -91,29 +91,31 @@ class ErrorCode(Enum):
     # Database errors - Query Execution (SQLAlchemy + Snowflake specific)
     DB_EXECUTION_SYNTAX_ERROR = (
         "500005",
-        "Invalid SQL syntax in query. SQL: {sql}, Error details: {error_message}",
+        "Invalid SQL syntax in query. Error details: {error_message}",
     )
     DB_EXECUTION_ERROR = (
         "500006",
-        "Failed to execute query on database. SQL: {sql}, Error details: {error_message}",
+        "Failed to execute query on database. Error details: {error_message}",
     )
     DB_EXECUTION_TIMEOUT = (
         "500007",
-        "Query execution timed out on database. SQL: {sql}, Error details: {error_message}",
+        "Query execution timed out on database. Error details: {error_message}",
     )
     DB_QUERY_METADATA_FAILED = (
         "500008",
-        "Failed to retrieve metadata for query. SQL: {sql}, Error details: {error_message}",
+        "Failed to retrieve metadata for query. Error details: {error_message}",
     )
 
     # Database errors - Constraints (SQLAlchemy IntegrityError)
     DB_CONSTRAINT_VIOLATION = (
         "500008",
-        "Database constraint violation occurred. SQL: {sql}, Error details: {error_message}",
+        "Database constraint violation occurred. Error details: {error_message}",
     )
 
     # Database errors - Transaction (SQLAlchemy transaction issues)
     DB_TRANSACTION_FAILED = ("500009", "Database transaction failed. Error details: {error_message}")
+
+    DB_TABLE_NOT_EXISTS = ("500010", "Table {table_name} does not exist.")
 
     def __init__(self, code: str, desc: str):
         self.code = code

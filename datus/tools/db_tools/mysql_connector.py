@@ -1,5 +1,7 @@
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, override
+from typing import Any, Dict, List, Optional, Set, override
 from urllib.parse import quote_plus
+
+from pydantic import BaseModel, Field
 
 from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.base import list_to_in_str
@@ -10,27 +12,43 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-CREATE_TYPE = Literal["TABLE", "VIEW", "MATERIALIZED VIEW"]
-META_TABLE_NAMES = Literal["TABLES", "VIEWS", "MATERIALIZED_VIEWS"]
+
+class TableMetadataNames(BaseModel):
+    """
+    The corresponding database commands are SHOW/SHOW CREAT/INFORMATION_SCHEMA.<TABLES>
+    """
+
+    show_table: str = Field(..., init=True, description="The corresponding database commands SHOW")
+    show_create_table: str = Field(..., init=True, description="The corresponding database commands SHOW CREATE")
+    info_table: str = Field(..., init=True, description="The name of metadata table")
+    table_types: Optional[List[str]] = Field(
+        default=None, init=True, description="The type of table INFORMATION_SCHEMA.TABLES"
+    )
 
 
-def db_table_type_to_inner(db_table_type: str) -> TABLE_TYPE:
-    if db_table_type == "VIEW":
-        return "view"
-    elif db_table_type == "MATERIALIZED VIEW":
-        return "mv"
-    return "table"
+METADATA_DICT: Dict[TABLE_TYPE, TableMetadataNames] = {
+    "table": TableMetadataNames(
+        show_table="TABLES", show_create_table="TABLE", info_table="TABLES", table_types=["TABLE", "BASE TABLE"]
+    ),
+    "view": TableMetadataNames(
+        show_table="VIEWS",
+        show_create_table="VIEW",
+        info_table="VIEWS",
+    ),
+    "mv": TableMetadataNames(
+        show_table="MATERIALIZED VIEWS",
+        show_create_table="MATERIALIZED VIEW",
+        info_table="MATERIALIZED_VIEWS",
+    ),
+}
 
 
-def inner_table_type_to_db(table_type: TABLE_TYPE) -> Tuple[META_TABLE_NAMES, CREATE_TYPE]:
-    if table_type == "table":
-        return ("TABLES", "TABLE")
-    elif table_type == "view":
-        return ("VIEWS", "VIEW")
-    elif table_type == "mv":
-        return ("MATERIALIZED_VIEWS", "MATERIALIZED VIEW")
-    else:
-        raise DatusException(ErrorCode.COMMON_FIELD_INVALID, f"Invalid table type: {table_type}")
+def table_metadata_names(inner_table_type: TABLE_TYPE) -> TableMetadataNames:
+    if inner_table_type not in METADATA_DICT:
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID, f"Invalid table type `{inner_table_type}` for Database table type"
+        )
+    return METADATA_DICT[inner_table_type]
 
 
 class MySQLConnectorBase(SQLAlchemyConnector):
@@ -51,8 +69,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
 
     def _get_metadata(
         self,
-        meta_table_name: META_TABLE_NAMES = "TABLES",
-        inner_table_type: Optional[List[str]] = None,
+        inner_table_type: TABLE_TYPE = "table",
         catalog_name: str = "",
         database_name: str = "",
     ) -> List[Dict[str, str]]:
@@ -64,11 +81,12 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             where = f"{where} AND TABLE_SCHEMA = '{database_name}'"
         else:
             where = f"{where} {list_to_in_str('and TABLE_SCHEMA not in', list(self._sys_databases()))}"
+        metadata_names = table_metadata_names(inner_table_type)
 
         query_result = self._execute_pandas(
             (
-                f"SELECT TABLE_CATALOG, TABLE_SCHEMA,TABLE_NAME FROM information_schema.{meta_table_name} WHERE {where}"
-                f"{list_to_in_str(' and TABLE_TYPE in ', inner_table_type)}"
+                f"SELECT TABLE_CATALOG, TABLE_SCHEMA,TABLE_NAME FROM information_schema.{metadata_names.info_table}"
+                f" WHERE {where} {list_to_in_str(' and TABLE_TYPE in ', metadata_names.table_types)}"
             )
         )
         result = []
@@ -77,8 +95,10 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             result.append(
                 {
                     "catalog_name": catalog,
+                    "schema_name": "",
                     "database_name": query_result["TABLE_SCHEMA"][i],
                     "table_name": query_result["TABLE_NAME"][i],
+                    "table_type": inner_table_type,
                 }
             )
         return result
@@ -209,7 +229,6 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         inner_table_type: TABLE_TYPE = "table",
         catalog_name: str = "",
         database_name: str = "",
-        schema_name: str = "",
     ) -> List[Dict[str, str]]:
         """
         Get the database tables/views/materialized views as a list of dictionaries with DDL statements.
@@ -223,10 +242,8 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         """
         result = []
         filter_tables = self._reset_filter_tables(tables, catalog_name=catalog_name, database_name=database_name)
-        meta_table_name, create_type = inner_table_type_to_db(inner_table_type)
         for table in self._get_metadata(
-            meta_table_name=meta_table_name,
-            inner_table_type=None if inner_table_type != "table" else self.db_meta_table_type(),
+            inner_table_type=inner_table_type,
             catalog_name=catalog_name,
             database_name=database_name,
         ):
@@ -237,8 +254,10 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             )
             if filter_tables and full_name not in filter_tables:
                 continue
+            metadata_names = table_metadata_names(inner_table_type)
+
             try:
-                create_statement = self._show_create(full_name=full_name, create_type=create_type)
+                create_statement = self._show_create(full_name=full_name, create_type=metadata_names.show_create_table)
             except Exception as e:
                 logger.warning(f"Could not get DDL for table {full_name}: {e}")
                 # Fallback to basic table info
@@ -275,7 +294,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             database_name=database_name,
         )
 
-    def _show_create(self, full_name: str, create_type: CREATE_TYPE = "TABLE") -> str:
+    def _show_create(self, full_name: str, create_type: str) -> str:
         sql = f"show create {create_type} {full_name}"
         ddl_result = self._execute_pandas(sql)
         if not ddl_result.empty and len(ddl_result.columns) >= 2:
@@ -298,8 +317,7 @@ class MySQLConnector(MySQLConnectorBase):
         return [
             table["table_name"]
             for table in self._get_metadata(
-                meta_table_name="TABLES",
-                inner_table_type=self.db_meta_table_type(),
+                inner_table_type="table",
                 catalog_name=catalog_name,
                 database_name=database_name,
             )
@@ -313,6 +331,7 @@ class MySQLConnector(MySQLConnectorBase):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        table_type: TABLE_TYPE = "table",
     ) -> List[Dict[str, str]]:
         self.connect()
 
@@ -339,6 +358,7 @@ class MySQLConnector(MySQLConnectorBase):
         else:
             for t in self._get_metadata(
                 meta_table_name="TABLES",
+                inner_table_type=table_type,
                 database_name=database_name,
             ):
                 sql = f"select * from `{t['database_name']}`.`{t['table_name']}` limit {top_n}"

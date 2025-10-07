@@ -127,6 +127,7 @@ class DBManager:
                 password=db_config.password,
                 warehouse=db_config.warehouse,
                 database=db_config.database,
+                schema=db_config.schema,
             )
         elif db_config.type == DBType.MYSQL:
             conn = MySQLConnector(

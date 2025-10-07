@@ -5,6 +5,15 @@ from pydantic import BaseModel, Field
 TABLE_TYPE = Literal["table", "view", "mv", "full"]
 
 
+def parse_table_type_by_db(db_table_type: str) -> TABLE_TYPE:
+    db_table_type = db_table_type.upper()
+    if db_table_type in ("TABLE", "BASE TABLE"):
+        return "table"
+    if db_table_type == "VIEW":
+        return "view"
+    return "mv"
+
+
 class BaseInput(BaseModel):
     """
     Base class for all node input data validation.

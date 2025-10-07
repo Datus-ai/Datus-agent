@@ -3,6 +3,7 @@ import threading
 import weakref
 from typing import Any, Dict, List, Optional, override
 
+from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.mysql_connector import MySQLConnectorBase, list_to_in_str
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -153,6 +154,7 @@ class StarRocksConnector(MySQLConnectorBase):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        table_type: TABLE_TYPE = "table",
     ) -> List[Dict[str, str]]:
         """Get sample values from tables."""
         self.connect()
@@ -186,7 +188,30 @@ class StarRocksConnector(MySQLConnectorBase):
                         }
                     )
         else:
-            for table in self._get_metadata(catalog_name=catalog_name, database_name=database_name):
+            table_metadata = []
+            if table_type == "full":
+                table_metadata.extend(
+                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
+                )
+                table_metadata.extend(
+                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="view")
+                )
+                table_metadata.extend(
+                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="mv")
+                )
+            elif table_type == "table":
+                table_metadata.extend(
+                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
+                )
+            elif table_type == "view":
+                table_metadata.extend(
+                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="view")
+                )
+            else:
+                table_metadata.extend(
+                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
+                )
+            for table in tables:
                 sql = (
                     f"SELECT * FROM `{table['catalog_name']}`.`{table['database_name']}`.`{table['table_name']}` "
                     "LIMIT {top_n}"

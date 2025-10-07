@@ -34,7 +34,15 @@ class DbConfig:
     @staticmethod
     def filter_kwargs(cls, kwargs):
         valid_fields = {f.name for f in fields(cls)}
-        return cls(**{k: resolve_env(v) for k, v in kwargs.items() if k in valid_fields})
+        params = {}
+        for k, v in kwargs.items():
+            if k not in valid_fields:
+                continue
+            if not v:
+                params[k] = v
+            else:
+                params[k] = resolve_env(str(v))
+        return cls(**params)
 
 
 @dataclass

@@ -194,8 +194,8 @@ class MetadataCommands:
             database_name=self.cli.cli_context.current_db_name,
             schema_name=schema_name,
         )
-        self.cli.console.print(f"[bold green]Schema switched to: {self.cli.cli_context.current_db_name}[/]")
         self.cli.cli_context.current_schema = schema_name
+        self.cli.console.print(f"[bold green]Schema switched to: {self.cli.cli_context.current_schema}[/]")
 
     def cmd_table_schema(self, args: str):
         """Show schema information for tables."""

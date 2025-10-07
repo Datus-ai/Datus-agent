@@ -195,17 +195,25 @@ class DatusCLI:
 
         @kb.add("enter")
         def _(event):
-            """Enter key: closes the complementary menu or executes a command"""
+            """
+            Enter key:
+                if completion menu is open, apply the highlighted item (if any) or close the menu; otherwise execute.
+            """
             buffer = event.app.current_buffer
 
             if buffer.complete_state:
-                # When there is a complementary menu, close the menu but do not apply the complementary
-                buffer.apply_completion(buffer.complete_state.current_completion)
+                # If there is an actively highlighted completion, apply it.
+                cs = buffer.complete_state
+                comp = cs.current_completion
+                if comp is not None:
+                    buffer.apply_completion(comp)
+                else:
+                    # No item highlighted (e.g., select_first=False). Close the menu and proceed as normal Enter.
+                    buffer.cancel_completion()
+                    buffer.validate_and_handle()
                 return
 
-            # Don't intercept plan mode here - let it flow through normal command processing
-
-            # Performs normal Enter behavior when there is no complementary menu
+            # Performs normal Enter behavior when there is no completion menu.
             buffer.validate_and_handle()
 
         return kb
