@@ -65,9 +65,15 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
 
 
 class DBFuncTool:
-    def __init__(self, connector: BaseSqlConnector):
+    def __init__(self, connector: BaseSqlConnector, agent_config: Optional[AgentConfig] = None):
         self.connector = connector
         self.compressor = DataCompressor()
+        self.agent_config = agent_config
+        self.schema_rag = None
+        if agent_config:
+            from datus.storage.schema_metadata.store import rag_by_configuration as schema_metadata_by_configuration
+
+            self.schema_rag = schema_metadata_by_configuration(agent_config)
 
     def available_tools(self) -> List[Tool]:
         bound_tools = []
@@ -86,6 +92,10 @@ class DBFuncTool:
 
         if self.connector.dialect in SUPPORT_SCHEMA_DIALECTS:
             bound_tools.append(trans_to_function_tool(self.list_schemas))
+
+        # Add search_table if schema_rag is available
+        if self.schema_rag:
+            bound_tools.append(trans_to_function_tool(self.search_table))
 
         for bound_method in methods_to_convert:
             bound_tools.append(trans_to_function_tool(bound_method))
@@ -153,6 +163,102 @@ class DBFuncTool:
         try:
             schemas = self.connector.get_schemas(catalog, database, include_sys=include_sys)
             return FuncToolResult(result=schemas)
+        except Exception as e:
+            return FuncToolResult(success=0, error=str(e))
+
+    def search_table(
+        self,
+        query_text: str,
+        catalog: Optional[str] = "",
+        database: Optional[str] = "",
+        schema: Optional[str] = "",
+        top_n: int = 5,
+        simple_sample_data: bool = True,
+    ) -> FuncToolResult:
+        """
+        Search for database tables using natural language queries with vector similarity.
+
+        This tool helps find relevant tables by searching through table names, schemas (DDL),
+        and sample data using semantic search. Use this FIRST before describe_table to
+        efficiently discover relevant tables.
+
+        Use this tool when you need to:
+        - Find tables related to a specific business concept or domain
+        - Discover tables containing certain types of data
+        - Locate tables for SQL query development
+        - Understand what tables are available in a database
+
+        **Application Guidance**:
+        1. If table matches (via definition/sample_data), use it directly
+        2. If partitioned (e.g., date-based in definition), explore correct partition via describe_table
+        3. If no match, use list_tables for broader exploration
+
+        Args:
+            query_text: Natural language description of what you're looking for
+                       (e.g., "customer data", "sales transactions", "user profiles")
+            catalog: Optional catalog name to filter search results. Leave empty if not specified.
+            database: Optional database name to filter search results. Leave empty if not specified.
+            schema: Optional schema name to filter search results. Leave empty if not specified.
+            top_n: Maximum number of results to return (default 5)
+            simple_sample_data: If True, return simplified sample data without catalog/database/schema fields
+
+        Returns:
+            dict: Search results containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if search failed
+                - 'result' (dict): Search results with:
+                    - 'metadata' (list): Table information including catalog_name, database_name, schema_name,
+                         table_name, table_type ('table'/'view'/'mv'), definition (DDL), identifier, and _distance
+                    - 'sample_data' (list): Sample rows from matching tables with identifier, table_type,
+                         sample_rows, and _distance
+
+        Example:
+            search_table("customer information", database="prod", top_n=3)
+            Returns tables with DDL and sample data related to customers
+        """
+        if not self.schema_rag:
+            return FuncToolResult(success=0, error="search_table is not available. schema_rag not initialized.")
+
+        try:
+            metadata, sample_values = self.schema_rag.search_similar(
+                query_text,
+                catalog_name=catalog,
+                database_name=database,
+                schema_name=schema,
+                table_type="full",
+                top_n=top_n,
+            )
+            result_dict = {"metadata": [], "sample_data": []}
+            if metadata:
+                result_dict["metadata"] = metadata.select(
+                    [
+                        "catalog_name",
+                        "database_name",
+                        "schema_name",
+                        "table_name",
+                        "table_type",
+                        "definition",
+                        "identifier",
+                        "_distance",
+                    ]
+                ).to_pylist()
+
+            if sample_values:
+                if simple_sample_data:
+                    selected_fields = ["identifier", "table_type", "sample_rows", "_distance"]
+                else:
+                    selected_fields = [
+                        "identifier",
+                        "catalog_name",
+                        "database_name",
+                        "schema_name",
+                        "table_type",
+                        "table_name",
+                        "sample_rows",
+                        "_distance",
+                    ]
+                result_dict["sample_data"] = sample_values.select(selected_fields).to_pylist()
+            return FuncToolResult(success=1, error=None, result=result_dict)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
@@ -225,7 +331,8 @@ class DBFuncTool:
         - Analyze table schema for data modeling or analysis
         - Verify table structure before running queries
 
-        **IMPORTANT**: Only use AFTER search_table_metadata if no match or for partitioned tables.
+        **IMPORTANT**: Only use AFTER search_table if no match or for partitioned tables.
+        Always prefer search_table first for semantic table discovery.
 
         Args:
             table_name: Name of the table to describe
@@ -327,7 +434,8 @@ class DBFuncTool:
 def db_function_tool_instance(agent_config: AgentConfig, database_name: str = "") -> DBFuncTool:
     db_manager = db_manager_instance(agent_config.namespaces)
     return DBFuncTool(
-        db_manager.get_conn(agent_config.current_namespace, database_name or agent_config.current_database)
+        db_manager.get_conn(agent_config.current_namespace, database_name or agent_config.current_database),
+        agent_config=agent_config,
     )
 
 

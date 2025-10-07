@@ -215,6 +215,93 @@ class SqlHistoryRAG:
         """Get total number of SQL history entries."""
         return self.sql_history_storage.table_size()
 
+    def get_domains(self) -> List[str]:
+        """Get all unique domains from sql_history.
+
+        Returns:
+            List of unique domain names
+        """
+        self.sql_history_storage._ensure_table_ready()
+
+        MAX_DOMAINS = 1000
+        search_result = self.sql_history_storage.table.search().select(["domain"]).limit(MAX_DOMAINS).to_list()
+
+        if len(search_result) >= MAX_DOMAINS:
+            logger.warning(
+                f"Retrieved {MAX_DOMAINS} domain records (may be truncated). "
+                "Consider using filters to reduce result set."
+            )
+
+        domains = list(set(result["domain"] for result in search_result if result.get("domain")))
+        logger.debug(f"Found {len(domains)} unique domains from {len(search_result)} records")
+
+        return sorted(domains)
+
+    def get_layers_by_domain(self, domain: str = "") -> List[tuple]:
+        """Get unique (layer1, layer2) combinations from sql_history.
+
+        Args:
+            domain: Domain name to filter. Leave empty to get all layers.
+
+        Returns:
+            List of (layer1, layer2) tuples. Maximum 1000 combinations.
+        """
+        MAX_LAYERS = 1000
+
+        self.sql_history_storage._ensure_table_ready()
+
+        where_clause = build_where(eq("domain", domain)) if domain else None
+        search_result = self.sql_history_storage.table.search()
+        if where_clause:
+            search_result = search_result.where(where_clause)
+
+        results = search_result.select(["layer1", "layer2"]).limit(MAX_LAYERS).to_list()
+
+        if len(results) >= MAX_LAYERS:
+            logger.warning(
+                f"Retrieved {MAX_LAYERS} layer records (may be truncated). "
+                f"Consider filtering by domain to reduce result set."
+            )
+
+        unique_layers = set((r["layer1"], r["layer2"]) for r in results if r.get("layer1") and r.get("layer2"))
+        logger.debug(f"Found {len(unique_layers)} unique layers from {len(results)} records")
+
+        return list(unique_layers)
+
+    def get_sql_history_names(self, domain: str, layer1: str, layer2: str) -> List[Dict[str, str]]:
+        """Get sql_history names with summaries in a specific layer.
+
+        Args:
+            domain: Domain name
+            layer1: Primary layer name
+            layer2: Secondary layer name
+
+        Returns:
+            List of dicts with 'name' and 'summary' fields
+        """
+        MAX_SQL_HISTORY = 1000
+
+        conditions = [eq("domain", domain), eq("layer1", layer1), eq("layer2", layer2)]
+        query_result = self.sql_history_storage._search_all(
+            And(conditions),
+            select_fields=["name", "summary"],
+        )
+
+        if query_result is None or query_result.num_rows == 0:
+            logger.debug(f"No sql_history found for domain={domain}, layer1={layer1}, layer2={layer2}")
+            return []
+
+        if query_result.num_rows >= MAX_SQL_HISTORY:
+            logger.warning(
+                f"Retrieved {query_result.num_rows} sql_history items (may be truncated at {MAX_SQL_HISTORY}). "
+                "Result set is very large."
+            )
+
+        result_list = query_result.to_pylist()
+        logger.debug(f"Found {len(result_list)} sql_history items in {domain}/{layer1}/{layer2}")
+
+        return result_list
+
     def search_sql_history_by_summary(
         self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
     ) -> List[Dict[str, Any]]:

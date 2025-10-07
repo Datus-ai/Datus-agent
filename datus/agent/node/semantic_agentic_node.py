@@ -113,7 +113,7 @@ class SemanticAgenticNode(AgenticNode):
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
             conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-            self.db_func_tool = DBFuncTool(conn)
+            self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
@@ -199,7 +199,7 @@ class SemanticAgenticNode(AgenticNode):
                 if not self.db_func_tool:
                     db_manager = db_manager_instance(self.agent_config.namespaces)
                     conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-                    self.db_func_tool = DBFuncTool(conn)
+                    self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
                 tool_instance = self.db_func_tool
             elif tool_type == "generation_tools":
                 if not hasattr(self, "generation_tools") or not self.generation_tools:
