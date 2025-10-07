@@ -76,7 +76,6 @@ class DBFuncTool:
             self.describe_table,
             self.read_query,
             self.get_table_ddl,
-            self.get_tables_with_ddl,
         ]
 
         if self.connector.dialect in SUPPORT_CATALOG_DIALECTS:
@@ -300,8 +299,13 @@ class DBFuncTool:
                 - 'success' (int): 1 if successful, 0 if failed
                 - 'error' (str or None): Error message if failed
                 - 'result' (dict): Contains:
-                    - 'ddl' (str): Complete CREATE TABLE DDL statement
-                    - 'table_info' (dict): Table metadata including catalog, database, schema
+                    - 'identifier' (str): Full table identifier
+                    - 'catalog_name' (str): Catalog name
+                    - 'database_name' (str): Database name
+                    - 'schema_name' (str): Schema name
+                    - 'table_name' (str): Table name
+                    - 'definition' (str): Complete CREATE TABLE DDL statement
+                    - 'table_type' (str): Table type (table, view, etc.)
         """
         try:
             # Get tables with DDL
@@ -315,48 +319,6 @@ class DBFuncTool:
             # Return the first (and only) table's DDL
             table_info = tables_with_ddl[0]
             return FuncToolResult(result=table_info)
-
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
-
-    def get_tables_with_ddl(
-        self,
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-        tables: Optional[List[str]] = None,
-    ) -> FuncToolResult:
-        """
-        Get complete DDL definitions for multiple database tables.
-
-        Use this tool when you need to:
-        - Generate semantic models for multiple tables
-        - Analyze relationships between multiple tables
-        - Get comprehensive table structure information
-
-        Args:
-            catalog: Optional catalog name to filter tables
-            database: Optional database name to filter tables
-            schema_name: Optional schema name to filter tables
-            tables: Optional list of table names to filter
-
-        Returns:
-            dict: DDL results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (list): List of dictionaries with:
-                    - 'table_name' (str): Name of the table
-                    - 'ddl' (str): Complete CREATE TABLE DDL statement
-                    - 'catalog' (str): Catalog name
-                    - 'database' (str): Database name
-                    - 'schema' (str): Schema name
-        """
-        try:
-            tables_with_ddl = self.connector.get_tables_with_ddl(
-                catalog_name=catalog, database_name=database, schema_name=schema_name, tables=tables
-            )
-
-            return FuncToolResult(result=tables_with_ddl)
 
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))

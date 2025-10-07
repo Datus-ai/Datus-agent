@@ -59,7 +59,7 @@ class FilesystemFuncTool:
     """Function tool wrapper for filesystem operations"""
 
     def __init__(self, root_path: str = None):
-        self.root_path = root_path or os.getenv("FILESYSTEM_ROOT_PATH", os.path.expanduser("~"))
+        self.root_path = root_path or os.getenv("FILESYSTEM_MCP_PATH", os.path.expanduser("~"))
         self.config = FilesystemConfig(root_path=root_path)
 
     def available_tools(self) -> List[Tool]:
