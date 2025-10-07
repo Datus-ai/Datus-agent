@@ -128,7 +128,8 @@ class SelectableTree(Tree):
                     break
 
             if not found:
-                self.app.notify(f"Node not found: {label}", severity="error")
+                if self.app:
+                    self.app.notify(f"Node not found: {label}", severity="error")
                 return
 
         # Make sure it is a leaf node
@@ -336,10 +337,7 @@ class InputWithLabel(Widget):
         """
         self.readonly = readonly
         if self.input_widget:
-            if isinstance(self.input_widget, TextArea):
-                self.input_widget.read_only = readonly
-            else:
-                self.input_widget.disabled = readonly
+            self.input_widget.read_only = readonly
 
     def is_modified(self) -> bool:
         """
@@ -355,23 +353,23 @@ class InputWithLabel(Widget):
             return self.input_widget.text if isinstance(self.input_widget, TextArea) else self.input_widget.value
         return self.original_value
 
-    # --- Regex validation handlers ---
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        """
-        Handle changes to the single‑line Input. If a regex is provided,
-        revert the change when the new value doesn’t match.
-        """
-        if event.input is not self.input_widget or not self.regex:
-            return
-
-        # If entire value matches, record it; otherwise revert to last valid
-        if self.regex.fullmatch(event.value) or event.value == "":
-            self._last_valid = event.value
-            self._last_cursor_location = event.input.cursor_position
-        else:
-            event.input.value = self._last_valid
-            event.input.cursor_position = min(self._last_cursor_location, len(self._last_valid))
-        event.stop()
+    # # --- Regex validation handlers ---
+    # async def on_input_changed(self, event: Input.Changed) -> None:
+    #     """
+    #     Handle changes to the single‑line Input. If a regex is provided,
+    #     revert the change when the new value doesn’t match.
+    #     """
+    #     if event.input is not self.input_widget or not self.regex:
+    #         return
+    #
+    #     # If entire value matches, record it; otherwise revert to last valid
+    #     if self.regex.fullmatch(event.value) or event.value == "":
+    #         self._last_valid = event.value
+    #         self._last_cursor_location = event.input.cursor_position
+    #     else:
+    #         event.input.value = self._last_valid
+    #         event.input.cursor_position = min(self._last_cursor_location, len(self._last_valid))
+    #     event.stop()
 
     async def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """
@@ -402,10 +400,7 @@ class InputWithLabel(Widget):
     def set_value(self, value: str):
         self.original_value = value
 
-        if isinstance(self.input_widget, TextArea):
-            self.input_widget.text = value
-        else:
-            self.input_widget.value = value
+        self.input_widget.text = value
         self._last_valid = value
         self._last_cursor_location = len(value)
 
@@ -417,14 +412,20 @@ class InputWithLabel(Widget):
 
     @property
     def cursor_position(self) -> int:
-        if isinstance(self.input_widget, Input):
-            return self.input_widget.cursor_position
-        return 0
+        row, col = self.input_widget.cursor_location
+        lines = self.input_widget.text.split("\n")
+        return sum(len(line) + 1 for line in lines[:row]) + col
 
     @cursor_position.setter
     def cursor_position(self, position: int) -> None:
-        if isinstance(self.input_widget, Input):
-            self.input_widget.cursor_position = position
+        # Convert 1D position to 2D cursor location
+        lines = self.input_widget.text.split("\n")
+        current_pos = 0
+        for row, line in enumerate(lines):
+            if current_pos + len(line) >= position:
+                col = position - current_pos
+            self.input_widget.cursor_location = (row, col)
+            current_pos += len(line) + 1  # +1 for newline
 
 
 class FocusableStatic(Static):
