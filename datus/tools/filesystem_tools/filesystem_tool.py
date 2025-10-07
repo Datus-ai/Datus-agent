@@ -1,0 +1,435 @@
+import os
+from pathlib import Path
+from typing import Any, List, Optional
+
+from agents import Tool
+from pydantic import BaseModel, Field
+
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
+
+class FuncToolResult(BaseModel):
+    success: int = Field(
+        default=1, description="Whether the execution is successful or not, 1 is success, 0 is failure", init=True
+    )
+    error: Optional[str] = Field(
+        default=None, description="Error message: field is not empty when success=0", init=True
+    )
+    result: Optional[Any] = Field(default=None, description="Result of the execution", init=True)
+
+
+class EditOperation(BaseModel):
+    """Single edit operation for file editing"""
+
+    oldText: str = Field(description="The text to be replaced")
+    newText: str = Field(description="The text to replace with")
+
+
+class FilesystemConfig:
+    """Configuration for filesystem operations"""
+
+    def __init__(
+        self,
+        root_path: str = None,
+        allowed_extensions: List[str] = None,
+        max_file_size: int = 1024 * 1024,
+    ):
+        self.root_path = root_path or os.getenv("FILESYSTEM_MCP_PATH", os.path.expanduser("~"))
+        self.allowed_extensions = allowed_extensions or [
+            ".txt",
+            ".md",
+            ".py",
+            ".js",
+            ".ts",
+            ".json",
+            ".yaml",
+            ".yml",
+            ".csv",
+            ".sql",
+            ".html",
+            ".css",
+            ".xml",
+        ]
+        self.max_file_size = max_file_size
+
+
+class FilesystemFuncTool:
+    """Function tool wrapper for filesystem operations"""
+
+    def __init__(self, root_path: str = None):
+        self.root_path = root_path or os.getenv("FILESYSTEM_MCP_PATH", os.path.expanduser("~"))
+        self.config = FilesystemConfig(root_path=root_path)
+
+    def available_tools(self) -> List[Tool]:
+        """Get all available filesystem tools"""
+        from datus.tools.tools import trans_to_function_tool
+
+        bound_tools = []
+        methods_to_convert = [
+            self.read_file,
+            self.read_multiple_files,
+            self.write_file,
+            self.edit_file,
+            self.create_directory,
+            self.list_directory,
+            self.directory_tree,
+            self.move_file,
+        ]
+
+        for bound_method in methods_to_convert:
+            bound_tools.append(trans_to_function_tool(bound_method))
+        return bound_tools
+
+    def _get_safe_path(self, path: str) -> Optional[Path]:
+        """Get a safe path within the root directory"""
+        try:
+            root = Path(self.config.root_path).resolve()
+            target = (root / path).resolve()
+
+            if not str(target).startswith(str(root)):
+                return None
+
+            return target
+        except Exception:
+            return None
+
+    def _is_allowed_file(self, file_path: Path) -> bool:
+        """Check if file extension is allowed"""
+        if not self.config.allowed_extensions:
+            return True
+        return file_path.suffix.lower() in self.config.allowed_extensions
+
+    def read_file(self, path: str) -> FuncToolResult:
+        """
+        Read the contents of a file.
+
+        Args:
+            path: The path of the file to read
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[str]): File contents on success.
+        """
+        try:
+            target_path = self._get_safe_path(path)
+
+            if not target_path or not target_path.exists():
+                return FuncToolResult(success=0, error=f"File not found: {path}")
+
+            if not target_path.is_file():
+                return FuncToolResult(success=0, error=f"Path is not a file: {path}")
+
+            if not self._is_allowed_file(target_path):
+                return FuncToolResult(success=0, error=f"File type not allowed: {path}")
+
+            if target_path.stat().st_size > self.config.max_file_size:
+                return FuncToolResult(success=0, error=f"File too large: {path}")
+
+            try:
+                content = target_path.read_text(encoding="utf-8")
+                return FuncToolResult(result=content)
+            except UnicodeDecodeError:
+                return FuncToolResult(success=0, error=f"Cannot read binary file: {path}")
+            except PermissionError:
+                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+
+        except Exception as e:
+            logger.error(f"Error reading file {path}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def read_multiple_files(self, paths: List[str]) -> FuncToolResult:
+        """
+        Read the contents of multiple files.
+
+        Args:
+            paths: List of file paths to read
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[dict]): Dictionary mapping paths to their contents on success.
+        """
+        try:
+            results = {}
+
+            for path in paths:
+                target_path = self._get_safe_path(path)
+                if not target_path or not target_path.exists():
+                    results[path] = f"File not found: {path}"
+                    continue
+
+                if not target_path.is_file():
+                    results[path] = f"Path is not a file: {path}"
+                    continue
+
+                if not self._is_allowed_file(target_path):
+                    results[path] = f"File type not allowed: {path}"
+                    continue
+
+                try:
+                    content = target_path.read_text(encoding="utf-8")
+                    results[path] = content
+                except UnicodeDecodeError:
+                    results[path] = f"Cannot read binary file: {path}"
+                except PermissionError:
+                    results[path] = f"Permission denied: {path}"
+
+            return FuncToolResult(result=results)
+
+        except Exception as e:
+            logger.error(f"Error reading multiple files: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:
+        """
+        Create a new file or overwrite an existing file.
+
+        Args:
+            path: The path of the file to write
+            content: The content to write to the file
+            file_type: Type of file being written (e.g., "sql_history", "semantic_model").
+                       Used by hooks for special handling.
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[str]): Success message on success.
+        """
+        try:
+            target_path = self._get_safe_path(path)
+
+            if not target_path:
+                return FuncToolResult(success=0, error=f"Invalid path: {path}")
+
+            if not self._is_allowed_file(target_path):
+                return FuncToolResult(success=0, error=f"File type not allowed: {path}")
+
+            try:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(content, encoding="utf-8")
+                return FuncToolResult(result=f"File written successfully: {str(target_path)}")
+            except PermissionError:
+                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+
+        except Exception as e:
+            logger.error(f"Error writing file {path}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def edit_file(self, path: str, edits: List[EditOperation]) -> FuncToolResult:
+        """
+        Make selective edits to a file.
+
+        Args:
+            path: The path of the file to edit
+            edits: List of edits to apply, each containing 'oldText' and 'newText'
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[str]): Success message on success.
+        """
+        try:
+            target_path = self._get_safe_path(path)
+
+            if not target_path or not target_path.exists():
+                return FuncToolResult(success=0, error=f"File not found: {path}")
+
+            if not target_path.is_file():
+                return FuncToolResult(success=0, error=f"Path is not a file: {path}")
+
+            if not self._is_allowed_file(target_path):
+                return FuncToolResult(success=0, error=f"File type not allowed: {path}")
+
+            try:
+                content = target_path.read_text(encoding="utf-8")
+
+                for edit in edits:
+                    # Handle both EditOperation objects and dictionaries
+                    if isinstance(edit, dict):
+                        old_text = edit.get("oldText", "")
+                        new_text = edit.get("newText", "")
+                    else:
+                        old_text = edit.oldText
+                        new_text = edit.newText
+                    content = content.replace(old_text, new_text)
+
+                target_path.write_text(content, encoding="utf-8")
+                return FuncToolResult(result=f"File edited successfully: {str(target_path)}")
+            except UnicodeDecodeError:
+                return FuncToolResult(success=0, error=f"Cannot edit binary file: {path}")
+            except PermissionError:
+                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+
+        except Exception as e:
+            logger.error(f"Error editing file {path}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def create_directory(self, path: str) -> FuncToolResult:
+        """
+        Create a new directory or ensure it exists.
+
+        Args:
+            path: The path of the directory to create
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[str]): Success message on success.
+        """
+        try:
+            target_path = self._get_safe_path(path)
+
+            if not target_path:
+                return FuncToolResult(success=0, error=f"Invalid path: {path}")
+
+            try:
+                target_path.mkdir(parents=True, exist_ok=True)
+                return FuncToolResult(result=f"Directory created: {path}")
+            except PermissionError:
+                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+
+        except Exception as e:
+            logger.error(f"Error creating directory {path}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def list_directory(self, path: str) -> FuncToolResult:
+        """
+        List the contents of a directory.
+
+        Args:
+            path: The path of the directory to list
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[List[Dict]]): List of items with 'name' and 'type' on success.
+        """
+        try:
+            target_path = self._get_safe_path(path)
+
+            if not target_path or not target_path.exists():
+                return FuncToolResult(success=0, error=f"Directory not found: {path}")
+
+            if not target_path.is_dir():
+                return FuncToolResult(success=0, error=f"Path is not a directory: {path}")
+
+            try:
+                items = []
+                for item in sorted(target_path.iterdir()):
+                    item_info = {"name": item.name, "type": "directory" if item.is_dir() else "file"}
+                    items.append(item_info)
+
+                return FuncToolResult(result=items)
+            except PermissionError:
+                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+
+        except Exception as e:
+            logger.error(f"Error listing directory {path}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def directory_tree(self, path: str) -> FuncToolResult:
+        """
+        Get a tree view of a directory.
+
+        Args:
+            path: The path of the directory to analyze
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[str]): Tree view string on success.
+        """
+        try:
+            target_path = self._get_safe_path(path)
+
+            if not target_path or not target_path.exists():
+                return FuncToolResult(success=0, error=f"Directory not found: {path}")
+
+            if not target_path.is_dir():
+                return FuncToolResult(success=0, error=f"Path is not a directory: {path}")
+
+            try:
+
+                def build_tree(dir_path: Path, prefix: str = "") -> List[str]:
+                    lines = []
+                    items = sorted(dir_path.iterdir())
+
+                    for i, item in enumerate(items):
+                        is_last = i == len(items) - 1
+                        current_prefix = "└── " if is_last else "├── "
+
+                        if item.is_dir():
+                            lines.append(f"{prefix}{current_prefix}{item.name}/")
+                            next_prefix = prefix + ("    " if is_last else "│   ")
+                            lines.extend(build_tree(item, next_prefix))
+                        else:
+                            try:
+                                size = item.stat().st_size
+                                lines.append(f"{prefix}{current_prefix}{item.name} ({size} bytes)")
+                            except Exception:
+                                lines.append(f"{prefix}{current_prefix}{item.name}")
+
+                    return lines
+
+                tree_lines = [f"{target_path.name}/"]
+                tree_lines.extend(build_tree(target_path))
+                tree_output = "\n".join(tree_lines)
+
+                return FuncToolResult(result=tree_output)
+            except PermissionError:
+                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+
+        except Exception as e:
+            logger.error(f"Error building directory tree {path}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def move_file(self, source: str, destination: str) -> FuncToolResult:
+        """
+        Move or rename a file or directory.
+
+        Args:
+            source: The current path of the file or directory
+            destination: The new path for the file or directory
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[str]): Success message on success.
+        """
+        try:
+            source_path = self._get_safe_path(source)
+            dest_path = self._get_safe_path(destination)
+
+            if not source_path or not source_path.exists():
+                return FuncToolResult(success=0, error=f"Source not found: {source}")
+
+            if not dest_path:
+                return FuncToolResult(success=0, error=f"Invalid destination: {destination}")
+
+            try:
+                source_path.rename(dest_path)
+                return FuncToolResult(result=f"Moved {source} to {destination}")
+            except PermissionError:
+                return FuncToolResult(success=0, error="Permission denied")
+            except OSError as e:
+                return FuncToolResult(success=0, error=f"Move failed: {str(e)}")
+
+        except Exception as e:
+            logger.error(f"Error moving file from {source} to {destination}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+
+def filesystem_function_tools(root_path: str = None) -> List[Tool]:
+    """Get filesystem function tools"""
+    return FilesystemFuncTool(root_path=root_path).available_tools()

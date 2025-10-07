@@ -160,9 +160,9 @@ class AgenticNode(ABC):
         execution_prompt = (
             "After the plan has been confirmed, execute the pending steps.\n\n"
             + "Execution steps for each pending step:\n"
-            + "1. FIRST: call todo_update_pending(todo_id) to mark step as pending (triggers user confirmation)\n"
+            + "1. FIRST: call todo_update(todo_id, 'pending') to mark step as pending (triggers user confirmation)\n"
             + "2. then execute the actual task (SQL queries, data processing, etc.)\n"
-            + "3. then call todo_update_completed(todo_id) to mark step as completed\n\n"
+            + "3. then call todo_update(todo_id, 'completed') to mark step as completed\n\n"
             + "Start with the first pending step in the plan."
         )
 
@@ -397,6 +397,7 @@ class AgenticNode(ABC):
             "prompt_language",
             "tools",
             "mcp",
+            "hooks",
             "rules",
             "max_turns",
             "workspace_root",

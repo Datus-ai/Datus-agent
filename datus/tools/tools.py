@@ -75,6 +75,7 @@ class DBFuncTool:
             self.list_tables,
             self.describe_table,
             self.read_query,
+            self.get_table_ddl,
         ]
 
         if self.connector.dialect in SUPPORT_CATALOG_DIALECTS:
@@ -269,6 +270,56 @@ class DBFuncTool:
                 return FuncToolResult(result=self.compressor.compress(data))
             else:
                 return FuncToolResult(success=0, error=result.error)
+        except Exception as e:
+            return FuncToolResult(success=0, error=str(e))
+
+    def get_table_ddl(
+        self,
+        table_name: str,
+        catalog: Optional[str] = "",
+        database: Optional[str] = "",
+        schema_name: Optional[str] = "",
+    ) -> FuncToolResult:
+        """
+        Get complete DDL definition for a database table.
+
+        Use this tool when you need to:
+        - Generate semantic models (LLM needs complete DDL for accurate generation)
+        - Understand table structure including constraints, indexes, and relationships
+        - Analyze foreign key relationships for semantic model generation
+
+        Args:
+            table_name: Name of the database table
+            catalog: Optional catalog name to filter tables
+            database: Optional database name to filter tables
+            schema_name: Optional schema name to filter tables
+
+        Returns:
+            dict: DDL results containing:
+                - 'success' (int): 1 if successful, 0 if failed
+                - 'error' (str or None): Error message if failed
+                - 'result' (dict): Contains:
+                    - 'identifier' (str): Full table identifier
+                    - 'catalog_name' (str): Catalog name
+                    - 'database_name' (str): Database name
+                    - 'schema_name' (str): Schema name
+                    - 'table_name' (str): Table name
+                    - 'definition' (str): Complete CREATE TABLE DDL statement
+                    - 'table_type' (str): Table type (table, view, etc.)
+        """
+        try:
+            # Get tables with DDL
+            tables_with_ddl = self.connector.get_tables_with_ddl(
+                catalog_name=catalog, database_name=database, schema_name=schema_name, tables=[table_name]
+            )
+
+            if not tables_with_ddl:
+                return FuncToolResult(success=0, error=f"Table '{table_name}' not found or no DDL available")
+
+            # Return the first (and only) table's DDL
+            table_info = tables_with_ddl[0]
+            return FuncToolResult(result=table_info)
+
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 

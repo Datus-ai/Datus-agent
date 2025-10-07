@@ -1,0 +1,594 @@
+"""
+SemanticAgenticNode implementation for semantic model generation with enhanced configuration.
+
+This module provides a specialized implementation of AgenticNode focused on
+semantic model generation with support for filesystem tools, generation tools,
+hooks, and flexible configuration through agent.yml.
+"""
+
+from typing import Any, AsyncGenerator, Dict, Optional
+
+from agents.mcp import MCPServerStdio
+
+from datus.agent.node.agentic_node import AgenticNode
+from datus.configuration.agent_config import AgentConfig
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
+from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.filesystem_tools.filesystem_tool import FilesystemFuncTool
+from datus.tools.generation_tools import GenerationTools
+from datus.tools.mcp_server import MCPServer
+from datus.tools.tools import DBFuncTool
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
+
+class SemanticAgenticNode(AgenticNode):
+    """
+    Semantic model generation agentic node with enhanced configuration.
+
+    This node provides specialized semantic model generation capabilities with:
+    - Enhanced system prompt with template variables
+    - Filesystem tools for file operations
+    - Generation tools for code/model generation
+    - Hooks support for custom behavior
+    - Metricflow MCP server integration
+    - Configurable tool sets and MCP server integration
+    - Session-based conversation management
+    """
+
+    def __init__(
+        self,
+        node_name: str,
+        agent_config: Optional[AgentConfig] = None,
+        max_turns: int = 30,
+    ):
+        """
+        Initialize the SemanticAgenticNode.
+
+        Args:
+            node_name: Name of the node configuration in agent.yml
+            agent_config: Agent configuration
+            max_turns: Maximum conversation turns per interaction
+        """
+        self.configured_node_name = node_name
+        self.max_turns = max_turns
+
+        # Call parent constructor first to set up node_config
+        super().__init__(
+            tools=[],
+            mcp_servers={},  # Initialize empty, will setup after parent init
+            agent_config=agent_config,
+        )
+
+        # Initialize MCP servers based on configuration (after node_config is available)
+        self.mcp_servers = self._setup_mcp_servers()
+
+        # Debug: Log final MCP servers assignment
+        logger.debug(
+            f"SemanticAgenticNode final mcp_servers: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
+        )
+
+        # Setup tools based on configuration
+        self.db_func_tool: Optional[DBFuncTool] = None
+        self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
+        self.generation_tools: Optional[GenerationTools] = None
+        self.hooks = None
+        self.setup_tools()
+
+        # Debug: log hooks status after setup
+        logger.info(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
+
+    def get_node_name(self) -> str:
+        """
+        Get the configured node name for this semantic generation agentic node.
+
+        Returns:
+            The configured node name from agent.yml
+        """
+        return self.configured_node_name
+
+    def setup_tools(self):
+        """Setup tools based on configuration."""
+        if not self.agent_config:
+            return
+
+        self.tools = []
+        config_value = self.node_config.get("tools", "")
+        if not config_value:
+            return
+
+        tool_patterns = [p.strip() for p in config_value.split(",") if p.strip()]
+        for pattern in tool_patterns:
+            self._setup_tool_pattern(pattern)
+
+        logger.info(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
+
+        # Setup hooks after tools are configured
+        self._setup_hooks()
+
+    def _setup_db_tools(self):
+        """Setup database tools."""
+        try:
+            db_manager = db_manager_instance(self.agent_config.namespaces)
+            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            self.db_func_tool = DBFuncTool(conn)
+            self.tools.extend(self.db_func_tool.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup database tools: {e}")
+
+    def _setup_filesystem_tools(self):
+        """Setup filesystem tools."""
+        try:
+            root_path = self._resolve_workspace_root()
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.tools.extend(self.filesystem_func_tool.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup filesystem tools: {e}")
+
+    def _setup_generation_tools(self):
+        """Setup generation tools."""
+        try:
+            self.generation_tools = GenerationTools(self.agent_config)
+            self.tools.extend(self.generation_tools.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup generation tools: {e}")
+
+    def _setup_hooks(self):
+        """Setup hooks if configured."""
+        hooks_config = self.node_config.get("hooks", "")
+        logger.info(f"Hooks config: {hooks_config}, node_config: {self.node_config}")
+        if not hooks_config:
+            return
+
+        try:
+            # Import hooks module
+            if hooks_config == "generation_hooks":
+                from rich.console import Console
+
+                from datus.cli.generation_hooks import GenerationHooks
+
+                console = Console()
+                self.hooks = GenerationHooks(console=console, agent_config=self.agent_config)
+                logger.info(f"Setup hooks: {hooks_config}")
+            else:
+                logger.warning(f"Unknown hooks configuration: {hooks_config}")
+
+        except Exception as e:
+            logger.error(f"Failed to setup hooks '{hooks_config}': {e}")
+
+    def _setup_tool_pattern(self, pattern: str):
+        """Setup tools based on pattern."""
+        try:
+            # Handle wildcard patterns (e.g., "db_tools.*")
+            if pattern.endswith(".*"):
+                base_type = pattern[:-2]  # Remove ".*"
+                if base_type == "db_tools":
+                    self._setup_db_tools()
+                elif base_type == "filesystem_tools":
+                    self._setup_filesystem_tools()
+                elif base_type == "generation_tools":
+                    self._setup_generation_tools()
+                else:
+                    logger.warning(f"Unknown tool type: {base_type}")
+
+            # Handle exact type patterns (e.g., "db_tools")
+            elif pattern == "db_tools":
+                self._setup_db_tools()
+            elif pattern == "filesystem_tools":
+                self._setup_filesystem_tools()
+            elif pattern == "generation_tools":
+                self._setup_generation_tools()
+
+            # Handle specific method patterns (e.g., "db_tools.list_tables")
+            elif "." in pattern:
+                tool_type, method_name = pattern.split(".", 1)
+                self._setup_specific_tool_method(tool_type, method_name)
+
+            else:
+                logger.warning(f"Unknown tool pattern: {pattern}")
+
+        except Exception as e:
+            logger.error(f"Failed to setup tool pattern '{pattern}': {e}")
+
+    def _setup_specific_tool_method(self, tool_type: str, method_name: str):
+        """Setup a specific tool method."""
+        try:
+            if tool_type == "db_tools":
+                if not self.db_func_tool:
+                    db_manager = db_manager_instance(self.agent_config.namespaces)
+                    conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+                    self.db_func_tool = DBFuncTool(conn)
+                tool_instance = self.db_func_tool
+            elif tool_type == "generation_tools":
+                if not hasattr(self, "generation_tools") or not self.generation_tools:
+                    self.generation_tools = GenerationTools(self.agent_config)
+                tool_instance = self.generation_tools
+            elif tool_type == "filesystem_tools":
+                if not hasattr(self, "filesystem_func_tool") or not self.filesystem_func_tool:
+                    root_path = self._resolve_workspace_root()
+                    self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+                tool_instance = self.filesystem_func_tool
+            else:
+                logger.warning(f"Unknown tool type: {tool_type}")
+                return
+
+            if hasattr(tool_instance, method_name):
+                method = getattr(tool_instance, method_name)
+                from datus.tools.tools import trans_to_function_tool
+
+                self.tools.append(trans_to_function_tool(method))
+                logger.debug(f"Added specific tool method: {tool_type}.{method_name}")
+            else:
+                logger.warning(f"Method '{method_name}' not found in {tool_type}")
+        except Exception as e:
+            logger.error(f"Failed to setup {tool_type}.{method_name}: {e}")
+
+    def _setup_metricflow_mcp(self) -> Optional[MCPServerStdio]:
+        """Setup metricflow MCP server.
+
+        Returns:
+            MCPServerStdio instance or None if setup fails
+        """
+        try:
+            if not self.agent_config:
+                logger.warning("Agent config not available for metricflow MCP setup")
+                return None
+
+            # Get current database config
+            db_config = self.agent_config.current_db_config()
+            if not db_config:
+                logger.warning("Database config not found")
+                return None
+
+            metricflow_server = MCPServer.get_metricflow_mcp_server(
+                database_name=db_config.database, db_config=db_config
+            )
+            if metricflow_server:
+                logger.info(f"Added metricflow MCP server for database: {db_config.database}")
+                return metricflow_server
+            else:
+                logger.warning(f"Failed to create metricflow MCP server for db_config: {db_config}")
+        except Exception as e:
+            logger.error(f"Failed to setup metricflow MCP server: {e}")
+        return None
+
+    def _resolve_workspace_root(self) -> str:
+        """
+        Resolve workspace_root with priority: node-specific > global storage > legacy > default.
+
+        Returns:
+            Resolved workspace_root path
+        """
+        # Priority: node-specific workspace_root > global storage.workspace_root > legacy > default "."
+        node_workspace_root = self.node_config.get("workspace_root")
+        if node_workspace_root:
+            logger.debug(f"Using node-specific workspace_root: {node_workspace_root}")
+            return node_workspace_root
+
+        if (
+            self.agent_config
+            and hasattr(self.agent_config, "storage")
+            and hasattr(self.agent_config.storage, "workspace_root")
+        ):
+            global_workspace_root = self.agent_config.storage.workspace_root
+            if global_workspace_root:
+                logger.debug(f"Using global workspace_root: {global_workspace_root}")
+                return global_workspace_root
+
+        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
+            # Fallback to old workspace_root location
+            workspace_root = self.agent_config.workspace_root
+            if workspace_root is not None:
+                logger.debug(f"Using legacy workspace_root: {workspace_root}")
+                return workspace_root
+
+        logger.debug("Using default workspace_root: .")
+        return "."
+
+    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
+        """Setup MCP server from conf/.mcp.json using mcp_manager."""
+        try:
+            from datus.tools.mcp_tools.mcp_manager import MCPManager
+
+            # Use MCPManager to get server config
+            mcp_manager = MCPManager()
+            server_config = mcp_manager.get_server_config(server_name)
+
+            if not server_config:
+                logger.warning(f"MCP server '{server_name}' not found in configuration")
+                return None
+
+            # Create server instance using the manager
+            server_instance, details = mcp_manager._create_server_instance(server_config)
+
+            if server_instance:
+                logger.info(f"Added MCP server '{server_name}' from configuration: {details}")
+                return server_instance
+            else:
+                error_msg = details.get("error", "Unknown error")
+                logger.warning(f"Failed to create MCP server '{server_name}': {error_msg}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to setup MCP server '{server_name}' from config: {e}")
+            return None
+
+    def _setup_mcp_servers(self) -> Dict[str, Any]:
+        """Set up MCP servers based on configuration."""
+        mcp_servers = {}
+
+        config_value = self.node_config.get("mcp", "")
+        if not config_value:
+            return mcp_servers
+
+        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
+
+        for server_name in mcp_server_names:
+            try:
+                # Handle metricflow_mcp
+                if server_name == "metricflow_mcp":
+                    server = self._setup_metricflow_mcp()
+                    if server:
+                        mcp_servers["metricflow_mcp"] = server
+
+                # Handle MCP servers from conf/.mcp.json using mcp_manager
+                else:
+                    server = self._setup_mcp_server_from_config(server_name)
+                    if server:
+                        mcp_servers[server_name] = server
+
+            except Exception as e:
+                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
+
+        logger.info(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
+
+        # Debug: Log detailed info about each server
+        for name, server in mcp_servers.items():
+            logger.debug(f"MCP server '{name}': type={type(server)}, instance={server}")
+
+        return mcp_servers
+
+    def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
+        """
+        Prepare template context variables for the semantic model generation template.
+
+        Args:
+            user_input: User input
+
+        Returns:
+            Dictionary of template variables
+        """
+        context = {}
+
+        # Tool detection flags
+        context["has_db_tools"] = bool(self.db_func_tool)
+        context["has_mcp_filesystem"] = "filesystem" in self.mcp_servers
+        context["has_mf_tools"] = any("metricflow" in k for k in self.mcp_servers.keys())
+
+        # Tool name lists for template display
+        context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
+        context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
+
+        # Add rules from configuration
+        context["rules"] = self.node_config.get("rules", [])
+
+        # Add agent description from configuration or input
+        context["agent_description"] = user_input.agent_description or self.node_config.get("agent_description", "")
+
+        # Add namespace and workspace info
+        if self.agent_config:
+            context["namespace"] = getattr(self.agent_config, "current_namespace", None)
+            context["workspace_root"] = self._resolve_workspace_root()
+
+        logger.debug(f"Prepared template context: {context}")
+        return context
+
+    def _get_system_prompt(
+        self,
+        conversation_summary: Optional[str] = None,
+        prompt_version: Optional[str] = None,
+        template_context: Optional[dict] = None,
+    ) -> str:
+        """
+        Get the system prompt for this semantic generation node using enhanced template context.
+
+        Args:
+            conversation_summary: Optional summary from previous conversation compact
+            prompt_version: Optional prompt version to use, overrides agent config version
+            template_context: Optional template context variables
+
+        Returns:
+            System prompt string loaded from the template
+        """
+        # Get prompt version from parameter, fallback to node config, then agent config
+        version = prompt_version
+        if version is None:
+            version = self.node_config.get("prompt_version")
+        if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
+            version = self.agent_config.prompt_version
+
+        # Use shared workspace_root resolution logic
+        root_path = self._resolve_workspace_root()
+
+        # Construct template name: {system_prompt}_system or fallback to {node_name}_system
+        system_prompt_name = self.node_config.get("system_prompt")
+        if system_prompt_name:
+            template_name = f"{system_prompt_name}_system"
+        else:
+            template_name = f"{self.get_node_name()}_system"
+
+        try:
+            # Prepare template variables
+            template_vars = {
+                "agent_config": self.agent_config,
+                "namespace": getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
+                "workspace_root": root_path,
+                "conversation_summary": conversation_summary,
+            }
+
+            # Add template context if provided
+            if template_context:
+                template_vars.update(template_context)
+
+            # Use prompt manager to render the template
+            from datus.prompts.prompt_manager import prompt_manager
+
+            return prompt_manager.render_template(template_name=template_name, version=version, **template_vars)
+
+        except FileNotFoundError as e:
+            # Template not found - throw DatusException
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
+                message_args={"template_name": template_name, "version": version or "latest"},
+            ) from e
+        except Exception as e:
+            # Other template errors - wrap in DatusException
+            logger.error(f"Template loading error for '{template_name}': {e}")
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
+            ) from e
+
+    async def execute_stream(
+        self, user_input: SemanticNodeInput, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """
+        Execute the semantic node interaction with streaming support.
+
+        Args:
+            user_input: Customized input containing user message and context
+            action_history_manager: Optional action history manager
+
+        Yields:
+            ActionHistory: Progress updates during execution
+        """
+        if not action_history_manager:
+            action_history_manager = ActionHistoryManager()
+
+        # Create initial action
+        action = ActionHistory.create_action(
+            role=ActionRole.USER,
+            action_type=self.get_node_name(),
+            messages=f"User: {user_input.user_message}",
+            input_data=user_input.model_dump(),
+            status=ActionStatus.PROCESSING,
+        )
+        action_history_manager.add_action(action)
+        yield action
+
+        try:
+            # Check for auto-compact before session creation to ensure fresh context
+            await self._auto_compact()
+
+            # Get or create session and any available summary
+            session, conversation_summary = self._get_or_create_session()
+
+            # Prepare enhanced template context
+            template_context = self._prepare_template_context(user_input)
+
+            # Get system instruction from template with enhanced context
+            prompt_version = user_input.prompt_version or self.node_config.get("prompt_version")
+            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
+
+            # Add context to user message if provided
+            enhanced_message = user_input.user_message
+            enhanced_parts = []
+
+            if user_input.catalog or user_input.database or user_input.db_schema:
+                context_parts = []
+                if user_input.catalog:
+                    context_parts.append(f"catalog: {user_input.catalog}")
+                if user_input.database:
+                    context_parts.append(f"database: {user_input.database}")
+                if user_input.db_schema:
+                    context_parts.append(f"schema: {user_input.db_schema}")
+                context_part_str = f'Context: {", ".join(context_parts)}'
+                enhanced_parts.append(context_part_str)
+
+            if enhanced_parts:
+                enhanced_message = f"{'\\n\\n'.join(enhanced_parts)}\\n\\nUser question: {user_input.user_message}"
+
+            # Create assistant action for processing
+            assistant_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="llm_generation",
+                messages="Generating response with tools...",
+                input_data={"prompt": enhanced_message, "system": system_instruction},
+                status=ActionStatus.PROCESSING,
+            )
+            action_history_manager.add_action(assistant_action)
+            yield assistant_action
+
+            logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
+            logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
+            logger.info(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
+
+            # Stream response using the model's generate_with_tools_stream
+            async for stream_action in self.model.generate_with_tools_stream(
+                prompt=enhanced_message,
+                tools=self.tools,
+                mcp_servers=self.mcp_servers,
+                instruction=system_instruction,
+                max_turns=self.max_turns,
+                session=session,
+                action_history_manager=action_history_manager,
+                hooks=self.hooks,
+            ):
+                yield stream_action
+
+            # Extract token usage from final actions
+            final_actions = action_history_manager.get_actions()
+
+            # Find the final assistant action with token usage
+            for action in reversed(final_actions):
+                if action.role == "assistant":
+                    if action.output and isinstance(action.output, dict):
+                        usage_info = action.output.get("usage", {})
+                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
+                            conversation_tokens = usage_info.get("total_tokens", 0)
+                            if conversation_tokens > 0:
+                                # Add this conversation's tokens to the session
+                                self._add_session_tokens(conversation_tokens)
+                                logger.info(f"Added {conversation_tokens} tokens to session")
+                                break
+                            else:
+                                logger.warning(f"no usage token found in this action {action.messages}")
+
+            # Add to internal actions list
+            self.actions.extend(action_history_manager.get_actions())
+
+        except Exception as e:
+            logger.error(f"{self.get_node_name()} execution error: {e}")
+
+            # Create error result
+            error_result = SemanticNodeResult(
+                success=False,
+                error=str(e),
+                response="Sorry, I encountered an error while processing your request.",
+                tokens_used=0,
+            )
+
+            # Update action with error
+            action_history_manager.update_current_action(
+                status=ActionStatus.FAILED,
+                output=error_result.model_dump(),
+                messages=f"Error: {str(e)}",
+            )
+
+            # Create error action
+            error_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="error",
+                messages=f"{self.get_node_name()} interaction failed: {str(e)}",
+                input_data=user_input.model_dump(),
+                output_data=error_result.model_dump(),
+                status=ActionStatus.FAILED,
+            )
+            action_history_manager.add_action(error_action)
+            yield error_action

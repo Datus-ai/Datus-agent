@@ -653,9 +653,26 @@ class StreamingActionContext:
 
         # Start the live display
         self.live.start()
+
+        # Register with execution controller
+        try:
+            from datus.cli.execution_state import execution_controller
+
+            execution_controller.register_live_display(self.live)
+        except Exception as e:
+            logger.warning(f"Failed to register live display: {e}")
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):  # pylint: disable=unused-argument
+        # Unregister from execution controller
+        try:
+            from datus.cli.execution_state import execution_controller
+
+            execution_controller.unregister_live_display()
+        except Exception as e:
+            logger.warning(f"Failed to unregister live display: {e}")
+
         if self.live:
             self.live.stop()
 

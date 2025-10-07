@@ -1,6 +1,8 @@
 import json
 import sys
 import textwrap
+from datetime import date, datetime
+from enum import Enum
 from typing import List, Optional
 
 import pyperclip
@@ -228,7 +230,10 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                     if "error" in data:
                         result.append(Label(f"[bold red]Execute Failed: {data['error']}[/]"))
                     else:
-                        result.append(TextArea(json.dumps(data, indent=2), language="json", theme="monokai"))
+                        serializable_data = self._make_serializable(data)
+                        result.append(
+                            TextArea(json.dumps(serializable_data, indent=2), language="json", theme="monokai")
+                        )
                     return result
             if function_name == "read_query":
                 #  original_rows, original_columns, is_compressed, and compressed_data
@@ -270,7 +275,9 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         elif "result" in data:
             items = data["result"]
         else:
-            result.append(TextArea(json.dumps(data, indent=2), language="json", theme="monokai"))
+            # Convert FuncToolResult objects to dict for JSON serialization
+            serializable_data = self._make_serializable(data)
+            result.append(TextArea(json.dumps(serializable_data, indent=2), language="json", theme="monokai"))
             return result
 
         if not items:
@@ -404,6 +411,62 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             data = data.strip()
             return data.startswith("[") or data.startswith("{") or data.startswith("```json")
         return False
+
+    def _make_serializable(self, obj, visited=None):
+        """Convert FuncToolResult objects and other non-serializable types to JSON-serializable format
+
+        Args:
+            obj: Object to serialize
+            visited: Set to track visited objects and prevent circular references
+        """
+        if visited is None:
+            visited = set()
+
+        # Handle primitive types first
+        if isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+
+        # Check for circular reference using object id
+        obj_id = id(obj)
+        if obj_id in visited:
+            return f"<circular reference to {type(obj).__name__}>"
+
+        # Handle common types
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        elif isinstance(obj, bytes):
+            return obj.decode("utf-8", errors="replace")
+        elif isinstance(obj, set):
+            return list(obj)
+        elif isinstance(obj, tuple):
+            return [self._make_serializable(item, visited) for item in obj]
+        elif isinstance(obj, Enum):
+            return obj.value
+
+        # Mark as visited for complex types
+        visited.add(obj_id)
+
+        try:
+            # Handle Pydantic models
+            if hasattr(obj, "model_dump"):
+                return obj.model_dump()
+            # Handle dict
+            elif isinstance(obj, dict):
+                return {k: self._make_serializable(v, visited) for k, v in obj.items()}
+            # Handle list
+            elif isinstance(obj, list):
+                return [self._make_serializable(item, visited) for item in obj]
+            # Handle objects with __dict__
+            elif hasattr(obj, "__dict__"):
+                return {
+                    k: self._make_serializable(v, visited) for k, v in obj.__dict__.items() if not k.startswith("_")
+                }
+            else:
+                # Fallback
+                return str(obj)
+        finally:
+            # Remove from visited set after processing
+            visited.discard(obj_id)
 
     def generate_collapsible_actions(self, actions: List[ActionHistory]) -> List[Widget]:
         """Generate list of Collapsible widgets for actions"""

@@ -26,23 +26,17 @@ from datus.utils.traceable_utils import create_openai_client
 
 logger = get_logger(__name__)
 
-# Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue
+# Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue in openai-agents 0.3.2
 try:
     from agents.models.chatcmpl_stream_handler import ResponseTextDeltaEvent
-    from pydantic import Field
 
-    # Get the original fields and make logprobs optional
-    original_fields = ResponseTextDeltaEvent.model_fields.copy()
-    if "logprobs" in original_fields:
-        # Create a new field annotation that allows None
-        original_fields["logprobs"] = Field(default=None)
-
-        # Rebuild the model with optional logprobs
-        ResponseTextDeltaEvent.__annotations__["logprobs"] = Optional[Any]
-        ResponseTextDeltaEvent.model_fields["logprobs"] = Field(default=None)
-        ResponseTextDeltaEvent.model_rebuild()
-
-        logger.debug("Successfully patched ResponseTextDeltaEvent to make logprobs optional")
+    # Modify the model field annotation to accept both list and None
+    if hasattr(ResponseTextDeltaEvent, "__annotations__") and "logprobs" in ResponseTextDeltaEvent.__annotations__:
+        # Make logprobs accept list or None
+        ResponseTextDeltaEvent.__annotations__["logprobs"] = Union[list, None]
+        # Rebuild the pydantic model with new annotations
+        ResponseTextDeltaEvent.model_rebuild(force=True)
+        logger.debug("Successfully patched ResponseTextDeltaEvent to accept logprobs as list or None")
 except ImportError:
     logger.warning("Could not import ResponseTextDeltaEvent - patch not applied")
 except Exception as e:
@@ -246,23 +240,30 @@ class ClaudeModel(LLMBaseModel):
         output_type: type = str,
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
+        hooks=None,
         **kwargs,
     ) -> Dict:
-        """Generate response with unified tool support."""
-        # For now, primarily support MCP servers as that's what the existing code uses
-        if not mcp_servers:
-            # Fallback to basic generation if no tools
-            response = self.generate(f"{instruction}\n\n{prompt}", **kwargs)
-            return {"content": response, "sql_contexts": []}
+        """
+        Generate response with unified tool support (supports both MCP servers and native tools).
 
-        # If session is provided, use the session-aware implementation
-        if session:
-            return await self._generate_with_mcp_session(
-                prompt, mcp_servers, instruction, output_type, max_turns, session, **kwargs
-            )
+        Args:
+            prompt: Input prompt
+            mcp_servers: Optional MCP servers to use
+            tools: Optional native tools to use
+            instruction: System instruction
+            output_type: Expected output type
+            max_turns: Maximum conversation turns
+            session: Optional session for context
+            hooks: Optional hooks for tool interception
+            **kwargs: Additional parameters
 
-        # Use existing generate_with_mcp implementation for non-session calls
-        return await self.generate_with_mcp(prompt, mcp_servers, instruction, output_type, max_turns, **kwargs)
+        Returns:
+            Dict with content and sql_contexts
+        """
+        # Use the internal method
+        return await self._generate_with_tools_internal(
+            prompt, mcp_servers, tools, instruction, output_type, max_turns, session, hooks, **kwargs
+        )
 
     async def generate_with_tools_stream(
         self,
@@ -274,20 +275,25 @@ class ClaudeModel(LLMBaseModel):
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        hooks=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support."""
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
-        # For now, primarily support MCP servers
-        if not mcp_servers:
-            # Basic streaming not implemented for Claude without tools
-            return
-
-        # Use existing generate_with_mcp_stream implementation
-        async for action in self.generate_with_mcp_stream(
-            prompt, mcp_servers, instruction, output_type, max_turns, action_history_manager, **kwargs
+        # Use the unified streaming approach
+        async for action in self._generate_with_tools_stream_internal(
+            prompt,
+            mcp_servers,
+            tools,
+            instruction,
+            output_type,
+            max_turns,
+            action_history_manager,
+            session,
+            hooks,
+            **kwargs,
         ):
             yield action
 
@@ -530,8 +536,8 @@ class ClaudeModel(LLMBaseModel):
                     break
 
             except MaxTurnsExceeded as e:
-                logger.error(f"Max turns exceeded: {str(e)}")
-                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+                logger.exception("Max turns exceeded")
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
 
             except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
                 error_code, is_retryable = classify_api_error(e)
@@ -584,6 +590,223 @@ class ClaudeModel(LLMBaseModel):
                 return self.model_specs[spec_model]["context_length"]
 
         return None
+
+    async def _generate_with_tools_internal(
+        self,
+        prompt: Union[str, List[Dict[str, str]]],
+        mcp_servers: Optional[Dict[str, MCPServerStdio]],
+        tools: Optional[List[Any]],
+        instruction: str,
+        output_type: type,
+        max_turns: int,
+        session: Optional[SQLiteSession] = None,
+        hooks=None,
+        **kwargs,
+    ) -> Dict:
+        """Internal method for unified tool execution (both MCP servers and native tools)."""
+        from agents import Agent, OpenAIChatCompletionsModel, Runner
+
+        # Custom JSON encoder for special types
+        class CustomJSONEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, AnyUrl):
+                    return str(obj)
+                if isinstance(obj, (date, datetime)):
+                    return obj.isoformat()
+                return super().default(obj)
+
+        json._default_encoder = CustomJSONEncoder()
+
+        # If no tools at all, fall back to basic generation
+        if not mcp_servers and not tools:
+            logger.warning("No tools or MCP servers provided, using basic generation")
+            response = self.generate(f"{instruction}\n\n{prompt}", **kwargs)
+            return {"content": response, "sql_contexts": []}
+
+        async_client = create_openai_client(AsyncOpenAI, self.api_key, self.api_base + "/v1")
+        model_params = {"model": self.model_name}
+        async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+
+        # Use multiple_mcp_servers context manager with empty dict if no MCP servers
+        async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            agent_kwargs = {
+                "name": kwargs.pop("agent_name", "claude_agent"),
+                "instructions": instruction,
+                "output_type": output_type,
+                "model": async_model,
+            }
+
+            # Only add mcp_servers if we have connected servers
+            if connected_servers:
+                agent_kwargs["mcp_servers"] = list(connected_servers.values())
+
+            # Only add tools if we have them
+            if tools:
+                agent_kwargs["tools"] = tools
+
+            if hooks:
+                agent_kwargs["hooks"] = hooks
+
+            agent = Agent(**agent_kwargs)
+
+            try:
+                result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+            except MaxTurnsExceeded as e:
+                logger.error(f"Max turns exceeded: {str(e)}")
+                from datus.utils.exceptions import DatusException, ErrorCode
+
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+
+            # Extract SQL contexts from result (if any)
+            sql_contexts = []
+            if hasattr(result, "final_output"):
+                from datus.models.mcp_result_extractors import extract_sql_contexts
+
+                sql_contexts = extract_sql_contexts(result)
+
+            # Extract usage information
+            usage_info = {}
+            if hasattr(result, "context_wrapper") and hasattr(result.context_wrapper, "usage"):
+                usage = result.context_wrapper.usage
+                usage_info = {
+                    "requests": getattr(usage, "requests", 0),
+                    "input_tokens": getattr(usage, "input_tokens", 0),
+                    "output_tokens": getattr(usage, "output_tokens", 0),
+                    "total_tokens": getattr(usage, "total_tokens", 0),
+                    "cached_tokens": (
+                        getattr(usage.input_tokens_details, "cached_tokens", 0)
+                        if hasattr(usage, "input_tokens_details") and usage.input_tokens_details
+                        else 0
+                    ),
+                }
+                logger.debug(f"Claude tool execution usage: {usage_info}")
+
+            return {
+                "content": result.final_output if hasattr(result, "final_output") else "",
+                "sql_contexts": sql_contexts,
+                "usage": usage_info,
+                "model": self.model_name,
+                "turns_used": getattr(result, "turn_count", 0),
+            }
+
+    async def _generate_with_tools_stream_internal(
+        self,
+        prompt: Union[str, List[Dict[str, str]]],
+        mcp_servers: Optional[Dict[str, MCPServerStdio]],
+        tools: Optional[List[Any]],
+        instruction: str,
+        output_type: type,
+        max_turns: int,
+        action_history_manager: ActionHistoryManager,
+        session: Optional[SQLiteSession] = None,
+        hooks=None,
+        **kwargs,
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Internal method for unified streaming tool execution."""
+        from agents import Agent, OpenAIChatCompletionsModel, Runner
+
+        # Custom JSON encoder for special types
+        class CustomJSONEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, AnyUrl):
+                    return str(obj)
+                if isinstance(obj, (date, datetime)):
+                    return obj.isoformat()
+                return super().default(obj)
+
+        json._default_encoder = CustomJSONEncoder()
+
+        # If no tools at all, return a simple text response
+        if not mcp_servers and not tools:
+            logger.warning("No tools or MCP servers provided, returning basic response")
+            response = self.generate(f"{instruction}\n\n{prompt}", **kwargs)
+            action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="final_response",
+                messages=response,
+                input_data={"prompt": prompt},
+                output_data={"content": response},
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(action)
+            yield action
+            return
+
+        async_client = create_openai_client(AsyncOpenAI, self.api_key, self.api_base + "/v1")
+        model_params = {"model": self.model_name}
+        async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+
+        # Use multiple_mcp_servers context manager with empty dict if no MCP servers
+        async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            agent_kwargs = {
+                "name": kwargs.pop("agent_name", "claude_agent"),
+                "instructions": instruction,
+                "output_type": output_type,
+                "model": async_model,
+            }
+
+            # Only add mcp_servers if we have connected servers
+            if connected_servers:
+                agent_kwargs["mcp_servers"] = list(connected_servers.values())
+
+            # Only add tools if we have them
+            if tools:
+                agent_kwargs["tools"] = tools
+
+            if hooks:
+                agent_kwargs["hooks"] = hooks
+
+            agent = Agent(**agent_kwargs)
+
+            try:
+                result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+
+                while not result.is_complete:
+                    async for event in result.stream_events():
+                        if not hasattr(event, "type") or event.type != "run_item_stream_event":
+                            continue
+
+                        if not (hasattr(event, "item") and hasattr(event.item, "type")):
+                            continue
+
+                        action = None
+                        item_type = event.item.type
+
+                        if item_type == "tool_call_item":
+                            action = self._process_tool_call_start(event, action_history_manager)
+                        elif item_type == "tool_call_output_item":
+                            action = self._process_tool_call_complete(event, action_history_manager)
+                        elif item_type == "message_output_item":
+                            action = self._process_message_output(event, action_history_manager)
+
+                        if action:
+                            yield action
+
+                # Yield final success action
+                final_output = result.output if hasattr(result, "output") else {"content": ""}
+                final_action = ActionHistory.create_action(
+                    role=ActionRole.ASSISTANT,
+                    action_type="final_response",
+                    messages="Generation completed",
+                    input_data={"content": ""},
+                    output_data=final_output,
+                    status=ActionStatus.SUCCESS,
+                )
+                action_history_manager.add_action(final_action)
+                yield final_action
+
+            except MaxTurnsExceeded as e:
+                logger.error(f"Max turns exceeded: {str(e)}")
+                error_action = ActionHistory.create_action(
+                    role=ActionRole.ASSISTANT,
+                    action_type="error",
+                    messages=f"Max turns exceeded: {str(e)}",
+                    input_data={},
+                    output_data={"error": str(e)},
+                    status=ActionStatus.FAILED,
+                )
+                action_history_manager.add_action(error_action)
+                yield error_action
 
     def token_count(self, prompt: str) -> int:
         """Estimate the number of tokens in a text using a simple approximation.
@@ -694,7 +917,7 @@ class ClaudeModel(LLMBaseModel):
         action = ActionHistory(
             action_id=action_id,
             role=ActionRole.TOOL,
-            messages="Tool call",
+            messages=f"Tool call: {function_name}" if function_name else "Tool call",
             action_type=function_name or "unknown",
             input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
             status=ActionStatus.PROCESSING,

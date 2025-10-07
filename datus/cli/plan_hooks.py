@@ -36,9 +36,6 @@ class PlanModeHooks(AgentHooks):
         self.replan_feedback = ""
         self._state_transitions = []
 
-    async def on_agent_start(self, context, agent) -> None:
-        logger.info(f"Plan mode agent start: phase={self.plan_phase}")
-
     async def on_start(self, context, agent) -> None:
         logger.info(f"Plan mode start: phase={self.plan_phase}")
 
@@ -47,8 +44,10 @@ class PlanModeHooks(AgentHooks):
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
         logger.info(f"Plan mode tool start: {tool_name}, phase: {self.plan_phase}, mode: {self.execution_mode}")
 
-        if tool_name == "todo_update_pending" and self.execution_mode == "manual" and self.plan_phase == "executing":
-            await self._handle_execution_step(tool_name)
+        if tool_name == "todo_update" and self.execution_mode == "manual" and self.plan_phase == "executing":
+            # Check if this is updating to pending status
+            if self._is_pending_update(context):
+                await self._handle_execution_step(tool_name)
 
     @optional_traceable(name="on_tool_end", run_type="chain")
     async def on_tool_end(self, context, agent, tool, result) -> None:
@@ -58,18 +57,8 @@ class PlanModeHooks(AgentHooks):
             logger.info("Plan generation completed, transitioning to confirmation")
             await self._on_plan_generated()
 
-    async def on_handoff(self, context, agent, source) -> None:
-        pass
-
-    async def on_agent_end(self, context, agent, output) -> None:
-        pass
-
     async def on_end(self, context, agent, output) -> None:
         logger.info(f"Plan mode end: phase={self.plan_phase}")
-
-    @optional_traceable(name="on_error", run_type="chain")
-    async def on_error(self, context, agent, error) -> None:
-        pass
 
     def _transition_state(self, new_state: str, context: dict = None):
         old_state = self.plan_phase
@@ -291,6 +280,36 @@ class PlanModeHooks(AgentHooks):
         except (KeyboardInterrupt, EOFError):
             self._transition_state("cancelled", {"reason": "execution_interrupted"})
             self.console.print("\n[yellow]Execution cancelled[/]")
+
+    def _is_pending_update(self, context) -> bool:
+        """
+        Check if todo_update is being called with status='pending'.
+
+        Args:
+            context: ToolContext with tool_arguments field (JSON string)
+
+        Returns:
+            bool: True if this is a pending status update
+        """
+        try:
+            import json
+
+            if hasattr(context, "tool_arguments"):
+                if context.tool_arguments:
+                    tool_args = json.loads(context.tool_arguments)
+
+                    # Check if status is 'pending'
+                    if isinstance(tool_args, dict):
+                        if tool_args.get("status") == "pending":
+                            logger.debug(f"Detected pending status update with args: {tool_args}")
+                            return True
+
+            logger.debug("Not a pending status update")
+            return False
+
+        except Exception as e:
+            logger.debug(f"Error checking tool arguments: {e}")
+            return False
 
     def get_plan_tools(self):
         from datus.tools.plan_tools import PlanTool
