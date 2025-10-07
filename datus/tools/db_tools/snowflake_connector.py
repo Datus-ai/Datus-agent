@@ -864,9 +864,13 @@ class SnowflakeConnector(BaseSqlConnector):
         return full_name if not database_name else f'"{database_name}".{full_name}'
 
 
-def _sql_literal(value: str) -> str:
+def _sql_literal(value: str, around_with_quotes: bool = False) -> str:
     """Return a Snowflake-safe single-quoted SQL literal for strings."""
     if value is None:
         return "NULL"
     # Escape single quotes by doubling them
-    return value.replace("'", "''")
+    replace_value = value.replace("'", "''")
+    if not around_with_quotes:
+        return replace_value
+    else:
+        return f"'{replace_value}'"

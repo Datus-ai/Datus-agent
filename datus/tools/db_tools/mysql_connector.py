@@ -100,7 +100,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
                     "identifier": self.identifier(catalog, database_name=db_name, table_name=tb_name),
                     "catalog_name": catalog,
                     "schema_name": "",
-                    "database_name": database_name,
+                    "database_name": db_name,
                     "table_name": tb_name,
                     "table_type": inner_table_type,
                 }
@@ -341,7 +341,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             table_metadata.extend(
                 self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="view")
             )
-        elif self.support_mv():
+        elif table_type == "mv" and self.support_mv():
             table_metadata.extend(
                 self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="mv")
             )
