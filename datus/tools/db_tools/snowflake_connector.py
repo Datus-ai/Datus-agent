@@ -669,7 +669,7 @@ class SnowflakeConnector(BaseSqlConnector):
                                 "database_name": t["database_name"],
                                 "schema_name": t["schema_name"],
                                 "table_name": t["table_name"],
-                                "table_type": table_type,
+                                "table_type": t["table_type"],
                                 "sample_rows": res.to_csv(index=False),
                             }
                         )
