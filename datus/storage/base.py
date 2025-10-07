@@ -12,7 +12,7 @@ from lancedb.table import Table
 from pydantic import Field
 
 from datus.storage.embedding_models import EmbeddingModel
-from datus.storage.lancedb_conditions import Node, build_where
+from datus.storage.lancedb_conditions import WhereExpr, build_where
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -71,9 +71,6 @@ class BaseModelData(LanceModel):
         arbitrary_types_allowed = True
 
 
-WhereExpr = Union[str, Node, None]
-
-
 class BaseEmbeddingStore(StorageBase):
     """Base class for all embedding stores using LanceDB.
     table_name: the name of the table to store the embedding
@@ -116,7 +113,7 @@ class BaseEmbeddingStore(StorageBase):
 
     def _search_all(self, where: WhereExpr = None, select_fields: Optional[List[str]] = None) -> pa.Table:
         self._ensure_table_ready()
-        where_clause = self._compile_where(where)
+        where_clause = build_where(where)
         query_builder = self.table.search()
         if where_clause:
             query_builder = query_builder.where(where_clause)
@@ -308,7 +305,7 @@ class BaseEmbeddingStore(StorageBase):
         top_n: Optional[int] = None,
         where: WhereExpr = None,
     ) -> pa.Table:
-        where_clause = self._compile_where(where)
+        where_clause = build_where(where)
         try:
             query_builder = self.table.search(
                 query=query_txt, query_type="hybrid", vector_column_name=self.vector_source_name
@@ -331,7 +328,7 @@ class BaseEmbeddingStore(StorageBase):
         top_n: Optional[int] = None,
         where: WhereExpr = None,
     ) -> pa.Table:
-        where_clause = self._compile_where(where)
+        where_clause = build_where(where)
         try:
             query_builder = self.table.search(
                 query=query_txt, query_type="vector", vector_column_name=self.vector_column_name
@@ -370,11 +367,23 @@ class BaseEmbeddingStore(StorageBase):
             query_builder = query_builder.select(select_fields)
         return query_builder
 
-    @staticmethod
-    def _compile_where(where: WhereExpr) -> Optional[str]:
-        if where is None:
-            return None
-        if isinstance(where, str):
-            stripped = where.strip()
-            return stripped or None
-        return build_where(where)
+    def update(self, where: WhereExpr, update_values: Dict[str, Any], unique_filter: Optional[WhereExpr] = None):
+        self._ensure_table_ready()
+        if not update_values:
+            return
+        final_where = build_where(where)
+        if not final_where:
+            return
+        unique_where = build_where(unique_filter)
+        if unique_where:
+            existing = self.table.count_rows(unique_where)
+            if existing:
+                raise DatusException(
+                    ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                    message_args={
+                        "operation": "update",
+                        "table_name": self.table_name,
+                        "error_message": f"Conflicting rows already match {unique_where}",
+                    },
+                )
+        self.table.update(where=final_where, values=update_values)

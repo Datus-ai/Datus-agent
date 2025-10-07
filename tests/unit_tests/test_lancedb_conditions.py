@@ -1,4 +1,3 @@
-from datus.storage.base import BaseEmbeddingStore
 from datus.storage.lancedb_conditions import And, Or, build_where, eq, ge, gte, in_, lt, ne
 
 
@@ -44,10 +43,10 @@ def test_in_handles_null_values():
 
 
 def test_base_compile_where_accepts_node_and_string():
-    assert BaseEmbeddingStore._compile_where(None) is None
-    assert BaseEmbeddingStore._compile_where("status = 'active'") == "status = 'active'"
+    assert build_where(None) is None
+    assert build_where("status = 'active'") == "status = 'active'"
 
     node = eq("status", "active")
-    assert BaseEmbeddingStore._compile_where(node) == "status = 'active'"
+    assert build_where(node) == "status = 'active'"
 
-    assert BaseEmbeddingStore._compile_where("  ") is None
+    assert build_where("  ") is None

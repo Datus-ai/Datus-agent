@@ -10,11 +10,13 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Static
+from textual.widget import Widget
+from textual.widgets import Footer, Header, Label, Static
 from textual.widgets import Tree as TextualTree
 from textual.widgets._tree import TreeNode
 from textual.worker import get_current_worker
 
+from datus.cli.screen.base_widgets import EditableTree, FocusableStatic, InputWithLabel, ParentSelectionTree
 from datus.cli.screen.context_screen import ContextScreen
 from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.storage.metric.store import SemanticMetricsRAG
@@ -22,6 +24,337 @@ from datus.storage.sql_history import SqlHistoryRAG
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+TREE_VALIDATION_RULES: Dict[str, Dict[str, str]] = {
+    "domain": {
+        "pattern": r"^[a-zA-Z0-9_\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+$",
+    },
+    "layer1": {
+        "pattern": r"^[a-zA-Z0-9_\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+$",
+    },
+    "layer2": {
+        "pattern": r"^[a-zA-Z0-9_\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+$",
+    },
+}
+
+
+class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
+    """Dialog for editing a tree node name and reparenting within siblings."""
+
+    BINDINGS = [
+        Binding("ctrl+w", "save_exist", "Save and Exit", show=True, priority=True),
+        Binding("escape", "action_cancel_exist", "Exist", show=True, priority=True),
+    ]
+
+    CSS = """
+    InputWithLabel{
+        height: 10%;
+    }
+    #tree-edit-dialog {
+        layout: vertical;
+        width: 60%;
+        height: 100%;
+        # background: $panel;
+        border: tall $primary;
+        padding: 1;
+        align: center middle;
+    }
+    #tree-edit-name-input {
+        margin-bottom: 1;
+    }
+    #tree-edit-parent-label {
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+    #tree-parent-selector {
+        overflow-y: auto;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        level: str,
+        current_name: str,
+        current_parent: Optional[Dict[str, Any]],
+        parent_tree: Optional[List[Dict[str, Any]]],
+        parent_selection_type: Optional[str],
+        pattern: Optional[str] = None,
+    ) -> None:
+        super().__init__()
+        self.level = level
+        self.current_name = current_name
+        self.current_parent = current_parent
+        self.parent_tree = parent_tree or []
+        self.parent_selection_type = parent_selection_type
+        self._pattern = pattern
+        self.parent_selector: Optional[ParentSelectionTree] = None
+
+    def compose(self) -> ComposeResult:
+        with Container():
+            with Vertical(id="tree-edit-dialog"):
+                input_widget = InputWithLabel(
+                    label=self.level.title(),
+                    value=self.current_name,
+                    readonly=False,
+                    regex=self._pattern,
+                    lines=1,
+                    id="tree-edit-name-input",
+                )
+                yield input_widget
+
+                if self.parent_tree and self.parent_selection_type:
+                    yield Label("Parent", id="tree-edit-parent-label")
+                    self.parent_selector = ParentSelectionTree(
+                        self.parent_tree,
+                        allowed_type=self.parent_selection_type,
+                        current_selection=self.current_parent,
+                    )
+                    yield self.parent_selector
+
+                yield Footer()
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle key events at the screen level to ensure global shortcuts work"""
+        if hasattr(event, "ctrl") and event.ctrl and event.key == "w":
+            self.action_save_exist()
+            event.prevent_default()
+            event.stop()
+            return
+
+        # ESC cancels dialog
+        if event.key == "escape" or (hasattr(event, "ctrl") and event.ctrl and event.key == "q"):
+            self.cancel_and_close()
+            event.prevent_default()
+            event.stop()
+            return
+
+    def on_mount(self) -> None:
+        name_input = self.query_one("#tree-edit-name-input", InputWithLabel)
+        self.set_focus(name_input)
+        name_input.cursor_position = len(self.current_name)
+
+    def action_save_exist(self):
+        name_input = self.query_one("#tree-edit-name-input", InputWithLabel)
+        new_name = name_input.get_value().strip()
+        parent_value = self.current_parent
+        if self.parent_selector:
+            parent_value = self.parent_selector.get_selected() or self.current_parent
+
+        if not new_name:
+            self.app.notify("Name cannot be empty", severity="warning")
+            return
+
+        self.dismiss({"name": new_name, "parent": parent_value})
+
+    def action_cancel_exist(self):
+        self.dismiss(None)
+        return
+
+    def cancel_and_close(self) -> None:
+        """Restore dialog state and close without saving."""
+        # Restore name input
+        name_input = self.query_one("#tree-edit-name-input", InputWithLabel)
+        name_input.set_value(self.current_name)
+        # Restore parent selection (if any)
+        if self.parent_selector and self.current_parent:
+            try:
+                # Reset internal selection then focus the original
+                self.parent_selector._selected = self.current_parent
+                self.parent_selector._focus_current_selection()
+            except Exception as e:
+                logger.warning(f"Failed to restore parent selection: {e}")
+        self.dismiss(None)
+
+
+class MetricsPanel(Vertical):
+    """
+    A panel for displaying and editing metric details using DetailField components.
+    """
+
+    can_focus = True
+
+    def __init__(self, metric: Dict[str, Any], readonly: bool = True) -> None:
+        super().__init__()
+        self.entry = metric
+        self.readonly = readonly
+        self.fields: List[InputWithLabel] = []
+
+    def compose(self) -> ComposeResult:
+        metric_name = self.entry.get("name", "Unnamed Metric")
+        yield Label(f"📊 [bold cyan]Metric: {metric_name}[/]")
+        semantic_model_field = InputWithLabel(
+            "Semantic Model Name",
+            self.entry.get("semantic_model_name", ""),
+            lines=1,
+            readonly=self.readonly,
+            language="markdown",
+        )
+        self.fields.append(semantic_model_field)
+        yield semantic_model_field
+
+        description_field = InputWithLabel(
+            "Description",
+            self.entry.get("description", ""),
+            lines=2,
+            readonly=self.readonly,
+            language="markdown",
+        )
+        self.fields.append(description_field)
+        yield description_field
+        constraint_field = InputWithLabel(
+            "Constraint",
+            self.entry.get("constraint", ""),
+            lines=2,
+            readonly=self.readonly,
+        )
+        self.fields.append(constraint_field)
+        yield constraint_field
+        sql_field = InputWithLabel(
+            "SQL",
+            self.entry.get("sql_query", ""),
+            lines=2,
+            readonly=self.readonly,
+            language="sql",
+        )
+        self.fields.append(sql_field)
+        yield sql_field
+
+    def _fill_data(self):
+        self.fields[0].set_value(self.entry.get("semantic_model_field", ""))
+        self.fields[1].set_value(self.entry.get("description", ""))
+        self.fields[2].set_value(self.entry.get("constraint", ""))
+        self.fields[3].set_value(self.entry.get("sql_query", ""))
+
+    def set_readonly(self, readonly: bool) -> None:
+        """
+        Toggle the read-only mode for all fields in this panel.
+        """
+        self.readonly = readonly
+        for field in self.fields:
+            field.set_readonly(readonly)
+
+    def is_modified(self) -> bool:
+        """
+        Return True if any field has been modified.
+        """
+        return any(field.is_modified() for field in self.fields)
+
+    def get_value(self) -> Dict[str, str]:
+        """
+        Return a dictionary mapping field labels to their current values.
+
+        For metrics, ensure the SQL field maps back to the expected
+        storage key. The DetailField uses a label of "SQL" for the
+        SQL query, but the underlying storage uses the key
+        ``sql_query``. Convert the lowercase label to ``sql_query``
+        when building the result to avoid losing the SQL content on
+        save. Other labels are converted to lowercase directly.
+        """
+        values: Dict[str, str] = {}
+        for field in self.fields:
+            key = field.label_text.lower()
+            # The SQL field in metrics maps to ``sql_query`` in storage.
+            if key == "sql":
+                key = "sql_query"
+            if key == "semantic model name":
+                key = "semantic_model_name"
+            values[key] = field.get_value()
+        return values
+
+    def restore(self):
+        for field in self.fields:
+            field.restore()
+
+    def update_data(self, summary_data: Dict[str, Any]):
+        self.entry.update(summary_data)
+        self._fill_data()
+
+    def focus_first_input(self) -> bool:
+        for field in self.fields:
+            if field.focus_input():
+                return True
+        return False
+
+
+class SqlHistoryPanel(Vertical):
+    """
+    A panel for displaying and editing SQL history details using DetailField components.
+    """
+
+    can_focus = True  # Allow this panel to receive focus
+
+    def __init__(self, entry: Dict[str, Any], readonly: bool = True) -> None:
+        super().__init__()
+        self.entry = entry
+        self.readonly = readonly
+        self.fields: List[InputWithLabel] = []
+
+    def compose(self) -> ComposeResult:
+        sql_name = self.entry.get("name", "Unnamed")
+        yield Label(f"📝 [bold cyan]SQL: {sql_name}[/]")
+        summary_field = InputWithLabel(
+            "Summary", self.entry.get("summary", ""), lines=2, readonly=self.readonly, language="markdown"
+        )
+        self.fields.append(summary_field)
+        yield summary_field
+        comment_field = InputWithLabel(
+            "Comment", self.entry.get("comment", ""), lines=2, readonly=self.readonly, language="markdown"
+        )
+        self.fields.append(comment_field)
+        yield comment_field
+        tags_field = InputWithLabel(
+            "Tags",
+            self.entry.get("tags", ""),
+            lines=2,
+            readonly=self.readonly,
+        )
+        self.fields.append(tags_field)
+        yield tags_field
+        sql_field = InputWithLabel("SQL", self.entry.get("sql", ""), lines=5, readonly=self.readonly, language="sql")
+        self.fields.append(sql_field)
+        yield sql_field
+
+    def _fill_data(self):
+        self.fields[0].set_value(self.entry.get("summary", ""))
+        self.fields[1].set_value(self.entry.get("comment", ""))
+        self.fields[2].set_value(self.entry.get("tags", ""))
+        self.fields[3].set_value(self.entry.get("sql", ""))
+
+    def update_data(self, summary_data: Dict[str, Any]):
+        self.entry.update(summary_data)
+        self._fill_data()
+
+    def focus_first_input(self) -> bool:
+        for field in self.fields:
+            if field.focus_input():
+                return True
+        return False
+
+    def set_readonly(self, readonly: bool) -> None:
+        """
+        Toggle the read-only mode for all fields in this panel.
+        """
+        self.readonly = readonly
+        for field in self.fields:
+            field.set_readonly(readonly)
+
+    def is_modified(self) -> bool:
+        """
+        Return True if any field has been modified.
+        """
+        return any(field.is_modified() for field in self.fields)
+
+    def get_value(self) -> Dict[str, str]:
+        """
+        Return a dictionary mapping field labels to their current values.
+        """
+        return {field.label_text.lower(): field.get_value() for field in self.fields}
+
+    def restore(self):
+        for field in self.fields:
+            field.restore()
 
 
 @lru_cache(maxsize=128)
@@ -110,12 +443,6 @@ class SubjectScreen(ContextScreen):
             overflow-x: hidden;
         }
 
-        #metrics-panel,
-        #sql-panel {
-            width: 100%;
-            padding: 1 1;
-        }
-
         #panel-divider {
             height: 1;
             background: $surface-darken-1;
@@ -162,7 +489,10 @@ class SubjectScreen(ContextScreen):
         Binding("left", "collapse_node", "Collapse", show=False),
         Binding("f4", "show_path", "Show Path"),
         Binding("f5", "exit_with_selection", "Select"),
-        Binding("escape", "exit_without_selection", "Exit", show=False),
+        # Binding("f6", "change_edit_mode", "Change to edit/readonly mode "),
+        Binding("ctrl+e", "start_edit", "Edit", show=True, priority=True),
+        Binding("ctrl+w", "save_edit", "Save", show=True, priority=True),
+        Binding("ctrl+q", "cancel_or_exit", "Exit", show=True, priority=True),
     ]
 
     def __init__(self, title: str, context_data: Dict, inject_callback=None):
@@ -180,28 +510,35 @@ class SubjectScreen(ContextScreen):
         self.sql_rag: Optional[SqlHistoryRAG] = context_data.get("sql_rag")
         self.inject_callback = inject_callback
         self.selected_path = ""
+        self.readonly = True
         self.selected_data: Dict[str, Any] = {}
         self.tree_data: Dict[str, Any] = {}
         self.is_fullscreen = False
         self._current_loading_task = None
+        self._editing_component: Optional[str] = None
+        self._last_tree_selection: Optional[Dict[str, Any]] = None
+        self._active_dialog: TreeEditDialog | None = None
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True, name="Metrics & SQL")
+        header = Header(show_clock=True, name="Metrics & SQL")
+        yield header
 
         with Horizontal():
             with Vertical(id="tree-container", classes="tree-panel"):
-                yield Static("[dim]Loading subjects...[/dim]", id="tree-help")
-                yield TextualTree(label="Metrics & SQL", id="subject-tree")
+                yield Static("", id="tree-help")
+                yield EditableTree(label="Metrics & SQL", id="subject-tree")
 
             with Vertical(id="details-container", classes="details-panel"):
                 yield ScrollableContainer(
                     Static("Select a node to view metrics", id="metrics-panel"),
                     id="metrics-panel-container",
+                    can_focus=False,
                 )
                 yield Static(id="panel-divider", classes="hidden")
                 yield ScrollableContainer(
-                    Static("Select a node to view SQL history", id="sql-panel"),
+                    Label("Select a node to view SQL history", id="sql-panel"),
                     id="sql-panel-container",
+                    can_focus=False,
                 )
 
         yield Footer()
@@ -213,21 +550,55 @@ class SubjectScreen(ContextScreen):
         if event.key in {"enter", "right"}:
             self.action_load_details()
         elif event.key == "escape":
-            self.action_exit_without_selection()
+            self.action_cancel_or_exit()
+        elif event.key == "q" and event.ctrl:
+            self.action_cancel_or_exit()
+            event.prevent_default()
+            event.stop()
+            return
         else:
             super()._on_key(event)
 
+    def _resolve_focus_component(self) -> tuple[Optional[str], Optional[Widget]]:
+        """Determine which major component currently has focus."""
+        widget = self.focused
+        while widget is not None:
+            widget_id = widget.id or ""
+            if widget_id in {"metrics-panel-container", "metrics-panel"}:
+                return "metrics", widget
+            if widget_id in {"sql-panel-container", "sql-panel"}:
+                return "sql", widget
+            if isinstance(widget, EditableTree):
+                return "tree", widget
+            if isinstance(widget, MetricsPanel):
+                return "metrics", widget
+            if isinstance(widget, SqlHistoryPanel):
+                return "sql", widget
+            widget = widget.parent
+        return None, None
+
+    def _update_edit_indicator(self, component: Optional[str]) -> None:
+        """Update header subtitle to reflect active editing context."""
+        header = self.query_one(Header)
+        messages = {
+            "tree": "✏️ Editing tree node",
+            "metrics": "✏️ Editing metrics details",
+            "sql": "✏️ Editing SQL history",
+        }
+        header.sub_title = messages.get(component, "")
+        header.refresh()
+
     def _build_tree(self) -> None:
-        tree = self.query_one("#subject-tree", TextualTree)
+        tree = self.query_one("#subject-tree", EditableTree)
         tree.clear()
         tree.root.expand()
         tree.root.add_leaf("⏳ Loading...", data={"type": "loading"})
         if self._current_loading_task and not self._current_loading_task.is_finished:
             self._current_loading_task.cancel()
-        self._current_loading_task = self.run_worker(self._load_subject_data, thread=True)
+        self._current_loading_task = self.run_worker(self._load_subject_tree_data, thread=True)
 
     @work(thread=True)
-    def _load_subject_data(self) -> None:
+    def _load_subject_tree_data(self) -> None:
         get_current_worker()
         tree_data: Dict[str, Any] = {}
 
@@ -275,7 +646,7 @@ class SubjectScreen(ContextScreen):
         self.app.call_from_thread(self._populate_tree, tree_data)
 
     def _populate_tree(self, tree_data: Dict[str, Any]) -> None:
-        tree = self.query_one("#subject-tree", TextualTree)
+        tree = self.query_one("#subject-tree", EditableTree)
         tree.clear()
         tree.root.expand()
 
@@ -296,11 +667,11 @@ class SubjectScreen(ContextScreen):
                         payload = tree_data[domain][layer1][layer2][name]
                         type_tokens: List[str] = []
                         if payload.get("metrics_count"):
-                            type_tokens.append("metrics")
+                            type_tokens.append("📈")
                         if payload.get("sql_count"):
-                            type_tokens.append("sql")
-                        type_hint = f" ({'/'.join(type_tokens)})" if type_tokens else ""
-                        label = f"📋 {name}{type_hint}"
+                            type_tokens.append("💻")
+
+                        label = f"{''.join(type_tokens)} {name}"
                         node_data = {
                             "type": "subject_entry",
                             "name": name,
@@ -340,8 +711,8 @@ class SubjectScreen(ContextScreen):
             header._name = "Metrics & SQL"
 
     def action_load_details(self) -> None:
-        tree = self.query_one("#subject-tree", TextualTree)
-        if not tree.cursor_node:
+        tree = self.query_one("#subject-tree", EditableTree)
+        if not tree.has_focus or not tree.cursor_node:
             return
 
         node = tree.cursor_node
@@ -353,15 +724,549 @@ class SubjectScreen(ContextScreen):
             else:
                 node.expand()
 
+    def action_change_edit_mode(self):
+        self.action_start_edit()
+
+    def action_start_edit(self) -> None:
+        component, widget = self._resolve_focus_component()
+        if component is None:
+            self.app.notify("No component focused for editing", severity="warning")
+            return
+
+        if self._editing_component and self._editing_component != component:
+            self.app.notify("Finish the active edit before starting a new one", severity="warning")
+            return
+
+        if component == "tree":
+            assert isinstance(widget, EditableTree)
+            widget.request_edit()
+            return
+        self._begin_panel_edit(component, widget)
+
+    def action_save_edit(self) -> None:
+        if self._editing_component in {"metrics", "sql"}:
+            self._save_panel_edit(self._editing_component)
+            return
+
+        self.app.notify("Nothing to save", severity="warning")
+
+    def _begin_panel_edit(self, component: str, current_widget: Optional[Widget]) -> None:
+        if component not in {"metrics", "sql"}:
+            return
+
+        if self._editing_component == component:
+            return
+
+        if not self.selected_data:
+            self.app.notify("Select a subject entry before editing", severity="warning")
+            return
+
+        # Switch layout to editable panels if we're currently in read-only mode.
+        panel: Optional[MetricsPanel | SqlHistoryPanel] = None
+        if self.readonly:
+            self.readonly = False
+            self._show_subject_details(self.selected_data)
+
+        if isinstance(current_widget, (MetricsPanel, SqlHistoryPanel)):
+            panel = current_widget
+        else:
+            panel = self._get_panel(component)
+
+        if panel is None:
+            self.app.notify("No details available to edit", severity="warning")
+            self.readonly = True
+            self._update_edit_indicator(None)
+            self._show_subject_details(self.selected_data)
+            return
+
+        panel.set_readonly(False)
+        self._editing_component = component
+        self._update_edit_indicator(component)
+
+        def focus_panel_inputs() -> None:
+            if hasattr(panel, "focus_first_input") and panel.focus_first_input():
+                return
+            self.set_focus(panel)
+
+        self.app.call_after_refresh(focus_panel_inputs)
+
+    def _save_panel_edit(self, component: str) -> None:
+        metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
+        sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
+
+        panel: Optional[MetricsPanel | SqlHistoryPanel] = None
+        if component == "metrics":
+            if query := metrics_container.query(MetricsPanel):
+                panel = query.first()
+        elif component == "sql":
+            if query := sql_container.query(SqlHistoryPanel):
+                panel = query.first()
+
+        if panel is None:
+            self.app.notify("No panel available to save", severity="warning")
+            return
+
+        data = panel.get_value()
+        modified = panel.is_modified()
+        panel.set_readonly(True)
+        self._editing_component = None
+        self._update_edit_indicator(None)
+        self.readonly = True
+
+        if modified:
+            panel.update_data(data)
+            if component == "sql":
+                self.sql_rag.update(self.selected_data, data)
+                _sql_details_cache.cache_clear()
+            elif component == "metrics":
+                self.metrics_rag.update_metrics(self.selected_data, data)
+                _fetch_metrics_with_cache.cache_clear()
+        else:
+            self.app.notify(f"No changes detected in {component}.", severity="warning")
+
+        if self.selected_data:
+            self._show_subject_details(self.selected_data)
+
+    def on_editable_tree_edit_requested(self, message: EditableTree.EditRequested) -> None:
+        message.stop()
+        if self._editing_component and self._editing_component != "tree":
+            self.app.notify("Finish the active edit before editing the tree", severity="warning")
+            return
+
+        self._start_tree_edit_for_node(message.node)
+
+    def _start_tree_edit_for_node(self, node: TreeNode) -> None:
+        node_data = node.data or {}
+        node_type = node_data.get("type")
+
+        if node_type not in {"domain", "layer1", "layer2", "subject_entry"}:
+            self.app.notify("Selected item cannot be edited", severity="warning")
+            self._update_edit_indicator(None)
+            return
+
+        path = self._derive_path_from_node(node_type, node_data)
+        if path is None:
+            self.app.notify("Unable to resolve node path for editing", severity="error")
+            self._update_edit_indicator(None)
+            return
+
+        current_parent, parent_tree, selection_type = self._build_parent_selection_tree(node_type, node_data)
+        if selection_type is None:
+            self.app.notify("This node cannot change its parent", severity="warning")
+            self._update_edit_indicator(None)
+            return
+
+        current_name = node_data.get("name") or str(node.label)
+
+        self._editing_component = "tree"
+        self._update_edit_indicator("tree")
+        self._last_tree_selection = {
+            "node_type": node_type,
+            "path": path,
+            "node_data": dict(node_data),
+        }
+        dialog = TreeEditDialog(
+            level=node_type,
+            current_name=current_name,
+            current_parent=current_parent,
+            parent_tree=parent_tree,
+            parent_selection_type=selection_type,
+            pattern=TREE_VALIDATION_RULES.get(node_type, {}).get("pattern"),
+        )
+        self._active_dialog = dialog
+        self.app.push_screen(dialog, callback=self._on_tree_edit_finished)
+
+    def _render_readonly_panels(
+        self,
+        subject_info: Dict[str, Any],
+        metrics: List[Dict[str, Any]],
+        sql_entries: List[Dict[str, Any]],
+    ) -> None:
+        """Render static (read-only) details using the `_create_*_content` helpers."""
+
+        metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
+        sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
+
+        # Clear existing panels
+        for child in list(metrics_container.children):
+            child.remove()
+        for child in list(sql_container.children):
+            child.remove()
+
+        if metrics:
+            name = self._create_metrics_panel_content(metrics, subject_info.get("name", ""))
+            metrics_container.mount(FocusableStatic(name))
+            self._toggle_visibility(metrics_container, True)
+        else:
+            metrics_container.mount(Static("[dim]No metrics for this item[/dim]"))
+            self._toggle_visibility(metrics_container, False)
+
+        if sql_entries:
+            group = self._create_sql_panel_content(sql_entries)
+            sql_container.mount(FocusableStatic(group))
+            self._toggle_visibility(sql_container, True)
+        else:
+            sql_container.mount(Static("[dim]No SQL history for this item[/dim]"))
+            self._toggle_visibility(sql_container, False)
+
+    def _render_editable_panels(self, metrics: List[Dict[str, Any]], sql_entries: List[Dict[str, Any]]) -> None:
+        """Render editable panels (MetricsPanel / SqlHistoryPanel)."""
+        metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
+        sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
+
+        # Clear existing panels
+        for child in list(metrics_container.children):
+            child.remove()
+        for child in list(sql_container.children):
+            child.remove()
+
+        if metrics:
+            metrics_panel = MetricsPanel(metrics[0], readonly=False)
+            metrics_container.mount(metrics_panel)
+            self._toggle_visibility(metrics_container, True)
+        else:
+            metrics_container.mount(Static("[dim]No metrics for this item[/dim]"))
+            self._toggle_visibility(metrics_container, False)
+
+        if sql_entries:
+            sql_panel = SqlHistoryPanel(sql_entries[0], readonly=False)
+            sql_container.mount(sql_panel)
+            self._toggle_visibility(sql_container, True)
+        else:
+            sql_container.mount(Static("[dim]No SQL history for this item[/dim]"))
+            self._toggle_visibility(sql_container, False)
+
+    def _build_parent_selection_tree(
+        self, node_type: str, node_data: Dict[str, Any]
+    ) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
+        if node_type == "domain":
+            current = {"selection_type": "root"}
+            nodes = [
+                {
+                    "label": "Root",
+                    "data": {"selection_type": "root"},
+                    "expand": False,
+                }
+            ]
+            return current, nodes, "root"
+
+        if node_type == "layer1":
+            domains = sorted(self.tree_data.keys())
+            nodes = [
+                {
+                    "label": domain,
+                    "data": {"selection_type": "domain", "domain": domain},
+                    "expand": False,
+                }
+                for domain in domains
+            ]
+            current_domain = node_data.get("domain")
+            current = {"selection_type": "domain", "domain": current_domain} if current_domain else None
+            return current, nodes, "domain"
+
+        if node_type == "layer2":
+            domain = node_data.get("domain")
+            if not domain or domain not in self.tree_data:
+                return None, [], None
+            nodes: List[Dict[str, Any]] = []
+            for domain_name, layer1_map in sorted(self.tree_data.items()):
+                layer1_children = []
+                for layer1_name in sorted(layer1_map.keys()):
+                    layer1_children.append(
+                        {
+                            "label": layer1_name,
+                            "data": {
+                                "selection_type": "layer1",
+                                "domain": domain_name,
+                                "layer1": layer1_name,
+                            },
+                        }
+                    )
+
+                node_entry: Dict[str, Any] = {
+                    "label": domain_name,
+                    "data": {"selection_type": "domain", "domain": domain_name},
+                    "expand": domain_name == domain,
+                }
+                if layer1_children:
+                    node_entry["children"] = layer1_children
+                nodes.append(node_entry)
+            current_layer1 = node_data.get("layer1")
+            current = (
+                {
+                    "selection_type": "layer1",
+                    "domain": domain,
+                    "layer1": current_layer1,
+                }
+                if current_layer1
+                else None
+            )
+            return current, nodes, "layer1"
+
+        if node_type == "subject_entry":
+            domain = node_data.get("domain")
+            if not domain:
+                return None, [], None
+            choices: List[Dict[str, Any]] = []
+            for domain_name, layer1_map in sorted(self.tree_data.items()):
+                layer1_children: List[Dict[str, Any]] = []
+                for layer1_name, layer2_map in sorted(layer1_map.items()):
+                    layer2_children = [
+                        {
+                            "label": layer2_name,
+                            "data": {
+                                "selection_type": "layer2",
+                                "domain": domain_name,
+                                "layer1": layer1_name,
+                                "layer2": layer2_name,
+                            },
+                        }
+                        for layer2_name in sorted(layer2_map.keys())
+                    ]
+
+                    layer1_children.append(
+                        {
+                            "label": layer1_name,
+                            "data": {
+                                "selection_type": "layer1-context",
+                                "domain": domain_name,
+                                "layer1": layer1_name,
+                            },
+                            "expand": domain_name == domain and layer1_name == node_data.get("layer1"),
+                            "children": layer2_children,
+                        }
+                    )
+
+                choices.append(
+                    {
+                        "label": domain_name,
+                        "data": {
+                            "selection_type": "domain",
+                            "domain": domain_name,
+                        },
+                        "expand": domain_name == domain,
+                        "children": layer1_children,
+                    }
+                )
+
+            current = (
+                {
+                    "selection_type": "layer2",
+                    "domain": domain,
+                    "layer1": node_data.get("layer1"),
+                    "layer2": node_data.get("layer2"),
+                }
+                if node_data.get("layer2")
+                else None
+            )
+            return current, choices, "layer2"
+
+        return None, [], None
+
+    def _derive_path_from_node(self, node_type: str, node_data: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        try:
+            if node_type == "domain":
+                return {"domain": node_data["name"]}
+            if node_type == "layer1":
+                return {"domain": node_data["domain"], "layer1": node_data["name"]}
+            if node_type == "layer2":
+                return {
+                    "domain": node_data["domain"],
+                    "layer1": node_data["layer1"],
+                    "layer2": node_data["name"],
+                }
+            if node_type == "subject_entry":
+                return {
+                    "domain": node_data["domain"],
+                    "layer1": node_data["layer1"],
+                    "layer2": node_data["layer2"],
+                    "name": node_data["name"],
+                }
+        except KeyError:
+            return None
+        return None
+
+    def _on_tree_edit_finished(self, result: Optional[Dict[str, Any]]) -> None:
+        context = self._last_tree_selection or {}
+        node_type = context.get("node_type")
+        old_path = context.get("path")
+
+        self._editing_component = None
+        self._update_edit_indicator(None)
+        self._last_tree_selection = None
+
+        if not node_type or not old_path:
+            return
+
+        if not result:
+            return
+
+        new_name = result.get("name", "").strip()
+        if not new_name:
+            self.app.notify("Name cannot be empty", severity="warning")
+            return
+
+        parent_value = result.get("parent")
+        new_path = dict(old_path)
+
+        if node_type == "domain":
+            new_path["domain"] = new_name
+        elif node_type == "layer1":
+            new_path["layer1"] = new_name
+            if parent_value and parent_value.get("selection_type") == "domain":
+                new_path["domain"] = parent_value.get("domain", new_path.get("domain", ""))
+        elif node_type == "layer2":
+            new_path["layer2"] = new_name
+            if parent_value and parent_value.get("selection_type") == "layer1":
+                new_path["layer1"] = parent_value.get("layer1", new_path.get("layer1", ""))
+                new_path["domain"] = parent_value.get("domain", new_path.get("domain", ""))
+        elif node_type == "subject_entry":
+            new_path["name"] = new_name
+            if parent_value and parent_value.get("selection_type") == "layer2":
+                new_path["domain"] = parent_value.get("domain", new_path.get("domain", ""))
+                new_path["layer1"] = parent_value.get("layer1", new_path.get("layer1", ""))
+                new_path["layer2"] = parent_value.get("layer2", new_path.get("layer2", ""))
+        if node_type == "subject_entry":
+            if old_path == new_path:
+                self.app.notify("No changes")
+                return
+        else:
+            if old_path[node_type] == new_path[node_type]:
+                self.app.notify("No changes")
+                return
+        self.metrics_rag.update_metrics(old_path, update_values=new_path)
+        self.sql_rag.update(old_path, update_values=new_path)
+        self._show_subject_details(new_path)
+
+        moved_payload = self._apply_tree_edit(node_type, old_path, new_path)
+        if moved_payload is None:
+            self.app.notify("Failed to update tree data", severity="error")
+            return
+
+        self._populate_tree(self.tree_data)
+        tree = self.query_one("#subject-tree", EditableTree)
+        self._focus_tree_path(tree, new_path, node_type)
+
+        if tree.cursor_node:
+            self.update_path_display(tree.cursor_node)
+
+        new_selected_data = self._build_selected_data(node_type, new_path, moved_payload)
+        if new_selected_data:
+            self.selected_data = new_selected_data
+
+        # self._notify_tree_save(node_type, old_path, new_path)
+
+        # if node_type == "subject_entry" and new_selected_data:
+        #     self._show_subject_details(new_selected_data)
+
+    def _apply_tree_edit(self, node_type: str, old_path: Dict[str, str], new_path: Dict[str, str]) -> Optional[Any]:
+        if node_type == "domain":
+            subtree = self.tree_data.pop(old_path["domain"], None)
+            if subtree is None:
+                return None
+            self.tree_data[new_path["domain"]] = subtree
+            return subtree
+
+        if node_type == "layer1":
+            source_domain = self.tree_data.get(old_path["domain"], {})
+            subtree = source_domain.pop(old_path["layer1"], None)
+            if subtree is None:
+                return None
+            self.tree_data.setdefault(new_path["domain"], {})[new_path["layer1"]] = subtree
+            if not source_domain:
+                self.tree_data.pop(old_path["domain"], None)
+            return subtree
+
+        if node_type == "layer2":
+            domain_bucket = self.tree_data.get(old_path["domain"], {})
+            layer1_bucket = domain_bucket.get(old_path["layer1"], {})
+            subtree = layer1_bucket.pop(old_path["layer2"], None)
+            if subtree is None:
+                return None
+            self.tree_data.setdefault(new_path["domain"], {}).setdefault(new_path["layer1"], {})[
+                new_path["layer2"]
+            ] = subtree
+            if not layer1_bucket:
+                domain_bucket.pop(old_path["layer1"], None)
+            if not domain_bucket:
+                self.tree_data.pop(old_path["domain"], None)
+            return subtree
+
+        if node_type == "subject_entry":
+            domain_bucket = self.tree_data.get(old_path["domain"], {})
+            layer1_bucket = domain_bucket.get(old_path["layer1"], {})
+            layer2_bucket = layer1_bucket.get(old_path["layer2"], {})
+            payload = layer2_bucket.pop(old_path["name"], None)
+            if payload is None:
+                return None
+            self.tree_data.setdefault(new_path["domain"], {}).setdefault(new_path["layer1"], {}).setdefault(
+                new_path["layer2"], {}
+            )[new_path["name"]] = payload
+            if not layer2_bucket:
+                layer1_bucket.pop(old_path["layer2"], None)
+            if not layer1_bucket:
+                domain_bucket.pop(old_path["layer1"], None)
+            if not domain_bucket:
+                self.tree_data.pop(old_path["domain"], None)
+            return payload
+
+        return None
+
+    def _focus_tree_path(self, tree: EditableTree, path: Dict[str, str], node_type: str) -> None:
+        node = tree.root
+        traversal_order = [
+            ("domain", path.get("domain")),
+            ("layer1", path.get("layer1")),
+            ("layer2", path.get("layer2")),
+            ("subject_entry", path.get("name")),
+        ]
+
+        for level_type, target_name in traversal_order:
+            if not target_name:
+                break
+            for child in node.children:
+                data = child.data or {}
+                if data.get("type") == level_type and data.get("name") == target_name:
+                    node = child
+                    node.expand()
+                    break
+            else:
+                return
+
+        tree.move_cursor(node)
+
+    def _build_selected_data(self, node_type: str, path: Dict[str, str], payload: Any) -> Optional[Dict[str, Any]]:
+        if node_type == "domain":
+            return {"type": "domain", "name": path.get("domain", "")}
+        if node_type == "layer1":
+            return {"type": "layer1", "name": path.get("layer1", ""), "domain": path.get("domain", "")}
+        if node_type == "layer2":
+            return {
+                "type": "layer2",
+                "name": path.get("layer2", ""),
+                "layer1": path.get("layer1", ""),
+                "domain": path.get("domain", ""),
+            }
+        if node_type == "subject_entry":
+            return {
+                "type": "subject_entry",
+                "name": path.get("name", ""),
+                "layer2": path.get("layer2", ""),
+                "layer1": path.get("layer1", ""),
+                "domain": path.get("domain", ""),
+                "metrics_count": payload.get("metrics_count", 0) if isinstance(payload, dict) else 0,
+                "sql_count": payload.get("sql_count", 0) if isinstance(payload, dict) else 0,
+            }
+        return None
+
     def _show_subject_details(self, subject_info: Dict[str, Any]) -> None:
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
-        metrics_panel = self.query_one("#metrics-panel", Static)
+
         sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
-        sql_panel = self.query_one("#sql-panel", Static)
         divider = self.query_one("#panel-divider", Static)
 
-        metrics = []
-        sql_entries = []
+        metrics: List[Dict[str, Any]] = []
+        sql_entries: List[Dict[str, Any]] = []
 
         metrics_count = subject_info.get("metrics_count", 0)
         sql_count = subject_info.get("sql_count", 0)
@@ -382,20 +1287,13 @@ class SubjectScreen(ContextScreen):
                 subject_info.get("name", ""),
             )
 
-        if metrics:
-            metrics_panel.update(self._create_metrics_panel_content(metrics, subject_info.get("name", "")))
-            self._toggle_visibility(metrics_container, True)
+        # Render depending on mode
+        if self.readonly:
+            self._render_readonly_panels(subject_info, metrics, sql_entries)
         else:
-            metrics_panel.update("[dim]No metrics for this item[/dim]")
-            self._toggle_visibility(metrics_container, False)
+            self._render_editable_panels(metrics, sql_entries)
 
-        if sql_entries:
-            sql_panel.update(self._create_sql_panel_content(sql_entries))
-            self._toggle_visibility(sql_container, True)
-        else:
-            sql_panel.update("[dim]No SQL history for this item[/dim]")
-            self._toggle_visibility(sql_container, False)
-
+        # Layout sizing + divider logic (same for both modes)
         metrics_visible = bool(metrics)
         sql_visible = bool(sql_entries)
 
@@ -420,13 +1318,14 @@ class SubjectScreen(ContextScreen):
         else:
             widget.add_class("hidden")
 
-    def _create_metrics_panel_content(self, metrics: List[Dict[str, Any]], group_name: str) -> Group:
+    def _create_metrics_panel_content(self, metrics: List[Dict[str, Any]], metrics_name: str) -> Group:
         sections: List[Table] = []
         for idx, metric in enumerate(metrics, 1):
             if not isinstance(metric, dict):
                 continue
 
-            metric_name = str(metric.get("name", "Unnamed Metric"))
+            metric_name = str(metric.get("name", ""))
+            semantic_model_name = str(metric.get("semantic_model_name", ""))
             description = str(metric.get("description", ""))
             constraint = str(metric.get("constraint", ""))
             sql_query = str(metric.get("sql_query", ""))
@@ -439,11 +1338,13 @@ class SubjectScreen(ContextScreen):
                 expand=True,
                 padding=(0, 1),
             )
-            table.add_column("Key", style="bright_cyan", width=16)
+            table.add_column("Key", style="bright_cyan", width=20)
             table.add_column("Value", style="yellow", ratio=1)
 
-            if group_name:
-                table.add_row("Group", group_name)
+            if metrics_name:
+                table.add_row("Name", metrics_name)
+            if semantic_model_name:
+                table.add_row("Semantic Model Name", semantic_model_name)
             if description:
                 table.add_row("Description", description)
             if constraint:
@@ -489,21 +1390,27 @@ class SubjectScreen(ContextScreen):
         return Group(*sections)
 
     def action_cursor_down(self) -> None:
-        self.query_one("#subject-tree", TextualTree).action_cursor_down()
+        tree = self.query_one("#subject-tree", EditableTree)
+        if not tree.has_focus:
+            return
+        tree.action_cursor_down()
         self.query_one("#tree-help", Static).update("")
 
     def action_cursor_up(self) -> None:
-        self.query_one("#subject-tree", TextualTree).action_cursor_up()
+        tree = self.query_one("#subject-tree", EditableTree)
+        if not tree.has_focus:
+            return
+        tree.action_cursor_up()
         self.query_one("#tree-help", Static).update("")
 
     def action_expand_node(self) -> None:
-        tree = self.query_one("#subject-tree", TextualTree)
-        if tree.cursor_node:
+        tree = self.query_one("#subject-tree", EditableTree)
+        if tree.has_focus and tree.cursor_node:
             tree.cursor_node.expand()
 
     def action_collapse_node(self) -> None:
-        tree = self.query_one("#subject-tree", TextualTree)
-        if tree.cursor_node:
+        tree = self.query_one("#subject-tree", EditableTree)
+        if tree.has_focus and tree.cursor_node:
             tree.cursor_node.collapse()
 
     def action_show_navigation_help(self) -> None:
@@ -531,6 +1438,66 @@ class SubjectScreen(ContextScreen):
         self.selected_path = ""
         self.selected_data = {}
         self.app.exit()
+
+    def _get_panel(self, component: str) -> Optional[MetricsPanel | SqlHistoryPanel]:
+        metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
+        sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
+        if component == "metrics":
+            query = metrics_container.query(MetricsPanel)
+            return query.first() if query else None
+        if component == "sql":
+            query = sql_container.query(SqlHistoryPanel)
+            return query.first() if query else None
+        return None
+
+    def action_cancel_or_exit(self) -> None:
+        """
+        ESC / Ctrl+Q behavior:
+        1) If a dialog is open: restore dialog state and close it.
+        2) If in edit mode: restore snapshot and leave edit mode without saving.
+        3) Otherwise: perform the original exit behavior.
+        """
+        # Case 1: active dialog
+        if self._active_dialog is not None:
+            try:
+                self._active_dialog.cancel_and_close()
+            except Exception as e:
+                logger.warning(f"Failed to restore dialog state: {e}")
+                # Fall back to closing the dialog without extra restore
+                try:
+                    self._active_dialog.dismiss(None)
+                except Exception as e2:
+                    logger.warning(f"Failed to dismiss dialog: {e2}")
+            self._active_dialog = None
+            return
+
+        # Case 2: in-panel editing
+        if self._editing_component in {"metrics", "sql"}:
+            component = self._editing_component
+            panel = self._get_panel(component)
+            if panel is not None:
+                try:
+                    panel.restore()
+                except Exception as e:
+                    logger.warning(f"Failed to restore panel state: {e}")
+                panel.set_readonly(True)
+            # Reset edit state
+            self._editing_component = None
+            self._update_edit_indicator(None)
+            self.readonly = True
+            if self.selected_data:
+                self._show_subject_details(self.selected_data)
+            return
+
+        # Case 3: default behavior (exit)
+        try:
+            self.action_exit_without_selection()
+        except Exception as e:
+            logger.warning(f"Failed to exit without selection: {e}")
+            try:
+                self.app.pop_screen()
+            except Exception as e2:
+                logger.warning(f"Failed to pop screen: {e2}")
 
     def on_unmount(self) -> None:
         self.clear_cache()
@@ -568,7 +1535,9 @@ class NavigationHelpScreen(ModalScreen):
                 "• Enter - Load details\n"
                 "• F4 - Show path\n"
                 "• F5 - Select and exit\n"
-                "• Esc - Exit without selection\n\n"
+                "• Ctrl+e - Enter edit mode\n"
+                "• Ctrl+w - Save and exit edit mode\n"
+                "• Esc - Exit editing mode or application\n\n"
                 "Press any key to close this help.",
                 id="navigation-help-content",
             ),

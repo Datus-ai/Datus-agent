@@ -54,7 +54,7 @@ dependencies = [
     "textual[syntax]==5.1.1",
     "anthropic==0.51.0",
     "duckdb-engine>=0.17.0",
-    "duckdb>=1.3.0,<1.4.0",
+    "duckdb==1.3.0",
     "snowflake-sqlalchemy>=1.7.3",
     # Dependencies by snowflake-sqlalchemy
     "opentelemetry-api>=1.33.1",
