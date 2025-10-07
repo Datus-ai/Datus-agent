@@ -534,7 +534,7 @@ class ChatCommands:
             session_info = self.current_node.get_session_info()
             if session_info.get("session_id"):
                 # Determine node type for display
-                node_type = "Chat" if isinstance(self.current_node, ChatAgenticNode) else "Subagent"
+                node_type = "Chat" if isinstance(self.current_node, CliChatAgenticNode) else "Subagent"
 
                 self.console.print(f"[bold green]{node_type} Session Info:[/]")
                 self.console.print(f"  Session ID: {session_info['session_id']}")
@@ -565,7 +565,7 @@ class ChatCommands:
 
         try:
             # Determine node type for display
-            node_type = "Chat" if isinstance(self.current_node, ChatAgenticNode) else "Subagent"
+            node_type = "Chat" if isinstance(self.current_node, CliChatAgenticNode) else "Subagent"
 
             # Display session info before compacting
             self.console.print(f"[bold blue]Compacting {node_type} Session...[/]")

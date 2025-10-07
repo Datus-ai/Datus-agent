@@ -368,7 +368,7 @@ class AgenticNode(ABC):
         layer2: str = None,
         schemas=None,
         metrics=None,
-        historical_sql=None
+        historical_sql=None,
     ) -> str:
         """
         Build enhanced message with context enrichment.
@@ -393,7 +393,7 @@ class AgenticNode(ABC):
         # Add database & semantic context
         if catalog or database or db_schema or domain or layer1 or layer2:
             context_parts = []
-            if hasattr(self.agent_config, 'db_type'):
+            if hasattr(self.agent_config, "db_type"):
                 context_parts.append(f"dialect: {self.agent_config.db_type}")
             if catalog:
                 context_parts.append(f"catalog: {catalog}")
@@ -412,23 +412,26 @@ class AgenticNode(ABC):
         # Add table schemas
         if schemas:
             from datus.schemas.node_models import TableSchema
+
             table_schemas_str = TableSchema.list_to_prompt(
-                schemas, dialect=getattr(self.agent_config, 'db_type', 'generic')
+                schemas, dialect=getattr(self.agent_config, "db_type", "generic")
             )
             enhanced_parts.append(f"Table Schemas: \n{table_schemas_str}")
 
         # Add metrics
         if metrics:
             import json
+
             enhanced_parts.append(f"Metrics: \n{json.dumps([item.model_dump() for item in metrics])}")
 
         # Add historical SQL
         if historical_sql:
             import json
+
             enhanced_parts.append(f"Historical SQL: \n{json.dumps([item.model_dump() for item in historical_sql])}")
 
         if enhanced_parts:
-            return f'{chr(10).join(enhanced_parts)}\n\nUser question: {user_message}'
+            return f"{chr(10).join(enhanced_parts)}\n\nUser question: {user_message}"
         return user_message
 
     def _setup_mcp_servers(self) -> Dict[str, "MCPServerStdio"]:
@@ -511,9 +514,11 @@ class AgenticNode(ABC):
             return node_workspace_root
 
         # Priority 2: global storage workspace_root
-        if (self.agent_config and
-            hasattr(self.agent_config, "storage") and
-            hasattr(self.agent_config.storage, "workspace_root")):
+        if (
+            self.agent_config
+            and hasattr(self.agent_config, "storage")
+            and hasattr(self.agent_config.storage, "workspace_root")
+        ):
             global_workspace_root = self.agent_config.storage.workspace_root
             if global_workspace_root:
                 logger.debug(f"Using global workspace_root: {global_workspace_root}")

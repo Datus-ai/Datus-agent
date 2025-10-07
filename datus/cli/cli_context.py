@@ -103,7 +103,7 @@ class CliContext:
         db_logic_name: str = None,
         domain: str = None,
         layer1: str = None,
-        layer2: str = None
+        layer2: str = None,
     ):
         """Update current database context."""
         if db_name is not None:

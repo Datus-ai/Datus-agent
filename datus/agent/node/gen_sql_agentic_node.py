@@ -6,20 +6,15 @@ SQL generation with support for limited context, enhanced template variables,
 and flexible configuration through agent.yml.
 """
 
-import os
-from typing import Any, AsyncGenerator, Dict, Optional, Union
-
-from agents.mcp import MCPServerStdio
+from typing import AsyncGenerator, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.tools.context_search import ContextSearchTools
 from datus.tools.date_parsing_tools import DateParsingTools
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.mcp_server import MCPServer
 from datus.tools.tools import DBFuncTool
 from datus.utils.loggings import get_logger
 

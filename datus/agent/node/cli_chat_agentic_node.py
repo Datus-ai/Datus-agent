@@ -128,9 +128,11 @@ class CliChatAgenticNode(GenSQLAgenticNode):
 
             # Filter tools based on availability
             for tool in all_tools:
-                if (tool.name in metrics_tools and has_metrics) or \
-                   (tool.name in sql_history_tools and has_sql_history) or \
-                   (tool.name in shared_tools and (has_metrics or has_sql_history)):
+                if (
+                    (tool.name in metrics_tools and has_metrics)
+                    or (tool.name in sql_history_tools and has_sql_history)
+                    or (tool.name in shared_tools and (has_metrics or has_sql_history))
+                ):
                     self.tools.append(tool)
 
             logger.info(
@@ -191,9 +193,11 @@ class CliChatAgenticNode(GenSQLAgenticNode):
 
         try:
             from datus.prompts.prompt_manager import prompt_manager
+
             return prompt_manager.render_template(template_name=template_name, version=version, **context)
         except FileNotFoundError as e:
             from datus.utils.exceptions import DatusException, ErrorCode
+
             raise DatusException(
                 code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
                 message_args={"template_name": template_name, "version": version or "latest"},
@@ -201,6 +205,7 @@ class CliChatAgenticNode(GenSQLAgenticNode):
         except Exception as e:
             logger.error(f"Template loading error for '{template_name}': {e}")
             from datus.utils.exceptions import DatusException, ErrorCode
+
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
@@ -261,12 +266,12 @@ class CliChatAgenticNode(GenSQLAgenticNode):
                 catalog=user_input.catalog,
                 database=user_input.database,
                 db_schema=user_input.db_schema,
-                domain=getattr(user_input, 'domain', None),  # NEW: domain support
-                layer1=getattr(user_input, 'layer1', None),  # NEW: layer1 support
-                layer2=getattr(user_input, 'layer2', None),  # NEW: layer2 support
-                schemas=getattr(user_input, 'schemas', None),
-                metrics=getattr(user_input, 'metrics', None),
-                historical_sql=getattr(user_input, 'historical_sql', None)
+                domain=getattr(user_input, "domain", None),  # NEW: domain support
+                layer1=getattr(user_input, "layer1", None),  # NEW: layer1 support
+                layer2=getattr(user_input, "layer2", None),  # NEW: layer2 support
+                schemas=getattr(user_input, "schemas", None),
+                metrics=getattr(user_input, "metrics", None),
+                historical_sql=getattr(user_input, "historical_sql", None),
             )
 
             # Execute with streaming
@@ -500,11 +505,7 @@ class CliChatAgenticNode(GenSQLAgenticNode):
             Configuration dict with tools, instruction, and hooks
         """
         if execution_mode == "normal":
-            return {
-                "tools": self.tools,
-                "instruction": self._get_system_instruction(original_input),
-                "hooks": None
-            }
+            return {"tools": self.tools, "instruction": self._get_system_instruction(original_input), "hooks": None}
         elif execution_mode == "plan":
             # Plan mode: standard tools + plan tools
             plan_tools = self.plan_hooks.get_plan_tools() if self.plan_hooks else []
