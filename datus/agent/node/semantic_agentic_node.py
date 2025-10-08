@@ -529,6 +529,12 @@ class SemanticAgenticNode(AgenticNode):
             logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
             logger.info(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
 
+            # Initialize response collection variables
+            response_content = ""
+            semantic_model_file = None
+            tokens_used = 0
+            last_successful_output = None
+
             # Stream response using the model's generate_with_tools_stream
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=enhanced_message,
@@ -542,8 +548,43 @@ class SemanticAgenticNode(AgenticNode):
             ):
                 yield stream_action
 
-            # Extract token usage from final actions
+                # Collect response content from successful actions
+                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                    if isinstance(stream_action.output, dict):
+                        last_successful_output = stream_action.output
+                        # Look for content in various possible fields
+                        raw_output = stream_action.output.get("raw_output", "")
+                        # Handle case where raw_output is already a dict
+                        if isinstance(raw_output, dict):
+                            response_content = raw_output
+                        elif raw_output:
+                            response_content = raw_output
+
+            # If we still don't have response_content, check the last successful output
+            if not response_content and last_successful_output:
+                logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
+                # Try different fields that might contain the response
+                raw_output = last_successful_output.get("raw_output", "")
+                if isinstance(raw_output, dict):
+                    response_content = raw_output
+                elif raw_output:
+                    response_content = raw_output
+                else:
+                    response_content = str(last_successful_output)  # Fallback to string representation
+
+            # Extract semantic_model_file and output from the final response_content
+            semantic_model_file, extracted_output = self._extract_semantic_model_and_output_from_response(
+                {"content": response_content}
+            )
+            if extracted_output:
+                response_content = extracted_output
+
+            logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
+
+            # Extract token usage from final actions using our new approach
+            # With our streaming token fix, only the final assistant action will have accurate usage
             final_actions = action_history_manager.get_actions()
+            tokens_used = 0
 
             # Find the final assistant action with token usage
             for action in reversed(final_actions):
@@ -555,13 +596,34 @@ class SemanticAgenticNode(AgenticNode):
                             if conversation_tokens > 0:
                                 # Add this conversation's tokens to the session
                                 self._add_session_tokens(conversation_tokens)
+                                tokens_used = conversation_tokens
                                 logger.info(f"Added {conversation_tokens} tokens to session")
                                 break
                             else:
                                 logger.warning(f"no usage token found in this action {action.messages}")
 
+            # Create final result
+            result = SemanticNodeResult(
+                success=True,
+                response=response_content,
+                semantic_model=semantic_model_file,
+                tokens_used=int(tokens_used),
+            )
+
             # Add to internal actions list
             self.actions.extend(action_history_manager.get_actions())
+
+            # Create final action
+            final_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="semantic_response",
+                messages=f"{self.get_node_name()} interaction completed successfully",
+                input_data=user_input.model_dump(),
+                output_data=result.model_dump(),
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(final_action)
+            yield final_action
 
         except Exception as e:
             logger.error(f"{self.get_node_name()} execution error: {e}")
@@ -592,3 +654,59 @@ class SemanticAgenticNode(AgenticNode):
             )
             action_history_manager.add_action(error_action)
             yield error_action
+
+    def _extract_semantic_model_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
+        """
+        Extract semantic_model_file and formatted output from model response.
+
+        Per prompt template requirements, LLM should return JSON format:
+        {"semantic_model_file": "path", "output": "markdown text"}
+
+        Args:
+            output: Output dictionary from model generation
+
+        Returns:
+            Tuple of (semantic_model_file, output_string) - both can be None if not found
+        """
+        try:
+            from datus.utils.json_utils import strip_json_str
+
+            content = output.get("content", "")
+            logger.info(f"extract_semantic_model_and_output_from_final_resp: {content} (type: {type(content)})")
+
+            # Case 1: content is already a dict (most common)
+            if isinstance(content, dict):
+                semantic_model_file = content.get("semantic_model_file")
+                output_text = content.get("output")
+                if semantic_model_file or output_text:
+                    logger.debug(f"Extracted from dict: semantic_model_file={semantic_model_file}")
+                    return semantic_model_file, output_text
+                else:
+                    logger.warning(f"Dict format but missing expected keys: {content.keys()}")
+
+            # Case 2: content is a JSON string (possibly wrapped in markdown code blocks)
+            elif isinstance(content, str) and content.strip():
+                # Use strip_json_str to handle markdown code blocks and extract JSON
+                cleaned_json = strip_json_str(content)
+                if cleaned_json:
+                    try:
+                        import json_repair
+
+                        parsed = json_repair.loads(cleaned_json)
+                        if isinstance(parsed, dict):
+                            semantic_model_file = parsed.get("semantic_model_file")
+                            output_text = parsed.get("output")
+                            if semantic_model_file or output_text:
+                                logger.debug(f"Extracted from JSON string: semantic_model_file={semantic_model_file}")
+                                return semantic_model_file, output_text
+                            else:
+                                logger.warning(f"Parsed JSON but missing expected keys: {parsed.keys()}")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse cleaned JSON: {e}. Cleaned content: {cleaned_json[:200]}")
+
+            logger.warning(f"Could not extract semantic_model_file from response. Content type: {type(content)}")
+            return None, None
+
+        except Exception as e:
+            logger.error(f"Unexpected error extracting semantic_model_file: {e}", exc_info=True)
+            return None, None

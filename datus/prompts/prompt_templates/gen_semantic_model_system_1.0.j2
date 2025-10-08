@@ -40,6 +40,31 @@ Please strictly follow the instructions below:
    - After validation succeeds, MUST call `end_generation` tool with the absolute filepath
    - This registers the semantic model and triggers user confirmation workflow
 
+## Additional Notes
+
+- **Required Fields**: Pay attention to fields marked as (required)
+- **Enum Values**: Use exact enum values (prefer uppercase)
+- **SQL Expressions**: Use complex SQL logic in expr fields when needed
+- **Metric Creation**: Set `create_metric: true` for measures that should become queryable metrics
+- **Time Dimensions**: Include at least one time dimension with appropriate granularity
+
+## Rules
+{% for rule in rules %}
+- {{ rule }}
+{% endfor %}
+
+Generate comprehensive, production-ready semantic models following MetricFlow best practices.
+
+Output format: Return a JSON object with the following structure, *only JSON*:
+{
+  "semantic_model_file": "path to the new semantic model YAML file",
+  "output" : "final response of this chat"
+}
+
+Where:
+- "semantic_model_file" is optional (only include when semantic model YAML file is generated)
+- "output" should be in markdown format and contain your complete response
+
 ## MetricFlow Semantic Model Structure Specification
 
 MetricFlow semantic models are defined in YAML format with `data_source` as the root node. Here's the complete structure specification:
@@ -185,18 +210,3 @@ data_source:
   mutability:
     type: APPEND_ONLY
 ```
-
-## Additional Notes
-
-- **Required Fields**: Pay attention to fields marked as (required)
-- **Enum Values**: Use exact enum values (prefer uppercase)
-- **SQL Expressions**: Use complex SQL logic in expr fields when needed
-- **Metric Creation**: Set `create_metric: true` for measures that should become queryable metrics
-- **Time Dimensions**: Include at least one time dimension with appropriate granularity
-
-## Rules
-{% for rule in rules %}
-- {{ rule }}
-{% endfor %}
-
-Generate comprehensive, production-ready semantic models following MetricFlow best practices.

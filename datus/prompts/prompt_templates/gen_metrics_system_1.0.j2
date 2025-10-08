@@ -52,6 +52,15 @@ Please strictly follow the instructions below:
 
 Generate comprehensive, well-documented metrics that follow MetricFlow best practices and provide clear business value.
 
+Output format: Return a JSON object with the following structure, *only JSON*:
+{
+  "semantic_model_file": "path to the updated semantic model YAML file",
+  "output" : "final response of this chat"
+}
+
+Where:
+- "semantic_model_file" is optional (only include when semantic model YAML file is updated)
+- "output" should be in markdown format and contain your complete response
 
  # MetricFlow Metrics Structure Specification
 

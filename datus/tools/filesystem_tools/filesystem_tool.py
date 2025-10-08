@@ -1,4 +1,5 @@
 import os
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -76,6 +77,7 @@ class FilesystemFuncTool:
             self.list_directory,
             self.directory_tree,
             self.move_file,
+            self.search_files,
         ]
 
         for bound_method in methods_to_convert:
@@ -427,6 +429,79 @@ class FilesystemFuncTool:
 
         except Exception as e:
             logger.error(f"Error moving file from {source} to {destination}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def search_files(self, path: str, pattern: str, exclude_patterns: List[str] = None) -> FuncToolResult:
+        """
+        Recursively search for files and directories matching a pattern.
+
+        Args:
+            path: Starting directory to begin search
+            pattern: Glob-style pattern to match (e.g., "*.py", "**/*.yaml")
+            exclude_patterns: List of glob-style patterns to exclude from results
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[List[str]]): List of matching file paths on success.
+        """
+        try:
+            target_path = self._get_safe_path(path)
+
+            if not target_path or not target_path.exists():
+                return FuncToolResult(success=0, error=f"Directory not found: {path}")
+
+            if not target_path.is_dir():
+                return FuncToolResult(success=0, error=f"Path is not a directory: {path}")
+
+            exclude_patterns = exclude_patterns or []
+
+            try:
+                matches = []
+                # Resolve root path to handle symlinks (e.g., /var -> /private/var on macOS)
+                root_path_resolved = Path(self.config.root_path).resolve()
+
+                def should_exclude(file_path: Path) -> bool:
+                    """Check if file should be excluded based on exclude patterns"""
+                    relative_path = str(file_path.relative_to(target_path))
+                    for exclude_pattern in exclude_patterns:
+                        if fnmatch(relative_path, exclude_pattern) or fnmatch(file_path.name, exclude_pattern):
+                            return True
+                    return False
+
+                def search_recursive(current_path: Path):
+                    """Recursively search directory"""
+                    try:
+                        for item in current_path.iterdir():
+                            # Skip excluded items
+                            if should_exclude(item):
+                                continue
+
+                            # Check if item matches pattern
+                            relative_path = str(item.relative_to(target_path))
+                            if fnmatch(relative_path, pattern) or fnmatch(item.name, pattern):
+                                # Resolve item path to handle symlinks
+                                item_resolved = item.resolve()
+                                matches.append(str(item_resolved.relative_to(root_path_resolved)))
+
+                            # Recurse into directories
+                            if item.is_dir():
+                                search_recursive(item)
+
+                    except PermissionError:
+                        # Skip directories we don't have permission to read
+                        pass
+
+                search_recursive(target_path)
+
+                return FuncToolResult(result=matches)
+
+            except PermissionError:
+                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+
+        except Exception as e:
+            logger.error(f"Error searching files in {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
 

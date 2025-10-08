@@ -79,3 +79,13 @@ tags: string                         # Comma-separated tags
 {% endfor %}
 
 Generate comprehensive SQL summaries that enable effective knowledge reuse and semantic search.
+
+Output format: Return a JSON object with the following structure, *only JSON*:
+{
+  "sql_summary_file": "path to the new sql summary YAML file",
+  "output" : "final response of this chat"
+}
+
+Where:
+- "sql_summary_file" is optional (only include when sql summary YAML file is generated)
+- "output" should be in markdown format and contain your complete response
