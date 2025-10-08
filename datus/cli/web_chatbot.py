@@ -10,6 +10,7 @@ maximizing reuse of existing Datus CLI components including:
 """
 
 import csv
+import hashlib
 import os
 from argparse import Namespace
 from datetime import datetime
@@ -355,7 +356,7 @@ class StreamlitChatbot:
                 # Render Report Issue button
                 import streamlit.components.v1 as components
 
-                components.html(self._generate_report_issue_html(session_id), height=110)
+                components.html(self._generate_report_issue_html(session_id), height=150)
 
                 # Debug section
                 st.markdown("---")
@@ -545,12 +546,12 @@ class StreamlitChatbot:
         Load a session from URL query parameter if present.
         Sets the app to read-only mode when viewing a shared session.
         """
-        # Check if we're already in readonly mode (already loaded)
-        if st.session_state.session_readonly_mode:
-            return
-
         # Check URL query params for session parameter
         session_id = st.query_params.get("session")
+
+        # Check if we've already loaded this specific session
+        if st.session_state.get("view_session_id") == session_id:
+            return
         if not session_id:
             return
 
@@ -628,7 +629,6 @@ class StreamlitChatbot:
             if latest_msg:
                 st.caption(f"**Latest:** {latest_msg[:50]}...")
             if st.button("🔗 Load Session", key=f"load_{info['session_id']}", use_container_width=True):
-                st.session_state.session_readonly_mode = False
                 st.query_params.update({"session": info["session_id"]})
                 st.rerun()
 
@@ -642,9 +642,10 @@ class StreamlitChatbot:
                     background-color: #ff4b4b; color: white; border: none; border-radius: 0.5rem;
                     cursor: pointer; font-size: 1rem; font-weight: 500; transition: all 0.3s ease;">
                     🐛 Report Issue</button>
-                <div id="feedbackMsg" style="margin-top: 0.5rem; padding: 0.5rem;
-                    border-radius: 0.25rem; font-size: 0.875rem; display: none;
-                    transition: all 0.3s ease;"></div>
+                <div id="feedbackMsg" style="width: 100%; margin-top: 0.5rem; padding: 0.75rem;
+                    border-radius: 0.5rem; font-size: 0.875rem; display: none;
+                    transition: all 0.3s ease; text-align: center; box-sizing: border-box;
+                    min-height: 3rem; line-height: 1.5;"></div>
             </div>
             <script>
             document.getElementById('reportIssueBtn').addEventListener('click', function() {{
@@ -740,17 +741,18 @@ class StreamlitChatbot:
                     background-color: #ff4b4b; color: white; border: none; border-radius: 0.5rem;
                     cursor: pointer; font-size: 1rem; font-weight: 500; transition: all 0.3s ease;">
                     🐛 Report Issue</button>
-                <div id="feedbackMsg" style="margin-top: 0.5rem; padding: 0.5rem;
-                    border-radius: 0.25rem; font-size: 0.875rem; display: none;
-                    transition: all 0.3s ease;"></div>
+                <div id="feedbackMsg" style="width: 100%; margin-top: 0.5rem; padding: 0.75rem;
+                    border-radius: 0.5rem; font-size: 0.875rem; display: none;
+                    transition: all 0.3s ease; text-align: center; box-sizing: border-box;
+                    min-height: 3rem; line-height: 1.5;"></div>
             </div>
             <script>
             document.getElementById('reportIssueBtn').addEventListener('click', function() {
                 const feedbackMsg = document.getElementById('feedbackMsg');
                 feedbackMsg.innerHTML = 'ℹ No active session. Please run a query first.';
-                feedbackMsg.style.backgroundColor = '#d1ecf1';
-                feedbackMsg.style.color = '#0c5460';
-                feedbackMsg.style.border = '1px solid #bee5eb';
+                feedbackMsg.style.backgroundColor = '#d4edda';
+                feedbackMsg.style.color = '#155724';
+                feedbackMsg.style.border = '1px solid #c3e6cb';
                 feedbackMsg.style.display = 'block';
                 setTimeout(() => {
                     feedbackMsg.style.display = 'none';
@@ -841,9 +843,9 @@ class StreamlitChatbot:
         # Save button (only show if not in readonly mode)
         if not st.session_state.session_readonly_mode:
             # Create unique ID for this SQL block
-            sql_id = abs(hash(sql)) % 1000000
+            sql_id = hashlib.md5(sql.encode()).hexdigest()[:8]
 
-            if st.button("👍 Save", key=f"save_{sql_id}", help="Save this query as a success story"):
+            if st.button("👍 Success", key=f"save_{sql_id}", help="Save this query as a success story"):
                 self.save_success_story(sql, user_msg)
 
     def display_markdown_response(self, response: str):
