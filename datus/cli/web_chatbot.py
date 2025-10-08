@@ -310,8 +310,8 @@ class StreamlitChatbot:
                 st.subheader("💬 Session")
 
                 # Session info
-                if self.cli.chat_commands and self.cli.chat_commands.chat_node:
-                    session_info = self.cli.chat_commands.chat_node.get_session_info()
+                if self.cli.chat_commands and self.cli.chat_commands.current_node:
+                    session_info = self.cli.chat_commands.current_node.get_session_info()
                     col1, col2 = st.columns(2)
                     with col1:
                         st.metric("Messages", session_info.get("action_count", 0))
