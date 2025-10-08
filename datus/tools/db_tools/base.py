@@ -368,10 +368,12 @@ def _escape_sql_string_standard(value: str) -> str:
     return value.replace("'", "''")
 
 
-def _to_sql_literal(value: str, around_with_quotes: bool = False) -> str:
+def _to_sql_literal(value: Optional[str], around_with_quotes: bool = False) -> str:
     """Return a Snowflake-safe single-quoted SQL literal for strings."""
     if value is None:
         return "NULL"
+    if not value:
+        return "" if not around_with_quotes else "''"
     replace_value = _escape_sql_string_standard(value)
     if not around_with_quotes:
         return replace_value

@@ -117,6 +117,9 @@ class MetadataCommands:
         self.cli.agent_config.current_database = new_db
         self.cli.cli_context.current_logic_db_name = new_db
         if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
+            if new_db not in self.cli.agent_config.namespaces:
+                self.cli.console.print(f"[bold yellow]No corresponding database was found{new_db}[/]")
+                return
             # Logic database name
             self.cli.db_connector = self.cli.db_manager.get_conn(self.cli.agent_config.current_namespace, new_db)
             # use real database name
