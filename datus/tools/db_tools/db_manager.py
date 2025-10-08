@@ -108,8 +108,9 @@ class DBManager:
             name = list(dbs.keys())[0]
             conn = dbs[name]
             return name, conn
+
         config = list(self._db_configs[namespace].values())[0]
-        return config.database, dbs
+        return config.logic_name, dbs
 
     def get_db_uris(self, namespace: str) -> Dict[str, str]:
         dbs = self._db_configs.get(namespace, {})

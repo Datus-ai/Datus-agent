@@ -528,7 +528,7 @@ class SnowflakeConnector(BaseSqlConnector):
             sql = f"""SELECT TABLE_CATALOG as "database_name", TABLE_SCHEMA as "schema_name", TABLE_NAME as "name"
             FROM {select_table_name} WHERE TABLE_TYPE = '{table_type}'"""
             if schema_name:
-                sql += f" AND TABLE_SCHEMA= '{schema_name}'"
+                sql += f" AND TABLE_SCHEMA = {_to_sql_literal(schema_name, True)}"
             if tables:
                 sql += list_to_in_str(prefix=" AND TABLE_NAME IN ", values=tables)
             try:

@@ -72,7 +72,6 @@ class MetadataCommands:
                         )
 
             self.cli.last_result = result
-            logger.info(f"$$$$ result: {result}")
             # Display results
             table = Table(title="Databases", show_header=True, header_style="bold green")
             if show_uri:
@@ -98,6 +97,14 @@ class MetadataCommands:
             self.cli.console.print("[bold red]Error:[/] Database name is required")
             self.cmd_list_databases()
             return
+        if (
+            self.cli.db_connector.dialect in (DBType.SQLITE, DBType.DUCKDB)
+            and self.cli.cli_context.current_logic_db_name == new_db
+        ):
+            self.cli.console.print(
+                f"[yellow]It's now under the database [bold]{new_db}[/] and doesn't need to be switched[/]"
+            )
+            return
         if new_db == self.cli.cli_context.current_db_name:
             self.cli.console.print(
                 f"[yellow]It's now under the database [bold]{new_db}[/] and doesn't need to be switched[/]"
@@ -109,17 +116,21 @@ class MetadataCommands:
         if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
             # Logic database name
             self.cli.db_connector = self.cli.db_manager.get_conn(self.cli.agent_config.current_namespace, new_db)
-            # use rea database name
-            self.cli.agent_config.current_database = self.cli.db_connector.database_name
-            self.cli.cli_context.current_db_name = self.cli.db_connector.database_name
+            # use real database name
+            self.cli.cli_context.update_database_context(
+                db_name=self.cli.db_connector.database_name, db_logic_name=new_db
+            )
             self.cli.reset_session()
         else:
             self.cli.db_connector.switch_context(database_name=new_db)
-            self.cli.agent_config.current_database = new_db
-            self.cli.cli_context.current_db_name = new_db
+            self.cli.cli_context.update_database_context(db_name=new_db)
+
         if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
             self.cli.chat_commands.update_chat_node_tools()
-        self.cli.console.print(f"[bold green]Database switched to: {self.cli.cli_context.current_db_name}[/]")
+
+        self.cli.agent_config.current_database = self.cli.db_connector.database_name
+
+        self.cli.console.print(f"[bold green]Database switched to: {new_db}[/]")
 
     def cmd_tables(self, args: str):
         """List all tables in the current database (internal command)."""
