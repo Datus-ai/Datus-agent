@@ -360,7 +360,7 @@ def list_to_in_str(prefix: str, values: Optional[List[str]] = None) -> str:
     if not values:
         return ""
     value_str = ",".join(_to_sql_literal(v, around_with_quotes=True) for v in values)
-    return "" if not values else f"{prefix} ({value_str})"
+    return f"{prefix} ({value_str})"
 
 
 def _escape_sql_string_standard(value: str) -> str:
