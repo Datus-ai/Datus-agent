@@ -38,7 +38,7 @@ class MetadataCommands:
                 show_uri = True
                 for _, db_config in database_config_dict.items():
                     logic_name = db_config.logic_name
-                    is_current = logic_name == self.cli.cli_context.current_db_name
+                    is_current = logic_name == self.cli.cli_context.current_logic_db_name
                     result.append(
                         {
                             "logic_name": logic_name if not is_current else f"[bold green]{logic_name}[/]",
@@ -52,9 +52,12 @@ class MetadataCommands:
                 db_type = db_config.type
                 if db_type in (DBType.SQLITE, DBType.DUCKDB):
                     show_uri = True
+                    is_current = db_config.logic_name == self.cli.cli_context.current_logic_db_name
                     result.append(
                         {
-                            "logic_name": db_config.logic_name or namespace,
+                            "logic_name": db_config.logic_name
+                            if not is_current
+                            else f"[bold green]{db_config.logic_name}[/]",
                             "name": db_config.database,
                             "uri": db_config.uri,
                         }
