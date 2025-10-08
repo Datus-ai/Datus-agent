@@ -20,7 +20,7 @@ from snowflake.connector.errors import (
 
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import ExecuteSQLResult
-from datus.tools.db_tools.base import BaseSqlConnector, list_to_in_str
+from datus.tools.db_tools.base import BaseSqlConnector, _to_sql_literal, list_to_in_str
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -600,7 +600,7 @@ class SnowflakeConnector(BaseSqlConnector):
 
         for entry in table_entries:
             full_name = f"""
-{_sql_literal(entry["database_name"])}.{_sql_literal(entry["schema_name"])}.{_sql_literal(entry["table_name"])}
+{_to_sql_literal(entry["database_name"])}.{_to_sql_literal(entry["schema_name"])}.{_to_sql_literal(entry["table_name"])}
 """.strip()
             entry["definition"] = self._fetch_table_ddl_individually(full_name)
 
@@ -862,15 +862,3 @@ class SnowflakeConnector(BaseSqlConnector):
         else:
             full_name = f'"{table_name}"'
         return full_name if not database_name else f'"{database_name}".{full_name}'
-
-
-def _sql_literal(value: str, around_with_quotes: bool = False) -> str:
-    """Return a Snowflake-safe single-quoted SQL literal for strings."""
-    if value is None:
-        return "NULL"
-    # Escape single quotes by doubling them
-    replace_value = value.replace("'", "''")
-    if not around_with_quotes:
-        return replace_value
-    else:
-        return f"'{replace_value}'"

@@ -357,4 +357,21 @@ class BaseSqlConnector(ABC):
 
 
 def list_to_in_str(prefix: str, values: Optional[List[str]] = None) -> str:
-    return "" if not values else f"{prefix} ({str(values)[1:-1]})"
+    value_str = ",".join(_to_sql_literal(v, around_with_quotes=True) for v in values)
+    return "" if not values else f"{prefix} ({value_str})"
+
+
+def _escape_sql_string_standard(value: str) -> str:
+    # Standard SQL single quote escaping rules: single quote -> two single quotes
+    return value.replace("'", "''")
+
+
+def _to_sql_literal(value: str, around_with_quotes: bool = False) -> str:
+    """Return a Snowflake-safe single-quoted SQL literal for strings."""
+    if value is None:
+        return "NULL"
+    replace_value = _escape_sql_string_standard(value)
+    if not around_with_quotes:
+        return replace_value
+    else:
+        return f"'{replace_value}'"
