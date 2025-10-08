@@ -566,7 +566,7 @@ class SnowflakeConnector(BaseSqlConnector):
         """Fallback to retrieve table DDLs one by one when bulk retrieval fails."""
 
         with self.connection.cursor() as cursor:
-            sql = f"SELECT GET_DDL('TABLE', '{full_name}')"
+            sql = f"SELECT GET_DDL('TABLE', '{full_name}', true)"
             try:
                 cursor.execute(sql)
                 row = cursor.fetchone()
