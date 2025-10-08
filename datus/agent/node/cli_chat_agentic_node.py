@@ -54,7 +54,7 @@ class CliChatAgenticNode(GenSQLAgenticNode):
         # Call parent constructor
         super().__init__(node_name, agent_config, max_turns)
 
-        logger.info(f"✅ CliChatAgenticNode initialized successfully")
+        logger.info("CliChatAgenticNode initialized successfully")
 
     def setup_tools(self):
         """Override to add intelligent tool filtering + filesystem tools."""
