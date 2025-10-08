@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 import json
+import warnings
 from typing import Any, Callable, List, Optional
 
 from agents import FunctionTool, Tool, function_tool
 from pydantic import BaseModel, Field
+
+# Suppress Pydantic field name shadowing warnings
+warnings.filterwarnings("ignore", message=".*shadows an attribute in parent.*")
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.db_tools import BaseSqlConnector
@@ -171,7 +175,7 @@ class DBFuncTool:
         query_text: str,
         catalog: Optional[str] = "",
         database: Optional[str] = "",
-        schema: Optional[str] = "",
+        db_schema: Optional[str] = "",
         top_n: int = 5,
         simple_sample_data: bool = True,
     ) -> FuncToolResult:
@@ -198,7 +202,7 @@ class DBFuncTool:
                        (e.g., "customer data", "sales transactions", "user profiles")
             catalog: Optional catalog name to filter search results. Leave empty if not specified.
             database: Optional database name to filter search results. Leave empty if not specified.
-            schema: Optional schema name to filter search results. Leave empty if not specified.
+            db_schema: Optional schema name to filter search results. Leave empty if not specified.
             top_n: Maximum number of results to return (default 5)
             simple_sample_data: If True, return simplified sample data without catalog/database/schema fields
 
@@ -224,7 +228,7 @@ class DBFuncTool:
                 query_text,
                 catalog_name=catalog,
                 database_name=database,
-                schema_name=schema,
+                schema_name=db_schema,
                 table_type="full",
                 top_n=top_n,
             )
