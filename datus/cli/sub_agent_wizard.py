@@ -25,7 +25,6 @@ from prompt_toolkit.widgets import Box, Button, CheckboxList, Dialog, Frame, Lab
 from pygments.lexers.data import YamlLexer
 from pygments.lexers.html import HtmlLexer
 
-from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.context_search import ContextSearchTools
@@ -1595,12 +1594,18 @@ class SubAgentWizard:
             pass  # Ignore errors during preview update
 
         # Generate prompt preview using sub-agent prompt template
-        prompt_context = prepare_template_context(
-            node_config=self.data,
-            agent_config=self.cli_instance.agent_config,
-            workspace_root=self.cli_instance.agent_config.workspace_root,
-        )
-        prompt_text = prompt_manager.render_template(self.prompt_template_name, **prompt_context)
+        # Build context inline using same approach as CliChatAgenticNode
+        context = {
+            "conversation_summary": None,  # No summary in wizard preview
+            "agent_config": self.cli_instance.agent_config,
+            "namespace": self.cli_instance.agent_config.current_namespace if self.cli_instance.agent_config else None,
+            "workspace_root": self.cli_instance.agent_config.workspace_root,
+            "rules": self.data.rules or [],
+            "agent_description": self.data.agent_description or "",
+            "context_search_tools": False,  # Preview mode, no tools initialized
+            "search_localfile": False,  # Subagent default
+        }
+        prompt_text = prompt_manager.render_template(self.prompt_template_name, **context)
         try:
             self.prompt_preview_buffer.text = prompt_text
         except Exception:

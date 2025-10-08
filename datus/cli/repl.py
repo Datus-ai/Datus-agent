@@ -788,7 +788,7 @@ class DatusCLI:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 
     def _execute_chat_command(self, message: str, subagent_name: str = None):
-        """Execute a chat command (/ prefix) using ChatAgenticNode."""
+        """Execute a chat command (/ prefix)."""
         self.chat_commands.execute_chat_command(message, plan_mode=self.plan_mode_active, subagent_name=subagent_name)
 
     def _execute_internal_command(self, cmd: str, args: str):

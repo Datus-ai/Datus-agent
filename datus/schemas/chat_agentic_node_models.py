@@ -1,7 +1,7 @@
 """
 Schema models for Chat Agentic Node.
 
-This module defines the input and output models for the ChatAgenticNode,
+This module defines the input and output models for the CliChatAgenticNode,
 providing structured validation for chat interactions with streaming support.
 """
 
@@ -39,7 +39,7 @@ class ChatNodeInput(BaseInput):
 
 class ChatNodeResult(BaseResult):
     """
-    Result model for ChatAgenticNode interactions.
+    Result model for CliChatAgenticNode interactions.
     """
 
     response: str = Field(..., description="AI assistant's response")

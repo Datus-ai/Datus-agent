@@ -44,6 +44,8 @@ class CliChatAgenticNode(GenSQLAgenticNode):
             agent_config: Agent configuration
             max_turns: Maximum conversation turns per interaction
         """
+        logger.info(f"🎯 Initializing CliChatAgenticNode with node_name='{node_name}'")
+
         # Initialize plan mode state
         self.plan_mode_active = False
         self.plan_hooks = None
@@ -51,6 +53,8 @@ class CliChatAgenticNode(GenSQLAgenticNode):
 
         # Call parent constructor
         super().__init__(node_name, agent_config, max_turns)
+
+        logger.info(f"✅ CliChatAgenticNode initialized successfully")
 
     def setup_tools(self):
         """Override to add intelligent tool filtering + filesystem tools."""

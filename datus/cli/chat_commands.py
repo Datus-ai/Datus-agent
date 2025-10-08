@@ -17,6 +17,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from datus.agent.node.cli_chat_agentic_node import CliChatAgenticNode
+from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
@@ -38,9 +39,9 @@ class ChatCommands:
         self.console = cli_instance.console
 
         # Chat state management - unified node management
-        self.current_node: CliChatAgenticNode | None = None  # Can be CliChatAgenticNode or GenSQLAgenticNode
-        self.chat_node: CliChatAgenticNode | None = None  # Kept for backward compatibility
+        self.current_node: "GenSQLAgenticNode | None" = None  # Can be CliChatAgenticNode or other AgenticNode types
         self.current_subagent_name: str | None = None  # Track current subagent name
+
         self.chat_history = []
         self.last_actions = []
 
@@ -48,9 +49,6 @@ class ChatCommands:
         """Update current node tools when namespace changes."""
         if self.current_node and hasattr(self.current_node, "setup_tools"):
             self.current_node.setup_tools()
-        # Keep backward compatibility
-        if self.chat_node:
-            self.chat_node.setup_tools()
 
     def _should_create_new_node(self, subagent_name: str = None) -> bool:
         """Determine if a new node should be created."""
@@ -120,10 +118,11 @@ class ChatCommands:
         else:
             # Create CliChatAgenticNode for default chat
             self.console.print("[dim]Creating new chat session...[/]")
-            return CliChatAgenticNode(
-                node_name="sql",  # Matches sql_system_1.0.j2 template
+            node = CliChatAgenticNode(
+                node_name="sql",  # Matches agent.yml sql config and sql_system_1.0.j2 template
                 agent_config=self.cli.agent_config,
             )
+            return node
 
     def execute_chat_command(
         self, message: str, plan_mode: bool = False, subagent_name: str = None, compact_when_new_subagent: bool = True
@@ -147,9 +146,6 @@ class ChatCommands:
             if need_new_node:
                 self.current_node = self._create_new_node(subagent_name)
                 self.current_subagent_name = subagent_name
-                # Update backward compatibility reference
-                if not subagent_name:
-                    self.chat_node = self.current_node
 
             # Use current node
             current_node = self.current_node
@@ -169,7 +165,24 @@ class ChatCommands:
             from datus.agent.node.semantic_agentic_node import SemanticAgenticNode
             from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
-            if isinstance(current_node, SemanticAgenticNode):
+            if isinstance(current_node, CliChatAgenticNode):
+                # Chat input for CliChatAgenticNode (default chat)
+                # MUST check this BEFORE GenSQLAgenticNode since it inherits from it
+                node_input = ChatNodeInput(
+                    user_message=message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    domain=self.cli.cli_context.current_domain if self.cli.cli_context.current_domain else None,
+                    layer1=self.cli.cli_context.current_layer1 if self.cli.cli_context.current_layer1 else None,
+                    layer2=self.cli.cli_context.current_layer2 if self.cli.cli_context.current_layer2 else None,
+                    schemas=at_tables,
+                    metrics=at_metrics,
+                    historical_sql=at_sqls,
+                    plan_mode=plan_mode,
+                )
+                node_type = "chat"
+            elif isinstance(current_node, SemanticAgenticNode):
                 # Semantic input for SemanticAgenticNode (gen_semantic_model, gen_metrics)
                 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
@@ -197,8 +210,10 @@ class ChatCommands:
                 node_type = "sql_summary"
             elif isinstance(current_node, GenSQLAgenticNode):
                 # GenSQL input for GenSQLAgenticNode (subagent)
+                # This check must come AFTER CliChatAgenticNode check
                 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 
+                logger.info("✅ Using GenSQLNodeInput for GenSQLAgenticNode subagent")
                 node_input = GenSQLNodeInput(
                     user_message=message,
                     catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
@@ -212,7 +227,8 @@ class ChatCommands:
                 )
                 node_type = "gensql"
             else:
-                # Chat input for CliChatAgenticNode (default chat)
+                # Fallback (should not happen)
+                logger.warning(f"⚠️ Unknown node type: {type(current_node).__name__}, using ChatNodeInput")
                 node_input = ChatNodeInput(
                     user_message=message,
                     catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
@@ -526,7 +542,6 @@ class ChatCommands:
 
         # Reset all node references
         self.current_node = None
-        self.chat_node = None  # Keep backward compatibility
 
     def cmd_chat_info(self, args: str):
         """Display information about the current session."""
