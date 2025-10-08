@@ -44,7 +44,7 @@ class InteractiveInit:
                     "target": "",
                     "models": {},
                     "namespace": {},
-                    "storage": {"base_path": "data"},
+                    "storage": {"base_path": "data", "embedding_device_type": "cpu"},
                     "nodes": {
                         "schema_linking": {"matching_rate": "fast"},
                         "generate_sql": {"prompt_version": "1.0"},

@@ -30,46 +30,59 @@ class MetadataCommands:
         try:
             # For SQLite, this is simply the current database file
             namespace = self.cli.agent_config.current_namespace
-            connections = self.cli.db_manager.get_connections(namespace)
+            database_config_dict = self.cli.agent_config.namespaces[namespace]
             result = []
             show_uri = False
-            if isinstance(connections, dict):
+            if len(database_config_dict) > 1:
+                # Multi-Database
                 show_uri = True
-                for name, conn in connections.items():
+                for _, db_config in database_config_dict.items():
+                    logic_name = db_config.logic_name
+                    is_current = logic_name == self.cli.cli_context.current_db_name
                     result.append(
                         {
-                            "name": name if name != self.cli.cli_context.current_db_name else f"[bold green]{name}[/]",
-                            "uri": conn.connection_string,
+                            "logic_name": logic_name if not is_current else f"[bold green]{logic_name}[/]",
+                            "name": db_config.database,
+                            "uri": db_config.uri,
                         }
                     )
             else:
-                db_type = connections.dialect
-                self.cli.db_connector = connections
-                if db_type == DBType.SQLITE:
+                # single database
+                db_config = list(database_config_dict.values())[0]
+                db_type = db_config.type
+                if db_type in (DBType.SQLITE, DBType.DUCKDB):
                     show_uri = True
-                    # FIXME use database_name
-                    result.append({"name": namespace, "uri": connections.connection_string})
-                elif db_type == DBType.DUCKDB:
-                    show_uri = True
-                    result.append({"name": connections.database_name, "uri": connections.connection_string})
+                    result.append(
+                        {
+                            "logic_name": db_config.logic_name or namespace,
+                            "name": db_config.database,
+                            "uri": db_config.uri,
+                        }
+                    )
                 else:
-                    for db_name in connections.get_databases(catalog_name=self.cli.cli_context.current_catalog):
-                        result.append({"name": db_name})
+                    for db_name in self.cli.db_connector.get_databases(
+                        catalog_name=self.cli.cli_context.current_catalog
+                    ):
+                        result.append(
+                            {
+                                "name": db_name
+                                if db_name != self.cli.cli_context.current_db_name
+                                else f"[bold green]{db_name}[/]"
+                            }
+                        )
 
             self.cli.last_result = result
-
+            logger.info(f"$$$$ result: {result}")
             # Display results
             table = Table(title="Databases", show_header=True, header_style="bold green")
-            table.add_column("Database Name")
             if show_uri:
+                table.add_column("Logic Name(Used for switch)")
+                table.add_column("Database Name")
                 table.add_column("URI")
                 for db_config in result:
-                    name = db_config["name"]
-                    table.add_row(
-                        name if name != self.cli.cli_context.current_db_name else f"[bold green]{name}[/]",
-                        db_config["uri"],
-                    )
+                    table.add_row(db_config["logic_name"], db_config["name"], db_config["uri"])
             else:
+                table.add_column("Name")
                 for db_config in result:
                     table.add_row(db_config["name"])
             self.cli.console.print(table)
@@ -91,16 +104,20 @@ class MetadataCommands:
             )
             return
 
-        self.cli.db_connector.switch_context(database_name=new_db)
         self.cli.agent_config.current_database = new_db
-        self.cli.cli_context.current_db_name = new_db
-        if self.cli.agent_config.db_type == DBType.SQLITE or self.cli.agent_config.db_type == DBType.DUCKDB:
-            self.cli.db_connector = self.cli.db_manager.get_conn(
-                self.cli.agent_config.current_namespace, self.cli.cli_context.current_db_name
-            )
+        self.cli.cli_context.current_logic_db_name = new_db
+        if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
+            # Logic database name
+            self.cli.db_connector = self.cli.db_manager.get_conn(self.cli.agent_config.current_namespace, new_db)
+            # use rea database name
+            self.cli.agent_config.current_database = self.cli.db_connector.database_name
+            self.cli.cli_context.current_db_name = self.cli.db_connector.database_name
             self.cli.reset_session()
-        self.cli.agent_config._current_database = new_db
-        if self.cli.agent_config.db_type == DBType.SQLITE or self.cli.agent_config.db_type == DBType.DUCKDB:
+        else:
+            self.cli.db_connector.switch_context(database_name=new_db)
+            self.cli.agent_config.current_database = new_db
+            self.cli.cli_context.current_db_name = new_db
+        if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
             self.cli.chat_commands.update_chat_node_tools()
         self.cli.console.print(f"[bold green]Database switched to: {self.cli.cli_context.current_db_name}[/]")
 

@@ -842,7 +842,7 @@ class Agent:
             generate_gold_standard_results(
                 converted_tasks,
                 benchmark_path,
-                self.db_manager.get_conn(current_namespace, db_name=db_id),
+                self.db_manager.get_conn(current_namespace, logic_name=db_id),
                 target_task_ids,
             )
 

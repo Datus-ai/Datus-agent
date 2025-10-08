@@ -18,6 +18,7 @@ class CliContext:
     """CLI context that maintains recent queries, metrics, and database state."""
 
     # Database connection info
+    current_logic_db_name: Optional[str] = None
     current_db_name: Optional[str] = None
     current_catalog: Optional[str] = None
     current_schema: Optional[str] = None

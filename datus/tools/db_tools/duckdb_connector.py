@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Set, override
 
 from pydantic import BaseModel, Field
 
-from datus.configuration.agent_config import duckdb_database_name
+from datus.configuration.agent_config import file_stem_from_uri
 from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.base import list_to_in_str
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
@@ -48,7 +48,7 @@ class DuckdbConnector(SQLAlchemyConnector):
         # connection_string += "?access_mode=read_only"
         super().__init__(connection_string=connection_string)
         self.db_path = db_path
-        self.database_name = duckdb_database_name(self.connection_string)
+        self.database_name = file_stem_from_uri(self.connection_string)
 
     @override
     def full_name(
