@@ -248,6 +248,7 @@ class AgentConfig:
             if db_path["logic_name"] in logic_names:
                 logger.warning(f"Duplicate logical names are detected and will be skipped: {db_path}")
                 continue
+            logic_names.add(db_path["logic_name"])
             child_config = DbConfig(
                 type=db_type,
                 uri=uri,
@@ -255,7 +256,7 @@ class AgentConfig:
                 schema="",
                 logic_name=db_path["logic_name"],
             )
-            self.namespaces[namespace][database_name] = child_config
+            self.namespaces[namespace][child_config.logic_name] = child_config
 
         if not any_db_path:
             raise DatusException(
