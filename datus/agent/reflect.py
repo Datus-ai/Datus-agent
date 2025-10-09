@@ -20,7 +20,7 @@ def evaluate_with_model(task: SqlTask, node_input: BaseInput, model: LLMBaseMode
     prompt_version = node_input.prompt_version
     sample_line = node_input.sql_return_sample_line
     sample_return = sql_context.sql_return
-    if sample_line != -1:
+    if sample_line != -1 and sql_context.sql_return:
         sample_return_list = sql_context.sql_return.split("\n")[: sample_line + 1]
         sample_return = "\n".join(sample_return_list)
 

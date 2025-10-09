@@ -139,6 +139,33 @@ def test_get_tables_with_ddl(connector: SnowflakeConnector):
     assert filtered[0]["table_name"] == sample_table
 
 
+def test_get_sample_rows(connector: SnowflakeConnector):
+    sample_rows = connector.get_sample_rows(catalog_name="", database_name="BBC", table_type="table")
+    assert len(sample_rows) > 0
+
+    sample_rows = connector.get_sample_rows(database_name="BBC", table_type="table")
+    assert len(sample_rows) > 0
+    sample_rows = connector.get_sample_rows(
+        catalog_name="",
+        database_name="BBC",
+        schema_name="BBC_NEWS",
+    )
+    assert len(sample_rows) > 0
+
+    sample_rows = connector.get_sample_rows(
+        catalog_name="", database_name="BBC", schema_name="BBC_NEWS", table_type="table", tables=["FULLTEXT"]
+    )
+    assert len(sample_rows) == 1
+
+    first_item = sample_rows[0]
+    assert first_item["database_name"]
+    assert first_item["table_name"]
+    assert not first_item["catalog_name"]
+    assert first_item["schema_name"]
+    assert first_item["identifier"]
+    assert len(first_item["identifier"].split(".")) == 3
+
+
 class TestExceptions:
     def test_syntax(self, connector: SnowflakeConnector):
         res = connector.execute({"sql_query": "SELECT * FROM_ PATENTS_GOOGLE.PATENTS_GOOGLE.DISCLOSURES_13"})

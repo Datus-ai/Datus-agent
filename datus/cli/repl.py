@@ -30,7 +30,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.utils.constants import SQLType
+from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_sql_type
@@ -195,17 +195,25 @@ class DatusCLI:
 
         @kb.add("enter")
         def _(event):
-            """Enter key: closes the complementary menu or executes a command"""
+            """
+            Enter key:
+                if completion menu is open, apply the highlighted item (if any) or close the menu; otherwise execute.
+            """
             buffer = event.app.current_buffer
 
             if buffer.complete_state:
-                # When there is a complementary menu, close the menu but do not apply the complementary
-                buffer.apply_completion(buffer.complete_state.current_completion)
+                # If there is an actively highlighted completion, apply it.
+                cs = buffer.complete_state
+                comp = cs.current_completion
+                if comp is not None:
+                    buffer.apply_completion(comp)
+                else:
+                    # No item highlighted (e.g., select_first=False). Close the menu and proceed as normal Enter.
+                    buffer.cancel_completion()
+                    buffer.validate_and_handle()
                 return
 
-            # Don't intercept plan mode here - let it flow through normal command processing
-
-            # Performs normal Enter behavior when there is no complementary menu
+            # Performs normal Enter behavior when there is no completion menu.
             buffer.validate_and_handle()
 
         return kb
@@ -523,10 +531,13 @@ class DatusCLI:
         else:
             self.agent_config.current_namespace = args.strip()
             name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_namespace)
+            db_name = self.db_connector.database_name
+            db_logic_name = name or self.agent_config.current_namespace
             self.cli_context.update_database_context(
                 catalog=self.db_connector.catalog_name,
-                db_name=self.db_connector.database_name if not name else name,
+                db_name=db_name,
                 schema=self.db_connector.schema_name,
+                db_logic_name=db_logic_name,
             )
             self.reset_session()
             self.chat_commands.update_chat_node_tools()
@@ -1040,9 +1051,18 @@ Type '.help' for a list of commands or '.exit' to quit.
         current_namespace = self.agent_config.current_namespace
         if not self.cli_context.current_db_name:
             db_name, self.db_connector = self.db_manager.first_conn_with_name(current_namespace)
-            self.cli_context.update_database_context(db_name=db_name)
+            if self.db_connector.dialect in (DBType.SQLITE, DBType.DUCKDB):
+                self.cli_context.update_database_context(db_name=self.db_connector.database_name, db_logic_name=db_name)
+            else:
+                self.cli_context.update_database_context(
+                    db_name=db_name, db_logic_name=db_name or self.agent_config.current_namespace
+                )
         else:
             self.db_connector = self.db_manager.get_conn(current_namespace, self.cli_context.current_db_name)
+            if self.db_connector.dialect in (DBType.SQLITE, DBType.DUCKDB):
+                self.cli_context.update_database_context(
+                    db_name=self.db_connector.database_name, db_logic_name=self.cli_context.current_db_name
+                )
         if not self.db_connector:
             self.console.print("[bold red]Error:[/] No database connection.")
             return

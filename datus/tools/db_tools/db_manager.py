@@ -45,20 +45,20 @@ class DBManager:
         self._conn_dict: Dict[str, Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]] = defaultdict(dict)
         self._db_configs: Dict[str, Dict[str, DbConfig]] = db_configs
 
-    def get_conn(self, namespace: str, db_name: str = "") -> BaseSqlConnector:
+    def get_conn(self, namespace: str, logic_name: str = "") -> BaseSqlConnector:
         self._init_connections(namespace)
         connector_or_dict = self._conn_dict[namespace]
         if isinstance(connector_or_dict, Dict):
-            if not db_name:
+            if not logic_name:
                 return list(connector_or_dict.values())[0]
-            if db_name not in connector_or_dict:
+            if logic_name not in connector_or_dict:
                 raise DatusException(
                     code=ErrorCode.DB_CONNECTION_FAILED,
                     message_args={
-                        "error_message": f"Database {db_name} not found in namespace {namespace}",
+                        "error_message": f"Database {logic_name} not found in namespace {namespace}",
                     },
                 )
-            return connector_or_dict[db_name]
+            return connector_or_dict[logic_name]
         else:
             return connector_or_dict
 
@@ -108,8 +108,9 @@ class DBManager:
             name = list(dbs.keys())[0]
             conn = dbs[name]
             return name, conn
+
         config = list(self._db_configs[namespace].values())[0]
-        return config.database, dbs
+        return config.logic_name, dbs
 
     def get_db_uris(self, namespace: str) -> Dict[str, str]:
         dbs = self._db_configs.get(namespace, {})
@@ -118,8 +119,10 @@ class DBManager:
     def _init_conn(self, namespace: str, db_config: DbConfig, database_name: Optional[str] = None) -> BaseSqlConnector:
         if db_config.type == DBType.SQLITE:
             conn: BaseSqlConnector = SQLiteConnector(db_config.uri)
+            conn.database_name = db_config.database
         elif db_config.type == DBType.DUCKDB:
             conn = DuckdbConnector(db_config.uri)
+            conn.database_name = db_config.database
         elif db_config.type == DBType.SNOWFLAKE:
             conn = SnowflakeConnector(
                 account=db_config.account,
@@ -127,6 +130,7 @@ class DBManager:
                 password=db_config.password,
                 warehouse=db_config.warehouse,
                 database=db_config.database,
+                schema=db_config.schema,
             )
         elif db_config.type == DBType.MYSQL:
             conn = MySQLConnector(

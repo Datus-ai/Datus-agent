@@ -3,6 +3,7 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Set, Tuple
 
 from pyarrow import Table as ArrowTable
 
+from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
 from datus.utils.constants import SQLType
 from datus.utils.loggings import get_logger
@@ -98,7 +99,7 @@ class BaseSqlConnector(ABC):
         Returns:
             A dictionary containing the insert operation results
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     @abstractmethod
     def execute_update(self, sql: str) -> ExecuteSQLResult:
@@ -110,7 +111,7 @@ class BaseSqlConnector(ABC):
         Returns:
             A dictionary containing the update operation results
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     @abstractmethod
     def execute_delete(self, sql: str) -> ExecuteSQLResult:
@@ -122,7 +123,7 @@ class BaseSqlConnector(ABC):
         Returns:
             A dictionary containing the delete operation results
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def validate_input(self, input_params: Any):
         """Validate the input parameters before execution.
@@ -139,7 +140,7 @@ class BaseSqlConnector(ABC):
             raise ValueError("'sql_query' must be a string")
 
     def execute_arrow(self, sql: str) -> ExecuteSQLResult:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     @abstractmethod
     def execute_query(
@@ -148,7 +149,7 @@ class BaseSqlConnector(ABC):
         """
         The best performing query in the current connector
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def execute_explain(
         self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
@@ -158,18 +159,18 @@ class BaseSqlConnector(ABC):
 
     @abstractmethod
     def execute_pandas(self, sql: str) -> ExecuteSQLResult:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     @abstractmethod
     def execute_ddl(self, sql: str) -> ExecuteSQLResult:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     @abstractmethod
     def execute_csv(self, sql: str) -> ExecuteSQLResult:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator[ArrowTable]:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def get_catalogs(self) -> List[str]:
         return []
@@ -186,7 +187,7 @@ class BaseSqlConnector(ABC):
         Parameters contains catalog_name, database_name and schema_name
         should be passed via kwargs and handled by subclasses as needed.
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """
@@ -214,7 +215,7 @@ class BaseSqlConnector(ABC):
         self, query: str, max_rows: int = 100, with_header: bool = True
     ) -> Iterator[Tuple[str, ...]]:
         # if with_header is True, the first batch is the column names
-        raise NotImplementedError
+        raise NotImplementedError()
 
     # for internal streaming inter IPC or networking
     # def execute_to_arrow_stream(self, query: str, output_stream: Any,
@@ -222,14 +223,14 @@ class BaseSqlConnector(ABC):
     #    pass
     @abstractmethod
     def test_connection(self):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def get_type(self) -> str:
         return self.dialect
 
     @abstractmethod
     def execute_queries(self, queries: List[str]) -> List[Any]:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def get_tables_with_ddl(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", tables: Optional[List[str]] = None
@@ -244,7 +245,7 @@ class BaseSqlConnector(ABC):
             database_name: The database name to filter the tables.
             schema_name: The schema name to filter the tables.
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def _reset_filter_tables(
         self, tables: Optional[List[str]] = None, catalog_name: str = "", database_name: str = "", schema_name: str = ""
@@ -277,7 +278,7 @@ class BaseSqlConnector(ABC):
             database_name: The database name to filter the views.
             schema_name: The schema name to filter the views.
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         """
@@ -304,7 +305,7 @@ class BaseSqlConnector(ABC):
         Namespace parameters (such as catalog_name, database_name, schema_name, table_name)
         should be passed via kwargs and handled by subclasses as needed.
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def get_sample_rows(
         self,
@@ -313,6 +314,7 @@ class BaseSqlConnector(ABC):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        table_type: TABLE_TYPE = "table",
     ) -> List[Dict[str, Any]]:
         """
         Get sample values for each table from the database.
@@ -321,11 +323,14 @@ class BaseSqlConnector(ABC):
         Args:
             tables: List of table names to sample from. If None, sample from all tables.
             top_n: Number of sample rows to retrieve per table.
-            **kwargs: Additional namespace parameters for database selection.
+            catalog_name: The Catalog of database
+            database_name: The Database of table
+            schema_name:
+            table_type: table/view/mv(Abbreviated Materialized View)
         Returns:
             A list of dictionaries containing sample values for each table.
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def full_name(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
@@ -333,7 +338,7 @@ class BaseSqlConnector(ABC):
         """
         Get the full name of the table. Special characters need to be taken into consideration during implementation.
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def identifier(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
@@ -348,8 +353,29 @@ class BaseSqlConnector(ABC):
 
     @abstractmethod
     def execute_content_set(self, sql_query: str) -> ExecuteSQLResult:
-        raise NotImplementedError
+        raise NotImplementedError()
 
 
 def list_to_in_str(prefix: str, values: Optional[List[str]] = None) -> str:
-    return "" if not values else f"{prefix} ({str(values)[1:-1]})"
+    if not values:
+        return ""
+    value_str = ",".join(_to_sql_literal(v, around_with_quotes=True) for v in values)
+    return f"{prefix} ({value_str})"
+
+
+def _escape_sql_string_standard(value: str) -> str:
+    # Standard SQL single quote escaping rules: single quote -> two single quotes
+    return value.replace("'", "''")
+
+
+def _to_sql_literal(value: Optional[str], around_with_quotes: bool = False) -> str:
+    """Return a Snowflake-safe single-quoted SQL literal for strings."""
+    if value is None:
+        return "NULL"
+    if not value:
+        return "" if not around_with_quotes else "''"
+    replace_value = _escape_sql_string_standard(value)
+    if not around_with_quotes:
+        return replace_value
+    else:
+        return f"'{replace_value}'"

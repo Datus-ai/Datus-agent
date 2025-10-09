@@ -1,6 +1,8 @@
-from typing import Any, Dict, List, Literal, Optional, Set, override
+from typing import Any, Dict, List, Optional, Set, override
 
-from datus.configuration.agent_config import duckdb_database_name
+from pydantic import BaseModel, Field
+
+from datus.configuration.agent_config import file_stem_from_uri
 from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.base import list_to_in_str
 from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
@@ -9,6 +11,30 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+class _DBMetadataNames(BaseModel):
+    """
+    The corresponding database commands are SHOW/SHOW CREAT/INFORMATION_SCHEMA.<TABLES>
+    """
+
+    info_table: str = Field(..., init=True, description="The name of metadata table")
+    name_field: str = Field(..., init=True, description="Fields corresponding to names in metadata table")
+    has_sql_field: bool = Field(True, init=True, description="Is there a SQL field.")
+
+
+METADATA_DICT: Dict[str, _DBMetadataNames] = {
+    "database": _DBMetadataNames(info_table="duckdb_databases", name_field="database_name", has_sql_field=False),
+    "schema": _DBMetadataNames(info_table="duckdb_schemas", name_field="schema_name", has_sql_field=True),
+    "table": _DBMetadataNames(info_table="duckdb_tables", name_field="table_name", has_sql_field=True),
+    "view": _DBMetadataNames(info_table="duckdb_views", name_field="view_name", has_sql_field=True),
+}
+
+
+def _metadata_names(_type: str) -> _DBMetadataNames:
+    if _type not in METADATA_DICT:
+        raise DatusException(ErrorCode.COMMON_FIELD_INVALID, f"Invalid type `{_type}` for Database table type")
+    return METADATA_DICT[_type]
 
 
 class DuckdbConnector(SQLAlchemyConnector):
@@ -22,7 +48,7 @@ class DuckdbConnector(SQLAlchemyConnector):
         # connection_string += "?access_mode=read_only"
         super().__init__(connection_string=connection_string)
         self.db_path = db_path
-        self.database_name = duckdb_database_name(self.connection_string)
+        self.database_name = file_stem_from_uri(self.connection_string)
 
     @override
     def full_name(
@@ -95,9 +121,7 @@ class DuckdbConnector(SQLAlchemyConnector):
         return self._get_meta_with_ddl(
             database_name=database_name,
             schema_name=schema_name,
-            name_field="table_name",
-            table_type="table",
-            meta_table="duckdb_tables",
+            _type="table",
             filter_tables=filter_tables,
         )
 
@@ -105,14 +129,14 @@ class DuckdbConnector(SQLAlchemyConnector):
         self,
         database_name: str = "",
         schema_name: str = "",
-        name_field: str = "table_name",
-        table_type: TABLE_TYPE = "table",
-        meta_table: Literal["duckdb_tables", "duckdb_views"] = "duckdb_tables",
+        _type: str = "",
         filter_tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
+        metadata_names = _metadata_names(_type)
+        sql_field = "" if not metadata_names.has_sql_field else '"sql"'
         query_sql = (
-            f'select database_name, schema_name, {name_field}, "sql" from {meta_table}() '
-            f"where database_name != 'system'"
+            f"select database_name, schema_name, {metadata_names.name_field}, {sql_field}"
+            f" from {metadata_names.info_table}() where database_name != 'system'"
         )
         if database_name:
             query_sql += f" and database_name = '{database_name}'"
@@ -121,7 +145,7 @@ class DuckdbConnector(SQLAlchemyConnector):
         tables = self._execute_pandas(query_sql)
         result = []
         for i in range(len(tables)):
-            table_name = str(tables[name_field][i])
+            table_name = str(tables[metadata_names.name_field][i])
             full_name = self.full_name(
                 database_name=str(tables["database_name"][i]),
                 schema_name=str(tables["schema_name"][i]),
@@ -143,7 +167,7 @@ class DuckdbConnector(SQLAlchemyConnector):
                     "schema_name": tables["schema_name"][i],
                     "table_name": table_name,
                     "definition": tables["sql"][i],
-                    "table_type": table_type,
+                    "table_type": _type,
                 }
             )
         return result
@@ -154,9 +178,7 @@ class DuckdbConnector(SQLAlchemyConnector):
         return self._get_meta_with_ddl(
             database_name=database_name,
             schema_name=schema_name,
-            name_field="view_name",
-            table_type="view",
-            meta_table="duckdb_views",
+            _type="view",
         )
 
     @override
@@ -167,13 +189,12 @@ class DuckdbConnector(SQLAlchemyConnector):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        table_type: TABLE_TYPE = "table",
     ) -> List[Dict[str, str]]:
         """Get sample values from tables."""
         self.connect()
         try:
             samples = []
-            if not tables:
-                tables = self.get_tables(database_name=database_name, schema_name=schema_name)
             if tables:
                 logger.debug(f"Getting sample data from tables {tables} LIMIT {top_n}")
                 for table_name in tables:
@@ -200,7 +221,18 @@ class DuckdbConnector(SQLAlchemyConnector):
                             }
                         )
             else:
-                for table in self.get_tables_with_ddl(database_name=database_name, schema_name=schema_name):
+                tables_with_ddl = []
+                if table_type == "mv":
+                    return []
+                if table_type in ("full", "table"):
+                    tables_with_ddl.extend(
+                        self.get_tables_with_ddl(database_name=database_name, schema_name=schema_name)
+                    )
+                if table_type in ("full", "view"):
+                    tables_with_ddl.extend(
+                        self.get_views_with_ddl(database_name=database_name, schema_name=schema_name)
+                    )
+                for table in tables_with_ddl:
                     query = (
                         f'SELECT * FROM "{table["database_name"]}"."{table["schema_name"]}"."{table["table_name"]}" '
                         f"LIMIT {top_n}"

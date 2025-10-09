@@ -58,3 +58,16 @@ def test_exceptions(connector: MySQLConnector):
 def test_get_databases(connector: MySQLConnector):
     databases = connector.get_databases()
     assert len(databases) > 0
+
+
+def test_get_sample_rows(connector: MySQLConnector):
+    sample_rows = connector.get_sample_rows()
+    print(sample_rows)
+    assert len(sample_rows) > 0
+    first_item = sample_rows[0]
+    assert first_item["database_name"]
+    assert first_item["table_name"]
+    assert not first_item["catalog_name"]
+    assert not first_item["schema_name"]
+    assert first_item["identifier"]
+    assert len(first_item["identifier"].split(".")) == 2

@@ -22,7 +22,7 @@ def has_glob_pattern(path: str) -> bool:
     return any(char in path for char in glob_chars)
 
 
-def get_files_from_glob_pattern(path_pattern: str, dialect: str = DBType.SQLITE) -> List[Dict[str, str]]:
+def get_files_from_glob_pattern(path_pattern: str, dialect: str | DBType = DBType.SQLITE) -> List[Dict[str, str]]:
     """Get files from glob pattern
 
     Args:
@@ -30,28 +30,45 @@ def get_files_from_glob_pattern(path_pattern: str, dialect: str = DBType.SQLITE)
         dialect (str, optional): dialect of the database. Defaults to DBType.SQLITE.
 
     Returns:
-        List[Dict[str, str]]: list of files with name and uri
+        List[Dict[str, str]]: list of dicts with keys logic_name, database_name, and uri
     """
     if not has_glob_pattern(path_pattern):
         return []
+    if isinstance(dialect, DBType):
+        dialect = dialect.value
     path_pattern = os.path.expanduser(path_pattern)
-    paths = path_pattern.split("/")
-    if len(paths) == 1:
-        name_index = -1
+    normalized_pattern = path_pattern.replace("\\", "/")
+
+    # Detect whether the directory part contains any wildcard
+    if "/" in normalized_pattern:
+        dir_pattern, _ = normalized_pattern.rsplit("/", 1)
     else:
-        if "*" in paths[-2] or "?" in paths[-2]:
-            name_index = -2
-        else:
-            name_index = -1
+        dir_pattern, _ = "", normalized_pattern
+    dir_has_wildcard = any(ch in dir_pattern for ch in ("*", "?", "["))
+
     files = glob.glob(path_pattern, recursive=True)
-    result = []
+    result: List[Dict[str, str]] = []
+
     for file_path in files:
         path = Path(file_path)
-        file_name = path.parts[name_index]
-        if name_index == -1 and path.suffix:
-            file_name = file_name.rsplit(".", 1)[0]
+        if not path.is_file():
+            continue
+
+        database_name = path.stem  # 文件名（去扩展名）
+        # logic_name 使用父目录名称（当目录中存在通配符时）
+        if dir_has_wildcard:
+            logic_name = path.parent.name
+        else:
+            logic_name = database_name
+
         uri = f"{dialect}:///{path.as_posix()}"
-        result.append({"name": file_name, "uri": uri})
+        result.append(
+            {
+                "logic_name": logic_name,
+                "name": database_name,
+                "uri": uri,
+            }
+        )
     return result
 
 

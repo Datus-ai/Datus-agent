@@ -10,7 +10,7 @@ from datus.storage.storage_cfg import check_storage_config, save_storage_config
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.path_utils import get_file_name, get_files_from_glob_pattern
+from datus.utils.path_utils import get_files_from_glob_pattern
 
 
 @dataclass
@@ -27,14 +27,27 @@ class DbConfig:
     schema: str = field(default="", init=True)
     warehouse: str = field(default="", init=True)
     catalog: str = field(default="", init=True)
+    logic_name: str = field(default="", init=True)  # Logical name defined in namespace, used to switch databases
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     @staticmethod
-    def filter_kwargs(cls, kwargs):
+    def filter_kwargs(cls, kwargs) -> "DbConfig":
         valid_fields = {f.name for f in fields(cls)}
-        return cls(**{k: resolve_env(v) for k, v in kwargs.items() if k in valid_fields})
+        params = {}
+        for k, v in kwargs.items():
+            if k not in valid_fields:
+                continue
+            if not v:
+                params[k] = v
+            else:
+                params[k] = resolve_env(str(v))
+        db_config = cls(**params)
+        if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
+            db_config.database = file_stem_from_uri(db_config.uri)
+        db_config.logic_name = kwargs.get("name")
+        return db_config
 
 
 @dataclass
@@ -94,6 +107,19 @@ DEFAULT_REFLECTION_NODES = {
         NodeType.TYPE_REFLECT,
     ],
 }
+
+
+def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
+    uri = str(db_config["uri"])
+    if "name" in db_config:
+        login_name = db_config["name"]
+        db_name = file_stem_from_uri(uri)
+    else:
+        login_name = file_stem_from_uri(uri)
+        db_name = login_name
+    if not uri.startswith(dialect):
+        uri = f"{dialect}:///{os.path.expanduser(uri)}"
+    return DbConfig(type=dialect, uri=uri, database=db_name, schema=db_config.get("schema", ""), logic_name=login_name)
 
 
 @dataclass
@@ -189,41 +215,29 @@ class AgentConfig:
         self.db_type = list(self.namespaces[self._current_namespace].values())[0].type
 
     def _init_namespace_config(self, namespace_config: Dict[str, Any]):
-        for namespace, db_config in namespace_config.items():
-            db_type = db_config.get("type", "")
+        for namespace, db_config_dict in namespace_config.items():
+            db_type = db_config_dict.get("type", "")
             self.namespaces[namespace] = {}
-            if db_type == DBType.SQLITE or db_type == DBType.DUCKDB:
-                if "path_pattern" in db_config:
-                    self._parse_glob_pattern(namespace, db_config["path_pattern"], db_type)
-                elif "dbs" in db_config:
-                    for item in db_config.get("dbs", []):
-                        self.namespaces[namespace][item["name"]] = DbConfig(
-                            type=db_type,
-                            uri=item.get("uri", ""),
-                            database=item["name"],
-                            schema=item.get("schema", ""),
-                        )
-                elif "uri" in db_config:
-                    uri = str(db_config["uri"])
-                    if "name" in db_config:
-                        name = db_config["name"]
-                    else:
-                        name = get_file_name(uri if not uri.startswith(db_type) else uri[uri.index(":") + 4 :])
-                    if not uri.startswith(db_type):
-                        uri = f"{db_type}:///{os.path.expanduser(uri)}"
-                    self.namespaces[namespace][name] = DbConfig(
-                        type=db_type,
-                        uri=uri,
-                        database=name,
-                        schema=db_config.get("schema", ""),
-                    )
+            if db_type in (DBType.SQLITE, DBType.DUCKDB):
+                if "path_pattern" in db_config_dict:
+                    self._parse_glob_pattern(namespace, db_config_dict["path_pattern"], db_type)
+                elif "dbs" in db_config_dict:
+                    # Multi-database
+                    for item in db_config_dict.get("dbs", []):
+                        db_config = _parse_single_file_db(item, db_type)
+                        self.namespaces[namespace][db_config.logic_name] = db_config
+                elif "uri" in db_config_dict:
+                    # Single database
+                    db_config = _parse_single_file_db(db_config_dict, db_type)
+                    self.namespaces[namespace][db_config.logic_name] = db_config
 
             else:
-                name = db_config.get("name", namespace)
-                self.namespaces[namespace][name] = DbConfig.filter_kwargs(DbConfig, db_config)
+                name = db_config_dict.get("name", namespace)
+                self.namespaces[namespace][name] = DbConfig.filter_kwargs(DbConfig, db_config_dict)
 
     def _parse_glob_pattern(self, namespace: str, path_pattern: str, db_type: str):
         any_db_path = False
+        logic_names = set()
         for db_path in get_files_from_glob_pattern(path_pattern, db_type):
             uri = db_path["uri"]
             database_name = db_path["name"]
@@ -231,13 +245,18 @@ class AgentConfig:
             if not os.path.exists(file_path):
                 continue
             any_db_path = True
+            if db_path["logic_name"] in logic_names:
+                logger.warning(f"Duplicate logical names are detected and will be skipped: {db_path}")
+                continue
+            logic_names.add(db_path["logic_name"])
             child_config = DbConfig(
                 type=db_type,
                 uri=uri,
                 database=database_name,
                 schema="",
+                logic_name=db_path["logic_name"],
             )
-            self.namespaces[namespace][database_name] = child_config
+            self.namespaces[namespace][child_config.logic_name] = child_config
 
         if not any_db_path:
             raise DatusException(
@@ -459,6 +478,21 @@ def load_model_config(data: dict) -> ModelConfig:
     )
 
 
-def duckdb_database_name(uri: str) -> str:
-    file_name = uri.split("/")[-1]
-    return file_name.split(".")[0]
+def file_stem_from_uri(uri: str) -> str:
+    """
+    Extract the stem of the file name (remove extension) from the URI of DuckDB/SQLite or the normal path.
+    e.g. duckdb:///path/to/demo.duckdb -> demo
+         sqlite:////tmp/foo.db -> foo
+         /abs/path/bar.duckdb -> bar
+         foo.db -> foo
+    """
+    if not uri:
+        return ""
+    try:
+        path = uri.split(":///")[-1] if ":///" in uri else uri
+        base = os.path.basename(path)
+        stem, _ = os.path.splitext(base)
+        return stem
+    except Exception:
+        # reveal all the details
+        return uri.split("/")[-1].split(".")[0]

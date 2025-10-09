@@ -123,9 +123,9 @@ def test_execute_explain_returns_plan(connector: StarRocksConnector):
     assert str(result.sql_return).strip()
 
 
-def test_merge_statement_round_trip(connector: StarRocksConnector):
+def test_execute_insert_round_trip(connector: StarRocksConnector):
     suffix = uuid.uuid4().hex[:8]
-    table_name = f"datus_merge_test_{suffix}"
+    table_name = f"datus_insert_test_{suffix}"
 
     connector.switch_context(database_name="quickstart")
 
@@ -145,38 +145,164 @@ def test_merge_statement_round_trip(connector: StarRocksConnector):
 
     create_result = connector.execute_ddl(create_sql)
     if not create_result.success:
-        pytest.skip(f"Unable to create test table for MERGE: {create_result.error}")
+        pytest.skip(f"Unable to create test table for INSERT: {create_result.error}")
 
     try:
-        insert_existing = connector.execute_insert(
-            f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')"
-        )
-        assert insert_existing.success
+        # Insert two rows
+        insert_result = connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+        assert insert_result.success
 
-        merge_sql = (
-            "MERGE INTO {table} AS target "
-            "USING (SELECT 1 AS id, 'Alice Updated' AS name UNION ALL "
-            "SELECT 3 AS id, 'Charlie' AS name) AS source "
-            "ON target.id = source.id "
-            "WHEN MATCHED THEN UPDATE SET name = source.name "
-            "WHEN NOT MATCHED THEN INSERT (id, name) VALUES (source.id, source.name);"
-        ).format(table=table_name)
-
-        merge_result = connector.execute({"sql_query": merge_sql}, result_format="list")
-        assert merge_result.success is True
-        assert not merge_result.error
-
+        # Verify rows
         final_query = connector.execute(
-            {
-                "sql_query": f"SELECT id, name FROM {table_name} ORDER BY id",
-            },
+            {"sql_query": f"SELECT id, name FROM {table_name} ORDER BY id"},
             result_format="list",
         )
         assert final_query.success is True
         assert not final_query.error
-        names = {row["id"]: row["name"] for row in final_query.sql_return}
-        assert names[1] == "Alice Updated"
-        assert names[2] == "Bob"
-        assert names[3] == "Charlie"
+        assert final_query.sql_return == [
+            {"id": 1, "name": "Alice"},
+            {"id": 2, "name": "Bob"},
+        ]
     finally:
         connector.execute_ddl(drop_sql)
+
+
+def test_execute_update_round_trip(connector: StarRocksConnector):
+    suffix = uuid.uuid4().hex[:8]
+    table_name = f"datus_update_test_{suffix}"
+
+    connector.switch_context(database_name="quickstart")
+
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS  {table_name} (
+        `id` BIGINT NOT NULL,
+        `name` VARCHAR(64)
+    ) ENGINE=OLAP
+    PRIMARY KEY (`id`)
+    DISTRIBUTED BY HASH(`id`) BUCKETS 1
+    PROPERTIES (
+        "replication_num" = "1"
+    );
+    """
+
+    drop_sql = f"DROP TABLE IF EXISTS {table_name}"
+
+    create_result = connector.execute_ddl(create_sql)
+    if not create_result.success:
+        pytest.skip(f"Unable to create test table for UPDATE: {create_result.error}")
+
+    try:
+        # Seed data
+        seed = connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+        assert seed.success
+
+        # Perform UPDATE via generic execute
+        update_result = connector.execute(
+            {"sql_query": f"UPDATE {table_name} SET name = 'Alice Updated' WHERE id = 1"},
+            result_format="list",
+        )
+        assert update_result.success is True
+        assert not update_result.error
+
+        # Verify
+        final_query = connector.execute(
+            {"sql_query": f"SELECT id, name FROM {table_name} ORDER BY id"},
+            result_format="list",
+        )
+        assert final_query.success is True
+        rows = final_query.sql_return
+        assert rows == [
+            {"id": 1, "name": "Alice Updated"},
+            {"id": 2, "name": "Bob"},
+        ]
+    finally:
+        connector.execute_ddl(drop_sql)
+
+
+def test_execute_delete_round_trip(connector: StarRocksConnector):
+    suffix = uuid.uuid4().hex[:8]
+    table_name = f"datus_delete_test_{suffix}"
+
+    connector.switch_context(database_name="quickstart")
+
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS  {table_name} (
+        `id` BIGINT NOT NULL,
+        `name` VARCHAR(64)
+    ) ENGINE=OLAP
+    PRIMARY KEY (`id`)
+    DISTRIBUTED BY HASH(`id`) BUCKETS 1
+    PROPERTIES (
+        "replication_num" = "1"
+    );
+    """
+
+    drop_sql = f"DROP TABLE IF EXISTS {table_name}"
+
+    create_result = connector.execute_ddl(create_sql)
+    if not create_result.success:
+        pytest.skip(f"Unable to create test table for DELETE: {create_result.error}")
+
+    try:
+        # Seed data
+        seed = connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+        assert seed.success
+
+        # Perform DELETE via generic execute
+        delete_result = connector.execute(
+            {"sql_query": f"DELETE FROM {table_name} WHERE id = 2"},
+            result_format="list",
+        )
+        assert delete_result.success is True
+        assert not delete_result.error
+
+        # Verify only id=1 remains
+        final_query = connector.execute(
+            {"sql_query": f"SELECT id, name FROM {table_name} ORDER BY id"},
+            result_format="list",
+        )
+        assert final_query.success is True
+        assert final_query.sql_return == [
+            {"id": 1, "name": "Alice"},
+        ]
+    finally:
+        connector.execute_ddl(drop_sql)
+
+
+def test_get_sample_rows(connector: StarRocksConnector):
+    sample_rows = connector.get_sample_rows(catalog_name="default_catalog", database_name="quickstart")
+    assert len(sample_rows) > 0
+
+    sample_rows = connector.get_sample_rows(database_name="quickstart")
+    assert len(sample_rows) > 0
+
+    sample_rows = connector.get_sample_rows()
+    assert len(sample_rows) > 0
+
+    sample_rows = connector.get_sample_rows(
+        catalog_name="default_catalog",
+        database_name="quickstart",
+        table_type="table",
+        tables=["crashdata"],
+    )
+    assert len(sample_rows) > 0
+    print(sample_rows)
+    assert len(sample_rows) == 1
+
+    sample_rows = connector.get_sample_rows(
+        catalog_name="default_catalog",
+        database_name="quickstart",
+        table_type="table",
+        tables=["crashdata", "weatherdata"],
+    )
+    assert len(sample_rows) > 0
+    print(sample_rows)
+    assert len(sample_rows) == 2
+
+    first_item = sample_rows[0]
+    assert first_item["database_name"]
+    assert first_item["table_name"]
+    assert first_item["catalog_name"]
+    assert not first_item["schema_name"]
+    assert first_item["identifier"]
+    assert len(first_item["identifier"].split(".")) == 3

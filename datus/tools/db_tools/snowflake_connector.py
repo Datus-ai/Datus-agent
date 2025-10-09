@@ -1,7 +1,7 @@
-import json
 from typing import Any, Dict, List, Literal, Optional, Sequence, Set, override
 
 import pyarrow as pa
+import pyarrow.compute as pc
 from pandas import DataFrame
 from snowflake.connector import Connect, SnowflakeConnection
 from snowflake.connector.errors import (
@@ -18,8 +18,9 @@ from snowflake.connector.errors import (
     ServiceUnavailableError,
 )
 
+from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import ExecuteSQLResult
-from datus.tools.db_tools.base import BaseSqlConnector
+from datus.tools.db_tools.base import BaseSqlConnector, _to_sql_literal, list_to_in_str
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -193,46 +194,28 @@ class SnowflakeConnector(BaseSqlConnector):
                 error=str(ex),
             )
 
-    def _do_execute_arrow(self, input_params) -> ExecuteSQLResult:
+    def _do_execute_arrow(
+        self, sql_query: str, params: Optional[Sequence[Any] | dict[Any, Any]] = None
+    ) -> (pa.Table, int):
         """Execute SQL query on Snowflake and return results in Apache Arrow format.
 
         Args:
             input_params: Dictionary containing sql_query and optional params
 
         Returns:
-            ExecuteSQLResult with sql_return containing Arrow table bytes
         """
-        with self.connection.cursor() as cursor:
-            # Enable arrow result format
-            cursor.execute("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT='ARROW'")
+        try:
+            with self.connection.cursor() as cursor:
+                # Enable arrow result format
+                cursor.execute("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT='ARROW'")
 
-            # Execute the query
-            cursor.execute(
-                input_params["sql_query"],
-                input_params["params"] if "params" in input_params else None,
-            )
+                # Execute the query
+                cursor.execute(sql_query, params)
 
-            # Fetch the Arrow result
-            arrow_table = cursor.fetch_arrow_all(force_return_table=True)
-
-            # Handle case where arrow_table is None
-            if arrow_table is None:
-                logger.debug(f"[DEBUG] Arrow table is None for query. Row count from cursor: {cursor.rowcount}")
-                row_count = 0
-                # Create an empty arrow table or use None
-                arrow_table = None
-            else:
-                row_count = arrow_table.num_rows
-
-            # Keep the Arrow table as is for CLI compatibility
-            return ExecuteSQLResult(
-                sql_query=input_params["sql_query"],
-                row_count=row_count,
-                sql_return=arrow_table,
-                success=True,
-                error=None,
-                result_format="arrow",
-            )
+                # Fetch the Arrow result
+                return cursor.fetch_arrow_all(force_return_table=True), cursor.rowcount
+        except Exception as e:
+            raise _handle_snowflake_exception(e, sql_query)
 
     def validate_input(self, input_params: Dict[str, Any]):
         super().validate_input(input_params)
@@ -441,44 +424,158 @@ class SnowflakeConnector(BaseSqlConnector):
         Returns:
             List of table names
         """
+        # TODO Perhaps when database_name is empty, an exception should be thrown.
+        tables = self._get_tables_per_db(
+            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_type="table"
+        )
+        return [item["table_name"] for item in tables]
+
+    def _get_tables_per_db(
+        self,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        tables: Optional[List[str]] = None,
+        table_type: TABLE_TYPE = "",
+    ) -> List[Dict[str, str]]:
+        """
+        Get the metadata information of the corresponding data structure (excluding DDL)
+        """
+        catalog_name = catalog_name or self.catalog_name
         database_name = database_name or self.database_name
-        schema_name = schema_name or self.schema_name
-
-        # Use SHOW TABLES which is more efficient than querying INFORMATION_SCHEMA
-        if schema_name:
-            if database_name:
-                sql = f'SHOW TABLES IN SCHEMA "{database_name}"."{schema_name}"'
-            else:
-                sql = f'SHOW TABLES IN SCHEMA "{schema_name}"'
-        elif database_name:
-            sql = f'SHOW TABLES IN DATABASE "{database_name}"'
+        result = []
+        if not database_name:
+            dbs = self.get_databases(catalog_name=catalog_name)
+            for db in dbs:
+                self._get_tables_single_db(
+                    result=result,
+                    database_name=db,
+                    catalog_name=catalog_name,
+                    schema_name=schema_name,
+                    tables=tables,
+                    table_type=table_type,
+                )
         else:
-            sql = "SHOW TABLES"
+            self._get_tables_single_db(
+                result=result,
+                database_name=database_name,
+                catalog_name=catalog_name,
+                schema_name=schema_name,
+                tables=tables,
+                table_type=table_type,
+            )
+        return result
 
-        logger.info(f"Getting tables with command: {sql}")
+    def _get_tables_single_db(
+        self,
+        result: List[Dict[str, Any]],
+        database_name: str,
+        catalog_name: str = "",
+        schema_name: str = "",
+        tables: Optional[List[str]] = None,
+        table_type: TABLE_TYPE = "",
+    ):
+        if table_type in ("table", "full"):
+            db_tables = self._do_get_metas(
+                database_name=database_name, schema_name=schema_name, tables=tables, meta_name="TABLES"
+            )
+            result.extend(self._metadata_to_dict(db_tables, "table", catalog_name))
+        if table_type in ("view", "full"):
+            db_tables = self._do_get_metas(
+                database_name=database_name, schema_name=schema_name, tables=tables, meta_name="VIEWS"
+            )
+            result.extend(self._metadata_to_dict(db_tables, "view", catalog_name))
+        if table_type in ("mv", "full"):
+            db_tables = self._do_get_metas(
+                database_name=database_name, schema_name=schema_name, tables=tables, meta_name="MATERIALIZED VIEWS"
+            )
+            result.extend(self._metadata_to_dict(db_tables, "mv", catalog_name))
 
+    def _do_get_metas(
+        self,
+        database_name: str,
+        schema_name: str = "",
+        tables: Optional[List[str]] = None,
+        meta_name: str = "TABLES",
+    ) -> pa.Table:
+        meta_name = meta_name.upper()
+        sql = f'SHOW TERSE {meta_name} IN DATABASE "{database_name}"'
         try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(sql)
-                results = cursor.fetchall()
-
-                # Extract table names from the result
-                # Table name is in the second column (index 1) in SHOW TABLES result
-                return [row[1] for row in results]
+            query_tables = self.execute_query_to_dict(sql)
+            if not query_tables:
+                return pa.table([])
+            query_tables = pa.Table.from_pylist(query_tables)
+            if schema_name:
+                query_tables = query_tables.filter(pc.equal(query_tables["schema_name"], schema_name))
+            else:
+                query_tables = query_tables.filter(
+                    pc.invert(pc.is_in(query_tables["schema_name"], pa.array(self._sys_schemas(), type=pa.string())))
+                )
+            if tables:
+                query_tables = query_tables.filter(pc.is_in(query_tables["name"], pa.array(tables, type=pa.string())))
+            return query_tables
         except Exception as e:
-            logger.warning(f"Failed to get tables using SHOW TABLES, falling back to INFORMATION_SCHEMA: {e}")
-            # Fallback to original method if SHOW TABLES fails
+            logger.warning(f"Failed to get meta using {sql} falling back to INFORMATION_SCHEMA: {e}")
             select_table_name = (
                 "INFORMATION_SCHEMA.TABLES" if not database_name else f'"{database_name}".INFORMATION_SCHEMA.TABLES'
             )
-            sql = f"SELECT TABLE_SCHEMA, TABLE_NAME FROM {select_table_name} WHERE TABLE_TYPE = 'BASE TABLE'"
+            if meta_name == "TABLES":
+                table_type = "BASE TABLE"
+            elif meta_name == "VIEWS":
+                table_type = "VIEW"
+            else:
+                table_type = "MATERIALIZED VIEW"
+            sql = f"""SELECT TABLE_CATALOG as "database_name", TABLE_SCHEMA as "schema_name", TABLE_NAME as "name"
+            FROM {select_table_name} WHERE TABLE_TYPE = '{table_type}'"""
             if schema_name:
-                sql += f" AND TABLE_SCHEMA= '{schema_name}'"
+                sql += f" AND TABLE_SCHEMA = {_to_sql_literal(schema_name, True)}"
+            if tables:
+                sql += list_to_in_str(prefix=" AND TABLE_NAME IN ", values=tables)
             try:
-                df = self.execute_query_to_df(sql)
-                return [item for item in df["TABLE_NAME"]]
+                tables, _ = self._do_execute_arrow(sql)
+                return tables
             except Exception as e:
                 raise _handle_snowflake_exception(e, sql) from e
+
+    def _metadata_to_dict(
+        self, tables: pa.Table, table_type: TABLE_TYPE, catalog_name: str = ""
+    ) -> List[Dict[str, str]]:
+        result = []
+        for i in range(len(tables)):
+            current_schema = tables["schema_name"][i].as_py()
+            current_table_name = tables["name"][i].as_py()
+            db_name = tables["database_name"][i].as_py()
+            result.append(
+                {
+                    "catalog_name": catalog_name,
+                    "database_name": db_name,
+                    "schema_name": current_schema,
+                    "table_name": current_table_name,
+                    "table_type": table_type,
+                    "identifier": self.identifier(
+                        catalog_name=catalog_name,
+                        database_name=db_name,
+                        schema_name=current_schema,
+                        table_name=current_table_name,
+                    ),
+                }
+            )
+        return result
+
+    def _fetch_table_ddl_individually(self, full_name: str) -> str:
+        """Fallback to retrieve table DDLs one by one when bulk retrieval fails."""
+
+        with self.connection.cursor() as cursor:
+            sql = f"SELECT GET_DDL('TABLE', '{full_name}', true)"
+            try:
+                cursor.execute(sql)
+                row = cursor.fetchone()
+                ddl = row[0] if row else ""
+            except Exception as e:  # pragma: no cover - depends on permissions/state
+                logger.warning(f"Failed to get DDL with {sql}: {e}")
+                ddl = f"-- DDL not available for {full_name}: {e}"
+
+        return ddl
 
     @override
     def get_tables_with_ddl(
@@ -490,177 +587,93 @@ class SnowflakeConnector(BaseSqlConnector):
     ) -> List[Dict[str, str]]:
         """Return table metadata together with their DDL definitions."""
 
-        database_name = database_name or self.database_name
-        schema_name = schema_name or self.schema_name
-
-        filter_tables = self._reset_filter_tables(
-            tables=tables,
+        table_entries = self._get_tables_per_db(
             catalog_name=catalog_name,
             database_name=database_name,
             schema_name=schema_name,
+            tables=tables,
+            table_type="table",
         )
-
-        show_sql: str
-        if schema_name:
-            if database_name:
-                show_sql = f'SHOW TERSE TABLES IN SCHEMA "{database_name}"."{schema_name}"'
-            else:
-                show_sql = f'SHOW TERSE TABLES IN SCHEMA "{schema_name}"'
-        elif database_name:
-            show_sql = f'SHOW TERSE TABLES IN DATABASE "{database_name}"'
-        else:
-            show_sql = "SHOW TERSE TABLES"
-
-        column_names: List[str] = []
-        try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(show_sql)
-                show_results = cursor.fetchall()
-                if cursor.description:
-                    column_names = [col[0].lower() for col in cursor.description]
-        except Exception as e:
-            raise _handle_snowflake_exception(e, show_sql) from e
-
-        table_entries: List[Dict[str, str]] = []
-        seen: Set[tuple[str, str, str]] = set()
-        for row in show_results:
-            row_dict = {
-                column_names[idx]: row[idx] for idx in range(min(len(column_names), len(row))) if column_names[idx]
-            }
-
-            table_name = row_dict.get("name") or row_dict.get("table_name")
-            if not table_name and len(row) > 1:
-                table_name = row[1]
-            if not table_name:
-                continue
-
-            row_database = row_dict.get("database_name") or database_name or ""
-            row_schema = row_dict.get("schema_name") or schema_name or ""
-
-            full_name = self.full_name(database_name=row_database, schema_name=row_schema, table_name=table_name)
-
-            if filter_tables and full_name not in filter_tables:
-                continue
-
-            key = (row_database or "", row_schema or "", table_name)
-            if key in seen:
-                continue
-            seen.add(key)
-
-            table_entries.append(
-                {
-                    "catalog_name": catalog_name or "",
-                    "database_name": row_database or "",
-                    "schema_name": row_schema or "",
-                    "table_name": table_name,
-                    "full_name": full_name,
-                }
-            )
 
         if not table_entries:
             return []
 
-        ddl_batch_sql = """
-            SELECT
-                value:database_name::string AS database_name,
-                value:schema_name::string AS schema_name,
-                value:table_name::string AS table_name,
-                GET_DDL('TABLE', value:full_name::string) AS ddl
-            FROM TABLE(FLATTEN(INPUT => PARSE_JSON(%s)))
-        """
+        for entry in table_entries:
+            full_name = f"""
+{_to_sql_literal(entry["database_name"])}.{_to_sql_literal(entry["schema_name"])}.{_to_sql_literal(entry["table_name"])}
+""".strip()
+            entry["definition"] = self._fetch_table_ddl_individually(full_name)
 
-        results: List[Dict[str, str]] = []
-        batch_size = 10
+        return table_entries
 
-        for start in range(0, len(table_entries), batch_size):
-            batch = table_entries[start : start + batch_size]
-            payload = json.dumps(batch)
-            batch_lookup = {
-                (entry["database_name"], entry["schema_name"], entry["table_name"]): entry for entry in batch
-            }
-
-            try:
-                with self.connection.cursor() as cursor:
-                    cursor.execute(ddl_batch_sql, (payload,))
-                    ddl_rows = cursor.fetchall()
-            except Exception as e:
-                logger.warning("Bulk GET_DDL failed for Snowflake tables, falling back to per-table requests: %s", e)
-                ddl_rows = self._fetch_table_ddls_individually(batch)
-                # _fetch_table_ddls_individually already returns tuples, skip further processing
-                for db_name, sch_name, tbl_name, ddl in ddl_rows:
-                    entry = batch_lookup.get((db_name, sch_name, tbl_name))
-                    if not entry:
-                        continue
-                    results.append(
-                        {
-                            "identifier": self.identifier(
-                                database_name=db_name,
-                                schema_name=sch_name,
-                                table_name=tbl_name,
-                            ),
-                            "catalog_name": entry.get("catalog_name", ""),
-                            "database_name": db_name,
-                            "schema_name": sch_name,
-                            "table_name": tbl_name,
-                            "definition": ddl,
-                            "table_type": "table",
-                        }
-                    )
-                continue
-
-            for row in ddl_rows:
-                db_name = (row[0] or "").strip()
-                sch_name = (row[1] or "").strip()
-                tbl_name = (row[2] or "").strip()
-                ddl = row[3] if len(row) > 3 and row[3] else ""
-
-                entry = batch_lookup.get((db_name, sch_name, tbl_name))
-                if not entry:
-                    continue
-
-                results.append(
-                    {
-                        "identifier": self.identifier(
-                            database_name=db_name,
-                            schema_name=sch_name,
-                            table_name=tbl_name,
-                        ),
-                        "catalog_name": entry.get("catalog_name", ""),
-                        "database_name": db_name,
-                        "schema_name": sch_name,
-                        "table_name": tbl_name,
-                        "definition": ddl,
-                        "table_type": "table",
-                    }
-                )
-
-        return results
-
-    def _fetch_table_ddls_individually(self, entries: List[Dict[str, str]]):
-        """Fallback to retrieve table DDLs one by one when bulk retrieval fails."""
-
-        results = []
+    @override
+    def get_sample_rows(
+        self,
+        tables: Optional[List[str]] = None,
+        top_n: int = 5,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_type: TABLE_TYPE = "table",
+    ) -> List[Dict[str, Any]]:
+        """Return table metadata together with their DDL definitions."""
+        result = []
+        catalog_name = catalog_name or self.catalog_name
+        database_name = database_name or self.database_name
+        schema_name = schema_name or self.schema_name
         with self.connection.cursor() as cursor:
-            for entry in entries:
-                full_name = entry["full_name"]
-                try:
-                    cursor.execute("SELECT GET_DDL('TABLE', %s)", (full_name,))
-                    row = cursor.fetchone()
-                    ddl = row[0] if row else ""
-                except Exception as e:  # pragma: no cover - depends on permissions/state
-                    logger.warning("Failed to get DDL for %s: %s", full_name, e)
-                    ddl = f"-- DDL not available for {full_name}: {e}"
-
-                results.append(
-                    (
-                        entry.get("database_name", ""),
-                        entry.get("schema_name", ""),
-                        entry.get("table_name", ""),
-                        ddl,
+            if tables:
+                for table in tables:
+                    full_name = self.full_name(
+                        catalog_name=catalog_name,
+                        database_name=database_name,
+                        schema_name=schema_name,
+                        table_name=table,
                     )
-                )
-
-        return results
+                    sql = f"select * from {full_name} limit {top_n}"
+                    res = cursor.execute(sql).fetch_pandas_all()
+                    if not res.empty:
+                        result.append(
+                            {
+                                "identifier": self.identifier(
+                                    catalog_name=catalog_name,
+                                    database_name=database_name,
+                                    schema_name=schema_name,
+                                    table_name=table,
+                                ),
+                                "catalog_name": catalog_name,
+                                "database_name": database_name,
+                                "schema_name": schema_name,
+                                "table_name": table,
+                                "table_type": table_type,
+                                "sample_rows": res.to_csv(index=False),
+                            }
+                        )
+            else:
+                for t in self._get_tables_per_db(
+                    catalog_name=catalog_name,
+                    database_name=database_name,
+                    schema_name=schema_name,
+                    table_type=table_type,
+                ):
+                    full_table_name = self.full_name(
+                        t["catalog_name"], t["database_name"], t["schema_name"], t["table_name"]
+                    )
+                    sql = f"select * from {full_table_name} limit {top_n}"
+                    res = cursor.execute(sql).fetch_pandas_all()
+                    if not res.empty:
+                        result.append(
+                            {
+                                "identifier": t["identifier"],
+                                "catalog_name": t["catalog_name"],
+                                "database_name": t["database_name"],
+                                "schema_name": t["schema_name"],
+                                "table_name": t["table_name"],
+                                "table_type": t["table_type"],
+                                "sample_rows": res.to_csv(index=False),
+                            }
+                        )
+        return result
 
     def get_type(self) -> str:
         return DBType.SNOWFLAKE
@@ -733,6 +746,21 @@ class SnowflakeConnector(BaseSqlConnector):
             ex = _handle_snowflake_exception(e, sql)
             return ExecuteSQLResult(success=False, sql_query=sql, result_format="pandas", error=str(ex))
 
+    def execute_query_to_dict(self, sql: str) -> List[Dict[str, Any]]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(sql)
+
+            query_result = cursor.fetchall()
+            if not query_result or isinstance(query_result[0], dict):
+                return query_result
+            result = []
+            for item in query_result:
+                item_dict = {}
+                for i, col in enumerate(cursor.description):
+                    item_dict[col.name] = item[i]
+                result.append(item_dict)
+        return result
+
     def execute_arrow(self, sql: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results in Arrow format.
 
@@ -742,12 +770,27 @@ class SnowflakeConnector(BaseSqlConnector):
         Returns:
             ExecuteSQLResult with Arrow data
         """
-        input_params = {"sql_query": sql}
         try:
-            return self._do_execute_arrow(input_params)
-        except Exception as e:
-            ex = _handle_snowflake_exception(e, sql)
-            return ExecuteSQLResult(success=False, sql_query=sql, error=str(ex))
+            arrow_table, row_count = self._do_execute_arrow(sql)
+            # Handle case where arrow_table is None
+            if arrow_table is None:
+                logger.debug(f"[DEBUG] Arrow table is None for query. Row count from cursor: {row_count}")
+                row_count = 0
+                # Create an empty arrow table or use None
+                arrow_table = None
+            else:
+                row_count = arrow_table.num_rows
+            # Keep the Arrow table as is for CLI compatibility
+            return ExecuteSQLResult(
+                sql_query=sql,
+                row_count=row_count,
+                sql_return=arrow_table,
+                success=True,
+                error=None,
+                result_format="arrow",
+            )
+        except DatusException as e:
+            return ExecuteSQLResult(success=False, sql_query=sql, error=str(e))
 
     def execute_csv(self, query: str) -> ExecuteSQLResult:
         """Execute a SQL query and return results in CSV format.

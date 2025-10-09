@@ -457,7 +457,7 @@ class DynamicAtReferenceCompleter(Completer):
 
     @abstractmethod
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def reload_data(self):
         self._data = self.load_data()
@@ -607,7 +607,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                             "database_name": database.as_py(),
                             "schema_name": schema.as_py(),
                             "table_name": table.as_py(),
-                            "table_type": table_type,
+                            "table_type": table_type.as_py(),
                             "definition": definition.as_py(),
                         }
                     return data
@@ -628,7 +628,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                             "catalog_name": catalog.as_py(),
                             "database_name": database.as_py(),
                             "table_name": table.as_py(),
-                            "table_type": table_type,
+                            "table_type": table_type.as_py(),
                             "definition": definition.as_py(),
                         }
                     return data
@@ -671,7 +671,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                         "database_name": database.as_py(),
                         "schema_name": schema.as_py(),
                         "table_name": table.as_py(),
-                        "table_type": table_type,
+                        "table_type": table_type.as_py(),
                         "definition": definition.as_py(),
                     }
             else:
@@ -689,7 +689,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                         "identifier": identifier.as_py(),
                         "database_name": database.as_py(),
                         "table_name": table.as_py(),
-                        "table_type": table_type,
+                        "table_type": table_type.as_py(),
                         "definition": definition.as_py(),
                     }
             return data
@@ -705,7 +705,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     "identifier": identifier.as_py(),
                     "schema_name": schema.as_py(),
                     "table_name": table.as_py(),
-                    "table_type": table_type,
+                    "table_type": table_type.as_py(),
                     "definition": definition.as_py(),
                 }
 

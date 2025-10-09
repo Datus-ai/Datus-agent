@@ -18,6 +18,7 @@ class CliContext:
     """CLI context that maintains recent queries, metrics, and database state."""
 
     # Database connection info
+    current_logic_db_name: Optional[str] = None
     current_db_name: Optional[str] = None
     current_catalog: Optional[str] = None
     current_schema: Optional[str] = None
@@ -89,7 +90,9 @@ class CliContext:
         last_context = self.get_last_sql_context()
         return last_context.sql_query if last_context else None
 
-    def update_database_context(self, db_name: str = None, catalog: str = None, schema: str = None):
+    def update_database_context(
+        self, db_name: str = None, catalog: str = None, schema: str = None, db_logic_name: str = None
+    ):
         """Update current database context."""
         if db_name is not None:
             self.current_db_name = db_name
@@ -100,6 +103,9 @@ class CliContext:
         if schema is not None:
             self.current_schema = schema
             logger.debug(f"Updated current schema: {schema}")
+        if db_logic_name:
+            self.current_logic_db_name = db_logic_name
+            logger.debug(f"Updated current logic db name: {db_logic_name}")
 
     def set_current_sql_task(self, sql_task: SqlTask):
         """Set the current SQL task."""

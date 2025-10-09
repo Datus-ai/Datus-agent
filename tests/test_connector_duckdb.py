@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from datus.tools.db_tools.duckdb_connector import DuckdbConnector
@@ -60,3 +62,122 @@ def test_execute_query(duckdb_connector: DuckdbConnector):
 @pytest.mark.acceptance
 def test_get_schemas(duckdb_connector: DuckdbConnector):
     assert len(duckdb_connector.get_schemas()) > 0
+
+
+def test_insert_round_trip():
+    connector = DuckdbConnector("duckdb:///:memory:")
+    suffix = uuid.uuid4().hex[:8]
+    table_name = f"datus_insert_test_{suffix}"
+
+    connector.switch_context(database_name="quickstart")
+
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        id BIGINT PRIMARY KEY,
+        name VARCHAR(64)
+    );
+    """
+    drop_sql = f"DROP TABLE IF EXISTS {table_name}"
+
+    create_result = connector.execute_ddl(create_sql)
+    if not create_result.success:
+        pytest.skip(f"Unable to create test table for INSERT: {create_result.error}")
+
+    try:
+        # Insert two rows
+        insert_res = connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+        assert insert_res.success
+
+        # Verify rows
+        final_query = connector.execute(
+            {
+                "sql_query": f"SELECT id, name FROM {table_name} ORDER BY id",
+            },
+            result_format="list",
+        )
+        assert final_query.success is True
+        rows = final_query.sql_return
+        assert [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}] == rows
+    finally:
+        connector.execute_ddl(drop_sql)
+
+
+def test_update_round_trip():
+    connector = DuckdbConnector("duckdb:///:memory:")
+    suffix = uuid.uuid4().hex[:8]
+    table_name = f"datus_update_test_{suffix}"
+
+    connector.switch_context(database_name="quickstart")
+
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        id BIGINT PRIMARY KEY,
+        name VARCHAR(64)
+    );
+    """
+    drop_sql = f"DROP TABLE IF EXISTS {table_name}"
+
+    create_result = connector.execute_ddl(create_sql)
+    if not create_result.success:
+        pytest.skip(f"Unable to create test table for UPDATE: {create_result.error}")
+
+    try:
+        connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+
+        # Perform UPDATE
+        update_res = connector.execute(
+            {"sql_query": f"UPDATE {table_name} SET name = 'Alice Updated' WHERE id = 1"},
+            result_format="list",
+        )
+        assert update_res.success is True
+
+        # Verify
+        final_query = connector.execute(
+            {"sql_query": f"SELECT id, name FROM {table_name} ORDER BY id"},
+            result_format="list",
+        )
+        rows = final_query.sql_return
+        assert rows[0]["id"] == 1 and rows[0]["name"] == "Alice Updated"
+        assert rows[1]["id"] == 2 and rows[1]["name"] == "Bob"
+    finally:
+        connector.execute_ddl(drop_sql)
+
+
+def test_delete_round_trip():
+    connector = DuckdbConnector("duckdb:///:memory:")
+    suffix = uuid.uuid4().hex[:8]
+    table_name = f"datus_delete_test_{suffix}"
+
+    connector.switch_context(database_name="quickstart")
+
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        id BIGINT PRIMARY KEY,
+        name VARCHAR(64)
+    );
+    """
+    drop_sql = f"DROP TABLE IF EXISTS {table_name}"
+
+    create_result = connector.execute_ddl(create_sql)
+    if not create_result.success:
+        pytest.skip(f"Unable to create test table for DELETE: {create_result.error}")
+
+    try:
+        connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+
+        # Perform DELETE
+        delete_res = connector.execute(
+            {"sql_query": f"DELETE FROM {table_name} WHERE id = 2"},
+            result_format="list",
+        )
+        assert delete_res.success is True
+
+        # Verify only id=1 remains
+        final_query = connector.execute(
+            {"sql_query": f"SELECT id, name FROM {table_name} ORDER BY id"},
+            result_format="list",
+        )
+        rows = final_query.sql_return
+        assert rows == [{"id": 1, "name": "Alice"}]
+    finally:
+        connector.execute_ddl(drop_sql)

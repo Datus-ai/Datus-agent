@@ -1,5 +1,8 @@
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, override
+from abc import abstractmethod
+from typing import Any, Dict, List, Optional, Set, override
 from urllib.parse import quote_plus
+
+from pydantic import BaseModel, Field
 
 from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.base import list_to_in_str
@@ -10,27 +13,43 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-CREATE_TYPE = Literal["TABLE", "VIEW", "MATERIALIZED VIEW"]
-META_TABLE_NAMES = Literal["TABLES", "VIEWS", "MATERIALIZED_VIEWS"]
+
+class TableMetadataNames(BaseModel):
+    """
+    The corresponding database commands are SHOW/SHOW CREAT/INFORMATION_SCHEMA.<TABLES>
+    """
+
+    show_table: str = Field(..., init=True, description="The corresponding database commands SHOW")
+    show_create_table: str = Field(..., init=True, description="The corresponding database commands SHOW CREATE")
+    info_table: str = Field(..., init=True, description="The name of metadata table")
+    table_types: Optional[List[str]] = Field(
+        default=None, init=True, description="The type of table INFORMATION_SCHEMA.TABLES"
+    )
 
 
-def db_table_type_to_inner(db_table_type: str) -> TABLE_TYPE:
-    if db_table_type == "VIEW":
-        return "view"
-    elif db_table_type == "MATERIALIZED VIEW":
-        return "mv"
-    return "table"
+METADATA_DICT: Dict[TABLE_TYPE, TableMetadataNames] = {
+    "table": TableMetadataNames(
+        show_table="TABLES", show_create_table="TABLE", info_table="TABLES", table_types=["TABLE", "BASE TABLE"]
+    ),
+    "view": TableMetadataNames(
+        show_table="VIEWS",
+        show_create_table="VIEW",
+        info_table="VIEWS",
+    ),
+    "mv": TableMetadataNames(
+        show_table="MATERIALIZED VIEWS",
+        show_create_table="MATERIALIZED VIEW",
+        info_table="MATERIALIZED_VIEWS",
+    ),
+}
 
 
-def inner_table_type_to_db(table_type: TABLE_TYPE) -> Tuple[META_TABLE_NAMES, CREATE_TYPE]:
-    if table_type == "table":
-        return ("TABLES", "TABLE")
-    elif table_type == "view":
-        return ("VIEWS", "VIEW")
-    elif table_type == "mv":
-        return ("MATERIALIZED_VIEWS", "MATERIALIZED VIEW")
-    else:
-        raise DatusException(ErrorCode.COMMON_FIELD_INVALID, f"Invalid table type: {table_type}")
+def table_metadata_names(inner_table_type: TABLE_TYPE) -> TableMetadataNames:
+    if inner_table_type not in METADATA_DICT:
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID, f"Invalid table type `{inner_table_type}` for Database table type"
+        )
+    return METADATA_DICT[inner_table_type]
 
 
 class MySQLConnectorBase(SQLAlchemyConnector):
@@ -51,8 +70,7 @@ class MySQLConnectorBase(SQLAlchemyConnector):
 
     def _get_metadata(
         self,
-        meta_table_name: META_TABLE_NAMES = "TABLES",
-        inner_table_type: Optional[List[str]] = None,
+        inner_table_type: TABLE_TYPE = "table",
         catalog_name: str = "",
         database_name: str = "",
     ) -> List[Dict[str, str]]:
@@ -64,21 +82,27 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             where = f"{where} AND TABLE_SCHEMA = '{database_name}'"
         else:
             where = f"{where} {list_to_in_str('and TABLE_SCHEMA not in', list(self._sys_databases()))}"
+        metadata_names = table_metadata_names(inner_table_type)
 
         query_result = self._execute_pandas(
             (
-                f"SELECT TABLE_CATALOG, TABLE_SCHEMA,TABLE_NAME FROM information_schema.{meta_table_name} WHERE {where}"
-                f"{list_to_in_str(' and TABLE_TYPE in ', inner_table_type)}"
+                f"SELECT TABLE_CATALOG, TABLE_SCHEMA,TABLE_NAME FROM information_schema.{metadata_names.info_table}"
+                f" WHERE {where} {list_to_in_str(' and TABLE_TYPE in ', metadata_names.table_types)}"
             )
         )
         result = []
         for i in range(len(query_result)):
             catalog = self.reset_catalog_to_default(str(query_result["TABLE_CATALOG"][i]))
+            db_name = query_result["TABLE_SCHEMA"][i]
+            tb_name = query_result["TABLE_NAME"][i]
             result.append(
                 {
+                    "identifier": self.identifier(catalog, database_name=db_name, table_name=tb_name),
                     "catalog_name": catalog,
-                    "database_name": query_result["TABLE_SCHEMA"][i],
-                    "table_name": query_result["TABLE_NAME"][i],
+                    "schema_name": "",
+                    "database_name": db_name,
+                    "table_name": tb_name,
+                    "table_type": inner_table_type,
                 }
             )
         return result
@@ -93,6 +117,9 @@ class MySQLConnectorBase(SQLAlchemyConnector):
 
     def default_catalog(self) -> str:
         return ""
+
+    def support_catalog(self):
+        return bool(self.default_catalog())
 
     def get_schema(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
@@ -209,7 +236,6 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         inner_table_type: TABLE_TYPE = "table",
         catalog_name: str = "",
         database_name: str = "",
-        schema_name: str = "",
     ) -> List[Dict[str, str]]:
         """
         Get the database tables/views/materialized views as a list of dictionaries with DDL statements.
@@ -223,10 +249,8 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         """
         result = []
         filter_tables = self._reset_filter_tables(tables, catalog_name=catalog_name, database_name=database_name)
-        meta_table_name, create_type = inner_table_type_to_db(inner_table_type)
         for table in self._get_metadata(
-            meta_table_name=meta_table_name,
-            inner_table_type=None if inner_table_type != "table" else self.db_meta_table_type(),
+            inner_table_type=inner_table_type,
             catalog_name=catalog_name,
             database_name=database_name,
         ):
@@ -237,8 +261,10 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             )
             if filter_tables and full_name not in filter_tables:
                 continue
+            metadata_names = table_metadata_names(inner_table_type)
+
             try:
-                create_statement = self._show_create(full_name=full_name, create_type=create_type)
+                create_statement = self._show_create(full_name=full_name, create_type=metadata_names.show_create_table)
             except Exception as e:
                 logger.warning(f"Could not get DDL for table {full_name}: {e}")
                 # Fallback to basic table info
@@ -275,13 +301,120 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             database_name=database_name,
         )
 
-    def _show_create(self, full_name: str, create_type: CREATE_TYPE = "TABLE") -> str:
+    def _show_create(self, full_name: str, create_type: str) -> str:
         sql = f"show create {create_type} {full_name}"
         ddl_result = self._execute_pandas(sql)
         if not ddl_result.empty and len(ddl_result.columns) >= 2:
             return str(ddl_result.iloc[0, 1])
         else:
             return f"-- DDL not available for table {full_name}"
+
+    def _get_meta_per_db(self, catalog_name: str = "", inner_table_type: TABLE_TYPE = "table") -> List[Dict[str, str]]:
+        dbs = self.get_databases(catalog_name=catalog_name)
+        if not dbs:
+            return []
+        result = []
+        for db in dbs:
+            result.extend(
+                self._get_single_db_metas(catalog_name=catalog_name, database_name=db, table_type=inner_table_type)
+            )
+        return result
+
+    def _get_single_db_metas(self, catalog_name: str, database_name: str, table_type: TABLE_TYPE = "table"):
+        table_metadata = []
+        if table_type == "full":
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
+            )
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="view")
+            )
+            if self.support_mv():
+                table_metadata.extend(
+                    self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="mv")
+                )
+        elif table_type == "table":
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="table")
+            )
+        elif table_type == "view":
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="view")
+            )
+        elif table_type == "mv" and self.support_mv():
+            table_metadata.extend(
+                self._get_metadata(catalog_name=catalog_name, database_name=database_name, inner_table_type="mv")
+            )
+        return table_metadata
+
+    def get_sample_rows(
+        self,
+        tables: Optional[List[str]] = None,
+        top_n: int = 5,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_type: TABLE_TYPE = "table",
+    ) -> List[Dict[str, str]]:
+        """Get sample values from tables."""
+        self.connect()
+        catalog_name = self.reset_catalog_to_default(catalog_name) or self.catalog_name
+        database_name = database_name or self.database_name
+        result = []
+        if tables:
+            for table_name in tables:
+                full_table_name = self.full_name(
+                    catalog_name=catalog_name, database_name=database_name, table_name=table_name
+                )
+
+                sql = f"SELECT * FROM {full_table_name} LIMIT {top_n}"
+                res = self._execute_pandas(sql)
+                if not res.empty:
+                    result.append(
+                        {
+                            "identifier": self.identifier(
+                                catalog_name=catalog_name,
+                                database_name=database_name,
+                                table_name=table_name,
+                            ),
+                            "catalog_name": self.reset_catalog_to_default(catalog_name),
+                            "database_name": database_name,
+                            "schema_name": "",
+                            "table_name": table_name,
+                            "sample_rows": res.to_csv(index=False),
+                        }
+                    )
+            return result
+        if database_name:
+            table_metadata = self._get_single_db_metas(
+                catalog_name=catalog_name, database_name=database_name, table_type=table_type
+            )
+        else:
+            table_metadata = self._get_meta_per_db(catalog_name=catalog_name, inner_table_type=table_type)
+        for table in table_metadata:
+            full_name = self.full_name(
+                catalog_name=table["catalog_name"],
+                database_name=table["database_name"],
+                table_name=table["table_name"],
+            )
+            sql = f"SELECT * FROM {full_name} LIMIT {top_n}"
+            res = self._execute_pandas(sql)
+            if not res.empty:
+                result.append(
+                    {
+                        "identifier": table["identifier"],
+                        "catalog_name": table["catalog_name"],
+                        "database_name": table["database_name"],
+                        "schema_name": "",
+                        "table_name": table["table_name"],
+                        "sample_rows": res.to_csv(index=False),
+                    }
+                )
+        return result
+
+    @abstractmethod
+    def support_mv(self) -> bool:
+        raise NotImplementedError()
 
 
 class MySQLConnector(MySQLConnectorBase):
@@ -298,59 +431,11 @@ class MySQLConnector(MySQLConnectorBase):
         return [
             table["table_name"]
             for table in self._get_metadata(
-                meta_table_name="TABLES",
-                inner_table_type=self.db_meta_table_type(),
+                inner_table_type="table",
                 catalog_name=catalog_name,
                 database_name=database_name,
             )
         ]
 
-    @override
-    def get_sample_rows(
-        self,
-        tables: Optional[List[str]] = None,
-        top_n: int = 5,
-        catalog_name: str = "",
-        database_name: str = "",
-        schema_name: str = "",
-    ) -> List[Dict[str, str]]:
-        self.connect()
-
-        result = []
-        if tables:
-            for table in tables:
-                full_name = self.full_name(database_name=database_name, table_name=table)
-                sql = f"select * from {full_name} limit {top_n}"
-                res = self._execute_pandas(sql)
-                if not res.empty:
-                    result.append(
-                        {
-                            "identifier": self.identifier(
-                                database_name=database_name,
-                                table_name=table,
-                            ),
-                            "catalog_name": "",
-                            "database_name": schema_name if schema_name else "",
-                            "schema_name": "",
-                            "table_name": table,
-                            "sample_rows": res.to_csv(index=False),
-                        }
-                    )
-        else:
-            for t in self._get_metadata(
-                meta_table_name="TABLES",
-                database_name=database_name,
-            ):
-                sql = f"select * from `{t['database_name']}`.`{t['table_name']}` limit {top_n}"
-                res = self._execute_pandas(sql)
-                if not res.empty:
-                    result.append(
-                        {
-                            "catalog_name": "",
-                            "database_name": t["database_name"],
-                            "schema_name": "",
-                            "table_name": t["table_name"],
-                            "sample_rows": res.to_csv(index=False),
-                        }
-                    )
-        return result
+    def support_mv(self) -> bool:
+        return False
