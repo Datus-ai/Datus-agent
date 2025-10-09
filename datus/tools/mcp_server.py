@@ -12,44 +12,57 @@ logger = get_logger(__name__)
 
 
 class SilentMCPServerStdio(MCPServerStdio):
-    """MCP server wrapper that redirects stderr to suppress startup messages."""
+    """MCP server wrapper that redirects stderr to suppress logs.
+
+    Uses shell wrapping with explicit environment variable passing to ensure:
+    1. stderr is redirected to /dev/null (suppresses all console output)
+    2. Environment variables are correctly passed to the subprocess
+    """
 
     def __init__(self, params: MCPServerStdioParams, **kwargs):
-        # Redirect stderr using shell redirection to suppress startup messages
+        # Get command, args, and env
+        if hasattr(params, "command"):
+            original_command = params.command
+            original_args = params.args or []
+            env = params.env or {}
+        else:
+            original_command = params["command"]
+            original_args = params["args"] or []
+            env = params.get("env") or {}
 
-        # Handle both object attributes and dictionary keys
-        has_command = hasattr(params, "command") or (isinstance(params, dict) and "command" in params)
-        has_args = hasattr(params, "args") or (isinstance(params, dict) and "args" in params)
+        import shlex
+        import sys
 
-        if has_command and has_args:
-            # Get command and args regardless of whether it's object or dict
-            if hasattr(params, "command"):
-                original_command = params.command
-                original_args = params.args or []
-            else:
-                original_command = params["command"]
-                original_args = params["args"] or []
+        if sys.platform == "win32":
+            # Windows: Use cmd with stderr redirection
+            redirect_cmd = "cmd"
+            env_sets = " && ".join(f"set {k}={v}" for k, v in env.items())
+            args_str = " ".join(original_args)
+            redirect_args = ["/c", f"{env_sets} && {original_command} {args_str} 2>nul"]
+        else:
+            # Unix/Linux/macOS: Use sh with explicit env exports
+            redirect_cmd = "sh"
 
-            # Create shell command to redirect stderr
-            import sys
+            # Build environment variable exports
+            env_exports = " ".join(f"{k}={shlex.quote(str(v))}" for k, v in env.items())
 
-            if sys.platform == "win32":
-                # Windows: redirect stderr to nul
-                redirect_cmd = "cmd"
-                redirect_args = ["/c", f'{original_command} {" ".join(original_args)} 2>nul']
-            else:
-                # Unix/Linux/macOS: redirect stderr to /dev/null
-                args_str = " ".join(f'"{arg}"' for arg in original_args)
-                redirect_cmd = "sh"
-                redirect_args = ["-c", f'"{original_command}" {args_str} 2>/dev/null']
+            # Quote command and args properly
+            cmd_str = shlex.quote(original_command)
+            args_str = " ".join(shlex.quote(str(arg)) for arg in original_args)
 
-            # Set the redirected command back to params
-            if hasattr(params, "command"):
-                params.command = redirect_cmd
-                params.args = redirect_args
-            else:
-                params["command"] = redirect_cmd
-                params["args"] = redirect_args
+            # Combine: export vars, run command, redirect stderr
+            full_cmd = f"{env_exports} {cmd_str} {args_str} 2>/dev/null"
+            redirect_args = ["-c", full_cmd]
+
+        # Update params
+        if hasattr(params, "command"):
+            params.command = redirect_cmd
+            params.args = redirect_args
+            params.env = None  # Already included in the shell command
+        else:
+            params["command"] = redirect_cmd
+            params["args"] = redirect_args
+            params["env"] = None
 
         super().__init__(params, **kwargs)
 
