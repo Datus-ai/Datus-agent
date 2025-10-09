@@ -353,6 +353,9 @@ class BaseSqlConnector(ABC):
 
     @abstractmethod
     def execute_content_set(self, sql_query: str) -> ExecuteSQLResult:
+        """
+        Execute commands such as use/set to switch contexts
+        """
         raise NotImplementedError()
 
 
