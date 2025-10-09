@@ -81,6 +81,8 @@ class DuckdbConnector(SQLAlchemyConnector):
                 sql += list_to_in_str(" AND database_name not in", list(self._sys_schemas()))
 
         schema_names = self._execute_pandas(sql)
+        if schema_names.empty:
+            return []
         return schema_names["schema_name"].to_list()
 
     @override

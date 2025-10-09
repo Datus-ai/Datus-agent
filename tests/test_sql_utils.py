@@ -588,3 +588,48 @@ FROM gold_vs_bitcoin"""
     assert parse_sql_type("SHOW TABLES", dialect=DBType.DUCKDB) == SQLType.METADATA_SHOW
 
     assert parse_sql_type("SHOW CATALOGS", dialect="starrocks") == SQLType.METADATA_SHOW
+
+
+def test_parse_sql_type_with():
+    sql = """WITH hourly_data AS (
+        SELECT
+            EXTRACT(HOUR FROM time) as hour_of_day,
+            AVG(gold) as avg_gold,
+            AVG(bitcoin) as avg_bitcoin,
+            CORR(gold, bitcoin) as hourly_correlation
+        FROM gold_vs_bitcoin
+        GROUP BY EXTRACT(HOUR FROM time)
+    ),
+                  rolling_corr AS (
+                      SELECT
+                 time,
+                 CORR(gold, bitcoin) OVER (
+                 ORDER BY time
+                 ROWS BETWEEN 50 PRECEDING AND CURRENT ROW
+                 ) as rolling_correlation_50
+             FROM gold_vs_bitcoin
+                 )
+    SELECT
+        'Hourly Analysis' as analysis_type,
+        hour_of_day,
+        hourly_correlation
+    FROM hourly_data
+    UNION ALL
+    SELECT
+        'Rolling Correlation' as analysis_type,
+        NULL as hour_of_day,
+        AVG(rolling_correlation_50) as hourly_correlation
+    FROM rolling_corr
+    WHERE rolling_correlation_50 IS NOT NULL;"""
+    sql_type = parse_sql_type(sql, dialect=DBType.DUCKDB)
+    assert sql_type == SQLType.SELECT
+
+
+def test_parse_sql_type_union_statement():
+    sql = "SELECT 1 UNION SELECT 2"
+    assert parse_sql_type(sql, dialect=DBType.DUCKDB) == SQLType.SELECT
+
+
+def test_parse_sql_type_wrapped_select():
+    sql = "(WITH cte AS (SELECT 1) SELECT * FROM cte)"
+    assert parse_sql_type(sql, dialect=DBType.DUCKDB) == SQLType.SELECT

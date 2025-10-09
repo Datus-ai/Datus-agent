@@ -61,7 +61,10 @@ def test_execute_query(duckdb_connector: DuckdbConnector):
 
 @pytest.mark.acceptance
 def test_get_schemas(duckdb_connector: DuckdbConnector):
-    assert len(duckdb_connector.get_schemas()) > 0
+    schemas = duckdb_connector.get_schemas()
+    assert len(schemas) > 0
+    schemas = duckdb_connector.get_schemas(database_name="nonexists")
+    assert len(schemas) == 0
 
 
 def test_insert_round_trip():

@@ -476,8 +476,8 @@ class SQLAlchemyConnector(BaseSqlConnector):
 
     def test_connection(self) -> bool:
         """Test the database connection."""
+        self.connect()
         try:
-            self.connect()
             self._execute_query("SELECT 1")
             return True
         except DatusException:
