@@ -71,9 +71,6 @@ class AgenticNode(ABC):
             self.model = None
             self.context_length = None
 
-        # Generate system prompt using prompt manager
-        self.system_prompt = self._get_system_prompt()
-
     def get_node_name(self) -> str:
         """
         Get the template name for this agentic node. Overwrite this method if you need a special name
@@ -393,6 +390,7 @@ class AgenticNode(ABC):
         # Check direct attributes on node_config
         direct_attributes = [
             "system_prompt",
+            "agent_description",
             "prompt_version",
             "prompt_language",
             "tools",
@@ -413,6 +411,18 @@ class AgenticNode(ABC):
 
                 if value is not None:
                     config[attr] = value
+
+        # Normalize rules: convert dict items to strings (YAML parsing issue workaround)
+        if "rules" in config and isinstance(config["rules"], list):
+            normalized_rules = []
+            for rule in config["rules"]:
+                if isinstance(rule, dict):
+                    # Convert dict to string format "key: value"
+                    rule_str = ", ".join(f"{k}: {v}" for k, v in rule.items())
+                    normalized_rules.append(rule_str)
+                else:
+                    normalized_rules.append(str(rule))
+            config["rules"] = normalized_rules
 
         logger.info(f"Parsed node configuration for '{node_name}': {config}")
         return config

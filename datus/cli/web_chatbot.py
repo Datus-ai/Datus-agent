@@ -9,7 +9,12 @@ maximizing reuse of existing Datus CLI components including:
 - CollapsibleActionContentGenerator for detail views
 """
 
+import csv
+import hashlib
+import os
 from argparse import Namespace
+from datetime import datetime
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
@@ -24,6 +29,7 @@ from datus.cli.action_history_display import ActionContentGenerator
 from datus.cli.repl import DatusCLI
 from datus.cli.screen.action_display_app import CollapsibleActionContentGenerator
 from datus.configuration.agent_config_loader import parse_config_path
+from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import configure_logging, setup_web_chatbot_logging
 
@@ -48,19 +54,12 @@ def initialize_logging(debug: bool = False, log_dir: str = "~/.datus/logs") -> N
 def get_available_namespaces(config_path: str = "") -> List[str]:
     """Extract available namespaces from config file"""
     try:
-        config_path = parse_config_path(config_path)
-        import yaml
-
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
-
-        # Look for namespace configuration
+        config = _load_config_cached(config_path)
         if "agent" in config and "namespace" in config["agent"]:
             return list(config["agent"]["namespace"].keys())
         elif "namespace" in config:
             return list(config["namespace"].keys())
-        else:
-            return []
+        return []
     except Exception as e:
         logger.error(f"Failed to read namespaces from config: {e}")
         return []
@@ -91,27 +90,26 @@ def create_cli_args(config_path: str = "", namespace: str = None, catalog: str =
     return args
 
 
+@lru_cache(maxsize=1)
+def _load_config_cached(config_path: str) -> Dict[str, Any]:
+    """Load and cache YAML configuration"""
+    import yaml
+
+    config_path = parse_config_path(config_path)
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
 def get_storage_path_from_config(config_path: str) -> str:
     """Extract storage base_path from configuration file"""
     try:
-        import os
-
-        import yaml
-
-        config_path = parse_config_path(config_path)
-
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-
+        config = _load_config_cached(config_path)
         storage_config = config.get("agent", {}).get("storage", {})
         base_path = storage_config.get("base_path", "data")
-
-        # Expand user path if needed
         return os.path.expanduser(base_path)
-
     except Exception as e:
         logger.warning(f"Failed to read storage path from config: {e}")
-        return "data"  # fallback to default
+        return "data"
 
 
 class StreamlitActionRenderer:
@@ -180,22 +178,27 @@ class StreamlitChatbot:
     def __init__(self):
         self.action_renderer = StreamlitActionRenderer()
         self.collapsible_generator = CollapsibleActionContentGenerator()
+        self.session_manager = SessionManager()
 
-        # Initialize session state
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
-        if "current_actions" not in st.session_state:
-            st.session_state.current_actions = []
-        if "chat_session_initialized" not in st.session_state:
-            st.session_state.chat_session_initialized = False
-        if "cli_instance" not in st.session_state:
-            st.session_state.cli_instance = None
-        if "rendered_action_ids" not in st.session_state:
-            st.session_state.rendered_action_ids = set()
-        if "current_chat_id" not in st.session_state:
-            st.session_state.current_chat_id = None
-        if "subagent_name" not in st.session_state:
-            st.session_state.subagent_name = None
+        # Get server host and port from Streamlit config with fallback
+        self.server_host = st.get_option("server.address") or "localhost"
+        self.server_port = st.get_option("server.port") or 8501
+
+        # Initialize session state with defaults
+        defaults = {
+            "messages": [],
+            "current_actions": [],
+            "chat_session_initialized": False,
+            "cli_instance": None,
+            "rendered_action_ids": set(),
+            "current_chat_id": None,
+            "subagent_name": None,
+            "view_session_id": None,
+            "session_readonly_mode": False,
+        }
+        for key, value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
 
     @property
     def cli(self) -> DatusCLI:
@@ -206,6 +209,17 @@ class StreamlitChatbot:
     def cli(self, value):
         """Set CLI instance in session state"""
         st.session_state.cli_instance = value
+
+    @property
+    def current_subagent(self) -> Optional[str]:
+        """Get current subagent from URL query parameters"""
+        return st.query_params.get("subagent")
+
+    def _get_session_id(self) -> Optional[str]:
+        """Unified session ID retrieval: try session_state first, then node"""
+        if sid := st.session_state.get("current_session_id"):
+            return sid
+        return self.get_current_session_id()
 
     def setup_config(
         self, config_path: str = "conf/agent.yml", namespace: str = None, catalog: str = "", database: str = ""
@@ -219,8 +233,6 @@ class StreamlitChatbot:
         try:
             # Create CLI arguments
             args = create_cli_args(config_path, namespace, catalog, database=database)
-
-            # Note: Removed vector DB cleanup - now using correct storage path to reuse existing DBs
 
             # Initialize real DatusCLI
             self.cli = DatusCLI(args)
@@ -263,11 +275,10 @@ class StreamlitChatbot:
             # Show current configuration info
             if self.cli:
                 # Set subagent name directly from URL (always refresh from URL)
-                current_subagent = self._get_current_subagent_from_url()
-                st.session_state.subagent_name = current_subagent
+                st.session_state.subagent_name = self.current_subagent
 
                 # Current subagent info
-                if st.session_state.subagent_name:
+                if self.current_subagent:
                     st.subheader("🤖 Current Subagent")
                     st.info(f"**{st.session_state.subagent_name}** (GenSQL Mode)")
 
@@ -312,6 +323,41 @@ class StreamlitChatbot:
                     self.clear_chat()
                     st.rerun()
 
+                # Session History section
+                st.markdown("---")
+                st.subheader("📚 Session History")
+
+                # List all sessions
+                all_sessions = self.session_manager.list_sessions()
+                if all_sessions:
+                    # Get session info and sort by modified time
+                    session_infos = []
+                    for sid in all_sessions:
+                        info = self.session_manager.get_session_info(sid)
+                        if info.get("exists"):
+                            session_infos.append(info)
+
+                    session_infos.sort(key=lambda x: x.get("file_modified", 0), reverse=True)
+
+                    # Display recent 10 sessions
+                    st.caption(f"Showing {min(len(session_infos), 10)} of {len(session_infos)} sessions")
+
+                    for info in session_infos[:10]:
+                        self._render_session_item(info)
+                else:
+                    st.caption("No saved sessions yet")
+
+                # Report Issue section
+                st.markdown("---")
+
+                # Get session ID using unified method
+                session_id = self._get_session_id()
+
+                # Render Report Issue button
+                import streamlit.components.v1 as components
+
+                components.html(self._generate_report_issue_html(session_id), height=150)
+
                 # Debug section
                 st.markdown("---")
                 st.subheader("🔍 Debug Info")
@@ -319,6 +365,15 @@ class StreamlitChatbot:
                     st.write("Query Params:", dict(st.query_params))
                     st.write("Startup Subagent:", st.session_state.get("startup_subagent_name"))
                     st.write("Current Subagent:", st.session_state.get("subagent_name"))
+                    st.write("Session ID:", self.get_current_session_id())
+                    if self.cli and self.cli.chat_commands:
+                        st.write("Has current_node:", self.cli.chat_commands.current_node is not None)
+                        st.write("Has chat_node:", self.cli.chat_commands.chat_node is not None)
+                        if self.cli.chat_commands.current_node:
+                            st.write(
+                                "current_node.session_id:",
+                                getattr(self.cli.chat_commands.current_node, "session_id", None),
+                            )
 
             else:
                 st.warning("⚠️ Loading configuration...")
@@ -339,21 +394,13 @@ class StreamlitChatbot:
     def get_current_chat_model(self) -> str:
         """Get current chat model from configuration"""
         try:
-            # Read directly from config file to get nodes.chat.model
-            import yaml
-
             config_path = st.session_state.get("startup_config_path", "conf/agent.yml")
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f)
-
+            config = _load_config_cached(config_path)
             chat_model = config.get("agent", {}).get("nodes", {}).get("chat", {}).get("model", "")
             if chat_model:
                 return chat_model
-
-            # Fallback to first available model
             available_models = self.get_available_models()
             return available_models[0] if available_models else "unknown"
-
         except Exception as e:
             logger.error(f"Failed to get current chat model: {e}")
             return "unknown"
@@ -368,64 +415,351 @@ class StreamlitChatbot:
         if self.cli and self.cli.chat_commands:
             self.cli.chat_commands.cmd_clear_chat("")
 
+    def get_session_messages(self, session_id: str) -> List[Dict]:
+        """
+        Get all messages from a session stored in SQLite.
+
+        Args:
+            session_id: Session ID to load messages from
+
+        Returns:
+            List of message dictionaries with role, content, and timestamp
+        """
+        import json
+        import sqlite3
+
+        messages = []
+        db_path = os.path.join(os.path.expanduser("~/.datus/sessions"), f"{session_id}.db")
+
+        if not os.path.exists(db_path):
+            logger.warning(f"Session database not found: {db_path}")
+            return messages
+
+        try:
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT message_data, created_at
+                    FROM agent_messages
+                    WHERE session_id = ?
+                    ORDER BY created_at
+                    """,
+                    (session_id,),
+                )
+
+                for message_data, created_at in cursor.fetchall():
+                    try:
+                        message_json = json.loads(message_data)
+                        role = message_json.get("role", "")
+                        content = message_json.get("content", "")
+
+                        # Only include user and assistant messages
+                        if role in ["user", "assistant"]:
+                            messages.append({"role": role, "content": content, "timestamp": created_at})
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.debug(f"Skipping malformed message: {e}")
+                        continue
+
+        except Exception as e:
+            logger.error(f"Failed to load session messages for {session_id}: {e}")
+
+        return messages
+
+    def get_current_session_id(self) -> Optional[str]:
+        """
+        Get the current session ID from the active chat node.
+
+        Returns:
+            Session ID if available, None otherwise
+        """
+        if self.cli and self.cli.chat_commands:
+            # Prefer current_node over chat_node (for subagent support)
+            node = self.cli.chat_commands.current_node or self.cli.chat_commands.chat_node
+            if node:
+                return node.session_id
+        return None
+
+    def save_success_story(self, sql: str, user_message: str):
+        """
+        Save a success story to CSV file with session link.
+
+        Args:
+            sql: The generated SQL query
+            user_message: The user's original question
+        """
+        # Get current session ID
+        session_id = self.get_current_session_id()
+        if not session_id:
+            st.warning("No active session found. Cannot save success story.")
+            logger.warning("Attempted to save success story without active session")
+            return
+
+        # Get subagent name (for metadata and directory organization)
+        subagent_name = st.session_state.get("subagent_name") or "default"
+
+        # Generate session link with current server host and port
+        session_link = f"http://{self.server_host}:{self.server_port}?session={session_id}"
+
+        # Create benchmark directory
+        benchmark_dir = os.path.expanduser(f"~/.datus/benchmark/{subagent_name}")
+        os.makedirs(benchmark_dir, exist_ok=True)
+
+        # CSV file path
+        csv_path = os.path.join(benchmark_dir, "success_story.csv")
+
+        # Prepare row data
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        row = {
+            "session_link": session_link,
+            "session_id": session_id,
+            "subagent_name": subagent_name,
+            "user_message": user_message,
+            "sql": sql,
+            "timestamp": timestamp,
+        }
+
+        try:
+            # Check if file exists to determine if we need to write headers
+            file_exists = os.path.exists(csv_path)
+
+            with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                fieldnames = ["session_link", "session_id", "subagent_name", "user_message", "sql", "timestamp"]
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+                # Write header if file is new
+                if not file_exists:
+                    writer.writeheader()
+
+                # Write the success story
+                writer.writerow(row)
+
+            st.success(f"✅ Success story saved! Session link: {session_link}")
+            logger.info(f"Saved success story for session {session_id}")
+
+        except Exception as e:
+            st.error(f"Failed to save success story: {e}")
+            logger.error(f"Failed to save success story: {e}")
+
+    def load_session_from_url(self):
+        """
+        Load a session from URL query parameter if present.
+        Sets the app to read-only mode when viewing a shared session.
+        """
+        # Check URL query params for session parameter
+        session_id = st.query_params.get("session")
+
+        # Check if we've already loaded this specific session
+        if st.session_state.get("view_session_id") == session_id:
+            return
+        if not session_id:
+            return
+
+        # Verify session exists
+        if not self.session_manager.session_exists(session_id):
+            st.error(f"Session {session_id} not found or has no data.")
+            logger.warning(f"Attempted to load non-existent session: {session_id}")
+            return
+
+        # Load messages from session
+        try:
+            messages = self.get_session_messages(session_id)
+            if not messages:
+                st.warning(f"Session {session_id} has no messages to display.")
+                return
+
+            # Populate session state with loaded messages
+            st.session_state.messages = messages
+            st.session_state.view_session_id = session_id
+            st.session_state.session_readonly_mode = True
+
+            logger.info(f"Loaded session {session_id} with {len(messages)} messages in read-only mode")
+
+        except Exception as e:
+            st.error(f"Failed to load session: {e}")
+            logger.error(f"Failed to load session {session_id}: {e}")
+
     def extract_sql_and_response(self, actions: List[ActionHistory]) -> Tuple[Optional[str], Optional[str]]:
         """Extract SQL and clean response from actions using existing logic"""
         if not actions:
             return None, None
 
         final_action = actions[-1]
-
-        if (
+        if not (
             final_action.output
             and isinstance(final_action.output, dict)
             and final_action.status == ActionStatus.SUCCESS
         ):
-            # Use existing extraction logic from ChatCommands
-            sql = final_action.output.get("sql")
-            response = final_action.output.get("response")
+            return None, None
 
-            # Use existing extraction method
-            if self.cli and self.cli.chat_commands:
-                extracted_sql, extracted_output = self.cli.chat_commands._extract_sql_and_output_from_content(response)
-                sql = sql or extracted_sql
-            else:
-                extracted_sql, extracted_output = None, response
+        sql = final_action.output.get("sql")
+        response = final_action.output.get("response")
 
-            # Determine clean output using existing logic
-            clean_output = None
-            if sql:
-                clean_output = extracted_output or response
-            elif isinstance(extracted_output, dict):
-                clean_output = extracted_output.get("raw_output", str(extracted_output))
-            else:
-                try:
-                    import ast
+        # Extract SQL and output using ChatCommands
+        extracted_sql, extracted_output = None, response
+        if self.cli and self.cli.chat_commands:
+            extracted_sql, extracted_output = self.cli.chat_commands._extract_sql_and_output_from_content(response)
+            sql = sql or extracted_sql
 
-                    response_dict = ast.literal_eval(response)
-                    clean_output = (
-                        response_dict.get("raw_output", response) if isinstance(response_dict, dict) else response
-                    )
-                except (ValueError, SyntaxError):
-                    clean_output = response
+        # Determine clean output
+        if sql:
+            return sql, extracted_output or response
 
-            return sql, clean_output
+        if isinstance(extracted_output, dict):
+            return None, extracted_output.get("raw_output", str(extracted_output))
 
-        return None, None
-
-    def _get_current_subagent_from_url(self):
-        """Get current subagent directly from URL query parameters."""
         try:
-            query_params = st.query_params
-            return query_params.get("subagent", None)
-        except Exception:
-            # Fallback for older Streamlit versions
-            try:
-                query_params = st.experimental_get_query_params()
-                if "subagent" in query_params:
-                    return query_params["subagent"][0]
-            except Exception:
-                pass
-        return None
+            import ast
+
+            response_dict = ast.literal_eval(response)
+            if isinstance(response_dict, dict):
+                return None, response_dict.get("raw_output", response)
+        except (ValueError, SyntaxError):
+            pass
+
+        return None, response
+
+    def _render_session_item(self, info: dict) -> None:
+        """Render a single session item in sidebar"""
+        sid_short = info["session_id"][:8]
+        with st.expander(f"📝 {sid_short}...", expanded=False):
+            st.caption(f"**Created:** {info.get('created_at', 'N/A')}")
+            st.caption(f"**Messages:** {info.get('message_count', 0)}")
+            latest_msg = info.get("latest_user_message", "")
+            if latest_msg:
+                st.caption(f"**Latest:** {latest_msg[:50]}...")
+            if st.button("🔗 Load Session", key=f"load_{info['session_id']}", use_container_width=True):
+                st.query_params.update({"session": info["session_id"]})
+                st.rerun()
+
+    def _generate_report_issue_html(self, session_id: Optional[str] = None) -> str:
+        """Generate Report Issue button HTML with JavaScript"""
+        if session_id:
+            session_link = f"http://{self.server_host}:{self.server_port}?session={session_id}"
+            return f"""
+            <div style="width: 100%;">
+                <button id="reportIssueBtn" style="width: 100%; padding: 0.5rem 1rem;
+                    background-color: #ff4b4b; color: white; border: none; border-radius: 0.5rem;
+                    cursor: pointer; font-size: 1rem; font-weight: 500; transition: all 0.3s ease;">
+                    🐛 Report Issue</button>
+                <div id="feedbackMsg" style="width: 100%; margin-top: 0.5rem; padding: 0.75rem;
+                    border-radius: 0.5rem; font-size: 0.875rem; display: none;
+                    transition: all 0.3s ease; text-align: center; box-sizing: border-box;
+                    min-height: 3rem; line-height: 1.5;"></div>
+            </div>
+            <script>
+            document.getElementById('reportIssueBtn').addEventListener('click', function() {{
+                const sessionLink = '{session_link}';
+                const btn = this;
+                const feedbackMsg = document.getElementById('feedbackMsg');
+                const originalHTML = btn.innerHTML;
+                const originalBgColor = btn.style.backgroundColor;
+
+                const textArea = document.createElement('textarea');
+                textArea.value = sessionLink;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                textArea.style.top = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+
+                try {{
+                    const successful = document.execCommand('copy');
+                    if (successful) {{
+                        btn.innerHTML = '✓ Copied!';
+                        btn.style.backgroundColor = '#00c853';
+                        feedbackMsg.innerHTML = '✓ Session link copied to clipboard';
+                        feedbackMsg.style.backgroundColor = '#d4edda';
+                        feedbackMsg.style.color = '#155724';
+                        feedbackMsg.style.border = '1px solid #c3e6cb';
+                        feedbackMsg.style.display = 'block';
+                        setTimeout(() => {{
+                            btn.innerHTML = originalHTML;
+                            btn.style.backgroundColor = originalBgColor;
+                            feedbackMsg.style.display = 'none';
+                        }}, 3000);
+                    }} else if (navigator.clipboard && navigator.clipboard.writeText) {{
+                        navigator.clipboard.writeText(sessionLink)
+                            .then(() => {{
+                                btn.innerHTML = '✓ Copied!';
+                                btn.style.backgroundColor = '#00c853';
+                                feedbackMsg.innerHTML = '✓ Session link copied to clipboard';
+                                feedbackMsg.style.backgroundColor = '#d4edda';
+                                feedbackMsg.style.color = '#155724';
+                                feedbackMsg.style.border = '1px solid #c3e6cb';
+                                feedbackMsg.style.display = 'block';
+                                setTimeout(() => {{
+                                    btn.innerHTML = originalHTML;
+                                    btn.style.backgroundColor = originalBgColor;
+                                    feedbackMsg.style.display = 'none';
+                                }}, 3000);
+                            }})
+                            .catch(() => {{
+                                feedbackMsg.innerHTML = '⚠ Failed to copy. Link: ' + sessionLink;
+                                feedbackMsg.style.backgroundColor = '#fff3cd';
+                                feedbackMsg.style.color = '#856404';
+                                feedbackMsg.style.border = '1px solid #ffeaa7';
+                                feedbackMsg.style.display = 'block';
+                                feedbackMsg.style.wordBreak = 'break-all';
+                                setTimeout(() => {{
+                                    feedbackMsg.style.display = 'none';
+                                }}, 5000);
+                            }});
+                    }} else {{
+                        feedbackMsg.innerHTML = '⚠ Copy not supported. Link: ' + sessionLink;
+                        feedbackMsg.style.backgroundColor = '#fff3cd';
+                        feedbackMsg.style.color = '#856404';
+                        feedbackMsg.style.border = '1px solid #ffeaa7';
+                        feedbackMsg.style.display = 'block';
+                        feedbackMsg.style.wordBreak = 'break-all';
+                        setTimeout(() => {{
+                            feedbackMsg.style.display = 'none';
+                        }}, 5000);
+                    }}
+                }} catch (err) {{
+                    console.error('Copy failed:', err);
+                    feedbackMsg.innerHTML = '⚠ Copy failed. Link: ' + sessionLink;
+                    feedbackMsg.style.backgroundColor = '#fff3cd';
+                    feedbackMsg.style.color = '#856404';
+                    feedbackMsg.style.border = '1px solid #ffeaa7';
+                    feedbackMsg.style.display = 'block';
+                    feedbackMsg.style.wordBreak = 'break-all';
+                    setTimeout(() => {{
+                        feedbackMsg.style.display = 'none';
+                    }}, 5000);
+                }}
+
+                document.body.removeChild(textArea);
+            }});
+            </script>
+            """
+        else:
+            return """
+            <div style="width: 100%;">
+                <button id="reportIssueBtn" style="width: 100%; padding: 0.5rem 1rem;
+                    background-color: #ff4b4b; color: white; border: none; border-radius: 0.5rem;
+                    cursor: pointer; font-size: 1rem; font-weight: 500; transition: all 0.3s ease;">
+                    🐛 Report Issue</button>
+                <div id="feedbackMsg" style="width: 100%; margin-top: 0.5rem; padding: 0.75rem;
+                    border-radius: 0.5rem; font-size: 0.875rem; display: none;
+                    transition: all 0.3s ease; text-align: center; box-sizing: border-box;
+                    min-height: 3rem; line-height: 1.5;"></div>
+            </div>
+            <script>
+            document.getElementById('reportIssueBtn').addEventListener('click', function() {
+                const feedbackMsg = document.getElementById('feedbackMsg');
+                feedbackMsg.innerHTML = 'ℹ No active session. Please run a query first.';
+                feedbackMsg.style.backgroundColor = '#d4edda';
+                feedbackMsg.style.color = '#155724';
+                feedbackMsg.style.border = '1px solid #c3e6cb';
+                feedbackMsg.style.display = 'block';
+                setTimeout(() => {
+                    feedbackMsg.style.display = 'none';
+                }, 3000);
+            });
+            </script>
+            """
 
     def _get_available_subagents(self):
         """Get list of available subagents from agent config, excluding 'chat' (default)."""
@@ -490,14 +824,29 @@ class StreamlitChatbot:
             st.info("💡 **Tip**: Bookmark subagent URLs for direct access!")
 
     def display_sql_with_copy(self, sql: str):
-        """Display SQL with syntax highlighting"""
+        """Display SQL with syntax highlighting and save button"""
         if not sql:
             return
 
         st.markdown("### 🔧 Generated SQL")
 
-        # Display SQL with syntax highlighting (Streamlit has built-in copy functionality)
+        # Display SQL with syntax highlighting
         st.code(sql, language="sql")
+
+        # Get last user message for save functionality
+        user_msg = ""
+        if st.session_state.messages:
+            user_msgs = [m["content"] for m in st.session_state.messages if m["role"] == "user"]
+            if user_msgs:
+                user_msg = user_msgs[-1]
+
+        # Save button (only show if not in readonly mode)
+        if not st.session_state.session_readonly_mode:
+            # Create unique ID for this SQL block
+            sql_id = hashlib.md5(sql.encode()).hexdigest()[:8]
+
+            if st.button("👍 Success", key=f"save_{sql_id}", help="Save this query as a success story"):
+                self.save_success_story(sql, user_msg)
 
     def display_markdown_response(self, response: str):
         """Display clean response as formatted markdown"""
@@ -580,9 +929,14 @@ class StreamlitChatbot:
                 self.cli.current_actions = []
 
             # Execute chat command with subagent support - get directly from URL
-            subagent_name = self._get_current_subagent_from_url()
-            logger.info(f"Executing chat: {user_message} (subagent: {subagent_name})")
-            self.cli.chat_commands.execute_chat_command(user_message, subagent_name=subagent_name)
+            logger.info(f"Executing chat: {user_message} (subagent: {self.current_subagent})")
+            self.cli.chat_commands.execute_chat_command(user_message, subagent_name=self.current_subagent)
+
+            # Store session_id in session_state for sidebar access
+            session_id = self.get_current_session_id()
+            if session_id:
+                st.session_state.current_session_id = session_id
+                logger.info(f"Stored session_id in session_state: {session_id}")
 
             # Get all actions from this execution
             new_actions = self.cli.actions.actions.copy()
@@ -619,6 +973,12 @@ class StreamlitChatbot:
         # Hide deploy button and toolbar
         st.set_option("client.toolbarMode", "viewer")
 
+        # Update session_id in session_state at the beginning of each render
+        # This ensures sidebar always has the latest session_id
+        current_session_id = self.get_current_session_id()
+        if current_session_id:
+            st.session_state.current_session_id = current_session_id
+
         # Custom CSS for chat styling
         st.markdown(
             """
@@ -644,12 +1004,18 @@ class StreamlitChatbot:
             unsafe_allow_html=True,
         )
 
+        # Load session from URL if present
+        self.load_session_from_url()
+
+        # Show read-only banner if viewing shared session
+        if st.session_state.session_readonly_mode:
+            session_id_short = st.session_state.view_session_id[:8] if st.session_state.view_session_id else "unknown"
+            st.info(f"📖 Viewing Shared Session (Read-Only) - ID: {session_id_short}...")
+
         # Title and description with subagent support - detect directly from URL
-        current_subagent = self._get_current_subagent_from_url()
-        if current_subagent:
-            st.title(f"🤖 Datus AI Chat Assistant - {current_subagent.title()}")
-            st.caption(f"Specialized {current_subagent} subagent for SQL generation - Natural Language to SQL")
-            # Don't show subagent selection when already in subagent mode
+        if self.current_subagent:
+            st.title(f"🤖 Datus AI Chat Assistant - {self.current_subagent.title()}")
+            st.caption(f"Specialized {self.current_subagent} subagent for SQL generation - Natural Language to SQL")
         else:
             st.title("🤖 Datus AI Chat Assistant")
             st.caption("Intelligent database query assistant based on Datus Agent - Natural Language to SQL")
@@ -674,60 +1040,66 @@ class StreamlitChatbot:
                 if "sql" in message and message["sql"]:
                     self.display_sql_with_copy(message["sql"])
 
-                # Skip displaying historical actions to prevent duplication
+        # Chat input - disabled in read-only mode
+        if not st.session_state.session_readonly_mode:
+            if prompt := st.chat_input("Enter your data query question..."):
+                # Create unique chat ID for this conversation
+                import uuid
 
-        # Chat input
-        if prompt := st.chat_input("Enter your data query question..."):
-            # Create unique chat ID for this conversation
-            import uuid
+                chat_id = str(uuid.uuid4())
+                st.session_state.current_chat_id = chat_id
 
-            chat_id = str(uuid.uuid4())
-            st.session_state.current_chat_id = chat_id
+                # Add user message to chat history
+                st.session_state.messages.append({"role": "user", "content": prompt, "chat_id": chat_id})
 
-            # Add user message to chat history
-            st.session_state.messages.append({"role": "user", "content": prompt, "chat_id": chat_id})
+                # Display user message
+                with st.chat_message("user"):
+                    st.markdown(prompt)
 
-            # Display user message
-            with st.chat_message("user"):
-                st.markdown(prompt)
+                # Generate assistant response
+                with st.chat_message("assistant"):
+                    with st.spinner("Processing your query..."):
+                        # Execute chat and get actions
+                        actions = self.execute_chat(prompt)
 
-            # Generate assistant response
-            with st.chat_message("assistant"):
-                with st.spinner("Processing your query..."):
-                    # Execute chat and get actions
-                    actions = self.execute_chat(prompt)
+                        # Extract SQL and response
+                        sql, response = self.extract_sql_and_response(actions)
 
-                    # Extract SQL and response
-                    sql, response = self.extract_sql_and_response(actions)
+                        # Display response
+                        if response:
+                            self.display_markdown_response(response)
+                        else:
+                            st.markdown(
+                                "Sorry, unable to generate a valid response. "
+                                "Please check execution details for more information."
+                            )
 
-                    # Display response
-                    if response:
-                        self.display_markdown_response(response)
-                    else:
-                        st.markdown(
-                            "Sorry, unable to generate a valid response. "
-                            "Please check execution details for more information."
-                        )
+                        # Display SQL if available
+                        if sql:
+                            self.display_sql_with_copy(sql)
 
-                    # Display SQL if available
-                    if sql:
-                        self.display_sql_with_copy(sql)
+                        # Display action history for current conversation - only once per chat
+                        action_render_id = f"{chat_id}_actions"
+                        if actions and action_render_id not in st.session_state.rendered_action_ids:
+                            self.render_action_history(actions, chat_id)
+                            st.session_state.rendered_action_ids.add(action_render_id)
 
-                    # Display action history for current conversation - only once per chat
-                    action_render_id = f"{chat_id}_actions"
-                    if actions and action_render_id not in st.session_state.rendered_action_ids:
-                        self.render_action_history(actions, chat_id)
-                        st.session_state.rendered_action_ids.add(action_render_id)
+                    # Add assistant message to chat history
+                    assistant_message = {
+                        "role": "assistant",
+                        "content": response or "Unable to generate valid response",
+                        "sql": sql,
+                        "actions": actions,
+                        "chat_id": chat_id,
+                    }
+                    st.session_state.messages.append(assistant_message)
 
-                # Add assistant message to chat history
-                assistant_message = {
-                    "role": "assistant",
-                    "content": response or "Unable to generate valid response",
-                    "sql": sql,
-                    "actions": actions,
-                    "chat_id": chat_id,
-                }
-                st.session_state.messages.append(assistant_message)
+                    # Trigger rerun to update sidebar with new session_id
+                    # This ensures the Report Issue button gets the session_id immediately
+                    st.rerun()
+        else:
+            # Show disabled input in read-only mode
+            st.chat_input("Read-only mode - cannot send messages", disabled=True)
 
         # Display conversation statistics
         if st.session_state.messages:
