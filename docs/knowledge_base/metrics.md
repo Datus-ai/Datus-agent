@@ -36,11 +36,20 @@ Data Table/Historical SQLs → Semantic Model → Business Metrics
 ### Basic Command
 
 ```bash
-# Initialize metrics component
+# Initialize metrics component from success story CSV
 datus bootstrap-kb \
     --namespace your_namespace \
     --components metrics \
     --success_story path/to/success_story.csv \
+    --metric_meta business_meta
+```
+
+```bash
+# Initialize metrics component from semantic YAML
+datus bootstrap-kb \
+    --namespace your_namespace \
+    --components metrics \
+    --semantic_yaml path/to/semantic_model.yaml \
     --metric_meta business_meta
 ```
 
@@ -50,10 +59,10 @@ datus bootstrap-kb \
 |-----------|----------|-------------|---------|
 | `--namespace` | ✅ | Database namespace | `sales_db` |
 | `--components` | ✅ | Components to initialize | `metrics` |
-| `--success_story` | ✅ | A CSV file containing historical SQLs and questions | `benchmark/semantic_layer/success_story.csv` |
+| `--success_story` | ⚠️ | A CSV file containing historical SQLs and questions (required if not using `--semantic_yaml`) | `benchmark/semantic_layer/success_story.csv` |
+| `--semantic_yaml` | ⚠️ | Semantic model YAML file (required if not using `--success_story`) | `models/semantic_model.yaml` |
 | `--metric_meta` | ✅ | Metric metadata | `ecommerce` configuration component in `agent.yml` |
 | `--kb_update_strategy` | ✅ | Update strategy | `overwrite`/`incremental` |
-| `--semantic_yaml` | ❌ | Semantic model YAML file | `models/semantic_model.yaml` |
 | `--pool_size` | ❌ | Concurrent thread count | `4` |
 
 ## Data Source Formats

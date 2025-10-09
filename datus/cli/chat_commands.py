@@ -301,6 +301,16 @@ class ChatCommands:
                     if sql:
                         self._display_sql_with_copy(sql)
 
+                    # Check for semantic_model field (from SemanticAgenticNode)
+                    semantic_model = final_action.output.get("semantic_model")
+                    if semantic_model:
+                        self._display_semantic_model(semantic_model)
+
+                    # Check for sql_summary_file field (from SqlSummaryAgenticNode)
+                    sql_summary_file = final_action.output.get("sql_summary_file")
+                    if sql_summary_file:
+                        self._display_sql_summary_file(sql_summary_file)
+
                     if clean_output:
                         self._display_markdown_response(clean_output)
                     self.last_actions = incremental_actions
@@ -409,6 +419,38 @@ class ChatCommands:
             logger.error(f"Error displaying markdown: {e}")
             # Fallback to plain text display
             self.console.print(f"\n[bold blue]Assistant:[/] {response}")
+
+    def _display_semantic_model(self, semantic_model: str):
+        """
+        Display semantic model file path.
+
+        Args:
+            semantic_model: Semantic model file path
+        """
+        try:
+            self.console.print()
+            self.console.print(f"[bold magenta]Semantic Model File:[/] [cyan]{semantic_model}[/]")
+
+        except Exception as e:
+            logger.error(f"Error displaying semantic model: {e}")
+            # Fallback to simple display
+            self.console.print(f"\n[bold magenta]Semantic Model File:[/] {semantic_model}")
+
+    def _display_sql_summary_file(self, sql_summary_file: str):
+        """
+        Display SQL summary file path.
+
+        Args:
+            sql_summary_file: SQL summary file path
+        """
+        try:
+            self.console.print()
+            self.console.print(f"[bold yellow]SQL Summary File:[/] [cyan]{sql_summary_file}[/]")
+
+        except Exception as e:
+            logger.error(f"Error displaying SQL summary file: {e}")
+            # Fallback to simple display
+            self.console.print(f"\n[bold yellow]SQL Summary File:[/] {sql_summary_file}")
 
     def _extract_sql_and_output_from_content(self, content: str) -> Tuple[Optional[str], Optional[str]]:
         """

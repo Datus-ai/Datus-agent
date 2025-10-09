@@ -4,6 +4,7 @@ from typing import Any, List, Optional
 
 from agents import Tool
 from pydantic import BaseModel, Field
+from wcmatch import glob
 
 from datus.utils.loggings import get_logger
 
@@ -76,6 +77,7 @@ class FilesystemFuncTool:
             self.list_directory,
             self.directory_tree,
             self.move_file,
+            self.search_files,
         ]
 
         for bound_method in methods_to_convert:
@@ -427,6 +429,110 @@ class FilesystemFuncTool:
 
         except Exception as e:
             logger.error(f"Error moving file from {source} to {destination}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def search_files(self, path: str, pattern: str, exclude_patterns: Optional[List[str]] = None) -> FuncToolResult:
+        """
+        Recursively search for files and directories matching a pattern.
+
+        Args:
+            path: Starting directory to begin search
+            pattern: Glob-style pattern to match (e.g., "*.py", "**/*.yaml")
+            exclude_patterns: List of glob-style patterns to exclude from results
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[List[str]]): List of matching absolute file paths on success.
+        """
+        try:
+            target_path = self._get_safe_path(path)
+
+            if not target_path or not target_path.exists():
+                return FuncToolResult(success=0, error=f"Directory not found: {path}")
+
+            if not target_path.is_dir():
+                return FuncToolResult(success=0, error=f"Path is not a directory: {path}")
+
+            exclude_patterns = exclude_patterns or []
+
+            try:
+                matches = []
+                root_path_resolved = Path(self.config.root_path).resolve(strict=False)
+                target_path_resolved = target_path.resolve(strict=False)
+
+                # Ensure target path is within root path sandbox
+                try:
+                    target_path_resolved.relative_to(root_path_resolved)
+                except ValueError:
+                    return FuncToolResult(success=0, error=f"Path {path} is outside the allowed directory")
+
+                # Track visited inodes to prevent symlink loops
+                visited_inodes = set()
+
+                def should_exclude(file_path: Path) -> bool:
+                    relative_path = str(file_path.relative_to(target_path_resolved))
+                    for exclude_pattern in exclude_patterns:
+                        try:
+                            # globmatch: minimatch-compatible with DOTGLOB (hidden files) and GLOBSTAR (**)
+                            if glob.globmatch(relative_path, exclude_pattern, flags=glob.DOTGLOB | glob.GLOBSTAR):
+                                return True
+                        except Exception:
+                            continue
+                    return False
+
+                def search_recursive(current_path: Path):
+                    try:
+                        try:
+                            current_inode = current_path.stat().st_ino
+                        except OSError:
+                            return
+
+                        if current_inode in visited_inodes:
+                            return
+
+                        visited_inodes.add(current_inode)
+
+                        for item in current_path.iterdir():
+                            try:
+                                if should_exclude(item):
+                                    continue
+
+                                item_resolved = item.resolve(strict=False)
+
+                                # Security: ensure resolved path stays within sandbox
+                                try:
+                                    item_resolved.relative_to(root_path_resolved)
+                                except ValueError:
+                                    continue
+
+                                relative_path = str(item.relative_to(target_path_resolved))
+                                try:
+                                    if glob.globmatch(relative_path, pattern, flags=glob.DOTGLOB | glob.GLOBSTAR):
+                                        matches.append(str(item_resolved))
+                                except Exception:
+                                    if item.name == pattern:
+                                        matches.append(str(item_resolved))
+
+                                if item.is_dir():
+                                    search_recursive(item_resolved)
+
+                            except OSError:
+                                continue
+
+                    except OSError:
+                        return
+
+                search_recursive(target_path_resolved)
+
+                return FuncToolResult(result=matches)
+
+            except PermissionError:
+                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+
+        except Exception as e:
+            logger.exception(f"Error searching files in {path}")
             return FuncToolResult(success=0, error=str(e))
 
 

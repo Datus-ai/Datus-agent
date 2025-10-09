@@ -30,6 +30,6 @@ class SqlSummaryNodeResult(BaseResult):
     """Result model for SQL summary generation node."""
 
     response: str = Field(..., description="AI assistant's response")
-    sql_summary: Optional[dict] = Field(default=None, description="Generated SQL summary metadata")
+    sql_summary_file: Optional[str] = Field(default=None, description="Path to generated SQL summary YAML file")
     tokens_used: int = Field(default=0, description="Total tokens used in generation")
     error: Optional[str] = Field(default=None, description="Error message if generation failed")
