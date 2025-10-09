@@ -1067,11 +1067,6 @@ Type '.help' for a list of commands or '.exit' to quit.
             self.console.print("[bold red]Error:[/] No database connection.")
             return
 
-        try:
-            # Test the connection
-            connection_result = self.db_connector.test_connection()
-            logger.debug(f"Connection test result: {connection_result}")
-
-        except Exception as e:
-            self.console.print(f"[bold red]Connection Error:[/] {str(e)}")
-            raise
+        # Test the connection, ff there is an exception, it will be handled by unified exception handling.
+        connection_result = self.db_connector.test_connection()
+        logger.debug(f"Connection test result: {connection_result}")

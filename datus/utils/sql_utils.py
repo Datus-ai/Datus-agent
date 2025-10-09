@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import sqlglot
 from sqlglot import expressions
@@ -344,6 +344,80 @@ def _first_statement(sql: str) -> str:
     return s.split(";", 1)[0].strip()
 
 
+_KEYWORD_SQL_TYPE_MAP: Dict[str, SQLType] = {
+    "SELECT": SQLType.SELECT,
+    "INSERT": SQLType.INSERT,
+    "UPDATE": SQLType.UPDATE,
+    "DELETE": SQLType.DELETE,
+    "MERGE": SQLType.MERGE,
+    "CREATE": SQLType.DDL,
+    "ALTER": SQLType.DDL,
+    "DROP": SQLType.DDL,
+    "TRUNCATE": SQLType.DDL,
+    "RENAME": SQLType.DDL,
+    "COMMENT": SQLType.DDL,
+    "GRANT": SQLType.DDL,
+    "REVOKE": SQLType.DDL,
+    "ANALYZE": SQLType.DDL,
+    "VACUUM": SQLType.DDL,
+    "OPTIMIZE": SQLType.DDL,
+    "SHOW": SQLType.METADATA_SHOW,
+    "DESCRIBE": SQLType.METADATA_SHOW,
+    "DESC": SQLType.METADATA_SHOW,
+    "EXPLAIN": SQLType.EXPLAIN,
+    "USE": SQLType.CONTENT_SET,
+    "SET": SQLType.CONTENT_SET,
+    "CALL": SQLType.CONTENT_SET,
+    "EXEC": SQLType.CONTENT_SET,
+    "EXECUTE": SQLType.CONTENT_SET,
+    "BEGIN": SQLType.CONTENT_SET,
+    "START": SQLType.CONTENT_SET,
+    "COMMIT": SQLType.CONTENT_SET,
+    "ROLLBACK": SQLType.CONTENT_SET,
+}
+
+_OPTIONAL_DDL_EXPRESSIONS: tuple[type[expressions.Expression], ...] = tuple(
+    getattr(expressions, name)
+    for name in (
+        "Copy",
+        "Refresh",
+    )
+    if hasattr(expressions, name)
+)
+
+
+def _normalize_expression(expr: Optional[expressions.Expression]) -> Optional[expressions.Expression]:
+    """
+    Unwrap container expressions (Alias, Subquery, Paren) to reach the semantic root expression.
+    """
+    while expr is not None and isinstance(expr, (expressions.Alias, expressions.Subquery, expressions.Paren)):
+        expr = expr.this
+    return expr
+
+
+def _fallback_sql_type(statement: str) -> SQLType | None:
+    """Infer the SQL type from leading keywords when parsing fails."""
+    if not statement:
+        return None
+
+    upper_stmt = statement.upper()
+    match = re.match(r"\s*([A-Z_]+)", upper_stmt)
+    keyword = match.group(1) if match else ""
+
+    if keyword == "WITH":
+        # Look for the statement keyword that follows all CTE definitions.
+        match_cte_target = re.search(r"\)\s*(SELECT|INSERT|UPDATE|DELETE|MERGE)\b", upper_stmt)
+        if match_cte_target:
+            keyword = match_cte_target.group(1)
+        else:
+            keyword = "SELECT"
+
+    if not keyword:
+        return None
+
+    return _KEYWORD_SQL_TYPE_MAP.get(keyword)
+
+
 def parse_sql_type(sql: str, dialect: str) -> SQLType:
     """
     Determines the type of an SQL statement based on its first keyword.
@@ -372,23 +446,24 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
     if parsed_expression is None:
         if dialect_name == DBType.STARROCKS.value and _metadata_pattern().match(first_statement):
             return SQLType.METADATA_SHOW
-        # Return UNKNOWN instead of raising exception for CLI usage
-        return SQLType.UNKNOWN
+        inferred = _fallback_sql_type(first_statement)
+        return inferred if inferred else SQLType.UNKNOWN
 
-    if isinstance(parsed_expression, expressions.Select):
+    normalized_expression = _normalize_expression(parsed_expression)
+    if isinstance(normalized_expression, expressions.Query):
         return SQLType.SELECT
-    elif isinstance(parsed_expression, expressions.Values):
+    if isinstance(normalized_expression, expressions.Values):
         return SQLType.SELECT
-    elif isinstance(parsed_expression, expressions.Insert):
+    if isinstance(normalized_expression, expressions.Insert):
         return SQLType.INSERT
-    elif isinstance(parsed_expression, expressions.Merge):
+    if isinstance(normalized_expression, expressions.Merge):
         return SQLType.MERGE
-    elif isinstance(parsed_expression, expressions.Update):
+    if isinstance(normalized_expression, expressions.Update):
         return SQLType.UPDATE
-    elif isinstance(parsed_expression, expressions.Delete):
+    if isinstance(normalized_expression, expressions.Delete):
         return SQLType.DELETE
-    elif isinstance(
-        parsed_expression,
+    if isinstance(
+        normalized_expression,
         (
             expressions.Create,
             expressions.Alter,
@@ -401,10 +476,10 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
         ),
     ):
         return SQLType.DDL
-    elif isinstance(parsed_expression, (expressions.Describe, expressions.Show, expressions.Pragma)):
+    if isinstance(normalized_expression, (expressions.Describe, expressions.Show, expressions.Pragma)):
         return SQLType.METADATA_SHOW
-    elif isinstance(parsed_expression, expressions.Command):
-        command_name = str(parsed_expression.args.get("this") or "").upper()
+    if isinstance(normalized_expression, expressions.Command):
+        command_name = str(normalized_expression.args.get("this") or "").upper()
         if command_name in {"SHOW", "DESC", "DESCRIBE"}:
             return SQLType.METADATA_SHOW
         if command_name == "EXPLAIN":
@@ -414,9 +489,19 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
         if command_name in {"CALL", "EXEC", "EXECUTE"}:
             return SQLType.CONTENT_SET
         return SQLType.CONTENT_SET
-    elif isinstance(
-        parsed_expression, (expressions.Use, expressions.Transaction, expressions.Commit, expressions.Rollback)
+    if isinstance(
+        normalized_expression,
+        (
+            expressions.Use,
+            expressions.Transaction,
+            expressions.Commit,
+            expressions.Rollback,
+            expressions.Set,
+        ),
     ):
         return SQLType.CONTENT_SET
-    else:
-        return SQLType.UNKNOWN
+    if _OPTIONAL_DDL_EXPRESSIONS and isinstance(normalized_expression, _OPTIONAL_DDL_EXPRESSIONS):
+        return SQLType.DDL
+
+    inferred = _fallback_sql_type(first_statement)
+    return inferred if inferred else SQLType.UNKNOWN
