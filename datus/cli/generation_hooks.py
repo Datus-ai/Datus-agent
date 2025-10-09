@@ -154,11 +154,7 @@ class GenerationHooks(AgentHooks):
         sys.stdout.flush()
         sys.stderr.flush()
 
-        self.console.print("\n" + "=" * 80)
-        self.console.print("[bold yellow]⚠ USER INPUT REQUIRED ⚠[/]", justify="center")
-        self.console.print("=" * 80 + "\n")
-        self.console.print("=" * 60)
-        self.console.print("[bold cyan]SYNC TO KNOWLEDGE BASE?[/]", justify="center")
+        self.console.print("\n  [bold cyan]SYNC TO KNOWLEDGE BASE?[/]")
         self.console.print("")
         self.console.print("  [bold green]1.[/bold green] Yes - Save to Knowledge Base")
         self.console.print("  [bold yellow]2.[/bold yellow] No - Keep file only")

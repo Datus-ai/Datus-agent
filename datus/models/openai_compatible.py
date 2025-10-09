@@ -622,7 +622,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                     logger.error(f"Max turns exceeded in streaming: {str(e)}")
                     raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
 
-                # Yield streaming actions as they come
+                # Buffer to reorder events: thinking messages should come before tool calls
+                pending_tool_calls = []
+
                 while not result.is_complete:
                     async for event in result.stream_events():
                         if not hasattr(event, "type") or event.type != "run_item_stream_event":
@@ -636,13 +638,29 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                         if item_type == "tool_call_item":
                             action = self._process_tool_call_start(event, action_history_manager)
+                            if action:
+                                # Buffer tool calls instead of yielding immediately
+                                pending_tool_calls.append(action)
+                                action = None
                         elif item_type == "tool_call_output_item":
                             action = self._process_tool_call_complete(event, action_history_manager)
                         elif item_type == "message_output_item":
                             action = self._process_message_output(event, action_history_manager)
+                            if action:
+                                # Yield thinking message first
+                                yield action
+                                # Then yield buffered tool calls
+                                for tool_action in pending_tool_calls:
+                                    yield tool_action
+                                pending_tool_calls.clear()
+                                action = None
 
                         if action:
                             yield action
+
+                # Yield any remaining buffered tool calls
+                for tool_action in pending_tool_calls:
+                    yield tool_action
 
                 # Save LLM trace if method exists (for models that support it like DeepSeekModel)
                 if hasattr(self, "_save_llm_trace"):

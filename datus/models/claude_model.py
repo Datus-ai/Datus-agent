@@ -761,6 +761,9 @@ class ClaudeModel(LLMBaseModel):
             try:
                 result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
 
+                # Buffer to reorder events: thinking messages should come before tool calls
+                pending_tool_calls = []
+
                 while not result.is_complete:
                     async for event in result.stream_events():
                         if not hasattr(event, "type") or event.type != "run_item_stream_event":
@@ -774,13 +777,29 @@ class ClaudeModel(LLMBaseModel):
 
                         if item_type == "tool_call_item":
                             action = self._process_tool_call_start(event, action_history_manager)
+                            if action:
+                                # Buffer tool calls instead of yielding immediately
+                                pending_tool_calls.append(action)
+                                action = None
                         elif item_type == "tool_call_output_item":
                             action = self._process_tool_call_complete(event, action_history_manager)
                         elif item_type == "message_output_item":
                             action = self._process_message_output(event, action_history_manager)
+                            if action:
+                                # Yield thinking message first
+                                yield action
+                                # Then yield buffered tool calls
+                                for tool_action in pending_tool_calls:
+                                    yield tool_action
+                                pending_tool_calls.clear()
+                                action = None
 
                         if action:
                             yield action
+
+                # Yield any remaining buffered tool calls
+                for tool_action in pending_tool_calls:
+                    yield tool_action
 
                 # Yield final success action
                 final_output = result.output if hasattr(result, "output") else {"content": ""}
@@ -960,7 +979,7 @@ class ClaudeModel(LLMBaseModel):
         content = event.item.raw_item.content
         if not content:
             return None
-        logger.debug(f"Processing message output: {content}")
+
         # Extract text content
         if isinstance(content, list) and content:
             text_content = content[0].text if hasattr(content[0], "text") else str(content[0])
@@ -983,10 +1002,9 @@ class ClaudeModel(LLMBaseModel):
             )
             action.end_time = datetime.now()
             action_history_manager.add_action(action)
+            return action
         else:
-            action = None
-            logger.debug(f"No text content found in message output: {content}")
-        return action
+            return None
 
     def close(self):
         """Close HTTP clients and cleanup resources."""

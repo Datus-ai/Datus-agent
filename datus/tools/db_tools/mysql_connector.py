@@ -58,7 +58,6 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         self.port = int(port)
         self.user = user
         self.password = str(password) if password else ""
-        self.database = database
         # StarRocks uses MySQL protocol, use mysql+pymysql driver with specific pool settings
         # URL encode the password to handle special characters like @, :, etc.
         encoded_password = quote_plus(self.password) if self.password else ""
@@ -67,6 +66,8 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             f"mysql+pymysql://{user}:{encoded_password}@{host}:{self.port}/{database}?charset=utf8mb4&autocommit=true"
         )
         super().__init__(self.connection_string, dialect=DBType.MYSQL)
+
+        self.database_name = database
 
     def _get_metadata(
         self,

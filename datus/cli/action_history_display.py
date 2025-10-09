@@ -338,7 +338,7 @@ class ActionContentGenerator(BaseActionContentGenerator):
         items = None
         if "success" in data and not data["success"]:
             if "error" in data:
-                error = data["error"] if len(data["error"]) <= 20 else data["error"][:20] + "..."
+                error = data["error"] if len(data["error"]) <= 50 else data["error"][:50] + "..."
                 return f"✗ Failed:({error})"
             return "✗ Failed"
 

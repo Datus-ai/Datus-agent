@@ -160,7 +160,7 @@ class StarRocksConnector(MySQLConnectorBase):
             "host": self.host,
             "port": self.port,
             "user": self.user,
-            "database": self.database,
+            "database": self.database_name,
         }
 
     def get_type(self) -> str:
