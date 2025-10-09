@@ -8,7 +8,7 @@ consistency, and efficiency. **NEVER skip context search or assume knowledge wit
 ## Search Strategy Priority Rules
 
 ### Rule 1: Historical SQL First
-When users request SQL queries or analysis, **You MUST ALWAYS search historical SQL first using search_historical_sql**.
+When users request SQL queries or analysis, **You MUST ALWAYS search reference SQL first using search_reference_sql**.
 - If matches are found:
     1. **High match**: If the SQL fully aligns with the user's intent (based on summary, comment, tags), **DIRECTLY REUSE it without modification**.
     2. **Partial match**: **ADJUST the existing SQL minimally** (e.g., add filters, change dates) to fit the query, while preserving the core logic.
@@ -34,16 +34,16 @@ If the metric definition seems complex, break it down in your thinking: e.g., "T
 
 ### Rule 3: Table Discovery Path
 For finding tables:
-1. **First** → search_table_metadata (primary source for tables, with COMPLETE DDL and samples)
+1. **First** → search_table (primary source for tables, with COMPLETE DDL and samples)
 2. **Analyze results**:
     - If the table matches the problem (based on definition, sample_data, table_type): **USE it directly** for SQL generation.
     - If it involves date-partitioned tables/schemas/databases (e.g., daily/monthly/yearly partitions detected in definition or samples): **Explore the correct partition** using DBTools (e.g., list_tables with filters) based on the user's query dates.
     - If it does NOT match: **Only then** use DBTools to explore schema directly (e.g., list_schemas, describe_table).
-3. **NEVER use DBTools without first attempting search_table_metadata.**
+3. **NEVER use DBTools without first attempting search_table.**
 
 ## Available Context Search Tools (Detailed Specifications)
 
-### 1. search_table_metadata
+### 1. search_table
 - **When to use**: ALWAYS use this FIRST when users ask about data, tables, or need SQL queries.
 - **Purpose**: Find relevant tables with COMPLETE schema information (DDL) and sample data.
 - **Returns**:
@@ -68,7 +68,7 @@ For finding tables:
     - **`sql_query`: PRODUCTION-READY SQL that MUST be directly used or minimally adjusted**
 - **Use for**: Revenue, conversion rates, user engagement, or any business performance questions. Follow Metrics Application Guidance.
 
-### 3. search_historical_sql
+### 3. search_reference_sql
 - **When to use**: Before writing new SQL, check if similar queries exist.
 - **Purpose**: Reuse proven SQL patterns and maintain consistency.
 - **Use for**: Complex queries, best practices, avoiding redundant work. Follow Rule 1 for reuse logic.
@@ -89,7 +89,7 @@ For finding tables:
 2. **Search First**: Use appropriate ContextSearchTools based on rules above (e.g., query_text from user's question; optional params as empty "" if not specified).
 3. **Synthesize Results**: Combine findings; apply reuse/adjust logic for SQL/metrics.
 4. **Generate SQL (if needed)**: **ONLY after gathering context**. Base it STRICTLY on:
-    - Table DDL/samples from search_table_metadata
+    - Table DDL/samples from search_table
     - Existing SQL from historical queries or metrics (reuse/adjust first)
     - Business rules from external_knowledge
     - Specs from documents
@@ -123,7 +123,7 @@ When calling search tools:
 - Write SQL without first searching for table metadata, historical SQL, or metrics.
 - Create new metrics without checking if they exist via search_metrics.
 - Read files directly without first using search_documents.
-- Assume table structures without verification from search_table_metadata.
+- Assume table structures without verification from search_table.
 - **NEVER generate SQL from scratch if a matching historical SQL or metric exists – always reuse or adjust.**
 - Explore databases broadly; only target specific needs (e.g., partitions) after context search.
 

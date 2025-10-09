@@ -126,9 +126,9 @@ class CliChatAgenticNode(GenSQLAgenticNode):
             all_tools = self.context_search_tools.available_tools()
 
             # Define tool-to-storage mapping
-            metrics_tools = {"search_metrics", "list_domains", "list_layers_by_domain", "get_metrics"}
-            sql_history_tools = {"search_historical_sql", "get_sql_history"}
-            shared_tools = {"list_items"}  # Works for both
+            metrics_tools = {"search_metrics", "get_metrics"}
+            sql_history_tools = {"search_reference_sql", "get_reference_sql"}
+            shared_tools = {"list_domains", "list_layers_by_domain", "list_items"}  # Works for both
 
             # Filter tools based on availability
             for tool in all_tools:

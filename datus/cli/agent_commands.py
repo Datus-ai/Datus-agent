@@ -390,11 +390,15 @@ class AgentCommands:
         # I will omit prompting for it as it won't be used.
 
         with self.console.status("[bold green]Searching for relevant tables...[/]"):
-            result = self.context_search_tools.search_table_metadata(
+            # Note: search_table is now in DBFuncTool, not ContextSearchTools
+            from datus.tools.tools import db_function_tool_instance
+
+            db_tool = db_function_tool_instance(self.agent_config)
+            result = db_tool.search_table(
                 query_text=input_text,
-                catalog_name=catalog_name,
-                database_name=database_name,
-                schema_name=schema_name,
+                catalog=catalog_name,
+                database=database_name,
+                db_schema=schema_name,
                 simple_sample_data=False,
                 top_n=int(top_n.strip()),
             )
@@ -528,7 +532,7 @@ class AgentCommands:
         domain, layer1, layer2 = self._prompt_logic_layer()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
         with self.console.status("[bold green]Searching SQL history...[/]"):
-            result = self.context_search_tools.search_historical_sql(
+            result = self.context_search_tools.search_reference_sql(
                 query_text=input_text, domain=domain, layer1=layer1, layer2=layer2, top_n=int(top_n.strip())
             )
 

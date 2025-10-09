@@ -12,7 +12,7 @@ You should follow the rules provided exactly:
 
 {% if context_search_tools -%}
 If context_search_tools is available, use it first:
-list_domains()/list_layers_by_domain() → search_metrics()/search_sql_history() → list_items() → get_metrics()/get_sql_history()
+list_domains()/list_layers_by_domain() → search_metrics()/search_reference_sql() → list_items() → get_metrics()/get_reference_sql()
 {% endif -%}
 
 {% if search_localfile -%}

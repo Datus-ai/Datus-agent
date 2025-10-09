@@ -31,9 +31,9 @@ class ContextSearchTools:
                 self.list_layers_by_domain,
                 self.list_items,
                 self.get_metrics,
-                self.get_sql_history,
+                self.get_reference_sql,
                 self.search_metrics,
-                self.search_historical_sql,
+                self.search_reference_sql,
                 # Temporarily disabled
                 # self.search_documents,
                 # self.search_external_knowledge,
@@ -71,7 +71,7 @@ class ContextSearchTools:
             logger.error(f"Failed to search metrics for table '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def search_historical_sql(
+    def search_reference_sql(
         self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
     ) -> FuncToolResult:
         """
@@ -241,7 +241,7 @@ class ContextSearchTools:
 
         Note:
             Returns up to 1000 items per layer. If you need full details including
-            SQL queries, use get_metrics() or get_sql_history() instead.
+            SQL queries, use get_metrics() or get_reference_sql() instead.
         """
         try:
             if item_type not in ("metrics", "sql_history"):
@@ -313,7 +313,7 @@ class ContextSearchTools:
             logger.error(f"Failed to get metric {domain}/{layer1}/{layer2}/{name}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def get_sql_history(self, domain: str, layer1: str, layer2: str, name: str) -> FuncToolResult:
+    def get_reference_sql(self, domain: str, layer1: str, layer2: str, name: str) -> FuncToolResult:
         """
         Get complete details of a specific historical SQL query.
 
