@@ -596,6 +596,11 @@ FROM gold_vs_bitcoin"""
 
     assert parse_sql_type("SHOW CATALOGS", dialect="starrocks") == SQLType.METADATA_SHOW
 
+    assert parse_sql_type("USE test", dialect=DBType.DUCKDB) == SQLType.CONTENT_SET
+    assert parse_sql_type("USE test", dialect=DBType.MYSQL) == SQLType.CONTENT_SET
+    assert parse_sql_type("USE test", dialect=DBType.STARROCKS) == SQLType.CONTENT_SET
+    assert parse_sql_type(" USE test ", dialect=DBType.SNOWFLAKE) == SQLType.CONTENT_SET
+
 
 def test_parse_sql_type_with():
     sql = """WITH hourly_data AS (

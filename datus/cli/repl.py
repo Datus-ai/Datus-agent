@@ -606,8 +606,8 @@ class DatusCLI:
             dialect = self.agent_config.db_type if self.agent_config.db_type else "snowflake"
             sql_type = parse_sql_type(text, dialect)
 
-            # If parse_sql_type returns a valid SQL type (not CONTENT_SET or UNKNOWN), treat as SQL
-            if sql_type not in (SQLType.CONTENT_SET, SQLType.UNKNOWN):
+            # If parse_sql_type returns a valid SQL type (not UNKNOWN), treat as SQL
+            if sql_type != SQLType.UNKNOWN:
                 return CommandType.SQL, "", text
             else:
                 return CommandType.CHAT, "", text.strip()
