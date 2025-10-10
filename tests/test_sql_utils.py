@@ -1,6 +1,13 @@
 from datus.utils.constants import DBType, SQLType
 from datus.utils.json_utils import llm_result2json
-from datus.utils.sql_utils import extract_table_names, parse_metadata, parse_sql_type, parse_table_name_parts
+from datus.utils.sql_utils import (
+    _first_statement,
+    extract_table_names,
+    parse_context_switch,
+    parse_metadata,
+    parse_sql_type,
+    parse_table_name_parts,
+)
 
 SQL = """create or replace TABLE GT.GT2.VARIANTS (
     "reference_name" VARCHAR(16777216),
@@ -633,3 +640,162 @@ def test_parse_sql_type_union_statement():
 def test_parse_sql_type_wrapped_select():
     sql = "(WITH cte AS (SELECT 1) SELECT * FROM cte)"
     assert parse_sql_type(sql, dialect=DBType.DUCKDB) == SQLType.SELECT
+
+
+def test_parse_context_switch_duckdb():
+    # simple and fuzzy
+    result = parse_context_switch("USE analytics;", dialect=DBType.DUCKDB)
+    assert result == {
+        "command": "USE",
+        "target": "schema",
+        "catalog_name": "",
+        "database_name": "",
+        "schema_name": "analytics",
+        "fuzzy": True,
+        "raw": "USE analytics",
+    }
+    # full
+    result = parse_context_switch("use sales.analytics", dialect=DBType.DUCKDB)
+    assert result == {
+        "command": "USE",
+        "target": "schema",
+        "catalog_name": "",
+        "database_name": "sales",
+        "schema_name": "analytics",
+        "fuzzy": False,
+        "raw": "use sales.analytics",
+    }
+
+
+def test_parse_context_switch_mysql():
+    result = parse_context_switch("USE `orders`", dialect=DBType.MYSQL)
+    assert result == {
+        "command": "USE",
+        "target": "database",
+        "catalog_name": "",
+        "database_name": "orders",
+        "schema_name": "",
+        "fuzzy": False,
+        "raw": "USE `orders`",
+    }
+
+    result = parse_context_switch("USE orders", dialect=DBType.MYSQL)
+    assert result == {
+        "command": "USE",
+        "target": "database",
+        "catalog_name": "",
+        "database_name": "orders",
+        "schema_name": "",
+        "fuzzy": False,
+        "raw": "USE orders",
+    }
+
+
+def test_parse_context_switch_starrocks():
+    # set_catalog
+    result = parse_context_switch("SET catalog lakehouse", dialect=DBType.STARROCKS)
+    assert result == {
+        "command": "SET",
+        "target": "catalog",
+        "catalog_name": "lakehouse",
+        "database_name": "",
+        "schema_name": "",
+        "fuzzy": False,
+        "raw": "SET catalog lakehouse",
+    }
+
+    # datalog.db
+    result = parse_context_switch("USE lakehouse.sales", dialect=DBType.STARROCKS)
+    assert result == {
+        "command": "USE",
+        "target": "database",
+        "catalog_name": "lakehouse",
+        "database_name": "sales",
+        "schema_name": "",
+        "fuzzy": False,
+        "raw": "USE lakehouse.sales",
+    }
+
+    # db
+    result = parse_context_switch("USE sales", dialect=DBType.STARROCKS)
+    assert result == {
+        "command": "USE",
+        "target": "database",
+        "catalog_name": "",
+        "database_name": "sales",
+        "schema_name": "",
+        "fuzzy": False,
+        "raw": "USE sales",
+    }
+
+
+def test_parse_context_switch_snowflake():
+    result = parse_context_switch("USE DATABASE analytics", dialect=DBType.SNOWFLAKE)
+    assert result == {
+        "command": "USE",
+        "target": "database",
+        "catalog_name": "",
+        "database_name": "analytics",
+        "schema_name": "",
+        "fuzzy": False,
+        "raw": "USE DATABASE analytics",
+    }
+
+    result = parse_context_switch("USE analytics", dialect=DBType.SNOWFLAKE)
+    assert result == {
+        "command": "USE",
+        "target": "database",
+        "catalog_name": "",
+        "database_name": "analytics",
+        "schema_name": "",
+        "fuzzy": False,
+        "raw": "USE analytics",
+    }
+
+    # db.schema
+    result = parse_context_switch("USE sales.analytics", dialect=DBType.SNOWFLAKE)
+    assert result == {
+        "command": "USE",
+        "target": "schema",
+        "catalog_name": "",
+        "database_name": "sales",
+        "schema_name": "analytics",
+        "fuzzy": False,
+        "raw": "USE sales.analytics",
+    }
+    result = parse_context_switch("USE schema sales.analytics", dialect=DBType.SNOWFLAKE)
+    assert result == {
+        "command": "USE",
+        "target": "schema",
+        "catalog_name": "",
+        "database_name": "sales",
+        "schema_name": "analytics",
+        "fuzzy": False,
+        "raw": "USE schema sales.analytics",
+    }
+
+    # schema
+    result = parse_context_switch("USE schema analytics", dialect=DBType.SNOWFLAKE)
+    assert result == {
+        "command": "USE",
+        "target": "schema",
+        "catalog_name": "",
+        "database_name": "",
+        "schema_name": "analytics",
+        "fuzzy": False,
+        "raw": "USE schema analytics",
+    }
+
+
+def test_first_statement():
+    sql = "INSERT INTO t VALUES ('a;b'); SELECT 1;"
+    assert _first_statement(sql) == "INSERT INTO t VALUES ('a;b')"
+
+    sql = 'INSERT INTO t VALUES ("a;b"); SELECT 1;'
+    assert _first_statement(sql) == 'INSERT INTO t VALUES ("a;b")'
+
+    sql = "SELECT 1;"
+    assert _first_statement(sql) == "SELECT 1"
+
+    sql = "DO $$ BEGIN RAISE NOTICE 'foo;'; END $$; SELECT 1;"
+    assert _first_statement(sql) == "DO $$ BEGIN RAISE NOTICE 'foo;'; END $$"
