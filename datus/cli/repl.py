@@ -607,7 +607,7 @@ class DatusCLI:
             sql_type = parse_sql_type(text, dialect)
 
             # If parse_sql_type returns a valid SQL type (not UNKNOWN), treat as SQL
-            if sql_type == SQLType.UNKNOWN:
+            if sql_type != SQLType.UNKNOWN:
                 return CommandType.SQL, "", text
             else:
                 return CommandType.CHAT, "", text.strip()
