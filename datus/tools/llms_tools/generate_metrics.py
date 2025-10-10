@@ -11,9 +11,9 @@ from datus.prompts.generate_metrics_with_mcp import get_generate_metrics_prompt
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult, Metric
+from datus.storage.metric.llm_text_generator import generate_metric_llm_text
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
-from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -139,18 +139,23 @@ def generate_metrics_with_mcp(
 
         try:
             logger.debug(f"exec_result: {exec_result['content']}")
-            content_dict = json.loads(extract_json_str(exec_result["content"]))
-            metrics = parse_metrics(content_dict)
+            from datus.utils.json_utils import extract_json_array
+
+            # Extract JSON array from LLM response (handles markdown code blocks)
+            json_str = extract_json_array(exec_result["content"])
+            if not json_str:
+                logger.error("Failed to extract JSON array from exec_result")
+                metrics = []
+            else:
+                metric_list = json.loads(json_str)
+                metrics = parse_metrics(metric_list)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse exec_result.content: {e}, exec_result: {exec_result}")
-            content_dict = {}
             metrics = []
-        # content_dict = exec_result
-        # Extract required pieces from the parsed dict
+
         return GenerateMetricsResult(
             success=True,
             error="",
-            sql_queries=content_dict.get("sql_queries", []),
             metrics=metrics,
         )
     except Exception as e:
@@ -160,25 +165,34 @@ def generate_metrics_with_mcp(
         return GenerateMetricsResult(
             success=False,
             error=error_msg,
-            sql_queries=[],
             metrics=[],
         )
 
 
-def parse_metrics(content_dict: Dict[str, Any]) -> List[Metric]:
+def parse_metrics(metric_list: List[Dict[str, Any]]) -> List[Metric]:
+    """
+    Parse metrics from LLM generation result.
+
+    Args:
+        metric_list: List of metric definitions from LLM
+
+    Returns:
+        List of Metric objects with generated llm_text
+    """
+    if not metric_list:
+        logger.error("Failed to parse metrics: metrics list is empty")
+        return []
+
     metrics = []
-    metric_list = content_dict.get("metrics", [])
-    query_list = content_dict.get("sql_queries", [])
-    if not metric_list or not query_list or len(metric_list) != len(query_list):
-        logger.error(f"Failed to parse metrics: {content_dict}")
-        return metrics
-    for metric, query in zip(metric_list, query_list):
+    for metric in metric_list:
+        # Generate LLM-friendly text representation from metric definition
+        llm_text = generate_metric_llm_text(metric, None)
+
         metrics.append(
             Metric(
                 name=metric.get("name", ""),
-                description=metric.get("description", ""),
-                constraint=metric.get("constraint", ""),
-                sql_query=query,
+                llm_text=llm_text,
             )
         )
+
     return metrics

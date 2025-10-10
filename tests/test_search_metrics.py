@@ -121,9 +121,10 @@ def test_invalid_input(search_metrics_tool):
 def test_json():
     metric = Metric(
         name="metric_name",
-        sql_query="SELECT metric_name FROM metrics",
-        description="a description of this metric",
-        constraint="a constraint of this metric",
+        llm_text=(
+            "Metric: metric_name\na description of this metric\n\nSQL: SELECT metric_name FROM metrics\n",
+            "Filter: a constraint of this metric",
+        ),
     )
     json_str = json.dumps(metric.__dict__)
     print(f"json:{json_str}")

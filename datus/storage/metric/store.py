@@ -6,7 +6,7 @@ import pyarrow as pa
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.embedding_models import get_metric_embedding_model
-from datus.storage.lancedb_conditions import And, build_where, eq, in_, like
+from datus.storage.lancedb_conditions import And, build_where, eq, in_
 from datus.utils.exceptions import DatusException, ErrorCode
 
 logger = logging.getLogger(__file__)
@@ -101,16 +101,13 @@ class MetricStorage(BaseEmbeddingStore):
                     pa.field("domain", pa.string()),
                     pa.field("layer1", pa.string()),
                     pa.field("layer2", pa.string()),
-                    pa.field("domain_layer1_layer2", pa.string()),
                     pa.field("name", pa.string()),
-                    pa.field("description", pa.string()),
-                    pa.field("constraint", pa.string()),
-                    pa.field("sql_query", pa.string()),
+                    pa.field("llm_text", pa.string()),
                     pa.field("created_at", pa.string()),
                     pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
                 ]
             ),
-            vector_source_name="description",
+            vector_source_name="llm_text",
         )
         self.reranker = None
 
@@ -120,8 +117,7 @@ class MetricStorage(BaseEmbeddingStore):
 
         self.table.create_scalar_index("id", replace=True)
         self.table.create_scalar_index("semantic_model_name", replace=True)
-        self.table.create_scalar_index("domain_layer1_layer2", replace=True)
-        self.create_fts_index(["name", "description", "constraint", "sql_query"])
+        self.create_fts_index(["name"])
 
     def search_all(self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None) -> pa.Table:
         """Search all schemas for a given database name."""
@@ -192,29 +188,25 @@ class SemanticMetricsRAG:
     def search_hybrid_metrics(
         self,
         query_text: str,
-        domain: str,
-        layer1: str,
-        layer2: str,
+        domain: str = "",
+        layer1: str = "",
+        layer2: str = "",
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
         top_n: int = 5,
         use_rerank: bool = True,
     ) -> List[Dict[str, Any]]:
-        semantic_full_name: str = qualify_name(
-            [
-                catalog_name,
-                database_name,
-                schema_name,
-            ]
-        )
+        semantic_conditions = []
+        if catalog_name:
+            semantic_conditions.append(eq("catalog_name", catalog_name))
+        if database_name:
+            semantic_conditions.append(eq("database_name", database_name))
+        if schema_name:
+            semantic_conditions.append(eq("schema_name", schema_name))
 
-        semantic_condition = (
-            like("catalog_database_schema", semantic_full_name)
-            if "%" in semantic_full_name
-            else eq("catalog_database_schema", semantic_full_name)
-        )
-        semantic_where_clause = build_where(semantic_condition)
+        semantic_condition = And(semantic_conditions) if semantic_conditions else None
+        semantic_where_clause = build_where(semantic_condition) if semantic_condition else None
         logger.info(f"start to search semantic, semantic_where: {semantic_where_clause}, query_text: {query_text}")
         semantic_search_results = self.semantic_model_storage.search(
             query_text,
@@ -244,7 +236,7 @@ class SemanticMetricsRAG:
         logger.info(f"start to search metrics, metric_where: {metric_where_clause}, query_text: {query_text}")
         metric_search_results = self.metric_storage.search(
             query_txt=query_text,
-            select_fields=["name", "description", "constraint", "sql_query", "semantic_model_name"],
+            select_fields=["llm_text"],
             top_n=top_n,
             where=metric_condition,
         )
@@ -254,9 +246,7 @@ class SemanticMetricsRAG:
             return []
 
         try:
-            metric_result = metric_search_results.select(
-                ["name", "description", "constraint", "sql_query", "semantic_model_name"]
-            ).to_pylist()
+            metric_result = metric_search_results.select(["llm_text"]).to_pylist()
         except Exception as e:
             logger.warning(f"Failed to extract metric results, exception: {str(e)}")
             return []
@@ -282,18 +272,16 @@ class SemanticMetricsRAG:
                 "layer2",
                 "name",
                 "semantic_model_name",
-                "description",
-                "constraint",
-                "sql_query",
+                "llm_text",
             ],
         )
         return search_result.to_pylist()
 
     def get_metrics(
         self,
-        domain: str = "default",
-        layer1: str = "default",
-        layer2: str = "default",
+        domain: str = "",
+        layer1: str = "",
+        layer2: str = "",
         semantic_model_name: str = "",
         selected_fields: Optional[List[str]] = None,
         return_distance: bool = False,
@@ -346,11 +334,6 @@ class SemanticMetricsRAG:
                 },
             )
         update_payload = dict(update_values)
-        domain_value = update_payload.get("domain", old_values.get("domain"))
-        layer1_value = update_payload.get("layer1", old_values.get("layer1"))
-        layer2_value = update_payload.get("layer2", old_values.get("layer2"))
-        if domain_value and layer1_value and layer2_value:
-            update_payload["domain_layer1_layer2"] = qualify_name([domain_value, layer1_value, layer2_value])
         self.metric_storage.update(where, update_payload, unique_filter=unique_filter)
 
     def update_semantic_model(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):

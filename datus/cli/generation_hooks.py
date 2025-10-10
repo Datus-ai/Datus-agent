@@ -11,6 +11,7 @@ from rich.syntax import Syntax
 from datus.cli.blocking_input_manager import blocking_input_manager
 from datus.cli.execution_state import execution_controller
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.metric.llm_text_generator import generate_metric_llm_text
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -274,7 +275,7 @@ class GenerationHooks(AgentHooks):
 
             # Print completion separator to prevent action stream from overwriting
             self.console.print("\n" + "=" * 80)
-            self.console.print("[bold green]✓ Generation workflow completed[/]", justify="center")
+            self.console.print("[bold green]✓ Generation workflow completed, generating report...[/]", justify="center")
             self.console.print("=" * 80 + "\n")
 
             # Add delay to ensure message is visible before any new output
@@ -524,17 +525,17 @@ class GenerationHooks(AgentHooks):
 
                 # Check if metric already exists
                 if metric_id not in existing_metrics:
+                    # Generate LLM-friendly text
+                    llm_text = generate_metric_llm_text(metric_doc, data_source)
+
                     metric_dict = {
                         "id": metric_id,
                         "semantic_model_name": semantic_model_name,
                         "domain": domain,
                         "layer1": layer1,
                         "layer2": layer2,
-                        "domain_layer1_layer2": f"{domain}_{layer1}_{layer2}",
                         "name": metric_name,
-                        "description": metric_doc.get("description", ""),
-                        "constraint": metric_doc.get("constraint", ""),
-                        "sql_query": "",  # YAML metrics don't have SQL queries
+                        "llm_text": llm_text,
                         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
                     storage.metric_storage.store([metric_dict])

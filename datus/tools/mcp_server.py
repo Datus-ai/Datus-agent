@@ -163,13 +163,13 @@ class MCPServer:
                             env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
                     elif db_config.type == DBType.STARROCKS:
                         env_settings["MF_DWH_SCHEMA"] = db_config.schema
-                        env_settings["MF_DWH_DIALECT"] = DBType.MYSQL
+                        env_settings["MF_DWH_DIALECT"] = DBType.MYSQL.value
                         env_settings["MF_DWH_HOST"] = db_config.host
                         env_settings["MF_DWH_PORT"] = db_config.port
                         env_settings["MF_DWH_USER"] = db_config.username
                         env_settings["MF_DWH_PASSWORD"] = db_config.password
                         env_settings["MF_DWH_DB"] = database_name
-
+                    logger.debug(f"Environment settings: {env_settings}")
                     mcp_server_params = MCPServerStdioParams(
                         command="uv",
                         args=[

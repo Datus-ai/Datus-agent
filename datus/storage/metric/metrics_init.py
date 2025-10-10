@@ -122,7 +122,6 @@ def process_line(
 
     metrics = gen_metrics(
         semantic_model.get("semantic_model_name", ""),
-        metric_result.sql_queries,
         metric_result.metrics,
         current_metric_meta.domain,
         current_metric_meta.layer1,
@@ -168,7 +167,6 @@ def gen_semantic_model(
 
 def gen_metrics(
     semantic_model_name: str,
-    sql_queries: List[str],
     metrics: List[Metric],
     domain: str,
     layer1: str,
@@ -181,11 +179,9 @@ def gen_metrics(
             domain,
             layer1,
             layer2,
-            metric.description,
-            metric.constraint,
-            sql_query,
+            metric.llm_text,
         )
-        for metric, sql_query in zip(metrics, sql_queries)
+        for metric in metrics
     ]
 
 
@@ -205,9 +201,7 @@ def _build_metric_dict(
     domain: str,
     layer1: str,
     layer2: str,
-    description: str,
-    constraint: str,
-    sql_query: str = "",
+    llm_text: str = "",
 ):
     """Build metric dictionary with common fields."""
     return {
@@ -216,11 +210,8 @@ def _build_metric_dict(
         "domain": domain,
         "layer1": layer1,
         "layer2": layer2,
-        "domain_layer1_layer2": f"{domain}_{layer1}_{layer2}",
         "name": metric_name,
-        "description": description,
-        "constraint": constraint,
-        "sql_query": sql_query,
+        "llm_text": llm_text,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
