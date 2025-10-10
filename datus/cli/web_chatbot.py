@@ -861,34 +861,35 @@ class StreamlitChatbot:
         st.markdown(response)
 
     def render_action_history(self, actions: List[ActionHistory], chat_id: str = None):
-        """Render action history using existing ActionContentGenerator"""
+        """Render complete action history with full details"""
         if not actions:
             return
 
         chat_id = chat_id or "default"
 
-        # Use expander without key parameter (not supported in this Streamlit version)
-        with st.expander("🔍 Execution Step Details", expanded=False):
+        # Display complete execution history (collapsed by default)
+        with st.expander(f"🔍 View Full Execution Details ({len(actions)} steps)", expanded=False):
+            st.caption("Complete execution trace with all intermediate steps")
+
             content_generator = ActionContentGenerator(enable_truncation=False)
 
-            for action in actions:
-                # Use container without key parameter (not supported in this Streamlit version)
+            for i, action in enumerate(actions, 1):
                 with st.container():
-                    # Action header
+                    # Action header with status indicator
                     dot = content_generator._get_action_dot(action)
 
-                    # Format title similar to CLI version
+                    # Format title based on action type
                     if action.role == ActionRole.TOOL:
                         function_name = "unknown"
                         if action.input and isinstance(action.input, dict):
                             function_name = action.input.get("function_name", "unknown")
-                        title = f"{dot} Tool call - {function_name}"
+                        title = f"Step {i}: {dot} Tool call - {function_name}"
                     else:
-                        title = f"{dot} {action.messages}"
+                        title = f"Step {i}: {dot} {action.messages}"
 
-                    # Show action with expander
+                    # Nested expander for each action
                     with st.expander(title, expanded=False):
-                        # Show action details
+                        # Two-column layout for input/output
                         col1, col2 = st.columns([1, 1])
 
                         with col1:
@@ -898,6 +899,8 @@ class StreamlitChatbot:
                                     st.json(action.input)
                                 else:
                                     st.text(str(action.input))
+                            else:
+                                st.caption("(no input)")
 
                         with col2:
                             st.markdown("**Output:**")
@@ -906,13 +909,193 @@ class StreamlitChatbot:
                                     st.json(action.output)
                                 else:
                                     st.text(str(action.output))
+                            else:
+                                st.caption("(no output)")
 
-                        # Show timing info
-                        if action.start_time:
-                            st.caption(f"Start time: {action.start_time.strftime('%H:%M:%S')}")
-                        if action.end_time:
+                        # Timing information
+                        if action.start_time and action.end_time:
                             duration = (action.end_time - action.start_time).total_seconds()
-                            st.caption(f"Duration: {duration:.2f}s")
+                            st.caption(
+                                f"⏱️ Started: {action.start_time.strftime('%H:%M:%S')} | Duration: {duration:.2f}s"
+                            )
+                        elif action.start_time:
+                            st.caption(f"⏱️ Started: {action.start_time.strftime('%H:%M:%S')}")
+
+                    # Add divider between actions
+                    if i < len(actions):
+                        st.divider()
+
+    def _format_action_for_stream(self, action: ActionHistory) -> str:
+        """Format ActionHistory for streaming display with details"""
+        if action.role == ActionRole.TOOL:
+            function_name = action.function_name() or "unknown"
+
+            # Extract input parameters for display
+            input_preview = ""
+            if action.input and isinstance(action.input, dict):
+                # Show key parameters (limit to first 100 chars)
+                params = {k: v for k, v in action.input.items() if k != "function_name"}
+                if params:
+                    param_str = str(params)[:100]
+                    if len(str(params)) > 100:
+                        param_str += "..."
+                    input_preview = f" ({param_str})"
+
+            if action.status == ActionStatus.SUCCESS:
+                # Show output preview for successful tools
+                output_preview = ""
+                if action.output:
+                    if isinstance(action.output, dict):
+                        # Show first key-value or length
+                        if "result" in action.output:
+                            result_str = str(action.output["result"])[:80]
+                            output_preview = (
+                                f" → {result_str}..." if len(str(action.output["result"])) > 80 else f" → {result_str}"
+                            )
+                        elif len(action.output) > 0:
+                            first_key = list(action.output.keys())[0]
+                            output_preview = f" → {first_key}: ..."
+                    else:
+                        output_str = str(action.output)[:80]
+                        output_preview = f" → {output_str}..." if len(str(action.output)) > 80 else f" → {output_str}"
+
+                return f"✓ {function_name}{input_preview}{output_preview}"
+            elif action.status == ActionStatus.RUNNING:
+                return f"⟳ {function_name}{input_preview}..."
+            else:
+                return f"✗ {function_name}{input_preview}"
+        elif action.messages:
+            # Skip LLM thinking messages to avoid clutter
+            return ""
+        return ""
+
+    def execute_chat_stream(self, user_message: str):
+        """Execute chat command with simplified streaming support"""
+        if not self.cli or not self.cli.chat_commands:
+            yield "Error: Please load configuration first!"
+            return
+
+        try:
+            # Parse @context
+            at_tables, at_metrics, at_sqls = self.cli.at_completer.parse_at_context(user_message)
+
+            # Get or create node
+            subagent_name = self.current_subagent
+            need_new_node = self.cli.chat_commands._should_create_new_node(subagent_name)
+            logger.info(f"Need new node: {need_new_node}, subagent_name: {subagent_name}")
+            if need_new_node:
+                current_node = self.cli.chat_commands._create_new_node(subagent_name)
+                self.cli.chat_commands.current_node = current_node
+                if not subagent_name:
+                    self.cli.chat_commands.chat_node = current_node
+            else:
+                current_node = self.cli.chat_commands.current_node
+
+            # Create appropriate input based on node type
+            from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+            from datus.agent.node.semantic_agentic_node import SemanticAgenticNode
+            from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+
+            if isinstance(current_node, SemanticAgenticNode):
+                from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+                node_input = SemanticNodeInput(
+                    user_message=user_message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    prompt_version="1.0",
+                    prompt_language="en",
+                )
+            elif isinstance(current_node, SqlSummaryAgenticNode):
+                from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
+
+                node_input = SqlSummaryNodeInput(
+                    user_message=user_message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    prompt_version="1.0",
+                    prompt_language="en",
+                )
+            elif isinstance(current_node, GenSQLAgenticNode):
+                from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+
+                node_input = GenSQLNodeInput(
+                    user_message=user_message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    schemas=at_tables,
+                    metrics=at_metrics,
+                    historical_sql=at_sqls,
+                    prompt_version="1.0",
+                    prompt_language="en",
+                )
+            else:
+                from datus.schemas.chat_agentic_node_models import ChatNodeInput
+
+                node_input = ChatNodeInput(
+                    user_message=user_message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    schemas=at_tables,
+                    metrics=at_metrics,
+                    historical_sql=at_sqls,
+                    plan_mode=False,
+                )
+
+            # Stream execution with simplified async handling
+            import asyncio
+
+            incremental_actions = []
+
+            async def collect_actions():
+                """Collect all actions from the stream"""
+                async for action in current_node.execute_stream(node_input, self.cli.actions):
+                    incremental_actions.append(action)
+                    formatted = self._format_action_for_stream(action)
+                    if formatted:
+                        yield formatted
+
+            # Execute async generator with proper event loop handling
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                async def run_stream():
+                    async for message in collect_actions():
+                        yield message
+
+                async_gen = run_stream()
+                while True:
+                    try:
+                        result = loop.run_until_complete(async_gen.__anext__())
+                        yield result
+                    except StopAsyncIteration:
+                        break
+
+                # Store session_id and actions
+                session_id = self.get_current_session_id()
+                if session_id:
+                    st.session_state.current_session_id = session_id
+
+                st.session_state.last_stream_actions = incremental_actions
+
+            except Exception as inner_e:
+                logger.error(f"Stream error: {inner_e}")
+                import traceback
+
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                yield f"Error: {str(inner_e)}"
+
+        except Exception as e:
+            logger.error(f"Execution error: {e}")
+            import traceback
+
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            yield f"Error: {str(e)}"
 
     def execute_chat(self, user_message: str) -> List[ActionHistory]:
         """Execute chat command and return actions"""
@@ -1062,44 +1245,80 @@ class StreamlitChatbot:
 
                 # Generate assistant response
                 with st.chat_message("assistant"):
-                    with st.spinner("Processing your query..."):
-                        # Execute chat and get actions
-                        actions = self.execute_chat(prompt)
+                    # Use a simple placeholder for progress display
+                    progress_placeholder = st.empty()
+                    progress_messages = []
 
-                        # Extract SQL and response
-                        sql, response = self.extract_sql_and_response(actions)
+                    # Stream execution with incremental display
+                    for progress_msg in self.execute_chat_stream(prompt):
+                        # Only add non-empty messages
+                        if progress_msg and progress_msg.strip():
+                            progress_messages.append(progress_msg)
 
-                        # Display response
-                        if response:
-                            self.display_markdown_response(response)
-                        else:
-                            st.markdown(
-                                "Sorry, unable to generate a valid response. "
-                                "Please check execution details for more information."
-                            )
+                            # Clear and redraw the entire progress display
+                            with progress_placeholder.container():
+                                with st.status("Processing your query...", expanded=True):
+                                    # Smart display strategy: show only recent messages to avoid UI lag
+                                    max_visible = 15
+                                    if len(progress_messages) <= max_visible:
+                                        # Show all if under limit
+                                        for msg in progress_messages:
+                                            st.text(f"• {msg}")
+                                    else:
+                                        # Show count + recent messages
+                                        hidden_count = len(progress_messages) - max_visible
+                                        st.caption(f"({hidden_count} earlier steps completed)")
+                                        recent_msgs = progress_messages[-max_visible:]
+                                        for msg in recent_msgs:
+                                            st.text(f"• {msg}")
 
-                        # Display SQL if available
-                        if sql:
-                            self.display_sql_with_copy(sql)
+                    # Show final completion status
+                    progress_placeholder.empty()
+                    with progress_placeholder.container():
+                        with st.status(
+                            f"✓ Completed ({len(progress_messages)} steps)", state="complete", expanded=False
+                        ):
+                            st.caption("Click to view execution steps")
+                            for msg in progress_messages:
+                                st.text(f"• {msg}")
 
-                        # Display action history for current conversation - only once per chat
-                        action_render_id = f"{chat_id}_actions"
-                        if actions and action_render_id not in st.session_state.rendered_action_ids:
-                            self.render_action_history(actions, chat_id)
-                            st.session_state.rendered_action_ids.add(action_render_id)
+                    # Get complete actions from stored state
+                    actions = st.session_state.get("last_stream_actions", [])
 
-                    # Add assistant message to chat history
+                    # Extract SQL and response
+                    sql, response = self.extract_sql_and_response(actions)
+
+                    # Display final response
+                    if response:
+                        self.display_markdown_response(response)
+                    else:
+                        st.markdown(
+                            "Sorry, unable to generate a valid response. "
+                            "Please check execution details for more information."
+                        )
+
+                    # Display SQL if available
+                    if sql:
+                        self.display_sql_with_copy(sql)
+
+                    # Display detailed action history (collapsed by default, contains complete data)
+                    action_render_id = f"{chat_id}_actions"
+                    if actions and action_render_id not in st.session_state.rendered_action_ids:
+                        self.render_action_history(actions, chat_id)
+                        st.session_state.rendered_action_ids.add(action_render_id)
+
+                    # Save to chat history with complete data
                     assistant_message = {
                         "role": "assistant",
                         "content": response or "Unable to generate valid response",
                         "sql": sql,
                         "actions": actions,
                         "chat_id": chat_id,
+                        "progress_count": len(progress_messages),
                     }
                     st.session_state.messages.append(assistant_message)
 
                     # Trigger rerun to update sidebar with new session_id
-                    # This ensures the Report Issue button gets the session_id immediately
                     st.rerun()
         else:
             # Show disabled input in read-only mode

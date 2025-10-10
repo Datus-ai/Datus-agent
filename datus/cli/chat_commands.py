@@ -57,6 +57,11 @@ class ChatCommands:
             self.chat_node.setup_tools()
 
     def _should_create_new_node(self, subagent_name: str = None) -> bool:
+        logger.info(
+            f"_should_create_new_node: subaget_name: {subagent_name}, "
+            f"current_node: {self.current_node}, "
+            f"current_subagent_name: {self.current_subagent_name}"
+        )
         """Determine if a new node should be created."""
         if self.current_node is None:
             return True
@@ -153,6 +158,11 @@ class ChatCommands:
             # Get or create node
             if need_new_node:
                 self.current_node = self._create_new_node(subagent_name)
+                logger.info(
+                    f"create_new_node: subagent_name: {subagent_name}, "
+                    f"current_node: {self.current_node}, "
+                    f"current_subagent_name: {self.current_subagent_name}"
+                )
                 self.current_subagent_name = subagent_name if subagent_name else None
                 # Update backward compatibility reference
                 if not subagent_name:
