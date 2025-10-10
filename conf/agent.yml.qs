@@ -17,6 +17,7 @@ agent:
   storage:
     base_path: ~/.datus/data #rag storage base path, meta data path is 'data/datus_db_{namespace}'
     workspace_root: ~/.datus/workspace
+    embedding_device_type: cpu
 
   namespace:
     local_duckdb:
