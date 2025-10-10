@@ -24,6 +24,7 @@ from datus.tools.db_tools.base import BaseSqlConnector, _to_sql_literal, list_to
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_context_switch
 
 logger = get_logger(__name__)
 
@@ -813,6 +814,15 @@ class SnowflakeConnector(BaseSqlConnector):
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(sql_query)
+            switch_context = parse_context_switch(sql=sql_query, dialect=self.dialect)
+            if switch_context:
+                if catalog_name := switch_context.get("catalog_name"):
+                    self.catalog_name = catalog_name
+                if database_name := switch_context.get("database_name"):
+                    self.database_name = database_name
+                if schema_name := switch_context.get("schema_name"):
+                    # This may be problematic when in DuckDB as it supports use <database> and use <schema>
+                    self.schema_name = schema_name
             return ExecuteSQLResult(
                 success=True,
                 sql_query=sql_query,

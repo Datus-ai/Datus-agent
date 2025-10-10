@@ -336,12 +336,117 @@ def strip_sql_comments(sql: str) -> str:
     return sql
 
 
+def _is_escaped(text: str, index: int) -> bool:
+    """Return True if the character at index is escaped by an odd number of backslashes."""
+    backslash_count = 0
+    position = index - 1
+    while position >= 0 and text[position] == "\\":
+        backslash_count += 1
+        position -= 1
+    return backslash_count % 2 == 1
+
+
+_DOLLAR_QUOTE_RE = re.compile(r"\$[A-Za-z_0-9]*\$")
+
+
+def _match_dollar_tag(text: str, index: int) -> Optional[str]:
+    """Return the dollar-quote tag starting at index, if any."""
+    match = _DOLLAR_QUOTE_RE.match(text, index)
+    if not match:
+        return None
+    return match.group(0)
+
+
 def _first_statement(sql: str) -> str:
     """Return the first non-empty statement (before the first ';'), with comments removed."""
     s = strip_sql_comments(sql).strip()
     if not s:
         return ""
-    return s.split(";", 1)[0].strip()
+
+    in_single_quote = False
+    in_double_quote = False
+    in_backtick = False
+    in_bracket = False
+    dollar_tag: Optional[str] = None
+
+    i = 0
+    length = len(s)
+    while i < length:
+        ch = s[i]
+
+        if dollar_tag:
+            if s.startswith(dollar_tag, i):
+                i += len(dollar_tag)
+                dollar_tag = None
+                continue
+            i += 1
+            continue
+
+        if in_single_quote:
+            if ch == "'":
+                if i + 1 < length and s[i + 1] == "'":
+                    i += 2
+                    continue
+                if not _is_escaped(s, i):
+                    in_single_quote = False
+            i += 1
+            continue
+
+        if in_double_quote:
+            if ch == '"':
+                if i + 1 < length and s[i + 1] == '"':
+                    i += 2
+                    continue
+                if not _is_escaped(s, i):
+                    in_double_quote = False
+            i += 1
+            continue
+
+        if in_backtick:
+            if ch == "`":
+                if i + 1 < length and s[i + 1] == "`":
+                    i += 2
+                    continue
+                in_backtick = False
+            i += 1
+            continue
+
+        if in_bracket:
+            if ch == "]":
+                in_bracket = False
+            i += 1
+            continue
+
+        # Not within any quote context
+        if ch == "'":
+            in_single_quote = True
+            i += 1
+            continue
+        if ch == '"':
+            in_double_quote = True
+            i += 1
+            continue
+        if ch == "`":
+            in_backtick = True
+            i += 1
+            continue
+        if ch == "[":
+            in_bracket = True
+            i += 1
+            continue
+        if ch == "$":
+            tag = _match_dollar_tag(s, i)
+            if tag:
+                dollar_tag = tag
+                i += len(tag)
+                continue
+
+        if ch == ";":
+            return s[:i].strip()
+
+        i += 1
+
+    return s.strip()
 
 
 _KEYWORD_SQL_TYPE_MAP: Dict[str, SQLType] = {
@@ -505,3 +610,206 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
 
     inferred = _fallback_sql_type(first_statement)
     return inferred if inferred else SQLType.UNKNOWN
+
+
+_CONTEXT_CMD_RE = re.compile(r"^\s*(use|set)\b", flags=re.IGNORECASE)
+
+
+def _identifier_name(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, expressions.Identifier):
+        return value.name
+    if isinstance(value, expressions.Literal):
+        literal = value.this
+        return literal if isinstance(literal, str) else str(literal)
+    if isinstance(value, expressions.Table):
+        return _identifier_name(value.this)
+    if isinstance(value, expressions.Expression):
+        return value.sql()
+    if isinstance(value, str):
+        return value.strip('"`[]')
+    return str(value)
+
+
+def _table_parts(table_expr: Optional[Table]) -> Dict[str, str]:
+    if not isinstance(table_expr, Table):
+        return {"catalog": "", "database": "", "identifier": ""}
+    args = table_expr.args
+    return {
+        "catalog": _identifier_name(args.get("catalog")),
+        "database": _identifier_name(args.get("db")),
+        "identifier": _identifier_name(args.get("this")),
+    }
+
+
+def _parse_identifier_sequence(value: str, dialect: str) -> Dict[str, str]:
+    parsed = sqlglot.parse_one(f"USE {value}", dialect=dialect, error_level=sqlglot.ErrorLevel.IGNORE)
+    table_expr = parsed.this if isinstance(parsed, expressions.Use) else None
+    return _table_parts(table_expr)
+
+
+def parse_context_switch(sql: str, dialect: str) -> Optional[Dict[str, Any]]:
+    """
+    Parse statements that switch catalog/database/schema context (USE/SET).
+
+    Returns a dict with keys:
+        command: The leading verb ("USE" or "SET")
+        target:  The logical object being switched ("catalog", "database", "schema")
+        catalog_name, database_name, schema_name: Extracted identifiers (empty string if absent)
+        fuzzy: Whether the target inference is best-effort (e.g., DuckDB bare USE)
+        raw: The first statement that was parsed
+    """
+    if not sql or not isinstance(sql, str):
+        return None
+
+    statement = _first_statement(sql)
+    if not statement:
+        return None
+
+    cmd_match = _CONTEXT_CMD_RE.match(statement)
+    if not cmd_match:
+        return None
+
+    command = cmd_match.group(1).upper()
+    normalized_dialect = parse_dialect(dialect)
+
+    result: Dict[str, Any] = {
+        "command": command,
+        "target": "",
+        "catalog_name": "",
+        "database_name": "",
+        "schema_name": "",
+        "fuzzy": False,
+        "raw": statement,
+    }
+
+    if command == "USE":
+        expression = sqlglot.parse_one(statement, dialect=normalized_dialect, error_level=sqlglot.ErrorLevel.IGNORE)
+        if not isinstance(expression, expressions.Use):
+            return None
+        parts = _table_parts(expression.this)
+        kind_expr = expression.args.get("kind")
+        kind = kind_expr.name.upper() if isinstance(kind_expr, expressions.Var) else ""
+
+        catalog = parts["catalog"]
+        database = parts["database"]
+        identifier = parts["identifier"]
+
+        if not identifier and not database and not catalog:
+            return None
+
+        if kind == "CATALOG":
+            result["catalog_name"] = identifier or database or catalog
+            result["target"] = "catalog"
+            return result
+
+        if kind == "DATABASE":
+            result["database_name"] = identifier or database
+            result["target"] = "database"
+            return result
+
+        if kind == "SCHEMA":
+            result["schema_name"] = identifier
+            if catalog:
+                result["catalog_name"] = catalog
+            if database:
+                result["database_name"] = database
+            result["target"] = "schema"
+            return result
+
+        # Dialect-specific fallbacks when the kind keyword is omitted
+        if normalized_dialect == DBType.DUCKDB.value:
+            if database:
+                result["database_name"] = database
+                result["schema_name"] = identifier
+                result["target"] = "schema"
+            else:
+                result["schema_name"] = identifier
+                result["target"] = "schema"
+                result["fuzzy"] = True
+            return result
+
+        if normalized_dialect == DBType.MYSQL.value:
+            result["database_name"] = identifier
+            result["target"] = "database"
+            return result
+
+        if normalized_dialect == DBType.STARROCKS.value:
+            if catalog or (database and not catalog):
+                result["catalog_name"] = catalog or database
+                result["database_name"] = identifier
+            else:
+                result["database_name"] = identifier
+            result["target"] = "database"
+            return result
+
+        if normalized_dialect == DBType.SNOWFLAKE.value:
+            if catalog:
+                result["catalog_name"] = catalog
+                result["database_name"] = database
+                result["schema_name"] = identifier
+                result["target"] = "schema"
+            elif database:
+                result["database_name"] = database
+                result["schema_name"] = identifier
+                result["target"] = "schema"
+            else:
+                result["database_name"] = identifier
+                result["target"] = "database"
+            return result
+
+        # Generic fallback
+        if catalog:
+            result["catalog_name"] = catalog
+        if database:
+            result["database_name"] = database
+        result["schema_name"] = identifier
+        result["target"] = "schema" if database or catalog else "database"
+        return result
+
+    if command == "SET":
+        set_match = re.match(
+            r"^\s*SET\s+(?:SESSION\s+)?(CATALOG|DATABASE|SCHEMA)\s+(.*)$", statement, flags=re.IGNORECASE
+        )
+        if not set_match:
+            return None
+
+        target = set_match.group(1).upper()
+        remainder = set_match.group(2).strip()
+        remainder = remainder.rstrip(";").strip()
+        if remainder.startswith("="):
+            remainder = remainder[1:].strip()
+        elif remainder.upper().startswith("TO "):
+            remainder = remainder[3:].strip()
+
+        if not remainder:
+            return None
+
+        parts = _parse_identifier_sequence(remainder, normalized_dialect)
+        catalog = parts["catalog"]
+        database = parts["database"]
+        identifier = parts["identifier"]
+
+        if target == "CATALOG":
+            result["target"] = "catalog"
+            result["catalog_name"] = identifier or database or catalog
+            return result
+
+        if target == "DATABASE":
+            result["target"] = "database"
+            result["catalog_name"] = catalog
+            result["database_name"] = identifier or database
+            return result
+
+        if target == "SCHEMA":
+            result["target"] = "schema"
+            result["catalog_name"] = catalog
+            result["database_name"] = database
+            result["schema_name"] = identifier
+            if normalized_dialect == DBType.DUCKDB.value and not database:
+                # DuckDB SET SCHEMA mirrors USE without database context.
+                result["fuzzy"] = False
+            return result
+
+    return None
