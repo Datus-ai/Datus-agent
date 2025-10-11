@@ -1,7 +1,13 @@
 import os
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional
 
+import yaml
 from dotenv import load_dotenv
+
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 # Load environment variables from .env file
@@ -95,3 +101,41 @@ def get_env_list(key: str, default: Optional[list] = None, separator: str = ",")
     if value is None:
         return default if default is not None else []
     return [item.strip() for item in value.split(separator)]
+
+
+def load_metricflow_env_settings() -> Optional[Dict[str, Any]]:
+    """
+    Load MetricFlow environment settings from ~/.datus/metricflow/env_settings.yml
+
+    Returns:
+        Dictionary of environment variables if config file exists and is valid, None otherwise
+    """
+    config_path = Path.home() / ".datus" / "metricflow" / "env_settings.yml"
+    if config_path.exists():
+        try:
+            with open(config_path, "r") as f:
+                config_data = yaml.safe_load(f) or {}
+            env_settings = config_data.get("environment_variables", {})
+            logger.info(f"Loaded env_settings from {config_path}")
+            return env_settings
+        except Exception as e:
+            logger.warning(f"Failed to load env_settings from {config_path}: {e}")
+            return None
+    return None
+
+
+def get_metricflow_env(key: str, default: Any = None) -> Optional[str]:
+    """
+    Get MetricFlow environment variable value, prioritizing ~/.datus/metricflow/env_settings.yml
+
+    Args:
+        key: Environment variable name
+        default: Default value if not found
+
+    Returns:
+        Environment variable value from config file or system environment or default value
+    """
+    env_settings = load_metricflow_env_settings()
+    if env_settings and key in env_settings:
+        return env_settings[key]
+    return os.getenv(key, default)

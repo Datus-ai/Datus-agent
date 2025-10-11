@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from datus.configuration.agent_config import DbConfig
@@ -11,6 +10,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
+from datus.utils.env import get_metricflow_env
 from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
@@ -38,7 +38,7 @@ async def generate_semantic_model_with_mcp_stream(
     )
 
     # Setup MCP servers
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=os.getenv("MF_MODEL_PATH"))
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=get_metricflow_env("MF_MODEL_PATH"))
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
         database_name=input_data.sql_task.database_name, db_config=db_config
     )
@@ -73,7 +73,7 @@ def generate_semantic_model_with_mcp(
     if not isinstance(input_data, GenerateSemanticModelInput):
         raise ValueError("Input must be a GenerateSemanticModelInput instance")
 
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=os.getenv("MF_MODEL_PATH"))
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=get_metricflow_env("MF_MODEL_PATH"))
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
         database_name=input_data.sql_task.database_name, db_config=db_config
     )
