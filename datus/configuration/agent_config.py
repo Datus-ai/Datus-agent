@@ -185,6 +185,11 @@ class AgentConfig:
 
     @current_database.setter
     def current_database(self, value):
+        """
+        This field is used to set the current database name.
+        When db_type is sqlite or duckdb, this field is the logical name (the name configured in namespaces),
+        not the database file name.
+        """
         if not value:
             return
         if self.db_type == DBType.SQLITE and value not in self.current_db_configs():

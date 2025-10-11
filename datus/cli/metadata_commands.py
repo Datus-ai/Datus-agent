@@ -126,15 +126,15 @@ class MetadataCommands:
             self.cli.cli_context.update_database_context(
                 db_name=self.cli.db_connector.database_name, db_logic_name=new_db
             )
+            self.cli.agent_config.current_database = new_db
             self.cli.reset_session()
         else:
             self.cli.db_connector.switch_context(database_name=new_db)
+            self.cli.agent_config.current_database = new_db
             self.cli.cli_context.update_database_context(db_name=new_db)
 
         if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
             self.cli.chat_commands.update_chat_node_tools()
-
-        self.cli.agent_config.current_database = self.cli.db_connector.database_name
 
         self.cli.console.print(f"[bold green]Database switched to: {new_db}[/]")
 
