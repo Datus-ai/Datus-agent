@@ -115,9 +115,6 @@ def test_search_metrics(mock_args, capsys, schema_linking_input: List[Dict[str, 
         with patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt:
             mock_internal_prompt.side_effect = [
                 input_data["input_text"],
-                "",  # domain
-                "",  # layer1
-                "",  # layer2
                 input_data["database_name"],
                 "5",
             ]

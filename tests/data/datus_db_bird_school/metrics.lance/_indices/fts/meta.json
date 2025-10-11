@@ -5,37 +5,27 @@
   },
   "segments": [
     {
-      "segment_id": "b246975e-c463-4c17-9fdd-6a840f2c56f0",
+      "segment_id": "cdd066d7-4bd3-429a-be64-a9fa835f7beb",
       "max_doc": 1,
       "deletes": null
     },
     {
-      "segment_id": "1634e532-4758-451f-bf61-ff5c8f8b517a",
+      "segment_id": "03ec489c-3a91-4861-a9b2-f4a76ff43f12",
       "max_doc": 1,
       "deletes": null
     },
     {
-      "segment_id": "6834d6d1-0805-4e14-aed3-19c1c33937cd",
+      "segment_id": "058ee24e-48d0-44bc-a526-34067215331a",
       "max_doc": 1,
       "deletes": null
     },
     {
-      "segment_id": "b6a5a914-e120-44a7-b69f-2d1f1d627e28",
+      "segment_id": "47e7e219-2104-465a-8880-2ea1462f328f",
       "max_doc": 1,
       "deletes": null
     },
     {
-      "segment_id": "6e354e2f-94f9-4c64-9dbd-bac3a78f6228",
-      "max_doc": 1,
-      "deletes": null
-    },
-    {
-      "segment_id": "66199c2b-ce42-4cbf-a8e7-cb221c642c8e",
-      "max_doc": 1,
-      "deletes": null
-    },
-    {
-      "segment_id": "5f2e3af5-4903-4786-ad3f-8ce4a50bb380",
+      "segment_id": "d05a8a6e-c712-4ffb-bd53-20a933ae7a4e",
       "max_doc": 1,
       "deletes": null
     }
@@ -63,46 +53,7 @@
         "stored": true,
         "fast": false
       }
-    },
-    {
-      "name": "description",
-      "type": "text",
-      "options": {
-        "indexing": {
-          "record": "position",
-          "fieldnorms": true,
-          "tokenizer": "default"
-        },
-        "stored": true,
-        "fast": false
-      }
-    },
-    {
-      "name": "constraint",
-      "type": "text",
-      "options": {
-        "indexing": {
-          "record": "position",
-          "fieldnorms": true,
-          "tokenizer": "default"
-        },
-        "stored": true,
-        "fast": false
-      }
-    },
-    {
-      "name": "sql_query",
-      "type": "text",
-      "options": {
-        "indexing": {
-          "record": "position",
-          "fieldnorms": true,
-          "tokenizer": "default"
-        },
-        "stored": true,
-        "fast": false
-      }
     }
   ],
-  "opstamp": 14
+  "opstamp": 10
 }

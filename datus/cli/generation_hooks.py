@@ -414,12 +414,11 @@ class GenerationHooks(AgentHooks):
         try:
             import json
             from datetime import datetime
-            from typing import Set
 
             import yaml
 
             from datus.configuration.agent_config import MetricMeta
-            from datus.storage.metric.init_utils import gen_metric_id, gen_semantic_model_id
+            from datus.storage.metric.init_utils import exists_semantic_metrics, gen_metric_id, gen_semantic_model_id
             from datus.storage.metric.store import rag_by_configuration
 
             # Load YAML file
@@ -442,14 +441,7 @@ class GenerationHooks(AgentHooks):
             storage = rag_by_configuration(self.agent_config)
 
             # Get existing semantic models and metrics
-            existing_semantic_models: Set[str] = set()
-            existing_metrics: Set[str] = set()
-
-            for semantic_model in storage.search_all_semantic_models("", selected_fields=["id", "semantic_model_name"]):
-                existing_semantic_models.add(str(semantic_model["id"]))
-
-            for metric in storage.search_all_metrics("", select_fields=["id"]):
-                existing_metrics.add(str(metric["id"]))
+            existing_semantic_models, existing_metrics = exists_semantic_metrics(storage, build_mode="incremental")
 
             # Get database config
             current_db_config = self.agent_config.current_db_config()
@@ -493,9 +485,6 @@ class GenerationHooks(AgentHooks):
                         "database_name": current_db_config.database or "",
                         "schema_name": current_db_config.schema or "",
                         "table_name": table_name,
-                        "catalog_database_schema": (
-                            f"{current_db_config.catalog}_{current_db_config.database}_{current_db_config.schema}"
-                        ),
                         "domain": domain,
                         "layer1": layer1,
                         "layer2": layer2,

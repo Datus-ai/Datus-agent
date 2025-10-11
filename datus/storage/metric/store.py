@@ -30,7 +30,6 @@ class SemanticModelStorage(BaseEmbeddingStore):
                     pa.field("database_name", pa.string()),
                     pa.field("schema_name", pa.string()),
                     pa.field("table_name", pa.string()),
-                    pa.field("catalog_database_schema", pa.string()),
                     pa.field("domain", pa.string()),
                     pa.field("layer1", pa.string()),
                     pa.field("layer2", pa.string()),
@@ -56,28 +55,20 @@ class SemanticModelStorage(BaseEmbeddingStore):
         self.table.create_scalar_index("catalog_name", replace=True)
         self.table.create_scalar_index("database_name", replace=True)
         self.table.create_scalar_index("schema_name", replace=True)
-        self.table.create_scalar_index("catalog_database_schema", replace=True)
         self.table.create_scalar_index("table_name", replace=True)
         self.table.create_scalar_index("domain", replace=True)
         self.table.create_scalar_index("layer1", replace=True)
         self.table.create_scalar_index("layer2", replace=True)
         self.create_fts_index(["semantic_model_name", "semantic_model_desc", "identifiers", "dimensions", "measures"])
 
-    def search_all(self, database_name: str = "", selected_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def search_all(self, database_name: str = "", select_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Search all schemas for a given database name."""
 
         search_result = self._search_all(
             where=None if not database_name else eq("database_name", database_name),
-            select_fields=selected_fields,
+            select_fields=select_fields,
         )
-        if not selected_fields:
-            return search_result.to_pylist()
-        result = []
-        for i in range(search_result.num_rows):
-            d = {}
-            for k in selected_fields:
-                d[k] = search_result[k][i]
-        return result
+        return search_result.to_pylist()
 
     def filter_by_id(self, id: str) -> List[Dict[str, Any]]:
         # Ensure table is ready before direct table access
@@ -119,15 +110,18 @@ class MetricStorage(BaseEmbeddingStore):
         self.table.create_scalar_index("semantic_model_name", replace=True)
         self.create_fts_index(["name"])
 
-    def search_all(self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None) -> pa.Table:
+    def search_all(
+        self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Search all schemas for a given database name."""
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
-        return self._search_all(
+        search_result = self._search_all(
             where=None if not semantic_model_name else eq("semantic_model_name", semantic_model_name),
             select_fields=select_fields,
         )
+        return search_result.to_pylist()
 
 
 def qualify_name(input_names: List, delimiter: str = "_") -> str:
@@ -154,26 +148,14 @@ class SemanticMetricsRAG:
         self.metric_storage.store_batch(metrics)
 
     def search_all_semantic_models(
-        self, database_name: str, selected_fields: Optional[List[str]] = None
+        self, database_name: str, select_fields: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        return self.semantic_model_storage.search_all(database_name, selected_fields=selected_fields)
+        return self.semantic_model_storage.search_all(database_name, select_fields=select_fields)
 
     def search_all_metrics(
         self, semantic_model_name: str = "", select_fields: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        search_result = self.metric_storage.search_all(semantic_model_name, select_fields=select_fields)
-        if select_fields:
-            # Only return selected fields
-            return [
-                {field: search_result[field][i].as_py() for field in select_fields}
-                for i in range(search_result.num_rows)
-            ]
-        else:
-            # Return all fields
-            return [
-                {field: search_result[field][i].as_py() for field in search_result.column_names}
-                for i in range(search_result.num_rows)
-            ]
+        return self.metric_storage.search_all(semantic_model_name, select_fields=select_fields)
 
     def after_init(self):
         self.semantic_model_storage.create_indices()

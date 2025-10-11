@@ -181,8 +181,11 @@ class ClaudeModel(LLMBaseModel):
         if "top_p" not in kwargs:
             params["temperature"] = kwargs.get("temperature", 0.7)
 
-        # Add any remaining kwargs
-        params.update(kwargs)
+        # Add any remaining kwargs, but ensure temperature is removed when top_p is present
+        kw_copy = dict(kwargs)
+        if "top_p" in kw_copy:
+            kw_copy.pop("temperature", None)
+        params.update(kw_copy)
 
         # Create messages format expected by OpenAI
         if type(prompt) is list:

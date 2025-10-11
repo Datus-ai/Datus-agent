@@ -293,6 +293,7 @@ def process_semantic_yaml_file(
                 current_metric_meta.domain,
                 current_metric_meta.layer1,
                 current_metric_meta.layer2,
+                data_source,
             )
 
             _store_if_not_exists(storage.metric_storage.store, metric_dict, all_metrics, "metric")
@@ -316,7 +317,6 @@ def _build_semantic_model_dict(
         "database_name": database_name,
         "schema_name": schema_name,
         "table_name": table_name,
-        "catalog_database_schema": f"{catalog_name}_{database_name}_{schema_name}",
         "domain": domain,
         "layer1": layer1,
         "layer2": layer2,
@@ -352,14 +352,16 @@ def gen_metric_from_yaml(
     domain: str,
     layer1: str,
     layer2: str,
+    data_source: dict = None,
 ):
+    from datus.storage.metric.llm_text_generator import generate_metric_llm_text
+
+    llm_text = generate_metric_llm_text(metric_doc, data_source)
     return _build_metric_dict(
         semantic_model_name,
         metric_doc.get("name", ""),
         domain,
         layer1,
         layer2,
-        metric_doc.get("description", ""),
-        metric_doc.get("constraint", ""),
-        "",  # YAML metrics don't have SQL queries
+        llm_text,
     )
