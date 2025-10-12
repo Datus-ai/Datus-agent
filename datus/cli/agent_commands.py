@@ -474,19 +474,13 @@ class AgentCommands:
             self.console.print("[bold red]Error:[/] Input text cannot be empty.")
             return
 
-        domain, layer1, layer2 = self._prompt_logic_layer()
-
-        catalog_name, database_name, schema_name = self._prompt_db_layers()
+        database_name, schema_name = self._prompt_db_layers()[1:3]
 
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
 
         with self.console.status("[bold green]Searching for metrics...[/]"):
             result = self.context_search_tools.search_metrics(
                 query_text=input_text,
-                domain=domain,
-                layer1=layer1,
-                layer2=layer2,
-                catalog_name=catalog_name,
                 database_name=database_name,
                 schema_name=schema_name,
                 top_n=int(top_n.strip()),
@@ -502,16 +496,12 @@ class AgentCommands:
                 expand=True,
             )
             table.add_column("Name", style="bold green")
-            table.add_column("Description", style="default")
-            table.add_column("SQL Query", style="default")
-            table.add_column("Constraint", style="yellow")
+            table.add_column("LLM Text", style="default")
 
             for metric in metrics:
                 table.add_row(
                     metric.get("name"),
-                    metric.get("description"),
-                    Syntax(metric.get("sql_query"), lexer="sql", line_numbers=True, word_wrap=True),
-                    metric.get("constraint"),
+                    metric.get("llm_text"),
                 )
             self.console.print(table)
         elif not result.success:

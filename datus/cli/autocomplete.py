@@ -732,22 +732,19 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         from datus.storage.metric.store import rag_by_configuration
 
         storage = rag_by_configuration(self.agent_config).metric_storage
-        data = storage.search_all(
-            select_fields=["domain", "layer1", "layer2", "name", "description", "constraint", "sql_query"]
-        )
+        data = storage.search_all(select_fields=["domain", "layer1", "layer2", "name", "llm_text"])
 
         result = {}
-        for i in range(data.num_rows):
-            domain = data["domain"][i].as_py()
-            layer1 = data["layer1"][i].as_py()
-            layer2 = data["layer2"][i].as_py()
-            name = data["name"][i].as_py()
-            insert_into_dict_with_dict(result, [domain, layer1, layer2], name, data["description"][i])
+        for metric in data:
+            domain = metric.get("domain", "unknown")
+            layer1 = metric.get("layer1", "unknown")
+            layer2 = metric.get("layer2", "unknown")
+            name = metric.get("name", "unknown")
+            llm_text = metric.get("llm_text", "")
+            insert_into_dict_with_dict(result, [domain, layer1, layer2], name, llm_text)
             self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
                 "name": name,
-                "description": data["description"][i].as_py(),
-                "constraint": data["constraint"][i].as_py(),
-                "sql_query": data["sql_query"][i].as_py(),
+                "llm_text": llm_text,
             }
         return result
 

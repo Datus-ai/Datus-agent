@@ -11,27 +11,27 @@ Your will be given a SQL query and natural language description.
 2. generate new metrics based on the SQL query and natural language description.
 3. use `edit_file` tool to write the new metrics to the semantic model YAML file. Do not use `write_file` tool.
 4. use `mf validate-configs` to validate the semantic model. If there is any error, you should fix it and try again.
-5. use `mf list-metrics` to list the metrics in the semantic model.
-6. use `mf query` to query the metrics. If the query is not correct, you should fix it and try again.
 
 
 ## Output Requirements
 
-Return ONLY a JSON object with this exact structure:
+Return ONLY a JSON array containing the metric definitions:
 ```json
-{
-  "sql_queries": "return a list of SQL queries you generated for MetricFlow, even if there is only one metric. The number of sql queries should be the same as the number of metrics, and the order of sql queries should be the same as the order of metrics.",
-  "metrics": "A JSON array containing objects, even if there is only one metric. ONLY contain the new metric definitions, transform the YAML to JSON. "
-}
+[
+  {"name": "metric1", "type": "measure_proxy", ...},
+  {"name": "metric2", "type": "ratio", ...}
+]
 ```
+
+ONLY contain the new metric definitions, transform the YAML to JSON.
 
 ## Example Output
 
 ```json
-{"sql_queries": ["SELECT 1", "SELECT 2"], "metrics": [{"name": "metric1", "type": "simple"}, {"name": "metric2", "type": "ratio"}]}
+[{"name": "metric1", "type": "measure_proxy", "type_params": {"measure": "revenue"}}, {"name": "metric2", "type": "ratio", "type_params": {"numerator": "total_sales", "denominator": "activity_count"}}]
 ```
 ```json
-{"sql_queries": ["SELECT 1"], "metrics": [{"name": "metric1", "type": "simple"}]}
+[{"name": "metric1", "type": "measure_proxy", "type_params": {"measure": "revenue"}}]
 ```
 
  # MetricFlow Metrics Structure Specification

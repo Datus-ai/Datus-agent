@@ -35,6 +35,7 @@ class DateParsingTools:
         """Get all available date parsing function tools."""
         return [
             trans_to_function_tool(self.parse_temporal_expressions),
+            trans_to_function_tool(self.get_current_date),
         ]
 
     def parse_temporal_expressions(
@@ -76,4 +77,26 @@ class DateParsingTools:
 
         except Exception as e:
             logger.error(f"Failed to parse temporal expressions for text '{task_text}': {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def get_current_date(self) -> FuncToolResult:
+        """
+        Get the current date.
+
+        Returns:
+            dict with 'success', 'error', and 'result' containing current date in YYYY-MM-DD format
+        """
+        try:
+            from datus.utils.time_utils import get_default_current_date
+
+            current_date = get_default_current_date(None)
+
+            return FuncToolResult(
+                success=1,
+                error=None,
+                result={"current_date": current_date},
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to get current date: {str(e)}")
             return FuncToolResult(success=0, error=str(e))

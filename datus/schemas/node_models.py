@@ -309,20 +309,16 @@ class Metric(BaseModel):
     """
 
     name: str = Field(..., description="Name of the metric")
-    description: str = Field(..., description="Description of the metric")
-    constraint: str = Field(..., description="Constraint of the metric")
-    sql_query: str = Field(default="", description="SQL query of the metric")
+    llm_text: str = Field(default="", description="LLM-friendly text representation of the metric")
 
     def to_prompt(self, dialect: str = "snowflake") -> str:
-        return ""
+        return self.llm_text if self.llm_text else f"Metric: {self.name}"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Metric:
         return cls(
             name=data.get("name", ""),
-            description=data.get("description", ""),
-            constraint=data.get("constraint", ""),
-            sql_query=data.get("sql_query", ""),
+            llm_text=data.get("llm_text", ""),
         )
 
 

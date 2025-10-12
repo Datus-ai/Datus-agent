@@ -110,11 +110,11 @@ def sample_metric_data():
             "layer1": "Revenue",
             "layer2": "Monthly",
             "name": "monthly_revenue",
-            "description": "Total monthly revenue across all channels",
-            "constraint": "amount > 0",
-            "sql_query": "SELECT SUM(amount) FROM sales WHERE month = CURRENT_MONTH",
+            "llm_text": (
+                "Metric: monthly_revenue\nTotal monthly revenue across all channels\n\n"
+                "Constraint: amount > 0\nSQL: SELECT SUM(amount) FROM sales WHERE month = CURRENT_MONTH"
+            ),
             "semantic_model_name": "sales_model",
-            "domain_layer1_layer2": "Sales_Revenue_Monthly",
             "created_at": "2023-01-01T00:00:00Z",
         },
         {
@@ -122,11 +122,11 @@ def sample_metric_data():
             "layer1": "Revenue",
             "layer2": "Daily",
             "name": "daily_revenue",
-            "description": "Total daily revenue across all channels",
-            "constraint": "amount > 0",
-            "sql_query": "SELECT SUM(amount) FROM sales WHERE date = CURRENT_DATE",
+            "llm_text": (
+                "Metric: daily_revenue\nTotal daily revenue across all channels\n\n"
+                "Constraint: amount > 0\nSQL: SELECT SUM(amount) FROM sales WHERE date = CURRENT_DATE"
+            ),
             "semantic_model_name": "sales_model",
-            "domain_layer1_layer2": "Sales_Revenue_Daily",
             "created_at": "2023-01-02T00:00:00Z",
         },
     ]
@@ -316,12 +316,12 @@ class TestMetricStoragePyArrow:
                 return self.metric_storage.search_all(semantic_model_name, select_fields=select_fields)
 
         rag = MockSemanticMetricsRAG()
-        result = rag.search_all_metrics(select_fields=["name", "description"])
+        result = rag.search_all_metrics(select_fields=["name", "llm_text"])
 
-        assert isinstance(result, pa.Table)
-        assert result.num_rows == 2
-        assert "name" in result.column_names
-        assert "description" in result.column_names
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert all("name" in item for item in result)
+        assert all("llm_text" in item for item in result)
 
     def test_hybrid_metrics_search_with_pyarrow(self, temp_db_path, sample_metric_data):
         """Test hybrid metrics search using PyArrow operations."""
@@ -341,8 +341,8 @@ class TestMetricStoragePyArrow:
         assert filtered_metrics.num_rows == 2
 
         # Test column selection
-        selected_fields = filtered_metrics.select(["name", "description", "constraint", "sql_query"])
-        assert len(selected_fields.column_names) == 4
+        selected_fields = filtered_metrics.select(["name", "llm_text"])
+        assert len(selected_fields.column_names) == 2
 
     def test_metrics_detail_retrieval(self, temp_db_path, sample_metric_data):
         """Test metrics detail retrieval with PyArrow operations."""
@@ -351,8 +351,8 @@ class TestMetricStoragePyArrow:
 
         # Test direct table querying
         result = storage._search_all(
-            where="domain_layer1_layer2 = 'Sales_Revenue_Monthly' and name = 'monthly_revenue'",
-            select_fields=["name", "description", "constraint", "sql_query"],
+            where="domain = 'Sales' and layer1 = 'Revenue' and layer2 = 'Monthly' and name = 'monthly_revenue'",
+            select_fields=["name", "llm_text"],
         )
 
         assert isinstance(result, pa.Table)

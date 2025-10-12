@@ -195,38 +195,19 @@ class MetricsPanel(Vertical):
         self.fields.append(semantic_model_field)
         yield semantic_model_field
 
-        description_field = InputWithLabel(
-            "Description",
-            self.entry.get("description", ""),
-            lines=2,
+        llm_text_field = InputWithLabel(
+            "LLM Text",
+            self.entry.get("llm_text", ""),
+            lines=10,
             readonly=self.readonly,
             language="markdown",
         )
-        self.fields.append(description_field)
-        yield description_field
-        constraint_field = InputWithLabel(
-            "Constraint",
-            self.entry.get("constraint", ""),
-            lines=2,
-            readonly=self.readonly,
-        )
-        self.fields.append(constraint_field)
-        yield constraint_field
-        sql_field = InputWithLabel(
-            "SQL",
-            self.entry.get("sql_query", ""),
-            lines=2,
-            readonly=self.readonly,
-            language="sql",
-        )
-        self.fields.append(sql_field)
-        yield sql_field
+        self.fields.append(llm_text_field)
+        yield llm_text_field
 
     def _fill_data(self):
-        self.fields[0].set_value(self.entry.get("semantic_model_field", ""))
-        self.fields[1].set_value(self.entry.get("description", ""))
-        self.fields[2].set_value(self.entry.get("constraint", ""))
-        self.fields[3].set_value(self.entry.get("sql_query", ""))
+        self.fields[0].set_value(self.entry.get("semantic_model_name", ""))
+        self.fields[1].set_value(self.entry.get("llm_text", ""))
 
     def set_readonly(self, readonly: bool) -> None:
         """
@@ -246,21 +227,15 @@ class MetricsPanel(Vertical):
         """
         Return a dictionary mapping field labels to their current values.
 
-        For metrics, ensure the SQL field maps back to the expected
-        storage key. The DetailField uses a label of "SQL" for the
-        SQL query, but the underlying storage uses the key
-        ``sql_query``. Convert the lowercase label to ``sql_query``
-        when building the result to avoid losing the SQL content on
-        save. Other labels are converted to lowercase directly.
+        Maps field labels to their storage keys.
         """
         values: Dict[str, str] = {}
         for field in self.fields:
             key = field.label_text.lower()
-            # The SQL field in metrics maps to ``sql_query`` in storage.
-            if key == "sql":
-                key = "sql_query"
             if key == "semantic model name":
                 key = "semantic_model_name"
+            if key == "llm text":
+                key = "llm_text"
             values[key] = field.get_value()
         return values
 
@@ -1327,9 +1302,7 @@ class SubjectScreen(ContextScreen):
 
             metric_name = str(metric.get("name", ""))
             semantic_model_name = str(metric.get("semantic_model_name", ""))
-            description = str(metric.get("description", ""))
-            constraint = str(metric.get("constraint", ""))
-            sql_query = str(metric.get("sql_query", ""))
+            llm_text = str(metric.get("llm_text", ""))
 
             table = Table(
                 title=f"[bold cyan]📊 Metric #{idx}: {metric_name}[/bold cyan]",
@@ -1346,15 +1319,8 @@ class SubjectScreen(ContextScreen):
                 table.add_row("Name", metrics_name)
             if semantic_model_name:
                 table.add_row("Semantic Model Name", semantic_model_name)
-            if description:
-                table.add_row("Description", description)
-            if constraint:
-                table.add_row("Constraint", constraint)
-            if sql_query:
-                table.add_row(
-                    "SQL",
-                    Syntax(sql_query, "sql", theme="monokai", word_wrap=True, line_numbers=False),
-                )
+            if llm_text:
+                table.add_row("LLM Text", llm_text)
 
             sections.append(table)
 

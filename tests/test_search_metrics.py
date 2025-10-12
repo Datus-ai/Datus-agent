@@ -86,17 +86,11 @@ def test_empty_vector_and_scalar_query(search_metrics_tool, build_empty_pure_sca
 
 def test_pure_scalar_query(search_metrics_tool):
     search_metrics_tool.store.semantic_model_storage._ensure_table_ready()
-    result = (
-        search_metrics_tool.store.semantic_model_storage.table.search()
-        .where("catalog_database_schema like '%_%_%'")
-        .to_list()
-    )
+    result = search_metrics_tool.store.semantic_model_storage.table.search().to_list()
     assert len(result) > 0
     search_metrics_tool.store.metric_storage._ensure_table_ready()
 
-    result = (
-        search_metrics_tool.store.metric_storage.table.search().where("domain_layer1_layer2 like '%_%_%'").to_list()
-    )
+    result = search_metrics_tool.store.metric_storage.table.search().to_list()
     print(f"result: {result}")
     assert len(result) > 0
 
@@ -121,9 +115,8 @@ def test_invalid_input(search_metrics_tool):
 def test_json():
     metric = Metric(
         name="metric_name",
-        sql_query="SELECT metric_name FROM metrics",
-        description="a description of this metric",
-        constraint="a constraint of this metric",
+        llm_text="Metric: metric_name\na description of this metric\n\nSQL: SELECT metric_name FROM metrics\n"
+        "Filter: a constraint of this metric",
     )
     json_str = json.dumps(metric.__dict__)
     print(f"json:{json_str}")

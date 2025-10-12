@@ -20,10 +20,9 @@ class GenerateMetricsInput(BaseInput):
 class GenerateMetricsResult(BaseResult):
     """
     Result model for generating metrics node.
-    Contains the generated metric file path.
+    Contains the generated metrics.
     """
 
-    sql_queries: List[str] = Field(default_factory=list, description="The SQL queries generated from metrics")
     metrics: List[Metric] = Field(
         default_factory=list, description="The metrics you added to the semantic model YAML file"
     )

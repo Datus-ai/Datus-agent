@@ -57,11 +57,11 @@ def sample_metrics_with_domain_layers():
             "layer1": "Revenue",
             "layer2": "Monthly",
             "name": "monthly_revenue",
-            "description": "Monthly revenue across all channels",
-            "constraint": "revenue > 0",
-            "sql_query": "SELECT SUM(amount) FROM sales WHERE month = ?",
+            "llm_text": (
+                "Metric: monthly_revenue\nMonthly revenue across all channels\n\n"
+                "Constraint: revenue > 0\nSQL: SELECT SUM(amount) FROM sales WHERE month = ?"
+            ),
             "semantic_model_name": "sales_model",
-            "domain_layer1_layer2": "Sales_Revenue_Monthly",
             "created_at": "2023-01-01T00:00:00Z",
         },
         {
@@ -69,11 +69,11 @@ def sample_metrics_with_domain_layers():
             "layer1": "Revenue",
             "layer2": "Daily",
             "name": "daily_revenue",
-            "description": "Daily revenue across all channels",
-            "constraint": "revenue > 0",
-            "sql_query": "SELECT SUM(amount) FROM sales WHERE date = ?",
+            "llm_text": (
+                "Metric: daily_revenue\nDaily revenue across all channels\n\n"
+                "Constraint: revenue > 0\nSQL: SELECT SUM(amount) FROM sales WHERE date = ?"
+            ),
             "semantic_model_name": "sales_model",
-            "domain_layer1_layer2": "Sales_Revenue_Daily",
             "created_at": "2023-01-02T00:00:00Z",
         },
         {
@@ -81,11 +81,11 @@ def sample_metrics_with_domain_layers():
             "layer1": "Campaigns",
             "layer2": "Performance",
             "name": "campaign_ctr",
-            "description": "Campaign click-through rate",
-            "constraint": "ctr BETWEEN 0 AND 1",
-            "sql_query": "SELECT clicks/impressions FROM campaigns WHERE id = ?",
+            "llm_text": (
+                "Metric: campaign_ctr\nCampaign click-through rate\n\n"
+                "Constraint: ctr BETWEEN 0 AND 1\nSQL: SELECT clicks/impressions FROM campaigns WHERE id = ?"
+            ),
             "semantic_model_name": "user_model",
-            "domain_layer1_layer2": "Marketing_Campaigns_Performance",
             "created_at": "2023-01-03T00:00:00Z",
         },
     ]
@@ -136,7 +136,7 @@ class TestSemanticMetricsRAGPyArrow:
         # Simulate the filtering done in search_hybrid_metrics
         semantic_names_set = semantic_search_result["semantic_model_name"].unique()
 
-        filtered_metrics = all_metrics.select(["name", "description", "constraint", "sql_query"]).filter(
+        filtered_metrics = all_metrics.select(["name", "llm_text"]).filter(
             pc.is_in(all_metrics["semantic_model_name"], semantic_names_set)
         )
 
@@ -164,7 +164,7 @@ class TestSemanticMetricsRAGPyArrow:
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0]["name"] == "monthly_revenue"
-        assert result[0]["constraint"] == "revenue > 0"
+        assert "revenue > 0" in result[0]["llm_text"]
 
     def test_domain_layer_concatenation_consistency(self, temp_db_path):
         """Test that domain_layer concatenation is consistent with PyArrow utilities."""
@@ -175,9 +175,7 @@ class TestSemanticMetricsRAGPyArrow:
                 "layer1": "Test/Layer1",
                 "layer2": "Test Layer2",
                 "name": "test_metric",
-                "description": "Test metric description",
-                "constraint": "value > 0",
-                "sql_query": "SELECT 1",
+                "llm_text": "Metric: test_metric\nTest metric description\n\nConstraint: value > 0\nSQL: SELECT 1",
                 "semantic_model_name": "test_model",
                 "created_at": "2023-01-01T00:00:00Z",
             }
@@ -200,20 +198,18 @@ class TestSemanticMetricsRAGPyArrow:
         expected_concat = "Test_Domain_Test_Layer1_Test_Layer2"
         assert domain_layer_concat.to_pylist()[0] == expected_concat
 
-        # Add the concatenated value to the raw data
-        raw_metrics[0]["domain_layer1_layer2"] = expected_concat
-
         # Store and verify
         metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
         metric_storage.store(raw_metrics)
 
         # Verify the stored data can be filtered correctly
         result = metric_storage._search_all(
-            where=f"domain_layer1_layer2 = '{expected_concat}'", select_fields=["name", "domain_layer1_layer2"]
+            where="domain = 'Test Domain' and layer1 = 'Test Layer1' and layer2 = 'Test Layer2'",
+            select_fields=["name", "domain", "layer1", "layer2"],
         )
 
         assert result.num_rows == 1
-        assert result["domain_layer1_layer2"][0].as_py() == expected_concat
+        assert result["domain"][0].as_py() == "Test Domain"
 
 
 class TestPyArrowComputeIntegration:
@@ -329,11 +325,11 @@ class TestPerformanceOptimizations:
                     "layer1": f"Layer1_{i % 5}",
                     "layer2": f"Layer2_{i % 3}",
                     "name": f"metric_{i}",
-                    "description": f"Description for metric {i}",
-                    "constraint": f"value_{i} > 0",
-                    "sql_query": f"SELECT {i} FROM table_{i}",
+                    "llm_text": (
+                        f"Metric: metric_{i}\nDescription for metric {i}\n\n"
+                        f"Constraint: value_{i} > 0\nSQL: SELECT {i} FROM table_{i}"
+                    ),
                     "semantic_model_name": f"model_{i % 20}",
-                    "domain_layer1_layer2": f"Domain_{i % 10}_Layer1_{i % 5}_Layer2_{i % 3}",
                     "created_at": "2023-01-01T00:00:00Z",
                 }
             )
@@ -370,11 +366,11 @@ class TestPerformanceOptimizations:
                     "layer1": "LargeLayer1",
                     "layer2": "LargeLayer2",
                     "name": f"large_metric_{i}",
-                    "description": f"This is a very long description for metric {i} " * 20,  # Large text
-                    "constraint": f"long_constraint_expression_{i} > 0 AND value < 1000",
-                    "sql_query": f"SELECT * FROM very_large_table_{i} WHERE conditions_are_met",
+                    "llm_text": f"Metric: large_metric_{i}\n"
+                    f"This is a very long description for metric {i} " * 20
+                    + f"\n\nConstraint: long_constraint_expression_{i} > 0 AND value < 1000\n"
+                    f"SQL: SELECT * FROM very_large_table_{i} WHERE conditions_are_met",
                     "semantic_model_name": f"large_model_{i % 10}",
-                    "domain_layer1_layer2": "LargeDomain_LargeLayer1_LargeLayer2",
                     "created_at": "2023-01-01T00:00:00Z",
                 }
             )

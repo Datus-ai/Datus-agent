@@ -123,53 +123,25 @@ class ContextSearchTools:
     def search_metrics(
         self,
         query_text: str,
-        domain: str = "",
-        layer1: str = "",
-        layer2: str = "",
-        catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
         top_n=5,
     ) -> FuncToolResult:
         """
         Search for business metrics and KPIs using natural language queries.
-        This tool finds relevant metrics by searching through metric definitions, descriptions, and SQL logic.
-
-        Use this tool when you need to:
-        - Find existing metrics related to a business question
-        - Discover KPIs for reporting and analysis
-        - Locate metrics for specific business domains
-        - Understand how certain metrics are calculated
-
-        **Application Guidance**: If results are found, MUST prioritize reusing the 'sql_query' directly or with minimal
-         adjustments (e.g., add date filters). Integrate 'constraint' as mandatory filters in SQL.
-         Example: If metric is "revenue" with sql_query="SELECT SUM(sales) FROM orders" and
-         constraint="WHERE date > '2020'", use or adjust to "SELECT SUM(sales) FROM orders WHERE date > '2023'".
 
         Args:
-            query_text: Natural language description of the metric you're looking for (e.g., "revenue metrics",
-                "customer engagement", "conversion rates")
-            domain: Business domain to search within (e.g., "sales", "marketing", "finance").
-            layer1: Primary semantic layer for categorization.
-            layer2: Secondary semantic layer for fine-grained categorization.
-            catalog_name: Optional catalog name to filter metrics.
-            database_name: Optional database name to filter metrics.
-            schema_name: Optional schema name to filter metrics.
+            query_text: Natural language description of the metric (e.g., "revenue metrics", "conversion rates")
+            database_name: Optional database name to filter metrics
+            schema_name: Optional schema name to filter metrics
             top_n: Maximum number of results to return (default 5)
 
         Returns:
-            dict: Metric search results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if search failed
-                - 'result' (list): List of matching metrics with name, description, constraint, and sql_query
+            FuncToolResult with list of matching metrics containing name, description, constraint, and sql_query
         """
         try:
             metrics = self.metric_rag.search_hybrid_metrics(
-                domain=domain,
-                layer1=layer1,
-                layer2=layer2,
                 query_text=query_text,
-                catalog_name=catalog_name,
                 database_name=database_name,
                 schema_name=schema_name,
                 top_n=top_n,

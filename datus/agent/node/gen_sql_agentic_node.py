@@ -178,6 +178,10 @@ class GenSQLAgenticNode(AgenticNode):
                     conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
                     self.db_func_tool = DBFuncTool(conn)
                 tool_instance = self.db_func_tool
+            elif tool_type == "date_parsing_tools":
+                if not self.date_parsing_tools:
+                    self.date_parsing_tools = DateParsingTools(self.agent_config, self.model)
+                tool_instance = self.date_parsing_tools
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
                 return

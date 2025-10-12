@@ -663,7 +663,6 @@ class TestNode:
                 assert isinstance(result, GenerateMetricsResult), "Result type mismatch"
                 assert result.success is True, f"Node execution failed: {result}"
                 assert len(result.metrics) > 0, "Metrics is empty"
-                assert len(result.sql_queries) > 0, "SQL queries is empty"
         except Exception as e:
             logger.error(f"Generate metrics node test failed: {str(e)}")
             raise

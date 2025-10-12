@@ -11,6 +11,7 @@ from rich.syntax import Syntax
 from datus.cli.blocking_input_manager import blocking_input_manager
 from datus.cli.execution_state import execution_controller
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.metric.llm_text_generator import generate_metric_llm_text
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -274,7 +275,7 @@ class GenerationHooks(AgentHooks):
 
             # Print completion separator to prevent action stream from overwriting
             self.console.print("\n" + "=" * 80)
-            self.console.print("[bold green]✓ Generation workflow completed[/]", justify="center")
+            self.console.print("[bold green]✓ Generation workflow completed, generating report...[/]", justify="center")
             self.console.print("=" * 80 + "\n")
 
             # Add delay to ensure message is visible before any new output
@@ -413,12 +414,11 @@ class GenerationHooks(AgentHooks):
         try:
             import json
             from datetime import datetime
-            from typing import Set
 
             import yaml
 
             from datus.configuration.agent_config import MetricMeta
-            from datus.storage.metric.init_utils import gen_metric_id, gen_semantic_model_id
+            from datus.storage.metric.init_utils import exists_semantic_metrics, gen_metric_id, gen_semantic_model_id
             from datus.storage.metric.store import rag_by_configuration
 
             # Load YAML file
@@ -441,14 +441,7 @@ class GenerationHooks(AgentHooks):
             storage = rag_by_configuration(self.agent_config)
 
             # Get existing semantic models and metrics
-            existing_semantic_models: Set[str] = set()
-            existing_metrics: Set[str] = set()
-
-            for semantic_model in storage.search_all_semantic_models("", selected_fields=["id", "semantic_model_name"]):
-                existing_semantic_models.add(str(semantic_model["id"]))
-
-            for metric in storage.search_all_metrics("", select_fields=["id"]):
-                existing_metrics.add(str(metric["id"]))
+            existing_semantic_models, existing_metrics = exists_semantic_metrics(storage, build_mode="incremental")
 
             # Get database config
             current_db_config = self.agent_config.current_db_config()
@@ -492,9 +485,6 @@ class GenerationHooks(AgentHooks):
                         "database_name": current_db_config.database or "",
                         "schema_name": current_db_config.schema or "",
                         "table_name": table_name,
-                        "catalog_database_schema": (
-                            f"{current_db_config.catalog}_{current_db_config.database}_{current_db_config.schema}"
-                        ),
                         "domain": domain,
                         "layer1": layer1,
                         "layer2": layer2,
@@ -524,17 +514,17 @@ class GenerationHooks(AgentHooks):
 
                 # Check if metric already exists
                 if metric_id not in existing_metrics:
+                    # Generate LLM-friendly text
+                    llm_text = generate_metric_llm_text(metric_doc, data_source)
+
                     metric_dict = {
                         "id": metric_id,
                         "semantic_model_name": semantic_model_name,
                         "domain": domain,
                         "layer1": layer1,
                         "layer2": layer2,
-                        "domain_layer1_layer2": f"{domain}_{layer1}_{layer2}",
                         "name": metric_name,
-                        "description": metric_doc.get("description", ""),
-                        "constraint": metric_doc.get("constraint", ""),
-                        "sql_query": "",  # YAML metrics don't have SQL queries
+                        "llm_text": llm_text,
                         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
                     storage.metric_storage.store([metric_dict])

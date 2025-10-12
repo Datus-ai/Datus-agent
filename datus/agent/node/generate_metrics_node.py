@@ -238,7 +238,6 @@ class GenerateMetricsNode(Node):
             return GenerateMetricsResult(
                 success=False,
                 error="Metrics generation model not provided",
-                sql_queries=[],
                 metrics=[],
             )
 
@@ -282,7 +281,6 @@ class GenerateMetricsNode(Node):
                         return GenerateMetricsResult(
                             success=False,
                             error=f"Semantic model generation failed: {error_msg}",
-                            sql_queries=[],
                             metrics=[],
                         )
                     else:
@@ -303,7 +301,6 @@ class GenerateMetricsNode(Node):
             return GenerateMetricsResult(
                 success=False,
                 error=str(e),
-                sql_queries=[],
                 metrics=[],
             )
 

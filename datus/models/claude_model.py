@@ -155,6 +155,9 @@ class ClaudeModel(LLMBaseModel):
             )
         except ImportError:
             logger.debug("No langsmith wrapper available")
+
+        # Lazy-loaded async client for tool execution
+        self.async_client = None
         # Session manager is initialized lazily in the base class via property
 
     def generate(self, prompt: Any, **kwargs) -> str:
@@ -168,13 +171,21 @@ class ClaudeModel(LLMBaseModel):
             The generated text response
         """
         # Merge default parameters with any provided kwargs
+        # Note: Claude doesn't allow both temperature and top_p to be specified
         params = {
             "model": self.model_name,
-            "temperature": kwargs.get("temperature", 0.7),
             "max_tokens": kwargs.get("max_tokens", 3000),
-            "top_p": 1.0,
-            **kwargs,
         }
+
+        # Only add temperature if top_p is not specified
+        if "top_p" not in kwargs:
+            params["temperature"] = kwargs.get("temperature", 0.7)
+
+        # Add any remaining kwargs, but ensure temperature is removed when top_p is present
+        kw_copy = dict(kwargs)
+        if "top_p" in kw_copy:
+            kw_copy.pop("temperature", None)
+        params.update(kw_copy)
 
         # Create messages format expected by OpenAI
         if type(prompt) is list:
@@ -591,6 +602,13 @@ class ClaudeModel(LLMBaseModel):
 
         return None
 
+    def _get_async_client(self) -> AsyncOpenAI:
+        """Get or create the shared async OpenAI client."""
+        if self.async_client is None:
+            self.async_client = create_openai_client(AsyncOpenAI, self.api_key, self.api_base + "/v1")
+            logger.debug("Created shared AsyncOpenAI client")
+        return self.async_client
+
     async def _generate_with_tools_internal(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -623,7 +641,7 @@ class ClaudeModel(LLMBaseModel):
             response = self.generate(f"{instruction}\n\n{prompt}", **kwargs)
             return {"content": response, "sql_contexts": []}
 
-        async_client = create_openai_client(AsyncOpenAI, self.api_key, self.api_base + "/v1")
+        async_client = self._get_async_client()
         model_params = {"model": self.model_name}
         async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
@@ -732,7 +750,7 @@ class ClaudeModel(LLMBaseModel):
             yield action
             return
 
-        async_client = create_openai_client(AsyncOpenAI, self.api_key, self.api_base + "/v1")
+        async_client = self._get_async_client()
         model_params = {"model": self.model_name}
         async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
@@ -842,7 +860,7 @@ class ClaudeModel(LLMBaseModel):
 
     def _setup_async_agent(self, instruction: str, mcp_servers: Dict, output_type: dict, **kwargs):
         """Setup async client and agent."""
-        async_client = create_openai_client(AsyncOpenAI, self.api_key, self.api_base + "/v1")
+        async_client = self._get_async_client()
         model_params = {"model": self.model_name}
         async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
@@ -855,65 +873,6 @@ class ClaudeModel(LLMBaseModel):
             model=async_model,
         )
         return agent
-
-    async def _generate_with_mcp_session(
-        self,
-        prompt: Union[str, List[Dict[str, str]]],
-        mcp_servers: Dict[str, MCPServerStdio],
-        instruction: str,
-        output_type: type,
-        max_turns: int,
-        session: SQLiteSession,
-        **kwargs,
-    ) -> Dict:
-        """Generate response with MCP servers and session support."""
-
-        # Custom JSON encoder to handle special types
-        class CustomJSONEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, AnyUrl):
-                    return str(obj)
-                if isinstance(obj, (date, datetime)):
-                    return obj.isoformat()
-                return super().default(obj)
-
-        json._default_encoder = CustomJSONEncoder()
-
-        try:
-            # Use context manager to manage multiple MCP servers
-            async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                # Set up agent with session support
-                async_client = create_openai_client(AsyncOpenAI, self.api_key, self.api_base + "/v1")
-                model_params = {"model": self.model_name}
-                async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
-
-                # Create agent (session is passed to Runner, not Agent)
-                agent = Agent(
-                    name=kwargs.pop("agent_name", "MCP_Session_Agent"),
-                    instructions=instruction,
-                    mcp_servers=list(connected_servers.values()),
-                    output_type=str,  # Use str for compatibility
-                    model=async_model,
-                )
-
-                # Run the agent with session
-                result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
-
-                # Extract content and sql_contexts from result
-                content = ""
-                sql_contexts = []
-
-                if hasattr(result, "content") and result.content:
-                    content = str(result.content)
-                elif hasattr(result, "text") and result.text:
-                    content = str(result.text)
-
-                # For now, return the result in the expected format
-                return {"content": content, "sql_contexts": sql_contexts}
-
-        except Exception as e:
-            logger.error(f"Error in _generate_with_mcp_session: {str(e)}")
-            raise
 
     def _process_tool_call_start(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
         """Process tool_call_item events."""
@@ -1006,8 +965,32 @@ class ClaudeModel(LLMBaseModel):
         else:
             return None
 
+    async def aclose(self):
+        """Async cleanup of resources. Use this for proper cleanup."""
+        if hasattr(self, "async_client") and self.async_client:
+            try:
+                await self.async_client.close()
+                logger.debug("Async OpenAI client closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing async client: {e}")
+
+        if hasattr(self, "proxy_client") and self.proxy_client:
+            try:
+                self.proxy_client.close()
+                logger.debug("Proxy client closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing proxy client: {e}")
+
+        # Close the anthropic client if it has a close method
+        if hasattr(self, "anthropic_client") and hasattr(self.anthropic_client, "close"):
+            try:
+                self.anthropic_client.close()
+                logger.debug("Anthropic client closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing anthropic client: {e}")
+
     def close(self):
-        """Close HTTP clients and cleanup resources."""
+        """Synchronous close - for backward compatibility. Use aclose() for proper cleanup."""
         if hasattr(self, "proxy_client") and self.proxy_client:
             try:
                 self.proxy_client.close()
