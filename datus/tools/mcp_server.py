@@ -149,8 +149,6 @@ class MCPServer:
                         env_settings = {
                             "MF_MODEL_PATH": os.getenv("MF_MODEL_PATH", "/tmp"),
                             "MF_PATH": os.getenv("MF_PATH", ""),
-                            "MF_PROJECT_DIR": os.getenv("MF_PROJECT_DIR", ""),
-                            "MF_VERBOSE": os.getenv("MF_VERBOSE", "false"),
                         }
                         if db_config.type in (DBType.DUCKDB, DBType.SQLITE):
                             env_settings["MF_DWH_SCHEMA"] = db_config.schema or "default_schema"

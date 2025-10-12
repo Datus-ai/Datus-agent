@@ -14,7 +14,6 @@ from datus.storage.metric.llm_text_generator import generate_metric_llm_text
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
 from datus.utils.env import get_metricflow_env
-from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
