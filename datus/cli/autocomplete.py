@@ -736,11 +736,11 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
 
         result = {}
         for metric in data:
-            domain = metric["domain"]
-            layer1 = metric["layer1"]
-            layer2 = metric["layer2"]
-            name = metric["name"]
-            llm_text = metric["llm_text"]
+            domain = metric.get("domain", "unknown")
+            layer1 = metric.get("layer1", "unknown")
+            layer2 = metric.get("layer2", "unknown")
+            name = metric.get("name", "unknown")
+            llm_text = metric.get("llm_text", "")
             insert_into_dict_with_dict(result, [domain, layer1, layer2], name, llm_text)
             self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
                 "name": name,
