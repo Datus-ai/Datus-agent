@@ -115,7 +115,6 @@ def sample_metric_data():
                 "Constraint: amount > 0\nSQL: SELECT SUM(amount) FROM sales WHERE month = CURRENT_MONTH"
             ),
             "semantic_model_name": "sales_model",
-            "domain_layer1_layer2": "Sales_Revenue_Monthly",
             "created_at": "2023-01-01T00:00:00Z",
         },
         {
@@ -128,7 +127,6 @@ def sample_metric_data():
                 "Constraint: amount > 0\nSQL: SELECT SUM(amount) FROM sales WHERE date = CURRENT_DATE"
             ),
             "semantic_model_name": "sales_model",
-            "domain_layer1_layer2": "Sales_Revenue_Daily",
             "created_at": "2023-01-02T00:00:00Z",
         },
     ]
@@ -353,7 +351,7 @@ class TestMetricStoragePyArrow:
 
         # Test direct table querying
         result = storage._search_all(
-            where="domain_layer1_layer2 = 'Sales_Revenue_Monthly' and name = 'monthly_revenue'",
+            where="domain = 'Sales' and layer1 = 'Revenue' and layer2 = 'Monthly' and name = 'monthly_revenue'",
             select_fields=["name", "llm_text"],
         )
 

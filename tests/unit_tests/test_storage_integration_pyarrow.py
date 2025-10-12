@@ -62,7 +62,6 @@ def sample_metrics_with_domain_layers():
                 "Constraint: revenue > 0\nSQL: SELECT SUM(amount) FROM sales WHERE month = ?"
             ),
             "semantic_model_name": "sales_model",
-            "domain_layer1_layer2": "Sales_Revenue_Monthly",
             "created_at": "2023-01-01T00:00:00Z",
         },
         {
@@ -75,7 +74,6 @@ def sample_metrics_with_domain_layers():
                 "Constraint: revenue > 0\nSQL: SELECT SUM(amount) FROM sales WHERE date = ?"
             ),
             "semantic_model_name": "sales_model",
-            "domain_layer1_layer2": "Sales_Revenue_Daily",
             "created_at": "2023-01-02T00:00:00Z",
         },
         {
@@ -88,7 +86,6 @@ def sample_metrics_with_domain_layers():
                 "Constraint: ctr BETWEEN 0 AND 1\nSQL: SELECT clicks/impressions FROM campaigns WHERE id = ?"
             ),
             "semantic_model_name": "user_model",
-            "domain_layer1_layer2": "Marketing_Campaigns_Performance",
             "created_at": "2023-01-03T00:00:00Z",
         },
     ]
@@ -201,20 +198,18 @@ class TestSemanticMetricsRAGPyArrow:
         expected_concat = "Test_Domain_Test_Layer1_Test_Layer2"
         assert domain_layer_concat.to_pylist()[0] == expected_concat
 
-        # Add the concatenated value to the raw data
-        raw_metrics[0]["domain_layer1_layer2"] = expected_concat
-
         # Store and verify
         metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
         metric_storage.store(raw_metrics)
 
         # Verify the stored data can be filtered correctly
         result = metric_storage._search_all(
-            where=f"domain_layer1_layer2 = '{expected_concat}'", select_fields=["name", "domain_layer1_layer2"]
+            where="domain = 'Test Domain' and layer1 = 'Test Layer1' and layer2 = 'Test Layer2'",
+            select_fields=["name", "domain", "layer1", "layer2"],
         )
 
         assert result.num_rows == 1
-        assert result["domain_layer1_layer2"][0].as_py() == expected_concat
+        assert result["domain"][0].as_py() == "Test Domain"
 
 
 class TestPyArrowComputeIntegration:
@@ -335,7 +330,6 @@ class TestPerformanceOptimizations:
                         f"Constraint: value_{i} > 0\nSQL: SELECT {i} FROM table_{i}"
                     ),
                     "semantic_model_name": f"model_{i % 20}",
-                    "domain_layer1_layer2": f"Domain_{i % 10}_Layer1_{i % 5}_Layer2_{i % 3}",
                     "created_at": "2023-01-01T00:00:00Z",
                 }
             )
@@ -377,7 +371,6 @@ class TestPerformanceOptimizations:
                     + f"\n\nConstraint: long_constraint_expression_{i} > 0 AND value < 1000\n"
                     f"SQL: SELECT * FROM very_large_table_{i} WHERE conditions_are_met",
                     "semantic_model_name": f"large_model_{i % 10}",
-                    "domain_layer1_layer2": "LargeDomain_LargeLayer1_LargeLayer2",
                     "created_at": "2023-01-01T00:00:00Z",
                 }
             )
