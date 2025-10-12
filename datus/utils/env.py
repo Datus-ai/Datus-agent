@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -103,6 +104,7 @@ def get_env_list(key: str, default: Optional[list] = None, separator: str = ",")
     return [item.strip() for item in value.split(separator)]
 
 
+@lru_cache(maxsize=1)
 def load_metricflow_env_settings() -> Optional[Dict[str, Any]]:
     """
     Load MetricFlow environment settings from ~/.datus/metricflow/env_settings.yml
@@ -116,6 +118,8 @@ def load_metricflow_env_settings() -> Optional[Dict[str, Any]]:
             with open(config_path, "r") as f:
                 config_data = yaml.safe_load(f) or {}
             env_settings = config_data.get("environment_variables", {})
+            # Convert all values to strings for environment variable compatibility
+            env_settings = {k: str(v) for k, v in env_settings.items()}
             logger.info(f"Loaded env_settings from {config_path}")
             return env_settings
         except Exception as e:
