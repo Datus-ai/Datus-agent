@@ -58,8 +58,8 @@ class ChatCommands:
             # Create new node only if subagent changed or no current node exists
             return self.current_node is None or self.current_subagent_name != subagent_name
         else:
-            # Create new node only if no current node exists
-            return self.current_node is None
+            # Create new node if no current node exists OR switching from subagent to regular chat
+            return self.current_node is None or self.current_subagent_name is not None
 
     def _trigger_compact_for_current_node(self):
         """Trigger compact on current node before switching."""
