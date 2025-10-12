@@ -26,31 +26,20 @@ from datus.utils.traceable_utils import create_openai_client, optional_traceable
 logger = get_logger(__name__)
 
 # Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue in openai-agents 0.3.2
-# We need to patch the ChatCmplStreamHandler.handle_stream method to normalize logprobs before creating ResponseTextDeltaEvent
 try:
-    from agents.models import chatcmpl_stream_handler
+    from agents.models.chatcmpl_stream_handler import ResponseTextDeltaEvent
 
-    # Save the original handle_stream method
-    original_handle_stream = chatcmpl_stream_handler.ChatCmplStreamHandler.handle_stream
-
-    # Create a wrapper that normalizes logprobs
-    async def patched_handle_stream(response, stream):
-        async for event in original_handle_stream(response, stream):
-            # If this is a ResponseTextDeltaEvent being created, normalize logprobs in the data
-            if hasattr(event, '__class__') and event.__class__.__name__ == 'ResponseTextDeltaEvent':
-                # Event already created, check if we need to fix it
-                if hasattr(event, 'logprobs') and event.logprobs == []:
-                    # Use object.__setattr__ to bypass Pydantic's validation
-                    object.__setattr__(event, 'logprobs', None)
-            yield event
-
-    # Replace the original method
-    chatcmpl_stream_handler.ChatCmplStreamHandler.handle_stream = patched_handle_stream
-    logger.debug("Successfully patched ChatCmplStreamHandler.handle_stream to normalize logprobs")
-except ImportError as e:
-    logger.warning(f"Could not import chatcmpl_stream_handler - patch not applied: {e}")
+    # Modify the model field annotation to accept both list and None
+    if hasattr(ResponseTextDeltaEvent, "__annotations__") and "logprobs" in ResponseTextDeltaEvent.__annotations__:
+        # Make logprobs accept list or None
+        ResponseTextDeltaEvent.__annotations__["logprobs"] = Union[list, None]
+        # Rebuild the pydantic model with new annotations
+        ResponseTextDeltaEvent.model_rebuild(force=True)
+        logger.debug("Successfully patched ResponseTextDeltaEvent to accept logprobs as list or None")
+except ImportError:
+    logger.warning("Could not import ResponseTextDeltaEvent - patch not applied")
 except Exception as e:
-    logger.warning(f"Could not patch ChatCmplStreamHandler: {e}")
+    logger.warning(f"Could not patch ResponseTextDeltaEvent: {e}")
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
