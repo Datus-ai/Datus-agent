@@ -40,6 +40,7 @@ class ChatCommands:
         # Chat state management - unified node management
         self.current_node: ChatAgenticNode | None = None  # Can be ChatAgenticNode or GenSQLAgenticNode
         self.chat_node: ChatAgenticNode | None = None  # Kept for backward compatibility
+        self.current_subagent_name: str | None = None  # Track current subagent name
         self.chat_history = []
         self.last_actions = []
 
@@ -54,11 +55,11 @@ class ChatCommands:
     def _should_create_new_node(self, subagent_name: str = None) -> bool:
         """Determine if a new node should be created."""
         if subagent_name:
-            # Always create new node for subagent
-            return True
+            # Create new node only if subagent changed or no current node exists
+            return self.current_node is None or self.current_subagent_name != subagent_name
         else:
-            # Create new node only if no current node exists
-            return self.current_node is None
+            # Create new node if no current node exists OR switching from subagent to regular chat
+            return self.current_node is None or self.current_subagent_name is not None
 
     def _trigger_compact_for_current_node(self):
         """Trigger compact on current node before switching."""
@@ -145,6 +146,7 @@ class ChatCommands:
             # Get or create node
             if need_new_node:
                 self.current_node = self._create_new_node(subagent_name)
+                self.current_subagent_name = subagent_name
                 # Update backward compatibility reference
                 if not subagent_name:
                     self.chat_node = self.current_node
