@@ -84,6 +84,7 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
     ) -> None:
         super().__init__()
         self.level = level
+        self.label = self.level.title() if self.level.title() != "Subject_Entry" else "Name"
         self.current_name = current_name
         self.current_parent = current_parent
         self.parent_tree = parent_tree or []
@@ -95,7 +96,7 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
         with Container():
             with Vertical(id="tree-edit-dialog"):
                 input_widget = InputWithLabel(
-                    label=self.level.title(),
+                    label=self.label,
                     value=self.current_name,
                     readonly=False,
                     regex=self._pattern,

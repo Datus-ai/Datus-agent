@@ -1055,7 +1055,8 @@ Type '.help' for a list of commands or '.exit' to quit.
                 self.cli_context.update_database_context(db_name=self.db_connector.database_name, db_logic_name=db_name)
             else:
                 self.cli_context.update_database_context(
-                    db_name=db_name, db_logic_name=db_name or self.agent_config.current_namespace
+                    db_name=db_name,
+                    db_logic_name=db_name or self.db_connector.database_name or self.agent_config.current_namespace,
                 )
         else:
             self.db_connector = self.db_manager.get_conn(current_namespace, self.cli_context.current_db_name)

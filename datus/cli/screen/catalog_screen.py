@@ -45,7 +45,6 @@ class SemanticModelPanel(Vertical):
     def compose(self) -> ComposeResult:
         pattern = r"^[a-zA-Z0-9_\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+$"
         field_specs = [
-            ("Semantic Model Name", "semantic_model_name", 1, None, pattern),
             ("Domain", "domain", 1, None, pattern),
             ("Layer1", "layer1", 1, None, pattern),
             ("Layer2", "layer2", 1, None, pattern),

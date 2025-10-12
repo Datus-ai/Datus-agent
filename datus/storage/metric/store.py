@@ -354,15 +354,6 @@ class SemanticMetricsRAG:
         self.metric_storage.update(where, update_payload, unique_filter=unique_filter)
 
     def update_semantic_model(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):
-        unique_filter = And(
-            [
-                eq("catalog_name", update_values.get("catalog_name", old_values["catalog_name"])),
-                eq("database_name", update_values.get("database_name", old_values["database_name"])),
-                eq("schema_name", update_values.get("schema_name", old_values["schema_name"])),
-                eq("table_name", update_values.get("table_name", old_values["table_name"])),
-                eq("semantic_model_name", update_values["semantic_model_name"]),
-            ]
-        )
         where = And(
             [
                 eq("catalog_name", old_values["catalog_name"]),
@@ -372,7 +363,7 @@ class SemanticMetricsRAG:
                 eq("semantic_model_name", old_values["semantic_model_name"]),
             ]
         )
-        self.semantic_model_storage.update(where, update_values, unique_filter=unique_filter)
+        self.semantic_model_storage.update(where, update_values, unique_filter=None)
 
 
 def rag_by_configuration(agent_config: AgentConfig):
