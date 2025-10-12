@@ -176,7 +176,6 @@ class MCPServer:
                             env_settings["MF_DWH_PASSWORD"] = db_config.password
                             env_settings["MF_DWH_DB"] = database_name
 
-                    logger.debug(f"Environment settings: {env_settings}")
                     mcp_server_params = MCPServerStdioParams(
                         command="uv",
                         args=[
