@@ -670,7 +670,10 @@ class ChatCommands:
 
         if last_sql_action is None:
             # No SQL action found, skip adding to context
-            logger.warning("No SQL action found in incremental_actions")
+            action_types = [
+                (a.action_type, a.role.value if hasattr(a.role, "value") else a.role) for a in incremental_actions
+            ]
+            logger.warning(f"No SQL action found in incremental_actions. Actions: {action_types}")
             return
 
         action_output = last_sql_action.output

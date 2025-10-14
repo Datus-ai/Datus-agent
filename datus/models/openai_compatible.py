@@ -727,7 +727,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     role=ActionRole.TOOL,
                                     messages=f"Tool call: {tool_name}('{args_display}...')",
                                     action_type=tool_name,
-                                    input={},
+                                    input={"function_name": tool_name, "arguments": tool_info["arguments"]},
                                     output={
                                         "success": True,
                                         "summary": result_summary,
@@ -756,7 +756,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     role=ActionRole.TOOL,
                                     messages="Tool call (orphan)",
                                     action_type="tool_result",
-                                    input={},
+                                    input={"function_name": "unknown"},
                                     output={"success": True},
                                     status=ActionStatus.SUCCESS,
                                 )

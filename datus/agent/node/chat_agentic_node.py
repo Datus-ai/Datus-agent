@@ -249,12 +249,35 @@ class ChatAgenticNode(AgenticNode):
                     or str(last_successful_output)  # Fallback to string representation
                 )
 
-            # Extract SQL and output from the final response_content
-            sql_content, extracted_output = self._extract_sql_and_output_from_response({"content": response_content})
-            if extracted_output:
-                response_content = extracted_output
+            # Extract SQL directly from summary_report action if available
+            sql_content = None
+            for stream_action in reversed(action_history_manager.get_actions()):
+                if stream_action.action_type == "summary_report" and stream_action.output:
+                    if isinstance(stream_action.output, dict):
+                        sql_content = stream_action.output.get("sql")
+                        # Also get the markdown/content if response_content is still empty
+                        if not response_content:
+                            response_content = (
+                                stream_action.output.get("markdown", "")
+                                or stream_action.output.get("content", "")
+                                or stream_action.output.get("response", "")
+                            )
+                        if sql_content:  # Found SQL, stop searching
+                            logger.debug(f"Extracted SQL from summary_report action: {sql_content[:100]}...")
+                            break
+
+            # Fallback: try to extract SQL and output from response_content if not found
+            if not sql_content:
+                extracted_sql, extracted_output = self._extract_sql_and_output_from_response(
+                    {"content": response_content}
+                )
+                if extracted_sql:
+                    sql_content = extracted_sql
+                if extracted_output:
+                    response_content = extracted_output
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
+            logger.debug(f"Final sql_content: {sql_content[:100] if sql_content else 'None'}...")
 
             # Extract token usage from final actions using our new approach
             # With our streaming token fix, only the final assistant action will have accurate usage
@@ -502,7 +525,33 @@ class ChatAgenticNode(AgenticNode):
             content = output.get("content", "")
             logger.info(f"extract_sql_and_output_from_final_resp: {content}")
 
-            # Handle string representation of dictionary with raw_output
+            # Try to parse as direct JSON first (new format)
+            if isinstance(content, str) and content.strip():
+                # Try parsing as direct JSON object
+                try:
+                    import json_repair
+
+                    # Clean content and try to parse as JSON
+                    cleaned_content = strip_json_str(content.strip())
+                    try:
+                        json_content = json_repair.loads(cleaned_content)
+                    except Exception:
+                        json_content = json.loads(cleaned_content)
+
+                    if isinstance(json_content, dict):
+                        sql = json_content.get("sql")
+                        output_text = json_content.get("output")
+
+                        # Unescape output content
+                        if output_text:
+                            output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+
+                        logger.debug(f"Extracted from direct JSON: sql={bool(sql)}, output={bool(output_text)}")
+                        return sql, output_text
+                except (ValueError, SyntaxError, json.JSONDecodeError) as e:
+                    logger.debug(f"Content is not direct JSON: {e}")
+
+            # Handle string representation of dictionary with raw_output (legacy format)
             if isinstance(content, str) and content.strip().startswith("{'"):
                 parsed_dict = None
 
