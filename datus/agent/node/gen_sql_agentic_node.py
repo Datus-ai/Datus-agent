@@ -115,10 +115,18 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
 
+    def _scoped_storage_path(self) -> Optional[str]:
+        path = self.node_config.get("scoped_kb_path")
+        if isinstance(path, str) and path.strip():
+            return path
+        return None
+
     def _setup_context_search_tools(self):
         """Setup context search tools."""
         try:
-            self.context_search_tools = ContextSearchTools(self.agent_config)
+            self.context_search_tools = ContextSearchTools(
+                self.agent_config, scoped_storage_path=self._scoped_storage_path()
+            )
             self.tools.extend(self.context_search_tools.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup context search tools: {e}")
@@ -170,7 +178,9 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             if tool_type == "context_search_tools":
                 if not self.context_search_tools:
-                    self.context_search_tools = ContextSearchTools(self.agent_config)
+                    self.context_search_tools = ContextSearchTools(
+                        self.agent_config, scoped_storage_path=self._scoped_storage_path()
+                    )
                 tool_instance = self.context_search_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:

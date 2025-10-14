@@ -4,7 +4,7 @@ import pytest
 
 from datus.schemas.node_models import Metric, SqlTask
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
-from datus.storage.metric.store import SemanticMetricsRAG, qualify_name, rag_by_configuration
+from datus.storage.metric.store import SemanticMetricsRAG, qualify_name
 from datus.tools.metric_tools.search_metrics import SearchMetricsTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 def metrics_rag() -> SemanticMetricsRAG:
     agent_config = load_acceptance_config(namespace="bird_school")
     agent_config.rag_base_path = "tests/data"
-    return rag_by_configuration(agent_config)
+    return SemanticMetricsRAG(agent_config)
 
 
 @pytest.fixture

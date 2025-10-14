@@ -6,8 +6,6 @@ This module provides context-related commands for the Datus CLI.
 from typing import TYPE_CHECKING
 
 from datus.cli.screen import show_subject_screen
-from datus.storage.metric.store import rag_by_configuration
-from datus.storage.sql_history import sql_history_rag_by_configuration
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -36,7 +34,6 @@ class ContextCommands:
             from datus.cli.screen import show_catalog_screen
 
             # Push the catalogs screen
-            rag = rag_by_configuration(self.cli.agent_config)
             show_catalog_screen(
                 title="Database Catalogs",
                 data={
@@ -44,7 +41,7 @@ class ContextCommands:
                     "catalog_name": self.cli.cli_context.current_catalog,
                     "database_name": self.cli.cli_context.current_db_name,
                     "db_connector": self.cli.db_connector,
-                    "rag": rag,
+                    "agent_config": self.cli.agent_config,
                 },
                 inject_callback=self.cli.catalogs_callback,
             )
@@ -55,12 +52,10 @@ class ContextCommands:
 
     def cmd_subject(self, args: str):
         """Display metrics."""
-        metrics_rag = rag_by_configuration(self.cli.agent_config)
-        sql_rag = sql_history_rag_by_configuration(self.cli.agent_config)
+
         show_subject_screen(
             title="Subject",
             data={
-                "metrics_rag": metrics_rag,
-                "sql_rag": sql_rag,
+                "agent_config": self.cli.agent_config,
             },
         )

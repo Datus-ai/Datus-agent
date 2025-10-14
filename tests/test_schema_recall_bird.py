@@ -7,7 +7,7 @@ from pandas import DataFrame
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.utils.benchmark_utils import load_bird_dev_tasks
 from datus.utils.constants import DBType
 from datus.utils.sql_utils import extract_table_names
@@ -40,7 +40,7 @@ def agent_config() -> AgentConfig:
 
 @pytest.fixture
 def rag(agent_config: AgentConfig) -> SchemaWithValueRAG:
-    return rag_by_configuration(agent_config=agent_config)
+    return SchemaWithValueRAG(agent_config=agent_config)
 
 
 @pytest.mark.parametrize("task_ids", [[0, 1, 2, 3, 4, 5, 6]])

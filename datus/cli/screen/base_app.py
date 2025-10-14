@@ -133,7 +133,7 @@ class BaseApp(App):
             context_str = str(context)
 
         # Log the error
-        logger.error(f"Exception in screen '{screen_name}' during {context_str}: {error}", exc_info=True)
+        logger.error(f"Exception in screen '{screen_name}' during {context_str}: {error}")
 
         # Format error message
         error_msg = self._format_error_message(error)

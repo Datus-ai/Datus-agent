@@ -4,7 +4,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import Metric
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
-from datus.storage.metric.store import SemanticMetricsRAG, rag_by_configuration
+from datus.storage.metric.store import SemanticMetricsRAG
 from datus.tools import BaseTool
 
 
@@ -13,7 +13,6 @@ class SearchMetricsTool(BaseTool):
 
     def __init__(
         self,
-        db_path: str = "data/datus_db",
         store: Optional[SemanticMetricsRAG] = None,
         agent_config: Optional[AgentConfig] = None,
         **kwargs,
@@ -21,10 +20,8 @@ class SearchMetricsTool(BaseTool):
         super().__init__(**kwargs)
         if store:
             self.store = store
-        elif agent_config:
-            self.store = rag_by_configuration(agent_config)
         else:
-            self.store = SemanticMetricsRAG(db_path)
+            self.store = SemanticMetricsRAG(agent_config)
 
     def execute(self, input_param: SearchMetricsInput, model: Optional[LLMBaseModel] = None) -> SearchMetricsResult:
         """Execute search metrics operations."""

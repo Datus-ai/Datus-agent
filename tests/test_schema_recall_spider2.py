@@ -10,7 +10,7 @@ from pandas import DataFrame
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.utils.json_utils import load_jsonl
 
 
@@ -22,7 +22,7 @@ def agent_config() -> AgentConfig:
 @pytest.fixture
 def rag(agent_config: AgentConfig) -> SchemaWithValueRAG:
     # setup schema store
-    rag = rag_by_configuration(agent_config)
+    rag = SchemaWithValueRAG(agent_config)
     return rag
 
 

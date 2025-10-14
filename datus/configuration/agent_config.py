@@ -437,6 +437,9 @@ class AgentConfig:
             )
         return rag_storage_path(self._current_namespace, self.rag_base_path)
 
+    def sub_agent_storage_path(self, sub_agent_name: str):
+        return os.path.join(self.rag_base_path, "sub_agents", sub_agent_name)
+
     def check_init_storage_config(self, storage_type: str, save_config: bool = True):
         check_storage_config(
             storage_type,
@@ -451,6 +454,9 @@ class AgentConfig:
             self.rag_storage_path(),
             config=None if storage_type not in self.storage_configs else self.storage_configs[storage_type],
         )
+
+    def sub_agent_config(self, sub_agent_name: str) -> Dict[str, Any]:
+        return self.agentic_nodes.get(sub_agent_name, {})
 
 
 def rag_storage_path(namespace: str, rag_base_path: str = "data") -> str:

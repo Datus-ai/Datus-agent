@@ -12,7 +12,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
-from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.utils.benchmark_utils import load_bird_dev_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import configure_logging, get_logger
@@ -34,7 +34,7 @@ def agent_config() -> AgentConfig:
 
 @pytest.fixture
 def rag_storage(agent_config: AgentConfig) -> SchemaWithValueRAG:
-    rag_storage = rag_by_configuration(agent_config)
+    rag_storage = SchemaWithValueRAG(agent_config)
     return rag_storage
 
 
@@ -73,7 +73,7 @@ def bird_agent_config() -> AgentConfig:
 
 @pytest.fixture
 def bird_rag_storage(bird_agent_config: AgentConfig) -> SchemaWithValueRAG:
-    return rag_by_configuration(bird_agent_config)
+    return SchemaWithValueRAG(bird_agent_config)
 
 
 @pytest.mark.parametrize("database_name", BIRD_DATABASE_NAMES)

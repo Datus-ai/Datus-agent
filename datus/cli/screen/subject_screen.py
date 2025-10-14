@@ -19,8 +19,10 @@ from textual.worker import get_current_worker
 from datus.cli.screen.base_widgets import EditableTree, FocusableStatic, InputWithLabel, ParentSelectionTree
 from datus.cli.screen.context_screen import ContextScreen
 from datus.cli.subject_rich_utils import build_historical_sql_tags
+from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.sql_history import SqlHistoryRAG
+from datus.storage.subject_manager import SubjectUpdater
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -482,8 +484,9 @@ class SubjectScreen(ContextScreen):
             inject_callback: Callback for injecting data into the CLI
         """
         super().__init__(title=title, context_data=context_data, inject_callback=inject_callback)
-        self.metrics_rag: Optional[SemanticMetricsRAG] = context_data.get("metrics_rag") or context_data.get("rag")
-        self.sql_rag: Optional[SqlHistoryRAG] = context_data.get("sql_rag")
+        self.agent_config: AgentConfig = context_data.get("agent_config")
+        self.metrics_rag: SemanticMetricsRAG = SemanticMetricsRAG(self.agent_config)
+        self.sql_rag: SqlHistoryRAG = SqlHistoryRAG(self.agent_config)
         self.inject_callback = inject_callback
         self.selected_path = ""
         self.readonly = True
@@ -494,6 +497,13 @@ class SubjectScreen(ContextScreen):
         self._editing_component: Optional[str] = None
         self._last_tree_selection: Optional[Dict[str, Any]] = None
         self._active_dialog: TreeEditDialog | None = None
+        self._subject_updater: SubjectUpdater | None = None
+
+    @property
+    def subject_updater(self) -> SubjectUpdater:
+        if self._subject_updater is None:
+            self._subject_updater = SubjectUpdater(self.agent_config)
+        return self._subject_updater
 
     def compose(self) -> ComposeResult:
         header = Header(show_clock=True, name="Metrics & SQL")
@@ -792,10 +802,10 @@ class SubjectScreen(ContextScreen):
         if modified:
             panel.update_data(data)
             if component == "sql":
-                self.sql_rag.update(self.selected_data, data)
+                self.subject_updater.update_historical_sql(self.selected_data, data)
                 _sql_details_cache.cache_clear()
             elif component == "metrics":
-                self.metrics_rag.update_metrics(self.selected_data, data)
+                self.subject_updater.update_metrics_detail(self.selected_data, data)
                 _fetch_metrics_with_cache.cache_clear()
         else:
             self.app.notify(f"No changes detected in {component}.", severity="warning")
@@ -1110,8 +1120,7 @@ class SubjectScreen(ContextScreen):
             if old_path[node_type] == new_path[node_type]:
                 self.app.notify("No changes")
                 return
-        self.metrics_rag.update_metrics(old_path, update_values=new_path)
-        self.sql_rag.update(old_path, update_values=new_path)
+        self.subject_updater.update_domain_layers(old_path, update_values=new_path)
         self._show_subject_details(new_path)
 
         moved_payload = self._apply_tree_edit(node_type, old_path, new_path)
@@ -1468,6 +1477,10 @@ class SubjectScreen(ContextScreen):
 
     def on_unmount(self) -> None:
         self.clear_cache()
+        self._subject_updater = None
+        self.agent_config = None
+        self.sql_rag = None
+        self.metrics_rag = None
 
     def clear_cache(self) -> None:
         _fetch_metrics_with_cache.cache_clear()

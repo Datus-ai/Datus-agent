@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-from typing import List
+import os
+from typing import List, Optional
 
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.document import DocumentStore
-from datus.storage.ext_knowledge.store import rag_by_configuration as ext_knowledge_by_configuration
-from datus.storage.metric.store import rag_by_configuration as metrics_rag_by_configuration
-from datus.storage.schema_metadata.store import rag_by_configuration as schema_metadata_by_configuration
-from datus.storage.sql_history.store import sql_history_rag_by_configuration
+from datus.storage.cache import get_storage_cache_instance
+from datus.storage.ext_knowledge.store import rag_by_configuration
+from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.storage.sql_history.store import SqlHistoryRAG
 from datus.tools.tools import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -16,12 +17,16 @@ logger = get_logger(__name__)
 
 
 class ContextSearchTools:
-    def __init__(self, agent_config: AgentConfig):
-        self.schema_rag = schema_metadata_by_configuration(agent_config)
-        self.metric_rag = metrics_rag_by_configuration(agent_config)
-        self.doc_rag = DocumentStore(agent_config.rag_storage_path())
-        self.ext_knowledge_rag = ext_knowledge_by_configuration(agent_config)
-        self.sql_history_store = sql_history_rag_by_configuration(agent_config)
+    def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
+        self.agent_config = agent_config
+        self.sub_agent_name = sub_agent_name
+        self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name)
+        self.metric_rag = SemanticMetricsRAG(agent_config, sub_agent_name)
+        self.sql_history_store = SqlHistoryRAG(agent_config, sub_agent_name)
+
+        self.doc_rag = get_storage_cache_instance(agent_config).document_storage()
+
+        self.ext_knowledge_rag = rag_by_configuration(agent_config)
 
     def available_tools(self) -> List[Tool]:
         return [
@@ -264,3 +269,16 @@ class ContextSearchTools:
         except Exception as e:
             logger.error(f"Failed to search documents for query '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))
+
+    @staticmethod
+    def _scoped_storage_available(path: str) -> bool:
+        if not os.path.isdir(path):
+            return False
+        required = (
+            "schema_metadata.lance",
+            "schema_value.lance",
+            "metrics.lance",
+            "semantic_model.lance",
+            "sql_history.lance",
+        )
+        return any(os.path.exists(os.path.join(path, name)) for name in required)

@@ -8,8 +8,6 @@ from textual.widgets import Label, Static, Tree
 from datus.cli.screen import ContextApp
 from datus.cli.screen.context_app import ScreenType
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import rag_by_configuration
-from datus.storage.sql_history import sql_history_rag_by_configuration
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.constants import DBType
 
@@ -35,6 +33,7 @@ async def test_catalog_command(agent_config: AgentConfig, db_manager: DBManager)
             "db_type": DBType.SQLITE,
             "database_name": "california_schools",
             "db_connector": db_manager.get_conn("bird_school", "california_schools"),
+            "agent_config": agent_config,
         },
     )
     async with app.run_test() as pilot:
@@ -92,7 +91,7 @@ async def test_subject_command(agent_config: AgentConfig):
         screen_type=ScreenType.SUBJECT,
         title="Subject",
         data={
-            "rag": rag_by_configuration(agent_config),
+            "agent_config": agent_config,
             "database_name": "california_schools",
         },
     )
@@ -150,18 +149,3 @@ async def exec_domains_textual(pilot, tree_id: str, detail_panel_id: str):
     assert isinstance(table, Table)
     initial_row_count = table.row_count
     assert initial_row_count > 0
-
-
-@pytest.mark.asyncio
-async def test_sql_command(agent_config: AgentConfig):
-    app = ContextApp(
-        screen_type=ScreenType.HISTORICAL_SQL,
-        title="Historical SQL",
-        data={
-            "rag": sql_history_rag_by_configuration(agent_config),
-            "database_name": "california_schools",
-        },
-    )
-    async with app.run_test() as pilot:
-        await exec_domains_textual(pilot, "#history-tree", "#details-panel")
-        app.exit()

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
-from datus.storage.schema_metadata.store import rag_by_configuration
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.lineage_graph_tools import SchemaLineageTool
 from datus.utils.constants import DBType
 
@@ -15,7 +15,7 @@ def test_storage_spends():
         end = datetime.now()
         print("init agent config spends", (end - start).total_seconds() * 1000)
         start = datetime.now()
-        rag = rag_by_configuration(agent_config)
+        rag = SchemaWithValueRAG(agent_config)
         end = datetime.now()
         print("init storage spends", (end - start).total_seconds() * 1000)
         start = datetime.now()

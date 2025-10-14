@@ -4,7 +4,7 @@ from typing import List
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import rag_by_configuration
+from datus.storage.metric.store import SemanticMetricsRAG
 from datus.tools.tools import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -21,7 +21,7 @@ class GenerationTools:
 
     def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
-        self.metrics_rag = rag_by_configuration(agent_config)
+        self.metrics_rag = SemanticMetricsRAG(agent_config)
 
     def available_tools(self) -> List[Tool]:
         """
@@ -179,10 +179,10 @@ class GenerationTools:
                     - 'common_tags' (list): Available tags
         """
         try:
-            from datus.storage.sql_history.store import sql_history_rag_by_configuration
+            from datus.storage.sql_history.store import SqlHistoryRAG
 
             # Get SQL history storage
-            storage = sql_history_rag_by_configuration(self.agent_config)
+            storage = SqlHistoryRAG(self.agent_config)
             taxonomy = storage.sql_history_storage.get_existing_taxonomy()
 
             return FuncToolResult(
@@ -218,10 +218,10 @@ class GenerationTools:
                     - 'message' (str): Description message
         """
         try:
-            from datus.storage.sql_history.store import sql_history_rag_by_configuration
+            from datus.storage.sql_history.store import SqlHistoryRAG
 
             # Get SQL history storage
-            storage = sql_history_rag_by_configuration(self.agent_config)
+            storage = SqlHistoryRAG(self.agent_config)
 
             # Search for similar names using FTS
             all_items = storage.search_all_sql_history()
@@ -290,10 +290,10 @@ class GenerationTools:
                     - 'count' (int): Number of results found
         """
         try:
-            from datus.storage.sql_history.store import sql_history_rag_by_configuration
+            from datus.storage.sql_history.store import SqlHistoryRAG
 
             # Get SQL history storage
-            storage = sql_history_rag_by_configuration(self.agent_config)
+            storage = SqlHistoryRAG(self.agent_config)
 
             # Use summary for vector search if available, otherwise use comment
             query_text = summary if summary else comment

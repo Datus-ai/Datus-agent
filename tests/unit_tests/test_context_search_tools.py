@@ -92,16 +92,14 @@ def context_search_tools(
     mock_agent_config, mock_schema_rag, mock_metric_rag, mock_doc_rag, mock_ext_knowledge_rag, mock_sql_history_rag
 ):
     """Create ContextSearchTools instance with mocked dependencies."""
-    with patch(
-        "datus.tools.context_search.schema_metadata_by_configuration", return_value=mock_schema_rag
-    ) as mock_schema, patch(
-        "datus.tools.context_search.metrics_rag_by_configuration", return_value=mock_metric_rag
+    with patch("datus.tools.context_search.SchemaWithValueRAG", return_value=mock_schema_rag) as mock_schema, patch(
+        "datus.tools.context_search.SemanticMetricsRAG", return_value=mock_metric_rag
     ) as mock_metric, patch(
         "datus.tools.context_search.DocumentStore", return_value=mock_doc_rag
     ) as mock_doc_store, patch(
         "datus.tools.context_search.ext_knowledge_by_configuration", return_value=mock_ext_knowledge_rag
     ) as mock_ext, patch(
-        "datus.tools.context_search.sql_history_rag_by_configuration", return_value=mock_sql_history_rag
+        "datus.tools.context_search.SqlHistoryRAG", return_value=mock_sql_history_rag
     ) as mock_sql_history:
         tools = ContextSearchTools(mock_agent_config)
 
@@ -119,6 +117,37 @@ def context_search_tools(
         mock_sql_history.assert_called_once_with(mock_agent_config)
 
         return tools
+
+
+def test_scoped_storage_override_uses_custom_path(mock_agent_config):
+    """Ensure scoped storage path overrides namespace stores when available."""
+    with patch.object(ContextSearchTools, "_scoped_storage_available", return_value=True), patch(
+        "datus.tools.context_search.SchemaWithValueRAG"
+    ) as mock_schema_cls, patch("datus.tools.context_search.SemanticMetricsRAG") as mock_metrics_cls, patch(
+        "datus.tools.context_search.SqlHistoryRAG"
+    ) as mock_sql_cls, patch(
+        "datus.tools.context_search.DocumentStore"
+    ) as mock_doc_cls:
+        ContextSearchTools(mock_agent_config, scoped_storage_path="/tmp/scoped")
+
+        mock_schema_cls.assert_called_once_with("/tmp/scoped")
+        mock_metrics_cls.assert_called_once_with("/tmp/scoped")
+        mock_sql_cls.assert_called_once_with("/tmp/scoped")
+        mock_doc_cls.assert_called_once_with("/tmp/test_rag_storage")
+
+
+def test_scoped_storage_missing_falls_back_to_namespace(mock_agent_config):
+    """When scoped storage unavailable, fall back to namespace-level stores."""
+    with patch.object(ContextSearchTools, "_scoped_storage_available", return_value=False), patch(
+        "datus.tools.context_search.SchemaWithValueRAG"
+    ) as mock_schema_cls, patch("datus.tools.context_search.DocumentStore") as mock_doc_cls, patch(
+        "datus.tools.context_search.ext_knowledge_by_configuration"
+    ) as mock_ext_factory:
+        ContextSearchTools(mock_agent_config, scoped_storage_path="/tmp/missing")
+
+        mock_doc_cls.assert_called_once_with("/tmp/test_rag_storage")
+        mock_schema_cls.assert_called_once_with(mock_agent_config)
+        mock_ext_factory.assert_called_once_with(mock_agent_config)
 
 
 class TestContextSearchTools:

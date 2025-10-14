@@ -26,11 +26,13 @@ from pygments.lexers.data import YamlLexer
 from pygments.lexers.html import HtmlLexer
 
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
+from datus.cli.autocomplete import TableCompleter
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.context_search import ContextSearchTools
 from datus.tools.mcp_tools import MCPTool
 from datus.tools.tools import DBFuncTool
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -79,6 +81,7 @@ class SubAgentWizard:
 
         # Preview updates are suspended during initialization until edit-state is applied
         self._suspend_preview_updates = True
+        self.table_completer: TableCompleter | None = None
 
         # For step 4: Rules list
         self.selected_rule_index = 0
@@ -678,12 +681,16 @@ class SubAgentWizard:
             self._load_mcp_tools_async = _schedule_tools_loading
 
     def _init_step3_scoped_context(self):
+        if self.cli_instance.agent_config.db_type == DBType.SQLITE:
+            self.table_completer = TableCompleter(self.cli_instance.agent_config, True)
+        else:
+            self.table_completer = self.cli_instance.at_completer.table_completer
         self.catalogs_area = TextArea(
             text="",
             multiline=True,
             wrap_lines=True,
             style="class:textarea",
-            completer=LineCompleter(self.cli_instance.at_completer.table_completer),
+            completer=LineCompleter(self.table_completer),
             complete_while_typing=False,
         )
         self.metrics_area = TextArea(
@@ -791,16 +798,16 @@ class SubAgentWizard:
         items = []
         try:
             if kind == "tables":
-                self.cli_instance.at_completer.table_completer.reload_data()
+                # self.cli_instance.at_completer.table_completer.reload_data()
                 # Prefer flatten_data keys for full path; fallback to get_data list
-                if self.cli_instance.at_completer.table_completer.flatten_data:
-                    for key, meta in self.cli_instance.at_completer.table_completer.flatten_data.items():
+                if flatten_data := self.table_completer.flatten_data:
+                    for key, meta in flatten_data.items():
                         disp = key
                         if isinstance(meta, dict) and meta.get("table_type"):
                             disp = f"{key} [{str(meta.get('table_type'))}]"
                         items.append((key, disp))
                 else:
-                    data = self.cli_instance.at_completer.table_completer.get_data() or []
+                    data = self.table_completer.get_data() or []
                     if isinstance(data, list):
                         items = [(v, v) for v in data]
             elif kind == "metrics":
@@ -1166,7 +1173,7 @@ class SubAgentWizard:
             event.app.layout.focus(self.description_area)
 
         # Toggle completion menu for scoped inputs (Ctrl-P)
-        @self.kb.add("c-p", filter=is_scoped_context_input_focused)
+        @self.kb.add("c-p", filter=is_scoped_context_input_focused, eager=True)
         def _(event):
             try:
                 buf = event.app.current_buffer
