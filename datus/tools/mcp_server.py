@@ -249,6 +249,7 @@ class MCPServer:
                             "edit_file",
                             "search_files",
                             "list_directory",
+                            "list_allowed_directories",
                         ]
                     )
 

@@ -709,6 +709,7 @@ def prepare_template_context(
     if agent_config:
         context["agent_config"] = agent_config
         context["namespace"] = getattr(agent_config, "current_namespace", None)
+        context["db_name"] = getattr(agent_config, "current_database", None)
         context["workspace_root"] = workspace_root or agent_config.workspace_root
     logger.debug(f"Prepared template context: {context}")
     return context
