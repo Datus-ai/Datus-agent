@@ -17,6 +17,59 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+def parse_subject_tree(subject_tree_str: str) -> Dict[str, Any]:
+    """
+    Parse subject_tree string into taxonomy structure.
+
+    Args:
+        subject_tree_str: Comma-separated string of domain/layer1/layer2 paths
+
+    Returns:
+        Dict containing taxonomy with domains, layer1_categories, layer2_categories
+    """
+    if not subject_tree_str:
+        return None
+
+    domains_set = set()
+    layer1_set = set()
+    layer2_dict = {}
+
+    paths = [p.strip() for p in subject_tree_str.split(",")]
+
+    for path in paths:
+        parts = path.split("/")
+        if len(parts) != 3:
+            logger.warning(f"Skipping invalid subject_tree path (expected domain/layer1/layer2): {path}")
+            continue
+
+        domain, layer1, layer2 = parts
+        domains_set.add(domain)
+        layer1_set.add((layer1, domain))
+        layer2_dict[layer2] = layer1
+
+    taxonomy = {
+        "domains": [
+            {"name": domain, "description": f"{domain} domain", "examples": []} for domain in sorted(domains_set)
+        ],
+        "layer1_categories": [
+            {"name": layer1, "description": f"{layer1} category", "domain": domain, "examples": []}
+            for layer1, domain in sorted(layer1_set)
+        ],
+        "layer2_categories": [
+            {"name": layer2, "description": f"{layer2} subcategory", "layer1": layer1, "examples": []}
+            for layer2, layer1 in sorted(layer2_dict.items())
+        ],
+        "common_tags": [],
+    }
+
+    logger.info(
+        f"Parsed subject_tree into taxonomy: {len(taxonomy['domains'])} domains, "
+        f"{len(taxonomy['layer1_categories'])} layer1, {len(taxonomy['layer2_categories'])} layer2"
+    )
+
+    return taxonomy
+
+
 def ensure_unique_names(items: List[Dict[str, Any]], llm_tool: LLMTool = None) -> List[Dict[str, Any]]:
     """
     Ensure all SQL items have unique names using a hybrid approach:
@@ -128,7 +181,11 @@ def regenerate_unique_name(llm_tool: LLMTool, item: Dict[str, Any], conflicting_
 
 
 def analyze_sql_history(
-    llm_tool: LLMTool, items: List[Dict[str, Any]], pool_size: int = 4, existing_taxonomy: Dict[str, Any] = None
+    llm_tool: LLMTool,
+    items: List[Dict[str, Any]],
+    pool_size: int = 4,
+    existing_taxonomy: Dict[str, Any] = None,
+    predefined_taxonomy: Dict[str, Any] = None,
 ) -> List[Dict[str, Any]]:
     """
     Analyze SQL history items using LLM interaction process.
@@ -138,6 +195,7 @@ def analyze_sql_history(
         items: List of dict objects containing sql, comment, filepath fields
         pool_size: Number of threads for parallel processing
         existing_taxonomy: Optional existing taxonomy for incremental updates
+        predefined_taxonomy: Optional predefined taxonomy from subject_tree parameter
 
     Returns:
         List of enriched dict objects with additional summary, domain, layer1, layer2, tags, id fields
@@ -156,9 +214,13 @@ def analyze_sql_history(
     logger.info("Step 1.5: Ensuring unique SQL names...")
     items_with_summaries = ensure_unique_names(items_with_summaries, llm_tool)
 
-    # Step 2: Generate classification taxonomy
-    logger.info("Step 2: Generating classification taxonomy...")
-    taxonomy = generate_classification_taxonomy(llm_tool, items_with_summaries, existing_taxonomy)
+    # Step 2: Generate or use classification taxonomy
+    if predefined_taxonomy:
+        logger.info("Step 2: Using predefined classification taxonomy from subject_tree...")
+        taxonomy = predefined_taxonomy
+    else:
+        logger.info("Step 2: Generating classification taxonomy...")
+        taxonomy = generate_classification_taxonomy(llm_tool, items_with_summaries, existing_taxonomy)
 
     for domain in taxonomy.get("domains", []):
         logger.debug(f"Domain: {domain}")
@@ -260,12 +322,20 @@ def init_sql_history(
         model = LLMBaseModel.create_model(global_config)
         llm_tool = LLMTool(model=model)
 
-        # Get existing taxonomy for incremental updates
+        # Check if subject_tree is provided
+        predefined_taxonomy = None
+        if hasattr(args, "subject_tree") and args.subject_tree:
+            logger.info(f"Using predefined subject_tree: {args.subject_tree}")
+            predefined_taxonomy = parse_subject_tree(args.subject_tree)
+
+        # Get existing taxonomy for incremental updates (only if no predefined taxonomy)
         existing_taxonomy = None
-        if build_mode == "incremental":
+        if build_mode == "incremental" and not predefined_taxonomy:
             existing_taxonomy = storage.sql_history_storage.get_existing_taxonomy()
 
-        enriched_items = analyze_sql_history(llm_tool, items_to_process, pool_size, existing_taxonomy)
+        enriched_items = analyze_sql_history(
+            llm_tool, items_to_process, pool_size, existing_taxonomy, predefined_taxonomy
+        )
 
         # enriched_items are already dict format, can store directly
         storage.store_batch(enriched_items)

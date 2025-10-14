@@ -144,6 +144,11 @@ def create_parser() -> argparse.ArgumentParser:
         "--sql_dir", type=str, help="Directory containing SQL files for sql_history component"
     )
     bootstrap_parser.add_argument(
+        "--subject_tree",
+        type=str,
+        help="Predefined taxonomy structure for sql_history classification (e.g., 'domain/layer1/layer2')",
+    )
+    bootstrap_parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Only process and validate SQL files, then exit (for sql_history component)",

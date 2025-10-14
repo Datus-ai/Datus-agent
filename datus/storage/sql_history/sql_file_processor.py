@@ -5,7 +5,9 @@ from typing import Any, Dict, List, Tuple
 
 import sqlglot
 
+from datus.utils.constants import SQLType
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_sql_type
 
 logger = get_logger(__name__)
 
@@ -52,6 +54,7 @@ def remove_outer_parentheses(sql: str) -> str:
 def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
     """
     Parse a SQL file to extract comment-SQL pairs with line numbers.
+    Split by semicolons first, then extract optional comments for each SQL.
 
     Args:
         file_path: Path to the SQL file
@@ -67,56 +70,47 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
         with open(file_path, "r", encoding="gbk") as f:
             content = f.read()
 
-    # Split content by comment lines starting with --
-    # Keep track of line numbers for each section
-    lines = content.split("\n")
+    # First, split by semicolons to get SQL statements
+    sql_blocks = content.split(";")
+
     pairs = []
+    current_line = 1
 
-    i = 0
-    while i < len(lines):
-        # Skip empty lines
-        while i < len(lines) and not lines[i].strip():
-            i += 1
+    for block in sql_blocks:
+        block = block.strip()
+        if not block:
+            continue
 
-        if i >= len(lines):
-            break
+        # Split block into lines to extract comments and SQL
+        lines = block.split("\n")
+        comment_lines = []
+        sql_lines = []
+        block_start_line = current_line
 
-        # Check if this line starts a comment block
-        if lines[i].strip().startswith("--"):
-            comment_start_line = i + 1  # 1-indexed line number
-            comment_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("--"):
+                # Comment line - remove all leading dashes
+                comment_text = re.sub(r"^-+\s*", "", stripped)
+                comment_lines.append(comment_text)
+            elif stripped:
+                # SQL line
+                sql_lines.append(line)
 
-            # Collect all consecutive comment lines
-            while i < len(lines) and lines[i].strip().startswith("--"):
-                comment_lines.append(lines[i].strip().removeprefix("--").strip())
-                i += 1
+        # Update line counter
+        current_line += len(lines)
 
-            # Collect SQL lines until next comment or end of file
-            sql_lines = []
+        # Build comment and SQL
+        comment = " ".join(comment_lines).strip() if comment_lines else ""
+        sql = "\n".join(sql_lines).strip()
 
-            while i < len(lines):
-                line = lines[i].strip()
-                if line.startswith("--"):
-                    # Next comment block found, stop collecting SQL
-                    break
-                if line:  # Only add non-empty lines
-                    sql_lines.append(lines[i])
-                i += 1
+        # Clean up SQL
+        sql = re.sub(r"\n\s*\n", "\n", sql)
+        sql = sql.strip()
 
-            # Process the collected comment and SQL
-            if comment_lines:
-                comment = " ".join(comment_lines).strip()
-                sql = "\n".join(sql_lines).strip()
-
-                # Remove multiple empty lines and clean up SQL
-                sql = re.sub(r"\n\s*\n", "\n", sql)
-                sql = sql.strip()
-
-                if comment and sql:
-                    pairs.append((comment, sql, comment_start_line))
-        else:
-            # Skip non-comment lines at the beginning
-            i += 1
+        # Add to pairs if SQL is not empty
+        if sql:
+            pairs.append((comment, sql, block_start_line))
 
     return pairs
 
@@ -224,6 +218,17 @@ def process_sql_files(sql_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str
             for comment, sql, line_num in pairs:
                 # Remove outer parentheses before validation
                 sql_cleaned_parens = remove_outer_parentheses(sql)
+
+                # Check SQL type - only process SELECT queries
+                try:
+                    sql_type = parse_sql_type(sql_cleaned_parens, "mysql")
+                    if sql_type != SQLType.SELECT:
+                        logger.debug(f"Skipping non-SELECT SQL (type: {sql_type}) at {sql_file}:{line_num}")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Failed to parse SQL type at {sql_file}:{line_num}: {str(e)}")
+                    continue
+
                 is_valid, cleaned_sql, error_msg = validate_sql(sql_cleaned_parens)
 
                 if is_valid:
