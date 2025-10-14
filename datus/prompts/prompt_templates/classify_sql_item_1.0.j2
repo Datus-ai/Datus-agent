@@ -24,9 +24,13 @@ Please classify the following SQL query based on the provided taxonomy.
 {% endfor %}
 
 **Available Tags:**
+{% if taxonomy.common_tags %}
 {% for tag in taxonomy.common_tags %}
 - {{ tag.tag }}: {{ tag.description }}
 {% endfor %}
+{% else %}
+No predefined tags available.
+{% endif %}
 
 Please classify this SQL query in the following JSON format:
 
@@ -46,13 +50,17 @@ Please classify this SQL query in the following JSON format:
 3. **VALIDATION**: Your output values must contain NO spaces - only lowercase letters, numbers, and underscores
 
 **Classification Guidelines:**
+- **CRITICAL: You MUST select from the provided taxonomy above - DO NOT create new domain/layer1/layer2 values**
 - **IMPORTANT: Follow the hierarchical structure strictly**
-- Step 1: Select exactly ONE domain that best fits the business context
-- Step 2: Select exactly ONE layer1 category that belongs to your chosen domain
-- Step 3: Select exactly ONE layer2 category that belongs to your chosen layer1
-- Step 4: Select 2-5 relevant tags from the available tags list
+- Step 1: Select exactly ONE domain from the available domains above
+- Step 2: Select exactly ONE layer1 category that belongs to your chosen domain (verify it's listed under that domain)
+- Step 3: Select exactly ONE layer2 category that belongs to your chosen layer1 (verify it's listed under that layer1)
+- Step 4: {% if taxonomy.common_tags %}Select 2-5 relevant tags from the available tags list{% else %}Leave tags empty or generate appropriate tags if needed{% endif %}
 - **Validation**: Ensure your layer1 actually belongs to your selected domain, and your layer2 actually belongs to your selected layer1
-- Choose the most specific and accurate classifications possible
+- **MANDATORY**: Your domain/layer1/layer2 values MUST exactly match one of the names provided in the taxonomy above
+- Choose the most specific and accurate classifications from the available options
 - If no perfect match exists, choose the closest available option within the correct hierarchy
 - Tags should be comma-separated without spaces after commas
-- **FINAL CHECK**: Before submitting, verify that domain, layer1, and layer2 values contain NO spaces
+- **FINAL CHECK**: Before submitting, verify that:
+  1. Your domain/layer1/layer2 values are exact matches from the taxonomy above
+  2. All values contain NO spaces - only lowercase letters, numbers, and underscores
