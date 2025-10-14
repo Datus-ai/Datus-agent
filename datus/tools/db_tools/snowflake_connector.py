@@ -563,20 +563,23 @@ class SnowflakeConnector(BaseSqlConnector):
             )
         return result
 
-    def _fetch_table_ddl_individually(self, full_name: str) -> str:
-        """Fallback to retrieve table DDLs one by one when bulk retrieval fails."""
-
+    def _fetch_object_ddl(self, object_type: str, full_name: str) -> str:
+        """Retrieve DDL for the given database object."""
         with self.connection.cursor() as cursor:
-            sql = f"SELECT GET_DDL('TABLE', '{full_name}', true)"
+            sql = f"SELECT GET_DDL('{object_type}', '{full_name}', true)"
             try:
                 cursor.execute(sql)
                 row = cursor.fetchone()
                 ddl = row[0] if row else ""
             except Exception as e:  # pragma: no cover - depends on permissions/state
                 logger.warning(f"Failed to get DDL with {sql}: {e}")
-                ddl = f"-- DDL not available for {full_name}: {e}"
+                ddl = f"-- DDL not available for {object_type.lower()} {full_name}: {e}"
 
         return ddl
+
+    def _fetch_table_ddl_individually(self, full_name: str) -> str:
+        """Fallback to retrieve table DDLs one by one when bulk retrieval fails."""
+        return self._fetch_object_ddl("TABLE", full_name)
 
     @override
     def get_tables_with_ddl(
@@ -675,6 +678,72 @@ class SnowflakeConnector(BaseSqlConnector):
                             }
                         )
         return result
+
+    def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
+        """Get list of view names."""
+        views = self._get_tables_per_db(
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            table_type="view",
+        )
+        return [view["table_name"] for view in views]
+
+    def get_materialized_views(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[str]:
+        """Get list of materialized view names."""
+        materialized_views = self._get_tables_per_db(
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            table_type="mv",
+        )
+        return [mv["table_name"] for mv in materialized_views]
+
+    def get_views_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[Dict[str, str]]:
+        """Get view metadata together with their DDL definitions."""
+        view_entries = self._get_tables_per_db(
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            table_type="view",
+        )
+
+        if not view_entries:
+            return []
+
+        for entry in view_entries:
+            full_name = f"""
+{_to_sql_literal(entry["database_name"])}.{_to_sql_literal(entry["schema_name"])}.{_to_sql_literal(entry["table_name"])}
+""".strip()
+            entry["definition"] = self._fetch_object_ddl("VIEW", full_name)
+
+        return view_entries
+
+    def get_materialized_views_with_ddl(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[Dict[str, str]]:
+        """Get materialized view metadata together with their DDL definitions."""
+        mv_entries = self._get_tables_per_db(
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            table_type="mv",
+        )
+
+        if not mv_entries:
+            return []
+
+        for entry in mv_entries:
+            full_name = f"""
+{_to_sql_literal(entry["database_name"])}.{_to_sql_literal(entry["schema_name"])}.{_to_sql_literal(entry["table_name"])}
+""".strip()
+            entry["definition"] = self._fetch_object_ddl("MATERIALIZED VIEW", full_name)
+
+        return mv_entries
 
     def get_type(self) -> str:
         return DBType.SNOWFLAKE
