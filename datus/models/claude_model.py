@@ -119,6 +119,23 @@ class ClaudeModel(LLMBaseModel):
     Implementation of the BaseModel for Claude's API.
     """
 
+    @staticmethod
+    def _setup_custom_json_encoder():
+        """Setup custom JSON encoder for special types (AnyUrl, date, datetime).
+
+        Note: For snowflake mcp server compatibility, can be removed after using native db tools.
+        """
+
+        class CustomJSONEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, AnyUrl):
+                    return str(obj)
+                if isinstance(obj, (date, datetime)):
+                    return obj.isoformat()
+                return super().default(obj)
+
+        json._default_encoder = CustomJSONEncoder()
+
     def __init__(self, model_config: Dict[str, Any]):
         super().__init__(model_config)
         self.api_base = model_config.base_url
@@ -331,15 +348,7 @@ class ClaudeModel(LLMBaseModel):
         """
 
         # Custom JSON encoder to handle special types
-        class CustomJSONEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, AnyUrl):
-                    return str(obj)
-                if isinstance(obj, (date, datetime)):
-                    return obj.isoformat()
-                return super().default(obj)
-
-        json._default_encoder = CustomJSONEncoder()
+        self._setup_custom_json_encoder()
 
         # Create async Anthropic client
         logger.debug(f"Creating async Anthropic client with base_url: " f"{self.api_base}, model: {self.model_name}")
@@ -501,15 +510,7 @@ class ClaudeModel(LLMBaseModel):
             action_history_manager = ActionHistoryManager()
 
         # Setup JSON encoder for special types
-        class CustomJSONEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, AnyUrl):
-                    return str(obj)
-                if isinstance(obj, (date, datetime)):
-                    return obj.isoformat()
-                return super().default(obj)
-
-        json._default_encoder = CustomJSONEncoder()
+        self._setup_custom_json_encoder()
 
         max_retries = 3
         base_delay = 1.0
@@ -625,15 +626,7 @@ class ClaudeModel(LLMBaseModel):
         from agents import Agent, OpenAIChatCompletionsModel, Runner
 
         # Custom JSON encoder for special types
-        class CustomJSONEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, AnyUrl):
-                    return str(obj)
-                if isinstance(obj, (date, datetime)):
-                    return obj.isoformat()
-                return super().default(obj)
-
-        json._default_encoder = CustomJSONEncoder()
+        self._setup_custom_json_encoder()
 
         # If no tools at all, fall back to basic generation
         if not mcp_servers and not tools:
@@ -724,15 +717,7 @@ class ClaudeModel(LLMBaseModel):
         from agents import Agent, OpenAIChatCompletionsModel, Runner
 
         # Custom JSON encoder for special types
-        class CustomJSONEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, AnyUrl):
-                    return str(obj)
-                if isinstance(obj, (date, datetime)):
-                    return obj.isoformat()
-                return super().default(obj)
-
-        json._default_encoder = CustomJSONEncoder()
+        self._setup_custom_json_encoder()
 
         # If no tools at all, return a simple text response
         if not mcp_servers and not tools:
@@ -819,18 +804,11 @@ class ClaudeModel(LLMBaseModel):
                 for tool_action in pending_tool_calls:
                     yield tool_action
 
-                # Yield final success action
-                final_output = result.output if hasattr(result, "output") else {"content": ""}
-                final_action = ActionHistory.create_action(
-                    role=ActionRole.ASSISTANT,
-                    action_type="final_response",
-                    messages="Generation completed",
-                    input_data={"content": ""},
-                    output_data=final_output,
-                    status=ActionStatus.SUCCESS,
-                )
-                action_history_manager.add_action(final_action)
-                yield final_action
+                # Phase 2: Generate final summary report
+                final_output = result.final_output if hasattr(result, "final_output") else ""
+                summary_action = await self._generate_summary_report(final_output, action_history_manager)
+                if summary_action:
+                    yield summary_action
 
             except MaxTurnsExceeded as e:
                 logger.error(f"Max turns exceeded: {str(e)}")
@@ -873,6 +851,172 @@ class ClaudeModel(LLMBaseModel):
             model=async_model,
         )
         return agent
+
+    def _try_parse_json_output(self, content: str) -> Optional[Dict[str, Any]]:
+        """Try to parse content as JSON with sql and output fields.
+
+        Args:
+            content: String content that might be JSON or markdown-wrapped JSON
+
+        Returns:
+            Dict with 'sql' and 'output' keys if successfully parsed, None otherwise
+        """
+        if not content or not isinstance(content, str):
+            return None
+
+        import json
+        import re
+
+        import json_repair
+
+        # Strip markdown code blocks if present
+        content_stripped = content.strip()
+        if content_stripped.startswith("```"):
+            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content_stripped, re.DOTALL)
+            if match:
+                content_stripped = match.group(1).strip()
+
+        # Try direct JSON parsing first, then json_repair
+        try:
+            data = json.loads(content_stripped)
+        except json.JSONDecodeError:
+            try:
+                data = json_repair.loads(content_stripped)
+            except Exception:
+                return None
+
+        # Check if it has the expected structure
+        if isinstance(data, dict) and ("sql" in data or "output" in data or "markdown" in data):
+            output_text = data.get("markdown") or data.get("output", "")
+            return {"sql": data.get("sql"), "output": output_text}
+
+        return None
+
+    async def _generate_summary_report(
+        self, final_output: str, action_history_manager: ActionHistoryManager
+    ) -> Optional[ActionHistory]:
+        """Generate a formatted summary report from LLM final output.
+
+        Extracts SQL and Markdown output from the final LLM response and creates
+        a formatted summary action.
+
+        Args:
+            final_output: The final output from result.final_output
+            action_history_manager: Action history manager for context
+
+        Returns:
+            ActionHistory with formatted summary, or None if no structured output found
+        """
+        import uuid
+
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        # Parse the final output as JSON with sql and output fields
+        parsed = self._try_parse_json_output(final_output)
+        if not parsed:
+            logger.debug("No structured output found for summary report")
+            return None
+
+        sql = parsed.get("sql", "")
+        output_text = parsed.get("output", "")
+
+        if not sql and not output_text:
+            logger.debug("Parsed output has no SQL or text content")
+            return None
+
+        # Format the summary as Markdown
+        # UI will display SQL separately from output["sql"], so only put Analysis Report in messages
+        display_markdown = f"## Analysis Report\n{output_text}" if output_text else "Summary Report"
+
+        # Create summary action with formatted content in messages
+        summary_action = ActionHistory(
+            action_id=str(uuid.uuid4()),
+            role=ActionRole.ASSISTANT,
+            messages=display_markdown,
+            action_type="summary_report",
+            input={},
+            output={
+                "success": True,
+                "sql": sql,
+                "markdown": output_text,
+                "content": output_text,
+                "response": output_text,
+            },
+            status=ActionStatus.SUCCESS,
+        )
+        summary_action.end_time = datetime.now()
+
+        action_history_manager.add_action(summary_action)
+        logger.info("Generated summary report with SQL and analysis")
+
+        return summary_action
+
+    def _format_tool_result_from_dict(self, data: dict, tool_name: str = "") -> str:
+        """Format tool result from dict for display.
+
+        Args:
+            data: Tool result as dict
+            tool_name: Name of the tool (optional)
+
+        Returns:
+            Formatted summary string
+        """
+        _ = tool_name  # Reserved for future use
+
+        # Handle different tool result formats
+        if "result" in data:
+            result_value = data.get("result")
+            if isinstance(result_value, list):
+                return f"{len(result_value)} items"
+            elif isinstance(result_value, int):
+                return f"{result_value} rows"
+            elif isinstance(result_value, dict):
+                if "count" in result_value:
+                    return f"{result_value['count']} items"
+                else:
+                    return "Success"
+            else:
+                return "Success"
+        elif "rows" in data:
+            row_count = data.get("rows", 0)
+            return f"{row_count} rows" if isinstance(row_count, int) else "Success"
+        elif "items" in data:
+            items_count = len(data.get("items", []))
+            return f"{items_count} items"
+        elif "success" in data and len(data) == 1:
+            return "Success" if data["success"] else "Failed"
+        elif "count" in data:
+            return f"{data['count']} items"
+        else:
+            return "Success"
+
+    def _format_tool_result(self, content: str, tool_name: str = "") -> str:
+        """Format tool result for display.
+
+        Args:
+            content: Tool result content (string)
+            tool_name: Name of the tool (optional)
+
+        Returns:
+            Formatted summary string
+        """
+        if not content:
+            return "Empty result"
+
+        try:
+            # Try to parse as JSON and delegate to _format_tool_result_from_dict
+            data = json.loads(content)
+            if isinstance(data, dict):
+                return self._format_tool_result_from_dict(data, tool_name)
+            elif isinstance(data, list):
+                return f"{len(data)} items"
+            else:
+                return f"{str(data)[:50]}"
+
+        except (json.JSONDecodeError, Exception):
+            # Not JSON, return truncated string
+            summary = content[:100].replace("\n", " ")
+            return f"{summary}..." if len(content) > 100 else f"{summary}"
 
     def _process_tool_call_start(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
         """Process tool_call_item events."""
@@ -917,10 +1061,23 @@ class ClaudeModel(LLMBaseModel):
             else:
                 return None
 
+        # Format result summary
+        output_content = event.item.output
+        tool_name = matching_action.action_type if matching_action else ""
+
+        if isinstance(output_content, dict):
+            result_summary = self._format_tool_result_from_dict(output_content, tool_name)
+        elif isinstance(output_content, str):
+            result_summary = self._format_tool_result(output_content, tool_name)
+        else:
+            result_summary = self._format_tool_result(str(output_content), tool_name)
+
         output_data = {
             "call_id": call_id,
             "success": True,
-            "raw_output": event.item.output,
+            "raw_output": output_content,
+            "summary": result_summary,
+            "status_message": result_summary,
         }
 
         action_history_manager.update_action_by_id(
