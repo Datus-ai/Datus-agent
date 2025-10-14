@@ -2,7 +2,6 @@ import argparse
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
 
@@ -16,7 +15,6 @@ if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
 
 logger = get_logger(__name__)
-console = Console()
 
 
 class SubAgentCommands:
@@ -58,12 +56,16 @@ class SubAgentCommands:
             self._list_agents()
         elif command == "remove":
             if not cmd_args:
-                console.print("[bold red]Error:[/] Agent name is required for remove.", style="bold red")
+                self.cli_instance.console.print(
+                    "[bold red]Error:[/] Agent name is required for remove.", style="bold red"
+                )
                 return
             self._remove_agent(cmd_args[0])
         elif command == "update":
             if not cmd_args:
-                console.print("[bold red]Error:[/] Agent name is required for update.", style="bold red")
+                self.cli_instance.console.print(
+                    "[bold red]Error:[/] Agent name is required for update.", style="bold red"
+                )
                 return
             self._cmd_update_agent(cmd_args[0])
         elif command == "bootstrap":
@@ -73,11 +75,11 @@ class SubAgentCommands:
             self._show_help()
 
     def _show_help(self):
-        console.print("Usage: .subagent [add|list|remove|update|bootstrap] [args]", style="bold cyan")
-        console.print(" - [bold]add[/]: Launch the interactive wizard to add a new agent.")
-        console.print(" - [bold]list[/]: List all configured sub-agents.")
-        console.print(" - [bold]remove <agent_name>[/]: Remove a configured sub-agent.")
-        console.print(
+        self.cli_instance.console.print("Usage: .subagent [add|list|remove|update|bootstrap] [args]", style="bold cyan")
+        self.cli_instance.console.print(" - [bold]add[/]: Launch the interactive wizard to add a new agent.")
+        self.cli_instance.console.print(" - [bold]list[/]: List all configured sub-agents.")
+        self.cli_instance.console.print(" - [bold]remove <agent_name>[/]: Remove a configured sub-agent.")
+        self.cli_instance.console.print(
             " - [bold]bootstrap <agent_name>[/]: Build scoped knowledge base "
             "[dim](--components metadata,metrics,sql_history --plan to simulate)[/]"
         )
@@ -89,7 +91,7 @@ class SubAgentCommands:
     def _cmd_update_agent(self, sub_agent_name):
         existing = self.sub_agent_manager.get_agent(sub_agent_name)
         if existing is None:
-            console.print("[bold red]Error:[/] Agent not found.")
+            self.cli_instance.console.print("[bold red]Error:[/] Agent not found.")
             return
         self._do_update_agent(existing, original_name=sub_agent_name)
 
@@ -120,7 +122,7 @@ class SubAgentCommands:
 
         existing = self.sub_agent_manager.get_agent(parsed.name)
         if existing is None:
-            console.print(f"[bold red]Error:[/] Agent '[cyan]{parsed.name}[/]' not found.")
+            self.cli_instance.console.print(f"[bold red]Error:[/] Agent '[cyan]{parsed.name}[/]' not found.")
             return
 
         config = SubAgentConfig.model_validate(existing)
@@ -130,7 +132,7 @@ class SubAgentCommands:
         """Lists all configured sub-agents from agent.yml."""
         agents = self.sub_agent_manager.list_agents()
         if not agents:
-            console.print("No sub-agents configured.", style="yellow")
+            self.cli_instance.console.print("No sub-agents configured.", style="yellow")
             return
         show_agents: List[SubAgentConfig] = []
         # filter by namespace
@@ -165,7 +167,7 @@ class SubAgentCommands:
                 Syntax("\n".join(f"- {item}" for item in rules), "markdown"),
             )
 
-        console.print(table)
+        self.cli_instance.console.print(table)
 
     def _normalize_components(self, value: Optional[str]) -> Optional[List[str]]:
         if not value:
@@ -175,7 +177,7 @@ class SubAgentCommands:
             return list(SUPPORTED_COMPONENTS)
         invalid = [comp for comp in components if comp not in SUPPORTED_COMPONENTS]
         if invalid:
-            console.print(
+            self.cli_instance.console.print(
                 f"[bold red]Unsupported components:[/] {', '.join(invalid)}\n"
                 f"Supported components: {', '.join(SUPPORTED_COMPONENTS)}"
             )
@@ -194,7 +196,7 @@ class SubAgentCommands:
             config,
             components=selected_components,
             strategy=strategy,
-            console=console,
+            console=self.cli_instance.console,
         )
         self._render_bootstrap_report(result)
 
@@ -202,7 +204,7 @@ class SubAgentCommands:
             try:
                 self.sub_agent_manager.save_agent(config, previous_name=config.system_prompt)
             except Exception as exc:
-                console.print(f"[bold red]Failed to persist scoped KB path:[/] {exc}")
+                self.cli_instance.console.print(f"[bold red]Failed to persist scoped KB path:[/] {exc}")
                 logger.error("Failed to persist scoped KB for '%s': %s", config.system_prompt, exc)
             else:
                 self._refresh_agent_config()
@@ -225,9 +227,9 @@ class SubAgentCommands:
                 component_result.message,
             )
 
-        console.print(table)
+        self.cli_instance.console.print(table)
         path_prefix = "Simulated scoped directory" if result.strategy == "plan" else "Scoped directory"
-        console.print(f"{path_prefix}: [cyan]{result.storage_path}[/]")
+        self.cli_instance.console.print(f"{path_prefix}: [cyan]{result.storage_path}[/]")
 
         for component_result in result.results:
             if not component_result.details:
@@ -238,7 +240,7 @@ class SubAgentCommands:
                 if not missing and not invalid:
                     continue
             pretty = json.dumps(component_result.details, indent=2, ensure_ascii=False)
-            console.print(Syntax(pretty, "json"))
+            self.cli_instance.console.print(Syntax(pretty, "json"))
 
     @staticmethod
     def _format_scoped_context(value: Any) -> Union[str, Syntax]:
@@ -267,13 +269,15 @@ class SubAgentCommands:
         try:
             removed = self.sub_agent_manager.remove_agent(agent_name)
         except Exception as exc:
-            console.print(f"[bold red]Error removing agent:[/] {exc}")
+            self.cli_instance.console.print(f"[bold red]Error removing agent:[/] {exc}")
             logger.error("Failed to remove agent '%s': %s", agent_name, exc)
             return
         if not removed:
-            console.print(f"[bold red]Error:[/] Agent '[bold cyan]{agent_name}[/]' not found.", style="bold red")
+            self.cli_instance.console.print(
+                f"[bold red]Error:[/] Agent '[bold cyan]{agent_name}[/]' not found.", style="bold red"
+            )
             return
-        console.print(f"- Removed agent '[bold green]{agent_name}[/]' from configuration.")
+        self.cli_instance.console.print(f"- Removed agent '[bold green]{agent_name}[/]' from configuration.")
 
     def _do_update_agent(
         self, data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None, original_name: Optional[str] = None
@@ -281,11 +285,13 @@ class SubAgentCommands:
         try:
             result = run_wizard(self.cli_instance, data)
         except Exception as e:
-            console.print(f"[bold red]An error occurred while running the wizard:[/] {e}")
+            self.cli_instance.console.print(f"[bold red]An error occurred while running the wizard:[/] {e}")
             logger.error(f"Sub-agent wizard failed: {e}")
             return
         if result is None:
-            console.print(f"Agent cancelled {'creation' if not data else 'modification'}.", style="yellow")
+            self.cli_instance.console.print(
+                f"Agent cancelled {'creation' if not data else 'modification'}.", style="yellow"
+            )
             return
         if original_name is None and data is not None:
             if isinstance(data, SubAgentConfig):
@@ -296,14 +302,14 @@ class SubAgentCommands:
         try:
             save_result = self.sub_agent_manager.save_agent(result, previous_name=original_name)
         except Exception as exc:
-            console.print(f"[bold red]Failed to persist sub-agent:[/] {exc}")
+            self.cli_instance.console.print(f"[bold red]Failed to persist sub-agent:[/] {exc}")
             logger.error("Failed to persist sub-agent '%s': %s", agent_name, exc)
             return
         changed = save_result.get("changed", True)
         kb_action = save_result.get("kb_action")
 
         if not changed:
-            console.print("[yellow]No changes detected; skipping save.[/]")
+            self.cli_instance.console.print("[yellow]No changes detected; skipping save.[/]")
             return
 
         self._refresh_agent_config()
@@ -311,20 +317,23 @@ class SubAgentCommands:
         config_path = save_result.get("config_path")
         prompt_path = save_result.get("prompt_path")
         if config_path:
-            console.print(f"- Updated configuration file: [cyan]{config_path}[/]")
+            self.cli_instance.console.print(f"- Updated configuration file: [cyan]{config_path}[/]")
         if prompt_path:
-            console.print(f"- Created prompt template: [cyan]{prompt_path}[/]")
+            self.cli_instance.console.print(f"- Created prompt template: [cyan]{prompt_path}[/]")
         if kb_action == "cleared":
-            console.print("- Cleared scoped knowledge base for previous configuration.", style="yellow")
+            self.cli_instance.console.print(
+                "- Cleared scoped knowledge base for previous configuration.", style="yellow"
+            )
 
-        console.print(f"[bold green]Sub-agent {agent_name} {'created' if not data else 'modified'} successfully.[/]")
+        self.cli_instance.console.print(
+            f"[bold green]Sub-agent {agent_name} {'created' if not data else 'modified'} successfully.[/]"
+        )
 
         if result.has_scoped_context() and kb_action != "cleared":
-            question = (
-                f"Scoped KB exists at {result.scoped_kb_path}. Rebuild now? [y/N]: "
-                if result.scoped_kb_path
-                else "Bootstrap scoped KB now? [y/N]: "
-            )
-            answer = console.input(question).strip().lower()
-            if answer in ("y", "yes"):
+            if result.scoped_kb_path:
+                self.cli_instance.console.print(
+                    f"[bold green]Scoped KB exists at {result.scoped_kb_path}, will be rebuilt.[/]"
+                )
+
+            with self.cli_instance.console.status("[bold green]Building scoped KB...[/]"):
                 self._execute_bootstrap(result, None, plan=False)
