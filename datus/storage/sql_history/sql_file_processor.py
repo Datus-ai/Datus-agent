@@ -5,7 +5,9 @@ from typing import Any, Dict, List, Tuple
 
 import sqlglot
 
+from datus.utils.constants import SQLType
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_sql_type
 
 logger = get_logger(__name__)
 
@@ -216,6 +218,17 @@ def process_sql_files(sql_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str
             for comment, sql, line_num in pairs:
                 # Remove outer parentheses before validation
                 sql_cleaned_parens = remove_outer_parentheses(sql)
+
+                # Check SQL type - only process SELECT queries
+                try:
+                    sql_type = parse_sql_type(sql_cleaned_parens, "mysql")
+                    if sql_type != SQLType.SELECT:
+                        logger.debug(f"Skipping non-SELECT SQL (type: {sql_type}) at {sql_file}:{line_num}")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Failed to parse SQL type at {sql_file}:{line_num}: {str(e)}")
+                    continue
+
                 is_valid, cleaned_sql, error_msg = validate_sql(sql_cleaned_parens)
 
                 if is_valid:
