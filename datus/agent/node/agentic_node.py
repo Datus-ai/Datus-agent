@@ -399,6 +399,8 @@ class AgenticNode(ABC):
             "rules",
             "max_turns",
             "workspace_root",
+            "scoped_context",
+            "scoped_kb_path",
         ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns

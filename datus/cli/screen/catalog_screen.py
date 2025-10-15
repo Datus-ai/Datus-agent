@@ -19,8 +19,9 @@ from textual.worker import get_current_worker
 
 from datus.cli.screen.base_widgets import FocusableStatic, InputWithLabel
 from datus.cli.screen.context_screen import ContextScreen
+from datus.storage.catalog_manager import CatalogUpdater
 from datus.storage.lancedb_conditions import and_, eq
-from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.metric.store import SemanticModelStorage
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -301,6 +302,8 @@ class CatalogScreen(ContextScreen):
         self.db_type: DBType = context_data.get("db_type", DBType.SQLITE)
         self.catalog_name = context_data.get("catalog_name", "")
         self.database_name = context_data.get("database_name", "")
+        self._agent_config = context_data.get("agent_config")
+
         self.inject_callback = inject_callback
         self.selected_path = ""
         # Current cursor data
@@ -309,8 +312,10 @@ class CatalogScreen(ContextScreen):
         self.current_node_data = None
         self.is_fullscreen = False
         self.db_connector: BaseSqlConnector = context_data.get("db_connector")
-        rag = context_data.get("rag")
-        self.metrics_rag: SemanticMetricsRAG = rag
+        from datus.storage.cache import get_storage_cache_instance
+
+        self.semantic_storage: SemanticModelStorage = get_storage_cache_instance(self._agent_config).semantic_storage()
+
         self.loading_nodes = set()  # Track which nodes are currently loading
         self._current_loading_task = None  # Track current async task
         self.timeout_seconds = context_data.get("timeout_seconds", 30)  # Default 30 seconds timeout
@@ -318,6 +323,12 @@ class CatalogScreen(ContextScreen):
         self._semantic_original_values: Optional[Dict[str, str]] = None
         self._semantic_current_record: Optional[Dict[str, Any]] = None
         self._semantic_readonly: bool = True
+        self._catalog_updater: CatalogUpdater | None = None
+
+    def catalog_updater(self) -> CatalogUpdater:
+        if self._catalog_updater is None:
+            self._catalog_updater = CatalogUpdater(self._agent_config)
+        return self._catalog_updater
 
     def compose(self) -> ComposeResult:
         """Compose the layout of the screen."""
@@ -370,6 +381,10 @@ class CatalogScreen(ContextScreen):
 
     def on_unmount(self):
         self.clear_cache()
+        self._catalog_updater = None
+        self._agent_config = None
+        self.semantic_storage = None
+        self.db_connector = None
 
     def _build_catalog_tree(self) -> None:
         """Load catalog data from database connectors and populate the tree with lazy loading."""
@@ -609,7 +624,7 @@ class CatalogScreen(ContextScreen):
         if panel is None or self._semantic_readonly:
             self.app.notify("Nothing to save", severity="warning")
             return
-
+        panel.set_readonly(True)
         new_values = panel.get_value()
         old_values = self._semantic_original_values or {}
         has_change = False
@@ -623,11 +638,10 @@ class CatalogScreen(ContextScreen):
             self.app.notify("No changes detected.", severity="warning")
             return
         try:
-            self.metrics_rag.update_semantic_model(old_values, new_values)
+            self.catalog_updater().update_semantic_model(old_values, new_values)
         except Exception as e:
             self.app.notify(f"Failed to save changes: {e}", severity="error")
             return
-        panel.set_readonly(True)
         panel.update_data(new_values)
         self._semantic_current_record = dict(self._semantic_current_record or {})
         self._semantic_current_record.update(new_values)
@@ -861,10 +875,10 @@ class CatalogScreen(ContextScreen):
         table_name: str = "",
     ) -> List[Dict[str, Any]]:
         """Fetch all semantic model records for the given table identifiers."""
-        if not self.metrics_rag:
+        if not self.semantic_storage:
             return []
 
-        results = self.metrics_rag.semantic_model_storage._search_all(
+        results = self.semantic_storage._search_all(
             where=and_(
                 eq("catalog_name", catalog_name or ""),
                 eq("database_name", database_name or ""),
@@ -1232,7 +1246,7 @@ class CatalogScreen(ContextScreen):
         message: Optional[str] = None
         message_style = "dim"
 
-        if not self.metrics_rag:
+        if not self.semantic_storage:
             message = "Semantic model storage is not configured."
         else:
             try:

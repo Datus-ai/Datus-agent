@@ -12,6 +12,7 @@ from datus.cli.blocking_input_manager import blocking_input_manager
 from datus.cli.execution_state import execution_controller
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.llm_text_generator import generate_metric_llm_text
+from datus.storage.sql_history import SqlHistoryRAG
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -419,7 +420,7 @@ class GenerationHooks(AgentHooks):
 
             from datus.configuration.agent_config import MetricMeta
             from datus.storage.metric.init_utils import exists_semantic_metrics, gen_metric_id, gen_semantic_model_id
-            from datus.storage.metric.store import rag_by_configuration
+            from datus.storage.metric.store import SemanticMetricsRAG
 
             # Load YAML file
             with open(file_path, "r", encoding="utf-8") as f:
@@ -438,7 +439,7 @@ class GenerationHooks(AgentHooks):
                 return {"success": False, "error": "No data_source or metrics found in YAML file"}
 
             # Get storage
-            storage = rag_by_configuration(self.agent_config)
+            storage = SemanticMetricsRAG(self.agent_config)
 
             # Get existing semantic models and metrics
             existing_semantic_models, existing_metrics = exists_semantic_metrics(storage, build_mode="incremental")
@@ -565,7 +566,6 @@ class GenerationHooks(AgentHooks):
             import yaml
 
             from datus.storage.sql_history.init_utils import exists_sql_history, gen_sql_history_id
-            from datus.storage.sql_history.store import sql_history_rag_by_configuration
 
             # Load YAML file
             with open(file_path, "r", encoding="utf-8") as f:
@@ -590,7 +590,7 @@ class GenerationHooks(AgentHooks):
                 sql_history_data["id"] = item_id
 
             # Get storage and check if item already exists
-            storage = sql_history_rag_by_configuration(self.agent_config)
+            storage = SqlHistoryRAG(self.agent_config)
             existing_ids = exists_sql_history(storage, build_mode="incremental")
 
             # Check for duplicate

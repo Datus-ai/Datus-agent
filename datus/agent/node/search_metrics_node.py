@@ -60,7 +60,7 @@ class SearchMetricsNode(Node):
             return self.get_bad_result("RAG storage path does not exist.")
         else:
             try:
-                tool = SearchMetricsTool(db_path=self.agent_config.rag_storage_path())
+                tool = SearchMetricsTool(agent_config=self.agent_config)
                 if tool:
                     result = tool.execute(self.input, self.model)
                     logger.info(f"Search metrics result: found {result}")

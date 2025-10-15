@@ -7,7 +7,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import ExecuteSQLInput, OutputInput
-from datus.storage.schema_metadata.store import rag_by_configuration
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.output_tools.output import OutputTool
 from datus.utils.constants import DBType
@@ -49,7 +49,7 @@ class TestBirdDevOutput:
 
         # if 'db_path' in test_data:
         #     benchmark_config.test_path = test_data["db_path"]
-        rag_storage = rag_by_configuration(global_config)
+        rag_storage = SchemaWithValueRAG(global_config)
         output_dir = test_data["output_dir"]
         for task in test_data["tasks"]:
             db_name = task["database_name"]

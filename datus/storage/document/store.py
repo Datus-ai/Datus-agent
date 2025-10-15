@@ -1,23 +1,23 @@
+from functools import lru_cache
 from typing import List, Optional
 
 import pandas as pd
 import pyarrow as pa
 
 from datus.storage import BaseEmbeddingStore
-from datus.storage.embedding_models import get_document_embedding_model
+from datus.storage.embedding_models import EmbeddingModel, get_document_embedding_model
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
 class DocumentStore(BaseEmbeddingStore):
     """Store and manage document data in LanceDB."""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
         """Initialize the document store.
 
         Args:
             db_path: Path to the LanceDB database directory
         """
-        embedding_model = get_document_embedding_model()
         super().__init__(
             db_path=db_path,
             table_name="document",
@@ -111,3 +111,8 @@ class DocumentStore(BaseEmbeddingStore):
                     "top_n": str(top_n),
                 },
             ) from e
+
+
+@lru_cache(maxsize=1)
+def document_store(storage_path: str) -> DocumentStore:
+    return DocumentStore(storage_path, get_document_embedding_model())

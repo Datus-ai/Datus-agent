@@ -6,6 +6,7 @@ from typing import List, Tuple
 import pandas as pd
 import requests
 
+from datus.configuration.agent_config import AgentConfig
 from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
 from datus.storage.document.store import DocumentStore
 from datus.tools.base import BaseTool
@@ -20,17 +21,17 @@ class SearchTool(BaseTool):
     tool_name = "search"
     tool_description = "Search for documents using various methods (internal, external, llm)"
 
-    def __init__(self, document_store_path: str = "data/datus_db", **kwargs):
+    def __init__(self, agent_config: AgentConfig, **kwargs):
         """Initialize with a document store path"""
         super().__init__(**kwargs)
-        self.document_store_path = document_store_path
+        self.agent_config = agent_config
         self._document_store = None
 
     @property
     def document_store(self) -> DocumentStore:
         """Lazy initialize document store"""
         if self._document_store is None:
-            self._document_store = DocumentStore(self.document_store_path)
+            self._document_store = DocumentStore(self.agent_config)
         return self._document_store
 
     def execute(self, input_data: DocSearchInput) -> DocSearchResult:

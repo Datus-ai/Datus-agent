@@ -7,7 +7,6 @@ from datus.agent.workflow import Workflow
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.storage.metric.init_utils import gen_semantic_model_id
-from datus.storage.metric.store import rag_by_configuration
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.llms_tools import LLMTool
 from datus.tools.llms_tools.generate_semantic_model import generate_semantic_model_with_mcp_stream
@@ -106,8 +105,10 @@ class GenerateSemanticModelNode(Node):
 
             # Check if semantic model already exists in lancedb
             try:
-                semantic_metrics_rag = rag_by_configuration(self.agent_config)
-                existing_models = semantic_metrics_rag.semantic_model_storage.filter_by_id(semantic_model_id)
+                from datus.storage.cache import get_storage_cache_instance
+
+                storage_cache = get_storage_cache_instance(self.agent_config)
+                existing_models = storage_cache.semantic_storage().filter_by_id(semantic_model_id)
 
                 if existing_models:
                     logger.info(f"Semantic model with ID {semantic_model_id} already exists, skipping generation")

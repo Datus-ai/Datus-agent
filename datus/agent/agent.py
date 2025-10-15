@@ -8,6 +8,8 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import AsyncGenerator, Optional, Set
 
+from pydantic import ValidationError
+
 from datus.agent.evaluate import evaluate_result, setup_node_input
 from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
@@ -17,16 +19,18 @@ from datus.models.base import LLMBaseModel
 
 # Import model implementations
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.node_models import BaseResult, SqlTask
-from datus.storage.document import DocumentStore
 from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
 from datus.storage.metric.metrics_init import init_semantic_yaml_metrics, init_success_story_metrics
 from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.schema_metadata import SchemaWithValueRAG
 from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
 from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
 from datus.storage.schema_metadata.local_init import init_local_schema
-from datus.storage.schema_metadata.store import rag_by_configuration
+from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS as SUB_AGENT_COMPONENTS
+from datus.storage.sub_agent_kb_bootstrap import SubAgentBootstrapper
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.benchmark_utils import (
     evaluate_and_report_accuracy,
@@ -34,6 +38,7 @@ from datus.utils.benchmark_utils import (
     load_bird_dev_tasks,
 )
 from datus.utils.constants import DBType
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -538,6 +543,60 @@ class Agent:
             logger.error(f"LLM model test failed: {str(e)}")
             return {"status": "error", "message": str(e)}
 
+    def _refresh_scoped_agents(self, component: str, kb_strategy: str):
+        """Rebuild scoped knowledge bases for sub-agents after global bootstrap."""
+        if component not in SUB_AGENT_COMPONENTS:
+            return
+        if kb_strategy not in {"overwrite", "incremental"}:
+            return
+
+        agent_nodes = getattr(self.global_config, "agentic_nodes", {}) or {}
+        if not agent_nodes:
+            return
+
+        for name, raw_config in agent_nodes.items():
+            try:
+                sub_config = SubAgentConfig.model_validate(raw_config)
+            except ValidationError as exc:
+                logger.warning(f"Skipping sub-agent '{name}' due to invalid configuration: {exc}")
+                continue
+            if not sub_config.is_in_namespace(self.global_config.current_namespace):
+                logger.debug(
+                    f"Skipping sub-agent '{name}' for component '{component}' "
+                    f" because namespace '{self.global_config.current_namespace}' is not enabled",
+                )
+                continue
+
+            try:
+                bootstrapper = SubAgentBootstrapper(
+                    sub_agent=sub_config,
+                    agent_config=self.global_config,
+                )
+                logger.info(
+                    f"Running SubAgentBootstrapper for sub-agent '{name}' (component={component}, "
+                    f"strategy=overwrite, storage={bootstrapper.storage_path})"
+                )
+                result = bootstrapper.run([component], "overwrite")
+                if not result.should_bootstrap:
+                    reason = result.reason or "No scoped context provided"
+                    logger.info(f"SubAgentBootstrapper skipped for sub-agent '{name}': {reason}")
+                else:
+                    component_summaries = []
+                    for comp_result in result.results:
+                        summary = f"{comp_result.component}:{comp_result.status}"
+                        if comp_result.message:
+                            summary = f"{summary} ({comp_result.message})"
+                        component_summaries.append(summary)
+                    component_summaries_str = (
+                        ", ".join(component_summaries) if component_summaries else "no component results"
+                    )
+                    logger.info(
+                        f"Bootstrap finished for sub-agent '{name}' (storage={result.storage_path}): "
+                        f"{component_summaries_str}"
+                    )
+            except Exception as exc:
+                logger.warning(f"Failed to refresh scoped KB for sub-agent '{name}': {exc}")
+
     def bootstrap_kb(self):
         """Initialize knowledge base storage components."""
         logger.info("Initializing knowledge base components")
@@ -559,7 +618,7 @@ class Agent:
                     else:
                         self.global_config.check_init_storage_config("database")
 
-                        self.metadata_store = rag_by_configuration(self.global_config)
+                        self.metadata_store = SchemaWithValueRAG(self.global_config)
                         return {
                             "status": "success",
                             "message": f"current metadata is already built, "
@@ -580,7 +639,7 @@ class Agent:
                         logger.info(f"Deleted existing directory {schema_value_path}")
                 else:
                     self.global_config.check_init_storage_config("database")
-                self.metadata_store = rag_by_configuration(self.global_config)
+                self.metadata_store = SchemaWithValueRAG(self.global_config)
 
                 if not benchmark_platform:
                     self.check_db()
@@ -618,16 +677,23 @@ class Agent:
                     )
                 elif benchmark_platform == "bird_critic":
                     # TODO init bird_critic schema
-                    raise ValueError(f"Unsupported benchmark platform: {benchmark_platform}")
+                    raise DatusException(
+                        ErrorCode.COMMON_VALIDATION_FAILED,
+                        message=f"Unsupported benchmark platform: {benchmark_platform}",
+                    )
                 else:
-                    raise ValueError(f"Unsupported benchmark platform: {benchmark_platform}")
+                    raise DatusException(
+                        ErrorCode.COMMON_VALIDATION_FAILED, f"Unsupported benchmark platform: {benchmark_platform}"
+                    )
 
-                return {
+                result = {
                     "status": "success",
                     "message": f"metadata bootstrap completed, "
                     f"schema_size={self.metadata_store.get_schema_size()}, "
                     f"value_size={self.metadata_store.get_value_size()}",
                 }
+                self._refresh_scoped_agents("metadata", kb_update_strategy)
+                return result
 
             elif component == "metrics":
                 semantic_model_path = os.path.join(dir_path, "semantic_model.lance")
@@ -642,7 +708,7 @@ class Agent:
                     self.global_config.save_storage_config("metric")
                 else:
                     self.global_config.check_init_storage_config("metric")
-                self.metrics_store = SemanticMetricsRAG(dir_path)
+                self.metrics_store = SemanticMetricsRAG(self.global_config)
                 if hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
                     init_semantic_yaml_metrics(
                         self.metrics_store, self.args, self.global_config, build_mode=kb_update_strategy
@@ -651,14 +717,18 @@ class Agent:
                     init_success_story_metrics(
                         self.metrics_store, self.args, self.global_config, build_mode=kb_update_strategy
                     )
-                return {
+                result = {
                     "status": "success",
                     "message": f"metrics bootstrap completed, "
                     f"semantic_model_size={self.metrics_store.get_semantic_model_size()}, "
                     f"metrics_size={self.metrics_store.get_metrics_size()}",
                 }
+                self._refresh_scoped_agents("metrics", kb_update_strategy)
+                return result
             elif component == "document":
-                self.storage_modules["document_store"] = DocumentStore(dir_path)
+                from datus.storage.document.store import document_store
+
+                self.storage_modules["document_store"] = document_store(self.global_config.rag_storage_path())
                 # self.global_config.check_init_storage_config("document")
             elif component == "ext_knowledge":
                 ext_knowledge_path = os.path.join(dir_path, "ext_knowledge.lance")
@@ -692,7 +762,7 @@ class Agent:
                 from datus.storage.sql_history import SqlHistoryRAG
                 from datus.storage.sql_history.sql_history_init import init_sql_history
 
-                self.sql_history_store = SqlHistoryRAG(dir_path)
+                self.sql_history_store = SqlHistoryRAG(self.global_config)
                 result = init_sql_history(
                     self.sql_history_store,
                     self.args,
@@ -700,6 +770,8 @@ class Agent:
                     build_mode=kb_update_strategy,
                     pool_size=pool_size,
                 )
+                if isinstance(result, dict) and result.get("status") != "error":
+                    self._refresh_scoped_agents("sql_history", kb_update_strategy)
                 return result
             results[component] = True
 

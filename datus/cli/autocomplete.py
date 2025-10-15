@@ -212,6 +212,7 @@ class SQLCompleter(Completer):
             ".subagent add": None,
             ".subagent update": None,
             ".subagent remove": None,
+            ".subagent bootstrap": None,
         }
 
     def update_tables(self, tables: Dict[str, List[str]]):
@@ -535,17 +536,18 @@ def insert_into_dict(data: Dict, keys: List[str], value: str) -> None:
 class TableCompleter(DynamicAtReferenceCompleter):
     """Dynamic completer specifically for tables and metrics"""
 
-    def __init__(self, agent_config: AgentConfig):
+    def __init__(self, agent_config: AgentConfig, sqlite_show_db: bool = False):
         super().__init__()
         self.agent_config = agent_config
+        self.sqlite_show_db = sqlite_show_db
 
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
-        from datus.storage.schema_metadata.store import rag_by_configuration
+        from datus.storage.schema_metadata.store import SchemaWithValueRAG
 
-        storage = rag_by_configuration(self.agent_config)
+        storage = SchemaWithValueRAG(self.agent_config)
         try:
             schema_table = storage.search_all_schemas(
-                database_name=self.agent_config.current_database,
+                # database_name=self.agent_config.current_database,
                 select_fields=[
                     "catalog_name",
                     "database_name",
@@ -566,7 +568,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
         # Process schema table directly using pyarrow (no conversion to pylist)
         table_column = schema_table["table_name"]
 
-        if self.agent_config.db_type == DBType.SQLITE:
+        if self.agent_config.db_type == DBType.SQLITE and not self.sqlite_show_db:
             self.max_level = 1
             for table, definition, table_type in zip(
                 table_column, schema_table["definition"], schema_table["table_type"]
@@ -653,7 +655,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                         "definition": definition.as_py(),
                     }
 
-        if DBType.support_database(self.agent_config.db_type) and database_column[0].as_py():
+        if (DBType.support_database(self.agent_config.db_type) or self.sqlite_show_db) and database_column[0].as_py():
             if DBType.support_schema(self.agent_config.db_type) and schema_column[0].as_py():
                 self.max_level = 3
                 # Database -> Schema -> Table structure
@@ -729,9 +731,9 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         self.max_level = 4
 
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
-        from datus.storage.metric.store import rag_by_configuration
+        from datus.storage.cache import get_storage_cache_instance
 
-        storage = rag_by_configuration(self.agent_config).metric_storage
+        storage = get_storage_cache_instance(self.agent_config).metrics_storage()
         data = storage.search_all(select_fields=["domain", "layer1", "layer2", "name", "llm_text"])
 
         result = {}
@@ -757,9 +759,9 @@ class SqlHistoryCompleter(DynamicAtReferenceCompleter):
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
         self.max_level = 4
 
-        from datus.storage.sql_history.store import sql_history_rag_by_configuration
+        from datus.storage.sql_history.store import SqlHistoryRAG
 
-        storage = sql_history_rag_by_configuration(self.agent_config)
+        storage = SqlHistoryRAG(self.agent_config)
         search_data = storage.search_all_sql_history(domain="")
         result = {}
         for item in search_data:

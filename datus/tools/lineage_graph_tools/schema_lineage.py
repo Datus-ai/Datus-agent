@@ -1,11 +1,10 @@
-import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
-from datus.storage.schema_metadata.store import SchemaWithValueRAG, rag_by_configuration
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.base import BaseTool
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.llms_tools.llms import LLMTool
@@ -19,7 +18,6 @@ class SchemaLineageTool(BaseTool):
 
     def __init__(
         self,
-        db_path: str = "",
         storage: Optional[SchemaWithValueRAG] = None,
         agent_config: Optional[AgentConfig] = None,
         **kwargs,
@@ -30,15 +28,10 @@ class SchemaLineageTool(BaseTool):
             db_path: Path to the LanceDB database directory
         """
         super().__init__(**kwargs)
-        store: SchemaWithValueRAG | None = None
         if storage:
-            store = storage
-        elif agent_config:
-            store = rag_by_configuration(agent_config)
-        elif db_path:
-            if os.path.exists(db_path):
-                store = SchemaWithValueRAG(db_path)
-        self.store = store
+            self.store = storage
+        else:
+            self.store = SchemaWithValueRAG(agent_config)
 
     def validate_input(self, input_data: Dict[str, Any]) -> None:
         """Validate the input data for schema lineage operations.

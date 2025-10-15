@@ -92,7 +92,6 @@ agent:
         - Always check reference SQL files(*.sql) in allowed directory for similar patterns before writing new queries
         - If context is provided, use the tables/metrics/sqls in user prompt
         - Try to use database specific dialect
-
   schema_linking_rate: medium
   # benchmark configuration
   benchmark:

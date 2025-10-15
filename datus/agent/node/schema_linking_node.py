@@ -84,9 +84,9 @@ class SchemaLinkingNode(Node):
         logger.debug(f"Checking if rag storage path exists: {path}")
         if not os.path.exists(path):
             logger.info(f"RAG storage path `{path}` does not exist.")
-            return self._execute_schema_linking_fallback(SchemaLineageTool())
+            return self._execute_schema_linking_fallback(SchemaLineageTool(self.agent_config))
         else:
-            tool = SchemaLineageTool(db_path=path)
+            tool = SchemaLineageTool(self.agent_config)
             try:
                 # Import SchemaLineageTool only when needed
                 if tool:

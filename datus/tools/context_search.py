@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-from typing import List
+import os
+from typing import List, Optional
 
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.document import DocumentStore
-from datus.storage.ext_knowledge.store import rag_by_configuration as ext_knowledge_by_configuration
-from datus.storage.metric.store import rag_by_configuration as metrics_rag_by_configuration
-from datus.storage.schema_metadata.store import rag_by_configuration as schema_metadata_by_configuration
-from datus.storage.sql_history.store import sql_history_rag_by_configuration
+from datus.storage.cache import get_storage_cache_instance
+from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.storage.sql_history.store import SqlHistoryRAG
 from datus.tools.tools import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -16,12 +16,14 @@ logger = get_logger(__name__)
 
 
 class ContextSearchTools:
-    def __init__(self, agent_config: AgentConfig):
-        self.schema_rag = schema_metadata_by_configuration(agent_config)
-        self.metric_rag = metrics_rag_by_configuration(agent_config)
-        self.doc_rag = DocumentStore(agent_config.rag_storage_path())
-        self.ext_knowledge_rag = ext_knowledge_by_configuration(agent_config)
-        self.sql_history_store = sql_history_rag_by_configuration(agent_config)
+    def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
+        self.agent_config = agent_config
+        self.sub_agent_name = sub_agent_name
+        self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name)
+        self.metric_rag = SemanticMetricsRAG(agent_config, sub_agent_name)
+        self.sql_history_store = SqlHistoryRAG(agent_config, sub_agent_name)
+
+        self.doc_rag = get_storage_cache_instance(agent_config).document_storage()
 
     def available_tools(self) -> List[Tool]:
         return [
@@ -30,7 +32,6 @@ class ContextSearchTools:
                 self.search_table_metadata,
                 self.search_metrics,
                 self.search_documents,
-                self.search_external_knowledge,
                 self.search_historical_sql,
             )
         ]
@@ -189,49 +190,6 @@ class ContextSearchTools:
             logger.error(f"Failed to search historical SQL for `{query_text}`: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def search_external_knowledge(
-        self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
-    ) -> FuncToolResult:
-        """
-        Search for business terminology, domain knowledge, and concept definitions.
-        This tool helps find explanations of business terms, processes, and domain-specific concepts.
-
-        Use this tool when you need to:
-        - Understand business terminology and definitions
-        - Learn about domain-specific concepts and processes
-        - Get context for business rules and requirements
-        - Find explanations of industry-specific terms
-
-        Args:
-            query_text: Natural language query about business terms or concepts (e.g., "customer lifetime value",
-                "churn rate definition", "fiscal year")
-            domain: Business domain to search within (e.g., "finance", "marketing", "operations").
-                Leave empty if not specified in context.
-            layer1: Primary semantic layer for categorization. Leave empty if not specified in context.
-            layer2: Secondary semantic layer for fine-grained categorization. Leave empty if not specified in context.
-            top_n: Maximum number of results to return (default 5)
-
-        Returns:
-            dict: Knowledge search results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if search failed
-                - 'result' (list): List of knowledge entries with domain, layer1, layer2, terminology, and explanation
-        """
-        try:
-            result = self.ext_knowledge_rag.search_knowledge(
-                query_text=query_text, domain=domain, layer1=layer1, layer2=layer2, top_n=top_n
-            )
-            return FuncToolResult(
-                success=1,
-                error=None,
-                result=result.select(
-                    ["domain", "layer1", "layer2", "terminology", "explanation", "created_at"]
-                ).to_pylist(),
-            )
-        except Exception as e:
-            logger.error(f"Failed to search external knowledge for query '{query_text}': {str(e)}")
-            return FuncToolResult(success=0, error=str(e))
-
     def search_documents(self, query_text: str, top_n: int = 5) -> FuncToolResult:
         """
         Search through project documentation, specifications, and technical documents.
@@ -264,3 +222,16 @@ class ContextSearchTools:
         except Exception as e:
             logger.error(f"Failed to search documents for query '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))
+
+    @staticmethod
+    def _scoped_storage_available(path: str) -> bool:
+        if not os.path.isdir(path):
+            return False
+        required = (
+            "schema_metadata.lance",
+            "schema_value.lance",
+            "metrics.lance",
+            "semantic_model.lance",
+            "sql_history.lance",
+        )
+        return any(os.path.exists(os.path.join(path, name)) for name in required)

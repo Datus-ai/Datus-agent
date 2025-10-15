@@ -38,7 +38,7 @@ class DocSearchNode(Node):
             return {"success": False, "message": f"Document search context update failed: {str(e)}"}
 
     def _execute_document(self) -> DocSearchResult:
-        tool = SearchTool()
+        tool = SearchTool(self.agent_config)
         if not tool:
             return DocSearchResult(success=False, error="Document search tool not found", docs={})
 

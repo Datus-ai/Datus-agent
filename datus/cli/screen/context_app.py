@@ -50,7 +50,8 @@ def show_subject_screen(title: str, data: Dict):
 
     Args:
         title: Title of the screen
-        data: Metrics data to display
+        data: Metrics data to display:
+            - agent_config
     """
     app = ContextApp(ScreenType.SUBJECT, title, data)
     app.run()

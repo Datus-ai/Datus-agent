@@ -8,7 +8,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.storage.base import BaseEmbeddingStore, WhereExpr
-from datus.storage.embedding_models import EmbeddingModel, get_db_embedding_model
+from datus.storage.embedding_models import EmbeddingModel
 from datus.storage.lancedb_conditions import Node, and_, build_where, eq, or_
 from datus.utils.json_utils import json2csv
 from datus.utils.loggings import get_logger
@@ -232,14 +232,14 @@ class SchemaValueStorage(BaseMetadataStorage):
 class SchemaWithValueRAG:
     def __init__(
         self,
-        db_path: str,
+        agent_config: AgentConfig,
+        sub_agent_name: Optional[str] = None
         # use_rerank: bool = False,
     ):
-        self.db_path = db_path
+        from datus.storage.cache import get_storage_cache_instance
 
-        embedding_model = get_db_embedding_model()
-        self.schema_store = SchemaStorage(db_path, embedding_model)
-        self.value_store = SchemaValueStorage(db_path, embedding_model)
+        self.schema_store = get_storage_cache_instance(agent_config).schema_storage(sub_agent_name)
+        self.value_store = get_storage_cache_instance(agent_config).schema_value_storage(sub_agent_name)
 
     def store_batch(self, schemas: List[Dict[str, Any]], values: List[Dict[str, Any]]):
         # Process schemas and values in batches of 500
@@ -449,7 +449,3 @@ def _build_where_clause(
     if len(conditions) == 1:
         return conditions[0]
     return and_(*conditions)
-
-
-def rag_by_configuration(agent_config: AgentConfig):
-    return SchemaWithValueRAG(agent_config.rag_storage_path())

@@ -25,7 +25,7 @@ class ConfigurationManager:
     def __init__(self, config_path: str = ""):
         self.config_path: Path = parse_config_path(config_path)
 
-        self.data = self._load()
+        self.data = self._load().get("agent", {})
 
     def _load(self) -> Dict[str, Any]:
         try:
@@ -89,7 +89,7 @@ class ConfigurationManager:
 
     def save(self):
         with open(self.config_path, "w", encoding="utf-8") as file:
-            yaml.safe_dump(self.data, file, allow_unicode=True, sort_keys=False)
+            yaml.safe_dump({"agent": self.data}, file, allow_unicode=True, sort_keys=False)
 
     def __getitem__(self, key: str) -> Any:
         return self.data[key]
@@ -144,8 +144,7 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     except Exception:
         pass
 
-    config = configuration_manager(config_path=kwargs.get("config", ""), reload=reload)
-    agent_raw = config.get("agent")
+    agent_raw = configuration_manager(config_path=kwargs.get("config", ""), reload=reload).data
     nodes = {}
     if "nodes" in agent_raw:
         nodes_raw = agent_raw["nodes"]
@@ -177,7 +176,6 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
                 )
             nodes[node_type] = load_node_config(node_type, cfg)
         del agent_raw["nodes"]
-
     agent_config = AgentConfig(nodes=nodes, **agent_raw)
     if kwargs:
         # Filter out the 'config' parameter as it's only used for loading, not for overriding
@@ -187,4 +185,7 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
         current_configs = agent_config.current_db_configs()
         agent_config.current_database = current_configs[list(current_configs.keys())[0]].logic_name
+    from datus.storage.cache import get_storage_cache_instance
+
+    get_storage_cache_instance(agent_config)
     return agent_config
