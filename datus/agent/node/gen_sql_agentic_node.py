@@ -441,7 +441,9 @@ class GenSQLAgenticNode(AgenticNode):
             from datus.utils.json_utils import llm_result2json
 
             content = output.get("content", "")
-            logger.info(f"extract_sql_and_output_from_final_resp: {content[:200] if isinstance(content, str) else content}")
+            logger.info(
+                f"extract_sql_and_output_from_final_resp: {content[:200] if isinstance(content, str) else content}"
+            )
 
             if not isinstance(content, str) or not content.strip():
                 return None, None

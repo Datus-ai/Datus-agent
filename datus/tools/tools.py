@@ -6,14 +6,14 @@ from typing import Any, Callable, List, Optional
 from agents import FunctionTool, Tool, function_tool
 from pydantic import BaseModel, Field
 
-# Suppress Pydantic field name shadowing warnings
-warnings.filterwarnings("ignore", message=".*shadows an attribute in parent.*")
-
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.constants import SUPPORT_CATALOG_DIALECTS, SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
+
+# Suppress Pydantic field name shadowing warnings
+warnings.filterwarnings("ignore", message=".*shadows an attribute in parent.*")
 
 
 class FuncToolResult(BaseModel):
