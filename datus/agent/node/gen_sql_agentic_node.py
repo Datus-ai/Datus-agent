@@ -115,12 +115,6 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
 
-    def _scoped_storage_path(self) -> Optional[str]:
-        path = self.node_config.get("scoped_kb_path")
-        if isinstance(path, str) and path.strip():
-            return path
-        return None
-
     def _setup_context_search_tools(self):
         """Setup context search tools."""
         try:

@@ -25,7 +25,7 @@ COMPONENT_DIRECTORIES = {
     "metrics": ("semantic_model.lance", "metrics.lance"),
     "sql_history": ("sql_history.lance",),
 }
-
+# Incremental mode is not supported at the moment
 SubAgentBootstrapStrategy = Literal["overwrite", "plan"]
 
 
@@ -86,7 +86,7 @@ class SubAgentBootstrapper:
             )
 
     def _valid_sub_agent_in_main(self, sub_agent_name: str) -> Dict[str, Any]:
-        sub_in_main_config = self.agent_config.sub_agent_config(self.sub_agent_name)
+        sub_in_main_config = self.agent_config.sub_agent_config(sub_agent_name)
         if not sub_in_main_config:
             raise DatusException(
                 ErrorCode.COMMON_VALIDATION_FAILED,
@@ -107,7 +107,8 @@ class SubAgentBootstrapper:
                 strategy=strategy,
                 results=[],
             )
-        if strategy not in ("overwrite", "plan", "incremental"):
+        # Incremental mode is not supported at the moment
+        if strategy not in ("overwrite", "plan"):
             raise ValueError(f"Unsupported strategy '{strategy}'. Expected 'overwrite', 'incremental', or 'plan'.")
         effective_strategy = "overwrite" if strategy == "incremental" else strategy
         if not selected_components:
@@ -275,7 +276,7 @@ class SubAgentBootstrapper:
 
         self._clear_component("metadata")
 
-        target = SchemaWithValueRAG(self.storage_path, self.sub_agent.system_prompt)
+        target = SchemaWithValueRAG(self.agent_config, self.sub_agent.system_prompt)
         target.store_batch(schema_rows, value_rows)
         target.after_init()
 
