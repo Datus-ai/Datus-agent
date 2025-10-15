@@ -17,6 +17,11 @@ def mock_agent_config():
     """Create a mock agent configuration."""
     config = Mock(spec=AgentConfig)
     config.rag_storage_path.return_value = "/tmp/test_rag_storage"
+    config.agentic_nodes = {
+        "test": {
+            "system_prompt": "test",
+        }
+    }
     return config
 
 
@@ -49,7 +54,12 @@ def mock_doc_rag():
     mock_rag = Mock()
     mock_table = Mock()
     mock_table.to_pylist.return_value = [
-        {"title": "API Documentation", "hierarchy": "Engineering/API", "chunk_text": "API endpoints documentation"}
+        {
+            "title": "API Documentation",
+            "hierarchy": "Engineering/API",
+            "chunk_text": "API endpoints documentation",
+            "keywords": ["k1", "k2"],
+        }
     ]
     mock_rag.search_similar_documents.return_value = mock_table
     return mock_rag
@@ -61,7 +71,16 @@ def mock_ext_knowledge_rag():
     mock_rag = Mock()
 
     mock_rag.search_knowledge.return_value = pa.Table.from_pylist(
-        [{"terminology": "CLV", "explanation": "Customer Lifetime Value", "domain": "Marketing"}]
+        [
+            {
+                "layer1": "Analytics",
+                "layer2": "Customer",
+                "terminology": "CLV",
+                "explanation": "Customer Lifetime Value",
+                "domain": "Marketing",
+                "created_at": "2025-01-01 00:00:00",
+            }
+        ]
     )
     return mock_rag
 
@@ -70,7 +89,7 @@ def mock_ext_knowledge_rag():
 def mock_sql_history_rag():
     """Create a mock external knowledge RAG instance."""
     mock_rag = Mock()
-    mock_rag.sql_history_storage.return_value = [
+    mock_rag.search_sql_history_by_summary.return_value = [
         {
             "id": "sql_history1",
             "name": "test sql",
@@ -95,12 +114,16 @@ def context_search_tools(
     with patch("datus.tools.context_search.SchemaWithValueRAG", return_value=mock_schema_rag) as mock_schema, patch(
         "datus.tools.context_search.SemanticMetricsRAG", return_value=mock_metric_rag
     ) as mock_metric, patch(
-        "datus.tools.context_search.DocumentStore", return_value=mock_doc_rag
-    ) as mock_doc_store, patch(
-        "datus.tools.context_search.ext_knowledge_by_configuration", return_value=mock_ext_knowledge_rag
-    ) as mock_ext, patch(
         "datus.tools.context_search.SqlHistoryRAG", return_value=mock_sql_history_rag
-    ) as mock_sql_history:
+    ) as mock_sql_history, patch(
+        "datus.tools.context_search.get_storage_cache_instance"
+    ) as mock_cache_factory, patch(
+        "datus.tools.context_search.rag_by_configuration", return_value=mock_ext_knowledge_rag
+    ) as mock_ext:
+        cache_instance = Mock()
+        cache_instance.document_storage.return_value = mock_doc_rag
+        mock_cache_factory.return_value = cache_instance
+
         tools = ContextSearchTools(mock_agent_config)
 
         # Verify all RAG instances were created
@@ -110,44 +133,60 @@ def context_search_tools(
         assert tools.ext_knowledge_rag == mock_ext_knowledge_rag
         assert tools.sql_history_store == mock_sql_history_rag
 
-        mock_schema.assert_called_once_with(mock_agent_config)
-        mock_metric.assert_called_once_with(mock_agent_config)
-        mock_doc_store.assert_called_once_with("/tmp/test_rag_storage")
+        mock_schema.assert_called_once_with(mock_agent_config, None)
+        mock_metric.assert_called_once_with(mock_agent_config, None)
+        mock_sql_history.assert_called_once_with(mock_agent_config, None)
+        mock_cache_factory.assert_called_once_with(mock_agent_config)
+        cache_instance.document_storage.assert_called_once_with()
         mock_ext.assert_called_once_with(mock_agent_config)
-        mock_sql_history.assert_called_once_with(mock_agent_config)
 
         return tools
 
 
-def test_scoped_storage_override_uses_custom_path(mock_agent_config):
-    """Ensure scoped storage path overrides namespace stores when available."""
-    with patch.object(ContextSearchTools, "_scoped_storage_available", return_value=True), patch(
-        "datus.tools.context_search.SchemaWithValueRAG"
-    ) as mock_schema_cls, patch("datus.tools.context_search.SemanticMetricsRAG") as mock_metrics_cls, patch(
-        "datus.tools.context_search.SqlHistoryRAG"
-    ) as mock_sql_cls, patch(
-        "datus.tools.context_search.DocumentStore"
-    ) as mock_doc_cls:
-        ContextSearchTools(mock_agent_config, scoped_storage_path="/tmp/scoped")
+def test_sub_agent_initialization_passes_sub_agent_to_rags(
+    mock_agent_config, mock_schema_rag, mock_metric_rag, mock_ext_knowledge_rag, mock_sql_history_rag
+):
+    with patch("datus.tools.context_search.SchemaWithValueRAG", return_value=mock_schema_rag) as mock_schema, patch(
+        "datus.tools.context_search.SemanticMetricsRAG", return_value=mock_metric_rag
+    ) as mock_metric, patch(
+        "datus.tools.context_search.SqlHistoryRAG", return_value=mock_sql_history_rag
+    ) as mock_sql_history, patch(
+        "datus.tools.context_search.get_storage_cache_instance"
+    ) as mock_cache, patch(
+        "datus.tools.context_search.rag_by_configuration", return_value=mock_ext_knowledge_rag
+    ):
+        cache_instance = Mock()
+        cache_instance.document_storage.return_value = Mock()
+        mock_cache.return_value = cache_instance
 
-        mock_schema_cls.assert_called_once_with("/tmp/scoped")
-        mock_metrics_cls.assert_called_once_with("/tmp/scoped")
-        mock_sql_cls.assert_called_once_with("/tmp/scoped")
-        mock_doc_cls.assert_called_once_with("/tmp/test_rag_storage")
+        ContextSearchTools(mock_agent_config, sub_agent_name="test")
+
+        mock_schema.assert_called_once_with(mock_agent_config, "test")
+        mock_metric.assert_called_once_with(mock_agent_config, "test")
+        mock_sql_history.assert_called_once_with(mock_agent_config, "test")
+        cache_instance.document_storage.assert_called_once_with()
 
 
-def test_scoped_storage_missing_falls_back_to_namespace(mock_agent_config):
-    """When scoped storage unavailable, fall back to namespace-level stores."""
-    with patch.object(ContextSearchTools, "_scoped_storage_available", return_value=False), patch(
-        "datus.tools.context_search.SchemaWithValueRAG"
-    ) as mock_schema_cls, patch("datus.tools.context_search.DocumentStore") as mock_doc_cls, patch(
-        "datus.tools.context_search.ext_knowledge_by_configuration"
-    ) as mock_ext_factory:
-        ContextSearchTools(mock_agent_config, scoped_storage_path="/tmp/missing")
+def test_initialization_uses_storage_cache_for_documents(
+    mock_agent_config, mock_doc_rag, mock_ext_knowledge_rag, mock_sql_history_rag
+):
+    with patch("datus.tools.context_search.SchemaWithValueRAG") as mock_schema, patch(
+        "datus.tools.context_search.SemanticMetricsRAG"
+    ) as mock_metric, patch("datus.tools.context_search.SqlHistoryRAG", return_value=mock_sql_history_rag), patch(
+        "datus.tools.context_search.get_storage_cache_instance"
+    ) as mock_cache, patch(
+        "datus.tools.context_search.rag_by_configuration", return_value=mock_ext_knowledge_rag
+    ):
+        cache_instance = Mock()
+        cache_instance.document_storage.return_value = mock_doc_rag
+        mock_cache.return_value = cache_instance
 
-        mock_doc_cls.assert_called_once_with("/tmp/test_rag_storage")
-        mock_schema_cls.assert_called_once_with(mock_agent_config)
-        mock_ext_factory.assert_called_once_with(mock_agent_config)
+        ContextSearchTools(mock_agent_config)
+
+        mock_schema.assert_called_once_with(mock_agent_config, None)
+        mock_metric.assert_called_once_with(mock_agent_config, None)
+        mock_cache.assert_called_once_with(mock_agent_config)
+        cache_instance.document_storage.assert_called_once_with()
 
 
 class TestContextSearchTools:
@@ -234,10 +273,6 @@ class TestContextSearchTools:
         # Execute the method
         result = context_search_tools.search_metrics(
             query_text="revenue metrics",
-            domain="Sales",
-            layer1="Revenue",
-            layer2="Monthly",
-            catalog_name="test_catalog",
             database_name="test_db",
             schema_name="test_schema",
             top_n=5,
@@ -252,11 +287,7 @@ class TestContextSearchTools:
 
         # Verify the metric RAG was called correctly
         mock_metric_rag.search_hybrid_metrics.assert_called_once_with(
-            domain="Sales",
-            layer1="Revenue",
-            layer2="Monthly",
             query_text="revenue metrics",
-            catalog_name="test_catalog",
             database_name="test_db",
             schema_name="test_schema",
             top_n=5,
@@ -266,9 +297,7 @@ class TestContextSearchTools:
         """Test search_metrics with exception."""
         mock_metric_rag.search_hybrid_metrics.side_effect = Exception("Metric search failed")
 
-        result = context_search_tools.search_metrics(
-            query_text="revenue metrics", domain="Sales", layer1="Revenue", layer2="Monthly"
-        )
+        result = context_search_tools.search_metrics(query_text="revenue metrics")
 
         assert isinstance(result, FuncToolResult)
         assert result.success == 0
@@ -342,10 +371,11 @@ class TestContextSearchTools:
             query_text="revenue query", domain="Sales", layer1="Revenue", layer2="Monthly"
         )
 
-        # Should return FuncToolResult with success=0 since it's not implemented
+        # Should return FuncToolResult with success=1 and result list from mock
         assert isinstance(result, FuncToolResult)
         assert result.success == 1
         assert result.result is not None
+        assert result.result[0]["name"] == "test sql"
 
 
 class TestContextSearchToolsEdgeCases:
@@ -413,7 +443,7 @@ class TestContextSearchToolsEdgeCases:
         """Test that all methods return FuncToolResult instances."""
         methods_to_test = [
             lambda: context_search_tools.search_table_metadata("test"),
-            lambda: context_search_tools.search_metrics("test", "Sales", "Revenue", "Monthly"),
+            lambda: context_search_tools.search_metrics("test"),
             lambda: context_search_tools.search_external_knowledge("test", "Marketing", "Analytics", "Customer"),
             lambda: context_search_tools.search_documents("test"),
         ]
