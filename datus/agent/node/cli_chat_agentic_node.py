@@ -313,9 +313,15 @@ class CliChatAgenticNode(GenSQLAgenticNode):
                     if isinstance(stream_action.output, dict):
                         last_successful_output = stream_action.output
                         # Look for content in various possible fields
+                        # Only collect raw_output if it's from a "message" type action (Thinking messages)
+                        raw_output_value = ""
+                        if stream_action.action_type == "message" and "raw_output" in stream_action.output:
+                            raw_output_value = stream_action.output.get("raw_output", "")
+
                         response_content = (
                             stream_action.output.get("content", "")
                             or stream_action.output.get("response", "")
+                            or raw_output_value
                             or response_content
                         )
 
