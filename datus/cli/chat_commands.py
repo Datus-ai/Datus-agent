@@ -54,12 +54,15 @@ class ChatCommands:
 
     def _should_create_new_node(self, subagent_name: str = None) -> bool:
         """Determine if a new node should be created."""
+        if self.current_node is None:
+            return True
+
         if subagent_name:
-            # Create new node only if subagent changed or no current node exists
-            return self.current_node is None or self.current_subagent_name != subagent_name
+            # Create new node if switching from regular to subagent, or subagent changed
+            return self.current_subagent_name != subagent_name
         else:
-            # Create new node if no current node exists OR switching from subagent to regular chat
-            return self.current_node is None or self.current_subagent_name is not None
+            # Create new node only if switching from subagent to regular
+            return bool(self.current_subagent_name)
 
     def _trigger_compact_for_current_node(self):
         """Trigger compact on current node before switching."""
@@ -146,7 +149,7 @@ class ChatCommands:
             # Get or create node
             if need_new_node:
                 self.current_node = self._create_new_node(subagent_name)
-                self.current_subagent_name = subagent_name
+                self.current_subagent_name = subagent_name if subagent_name else None
                 # Update backward compatibility reference
                 if not subagent_name:
                     self.chat_node = self.current_node
