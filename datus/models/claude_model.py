@@ -764,8 +764,9 @@ class ClaudeModel(LLMBaseModel):
             try:
                 result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
 
-                # Buffer to reorder events: thinking messages should come before tool calls
-                pending_tool_calls = []
+                # Store tool call info for matching with completion events
+                # Changed from list to dict to match OpenAI implementation pattern
+                pending_tool_calls = {}  # {call_id: tool_info dict}
 
                 while not result.is_complete:
                     async for event in result.stream_events():
@@ -779,30 +780,16 @@ class ClaudeModel(LLMBaseModel):
                         item_type = event.item.type
 
                         if item_type == "tool_call_item":
-                            action = self._process_tool_call_start(event, action_history_manager)
-                            if action:
-                                # Buffer tool calls instead of yielding immediately
-                                pending_tool_calls.append(action)
-                                action = None
+                            # Store tool call info for later matching (don't create ActionHistory yet)
+                            self._store_tool_call_info(event, pending_tool_calls)
                         elif item_type == "tool_call_output_item":
-                            action = self._process_tool_call_complete(event, action_history_manager)
+                            # Create complete action with both input and output
+                            action = self._process_tool_call_complete_v2(event, action_history_manager, pending_tool_calls)
                         elif item_type == "message_output_item":
                             action = self._process_message_output(event, action_history_manager)
-                            if action:
-                                # Yield thinking message first
-                                yield action
-                                # Then yield buffered tool calls
-                                for tool_action in pending_tool_calls:
-                                    yield tool_action
-                                pending_tool_calls.clear()
-                                action = None
 
                         if action:
                             yield action
-
-                # Yield any remaining buffered tool calls
-                for tool_action in pending_tool_calls:
-                    yield tool_action
 
             except MaxTurnsExceeded as e:
                 logger.error(f"Max turns exceeded: {str(e)}")
@@ -1002,6 +989,132 @@ class ClaudeModel(LLMBaseModel):
         # Need to get the updated action from action_history_manager
         updated_action = action_history_manager.find_action_by_id(matching_action.action_id)
         return updated_action
+
+    def _store_tool_call_info(self, event, temp_tool_calls: dict) -> None:
+        """Store tool call information for later matching with completion event.
+
+        This matches the OpenAI implementation pattern - we don't create ActionHistory
+        until we have both the input and output.
+        """
+        raw_item = event.item.raw_item
+        call_id = getattr(raw_item, "call_id", None)
+        function_name = getattr(raw_item, "name", None)
+        arguments = getattr(raw_item, "arguments", None)
+
+        # Generate call_id if missing
+        if not call_id:
+            call_id = f"tool_{uuid.uuid4().hex[:8]}"
+            logger.warning(f"Tool call missing call_id, generated: {call_id}")
+
+        # Format arguments for display
+        args_display = ""
+        if arguments:
+            try:
+                args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
+                args_str = json.dumps(args_dict, ensure_ascii=False)[:80]
+                args_display = args_str
+            except Exception:
+                args_display = str(arguments)[:80]
+
+        # Store tool call info for matching with result
+        temp_tool_calls[call_id] = {
+            "tool_name": function_name,
+            "arguments": arguments,
+            "args_display": args_display,
+        }
+
+        logger.debug(
+            f"Stored tool call: {function_name} (call_id={call_id[:20] if call_id else 'None'}...)"
+        )
+
+    def _process_tool_call_complete_v2(
+        self, event, action_history_manager: ActionHistoryManager, temp_tool_calls: dict
+    ) -> ActionHistory:
+        """Process tool_call_output_item events - V2 implementation matching OpenAI pattern.
+
+        Creates a complete ActionHistory with both input and output, adds to manager once, yields once.
+        """
+        raw_item = getattr(event.item, "raw_item", None)
+        output_content = getattr(event.item, "output", "")
+
+        # Extract call_id
+        call_id = None
+        if raw_item:
+            if isinstance(raw_item, dict):
+                call_id = raw_item.get("call_id")
+            else:
+                call_id = getattr(raw_item, "call_id", None)
+
+        logger.debug(
+            f"🔍 Tool output call_id={call_id}, type={type(output_content)}, "
+            f"stored={list(temp_tool_calls.keys())}"
+        )
+
+        # Try to match with stored tool call
+        if call_id and call_id in temp_tool_calls:
+            # Found matching tool call
+            tool_info = temp_tool_calls[call_id]
+            tool_name = tool_info["tool_name"]
+            args_display = tool_info["args_display"]
+
+            # Format result summary
+            if isinstance(output_content, dict):
+                result_summary = self._format_tool_result_from_dict(output_content, tool_name)
+            elif isinstance(output_content, str):
+                result_summary = self._format_tool_result(output_content, tool_name)
+            else:
+                result_summary = self._format_tool_result(str(output_content), tool_name)
+
+            # Create complete action with both input and output
+            complete_action = ActionHistory(
+                action_id=call_id,
+                role=ActionRole.TOOL,
+                messages=f"Tool call: {tool_name}('{args_display}...')",
+                action_type=tool_name,
+                input={"function_name": tool_name, "arguments": tool_info["arguments"]},
+                output={
+                    "success": True,
+                    "raw_output": output_content,
+                    "summary": result_summary,
+                    "status_message": result_summary,
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            complete_action.end_time = datetime.now()
+
+            logger.debug(f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}")
+
+            # Add to action_history_manager once (not twice like before!)
+            action_history_manager.add_action(complete_action)
+
+            # Remove from temp storage to avoid duplicates
+            del temp_tool_calls[call_id]
+
+            # Return the action to be yielded once
+            return complete_action
+        else:
+            # No matching tool call found
+            logger.warning(
+                f"Orphan tool result: call_id={call_id}, "
+                f"stored={list(temp_tool_calls.keys())[:3]}"
+            )
+
+            # Create orphan action
+            orphan_action = ActionHistory(
+                action_id=call_id or f"orphan_{uuid.uuid4().hex[:8]}",
+                role=ActionRole.TOOL,
+                messages="Tool call (orphan)",
+                action_type="tool_result",
+                input={"function_name": "unknown"},
+                output={"success": True, "raw_output": output_content},
+                status=ActionStatus.SUCCESS,
+            )
+            orphan_action.end_time = datetime.now()
+
+            # Add to action_history_manager once
+            action_history_manager.add_action(orphan_action)
+
+            return orphan_action
 
     def _process_message_output(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
         """Process message_output_item events."""
