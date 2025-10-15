@@ -252,7 +252,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                     f"Processing read_query output. Data keys: {data.keys() if isinstance(data, dict) else 'not a dict'}"
                 )
                 logger.debug(f"Data type: {type(data)}, Data content (first 500 chars): {str(data)[:500]}")
-                if "result" not in data:
+                if not isinstance(data, dict) or "result" not in data:
                     # Handle case where "result" key is missing
                     logger.warning(
                         f"read_query output missing 'result' key. Available keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}. "

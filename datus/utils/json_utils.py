@@ -190,13 +190,21 @@ def llm_result2json(llm_str: str, expected_type: type[Dict | List] = dict) -> Un
 
         # If it's a dict, check if it has meaningful content
         if isinstance(result, dict):
-            # Check if we have meaningful SQL content OR output content
-            # (Chat responses may have only output without SQL)
-            sql_content = result.get("sql", "")
-            output_content = result.get("output", "")
 
-            # Return None only if BOTH sql and output are empty
-            if (not sql_content or not sql_content.strip()) and (not output_content or not output_content.strip()):
+            def _has_content(v):
+                if v is None:
+                    return False
+                if isinstance(v, str):
+                    return v.strip() != ""
+                if isinstance(v, (list, dict)):
+                    return len(v) > 0
+                return True
+
+            sql_content = result.get("sql")
+            output_content = result.get("output")
+
+            # Return None only if BOTH sql and output are empty/absent
+            if not _has_content(sql_content) and not _has_content(output_content):
                 return None
 
         return result

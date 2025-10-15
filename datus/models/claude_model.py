@@ -784,7 +784,9 @@ class ClaudeModel(LLMBaseModel):
                             self._store_tool_call_info(event, pending_tool_calls)
                         elif item_type == "tool_call_output_item":
                             # Create complete action with both input and output
-                            action = self._process_tool_call_complete_v2(event, action_history_manager, pending_tool_calls)
+                            action = self._process_tool_call_complete_v2(
+                                event, action_history_manager, pending_tool_calls
+                            )
                         elif item_type == "message_output_item":
                             action = self._process_message_output(event, action_history_manager)
 
@@ -1023,9 +1025,7 @@ class ClaudeModel(LLMBaseModel):
             "args_display": args_display,
         }
 
-        logger.debug(
-            f"Stored tool call: {function_name} (call_id={call_id[:20] if call_id else 'None'}...)"
-        )
+        logger.debug(f"Stored tool call: {function_name} (call_id={call_id[:20] if call_id else 'None'}...)")
 
     def _process_tool_call_complete_v2(
         self, event, action_history_manager: ActionHistoryManager, temp_tool_calls: dict
@@ -1046,8 +1046,7 @@ class ClaudeModel(LLMBaseModel):
                 call_id = getattr(raw_item, "call_id", None)
 
         logger.debug(
-            f"🔍 Tool output call_id={call_id}, type={type(output_content)}, "
-            f"stored={list(temp_tool_calls.keys())}"
+            f"🔍 Tool output call_id={call_id}, type={type(output_content)}, " f"stored={list(temp_tool_calls.keys())}"
         )
 
         # Try to match with stored tool call
@@ -1094,10 +1093,7 @@ class ClaudeModel(LLMBaseModel):
             return complete_action
         else:
             # No matching tool call found
-            logger.warning(
-                f"Orphan tool result: call_id={call_id}, "
-                f"stored={list(temp_tool_calls.keys())[:3]}"
-            )
+            logger.warning(f"Orphan tool result: call_id={call_id}, " f"stored={list(temp_tool_calls.keys())[:3]}")
 
             # Create orphan action
             orphan_action = ActionHistory(
