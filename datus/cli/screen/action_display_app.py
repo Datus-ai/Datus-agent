@@ -186,7 +186,11 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         if not output_data:
             return []
 
-        function_name = str(action.input.get("function_name", "unknown")) if action.input else "unknown"
+        function_name = (
+            str(action.input.get("function_name", "unknown"))
+            if action.input and isinstance(action.input, dict)
+            else "unknown"
+        )
         logger.debug(f"_create_output_table called for function: {function_name}, role: {role}")
 
         result: List[Widget] = [Static("[bold]Output[/bold]", classes="section-title")]
