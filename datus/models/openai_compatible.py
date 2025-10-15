@@ -786,7 +786,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     thinking_action = ActionHistory(
                                         action_id=f"assistant_{uuid.uuid4().hex[:8]}",
                                         role=ActionRole.ASSISTANT,
-                                        messages=f"Response: {text_content[:200]}...",
+                                        messages=f"Thinking: {text_content[:200]}...",
                                         action_type="response",
                                         input={},
                                         output={"raw_output": text_content},
