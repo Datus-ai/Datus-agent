@@ -42,7 +42,7 @@ class BootstrapResult:
     should_bootstrap: bool
     reason: Optional[str]
     storage_path: str
-    strategy: Literal["overwrite", "plan", "incremental"]
+    strategy: SubAgentBootstrapStrategy
     results: List[ComponentResult]
 
 
