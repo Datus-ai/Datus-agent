@@ -25,7 +25,7 @@ COMPONENT_DIRECTORIES = {
     "metrics": ("semantic_model.lance", "metrics.lance"),
     "sql_history": ("sql_history.lance",),
 }
-# Incremental mode is not supported at the moment
+# TODO: Implement incremental strategy for partial updates
 SubAgentBootstrapStrategy = Literal["overwrite", "plan"]
 
 
@@ -110,7 +110,7 @@ class SubAgentBootstrapper:
         # Incremental mode is not supported at the moment
         if strategy not in ("overwrite", "plan"):
             raise ValueError(f"Unsupported strategy '{strategy}'. Expected 'overwrite', 'incremental', or 'plan'.")
-        effective_strategy = "overwrite" if strategy == "incremental" else strategy
+        # effective_strategy = "overwrite" if strategy == "incremental" else strategy
         if not selected_components:
             selected_components = SUPPORTED_COMPONENTS
 
@@ -118,7 +118,7 @@ class SubAgentBootstrapper:
         results: List[ComponentResult] = []
         context_lists = self._context_lists()
 
-        if effective_strategy != "plan":
+        if strategy != "plan":
             os.makedirs(self.storage_path, exist_ok=True)
 
         handlers = {
@@ -139,11 +139,7 @@ class SubAgentBootstrapper:
                 )
             results.append(result)
 
-        if (
-            effective_strategy != "plan"
-            and any(r.status == "success" for r in results)
-            and not self.sub_agent.scoped_kb_path
-        ):
+        if strategy != "plan" and any(r.status == "success" for r in results) and not self.sub_agent.scoped_kb_path:
             self.sub_agent.scoped_kb_path = self.storage_path
 
         return BootstrapResult(
@@ -324,7 +320,7 @@ class SubAgentBootstrapper:
         field_order.append("table_name")
 
         values: Dict[str, str] = {field: "" for field in field_order}
-        for idx, part in enumerate(parts):
+        for idx, part in enumerate(parts[: len(field_order)]):
             values[field_order[idx]] = part
         conditions: List[Node] = []
         for field, value in values.items():
