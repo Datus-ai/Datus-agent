@@ -74,16 +74,12 @@ class ActionContentGenerator(BaseActionContentGenerator):
         """Format a single action for streaming display"""
         dot = self._get_action_dot(action)
         # Base action text with dot
+        # For tools, messages already contains full info (function name + args) from models layer
         text = f"{dot} {action.messages}"
 
         # Add status info for tools
         if action.role == ActionRole.TOOL:
-            if action.input and isinstance(action.input, dict):
-                # Only add arguments preview, don't repeat function name
-                # (action.messages already contains "Tool call: function_name")
-                args_preview = self._get_tool_args_preview(action.input)
-                if args_preview:
-                    text += f"({args_preview})"
+            # Don't add arguments - messages already contains everything
             if action.status == ActionStatus.PROCESSING:
                 pass
             else:

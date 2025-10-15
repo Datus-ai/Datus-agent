@@ -932,10 +932,23 @@ class ClaudeModel(LLMBaseModel):
         if action_history_manager.find_action_by_id(action_id):
             return None
 
+        # Format arguments for display (similar to openai_compatible.py)
+        args_display = ""
+        if arguments:
+            try:
+                args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
+                args_str = json.dumps(args_dict, ensure_ascii=False)[:80]
+                args_display = args_str
+            except Exception:
+                args_display = str(arguments)[:80]
+
+        # Include arguments in messages (consistent with openai_compatible.py)
+        messages = f"Tool call: {function_name}('{args_display}...')" if function_name and args_display else f"Tool call: {function_name}" if function_name else "Tool call"
+
         action = ActionHistory(
             action_id=action_id,
             role=ActionRole.TOOL,
-            messages=f"Tool call: {function_name}" if function_name else "Tool call",
+            messages=messages,
             action_type=function_name or "unknown",
             input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
             status=ActionStatus.PROCESSING,
@@ -980,8 +993,10 @@ class ClaudeModel(LLMBaseModel):
             matching_action.action_id, output=output_data, end_time=datetime.now(), status=ActionStatus.SUCCESS
         )
 
-        # Don't return the action to avoid duplicate yield
-        return None
+        # Return the updated action so display layer can show the result
+        # Need to get the updated action from action_history_manager
+        updated_action = action_history_manager.find_action_by_id(matching_action.action_id)
+        return updated_action
 
     def _process_message_output(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
         """Process message_output_item events."""

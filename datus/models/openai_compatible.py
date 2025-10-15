@@ -730,6 +730,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     input={"function_name": tool_name, "arguments": tool_info["arguments"]},
                                     output={
                                         "success": True,
+                                        "raw_output": output_content,  # Add raw output for action_display_app
                                         "summary": result_summary,
                                         "status_message": result_summary,
                                     },
@@ -738,6 +739,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 complete_action.end_time = datetime.now()
 
                                 logger.debug(f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}")
+
+                                # Add to action_history_manager before yielding (consistent with thinking messages)
+                                action_history_manager.add_action(complete_action)
                                 yield complete_action
 
                                 # Remove from temp storage to avoid duplicates
@@ -761,6 +765,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     status=ActionStatus.SUCCESS,
                                 )
                                 orphan_action.end_time = datetime.now()
+
+                                # Add to action_history_manager before yielding (consistent with other actions)
+                                action_history_manager.add_action(orphan_action)
                                 yield orphan_action
 
                         # Handle thinking messages
