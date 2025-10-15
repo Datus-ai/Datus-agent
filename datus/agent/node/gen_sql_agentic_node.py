@@ -125,7 +125,7 @@ class GenSQLAgenticNode(AgenticNode):
         """Setup context search tools."""
         try:
             self.context_search_tools = ContextSearchTools(
-                self.agent_config, scoped_storage_path=self._scoped_storage_path()
+                self.agent_config, sub_agent_name=self.node_config["system_prompt"]
             )
             self.tools.extend(self.context_search_tools.available_tools())
         except Exception as e:
@@ -178,9 +178,7 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             if tool_type == "context_search_tools":
                 if not self.context_search_tools:
-                    self.context_search_tools = ContextSearchTools(
-                        self.agent_config, scoped_storage_path=self._scoped_storage_path()
-                    )
+                    self.context_search_tools = ContextSearchTools(self.agent_config, self.node_config["system_prompt"])
                 tool_instance = self.context_search_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
