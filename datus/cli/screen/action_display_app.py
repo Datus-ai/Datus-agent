@@ -186,6 +186,9 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         if not output_data:
             return []
 
+        function_name = str(action.input.get("function_name", "unknown")) if action.input else "unknown"
+        logger.debug(f"_create_output_table called for function: {function_name}, role: {role}")
+
         result: List[Widget] = [Static("[bold]Output[/bold]", classes="section-title")]
         # Normalize output_data to dict format
         if isinstance(output_data, str):
@@ -214,12 +217,16 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
 
         # Use raw_output if available
         data = output_data.get("raw_output", output_data)
+        logger.debug(f"After extracting raw_output for {function_name}: has 'result' key = {'result' in data if isinstance(data, dict) else 'N/A'}")
 
         # Parse text field if present
         if data and isinstance(data, str):
+            logger.debug(f"Data is string, attempting JSON parse for {function_name}. String length: {len(data)}")
             try:
                 data = json.loads(data)
-            except Exception:
+                logger.debug(f"Successfully parsed JSON for {function_name}. Keys: {data.keys() if isinstance(data, dict) else 'not a dict'}")
+            except Exception as e:
+                logger.debug(f"Failed to parse JSON for {function_name}: {e}")
                 result.append(TextArea(data, language="markdown", theme="monokai"))
                 return result
 
@@ -237,6 +244,20 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                     return result
             if function_name == "read_query":
                 #  original_rows, original_columns, is_compressed, and compressed_data
+                logger.debug(f"Processing read_query output. Data keys: {data.keys() if isinstance(data, dict) else 'not a dict'}")
+                logger.debug(f"Data type: {type(data)}, Data content (first 500 chars): {str(data)[:500]}")
+                if "result" not in data:
+                    # Handle case where "result" key is missing
+                    logger.warning(
+                        f"read_query output missing 'result' key. Available keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}. "
+                        f"Full data structure: {json.dumps(self._make_serializable(data), indent=2)[:1000]}"
+                    )
+                    serializable_data = self._make_serializable(data)
+                    result.append(
+                        TextArea(json.dumps(serializable_data, indent=2), language="json", theme="monokai")
+                    )
+                    return result
+                logger.debug(f"Found 'result' key in read_query output")
                 data = data["result"]
                 is_compressed = data.get("is_compressed", False)
                 compressed_data = str(data.get("compressed_data"))

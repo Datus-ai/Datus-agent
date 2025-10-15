@@ -804,12 +804,6 @@ class ClaudeModel(LLMBaseModel):
                 for tool_action in pending_tool_calls:
                     yield tool_action
 
-                # Phase 2: Generate final summary report
-                final_output = result.final_output if hasattr(result, "final_output") else ""
-                summary_action = await self._generate_summary_report(final_output, action_history_manager)
-                if summary_action:
-                    yield summary_action
-
             except MaxTurnsExceeded as e:
                 logger.error(f"Max turns exceeded: {str(e)}")
                 error_action = ActionHistory.create_action(
@@ -852,104 +846,6 @@ class ClaudeModel(LLMBaseModel):
         )
         return agent
 
-    def _try_parse_json_output(self, content: str) -> Optional[Dict[str, Any]]:
-        """Try to parse content as JSON with sql and output fields.
-
-        Args:
-            content: String content that might be JSON or markdown-wrapped JSON
-
-        Returns:
-            Dict with 'sql' and 'output' keys if successfully parsed, None otherwise
-        """
-        if not content or not isinstance(content, str):
-            return None
-
-        import json
-        import re
-
-        import json_repair
-
-        # Strip markdown code blocks if present
-        content_stripped = content.strip()
-        if content_stripped.startswith("```"):
-            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content_stripped, re.DOTALL)
-            if match:
-                content_stripped = match.group(1).strip()
-
-        # Try direct JSON parsing first, then json_repair
-        try:
-            data = json.loads(content_stripped)
-        except json.JSONDecodeError:
-            try:
-                data = json_repair.loads(content_stripped)
-            except Exception:
-                return None
-
-        # Check if it has the expected structure
-        if isinstance(data, dict) and ("sql" in data or "output" in data or "markdown" in data):
-            output_text = data.get("markdown") or data.get("output", "")
-            return {"sql": data.get("sql"), "output": output_text}
-
-        return None
-
-    async def _generate_summary_report(
-        self, final_output: str, action_history_manager: ActionHistoryManager
-    ) -> Optional[ActionHistory]:
-        """Generate a formatted summary report from LLM final output.
-
-        Extracts SQL and Markdown output from the final LLM response and creates
-        a formatted summary action.
-
-        Args:
-            final_output: The final output from result.final_output
-            action_history_manager: Action history manager for context
-
-        Returns:
-            ActionHistory with formatted summary, or None if no structured output found
-        """
-        import uuid
-
-        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-
-        # Parse the final output as JSON with sql and output fields
-        parsed = self._try_parse_json_output(final_output)
-        if not parsed:
-            logger.debug("No structured output found for summary report")
-            return None
-
-        sql = parsed.get("sql", "")
-        output_text = parsed.get("output", "")
-
-        if not sql and not output_text:
-            logger.debug("Parsed output has no SQL or text content")
-            return None
-
-        # Format the summary as Markdown
-        # UI will display SQL separately from output["sql"], so only put Analysis Report in messages
-        display_markdown = f"## Analysis Report\n{output_text}" if output_text else "Summary Report"
-
-        # Create summary action with formatted content in messages
-        summary_action = ActionHistory(
-            action_id=str(uuid.uuid4()),
-            role=ActionRole.ASSISTANT,
-            messages=display_markdown,
-            action_type="summary_report",
-            input={},
-            output={
-                "success": True,
-                "sql": sql,
-                "markdown": output_text,
-                "content": output_text,
-                "response": output_text,
-            },
-            status=ActionStatus.SUCCESS,
-        )
-        summary_action.end_time = datetime.now()
-
-        action_history_manager.add_action(summary_action)
-        logger.info("Generated summary report with SQL and analysis")
-
-        return summary_action
 
     def _format_tool_result_from_dict(self, data: dict, tool_name: str = "") -> str:
         """Format tool result from dict for display.
