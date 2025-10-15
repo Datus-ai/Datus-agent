@@ -14,6 +14,7 @@ from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.sql_history.store import SqlHistoryRAG
 from datus.utils.constants import DBType
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -59,15 +60,39 @@ def _replace_wildcard(value: str) -> str:
 class SubAgentBootstrapper:
     def __init__(
         self,
-        *,
-        sub_agent: SubAgentConfig,
         agent_config: AgentConfig,
+        sub_agent: Optional[SubAgentConfig] = None,
+        sub_agent_name: Optional[str] = None,
     ):
-        self.sub_agent = sub_agent
         self.agent_config = agent_config
+        self._valid_sub_agent(sub_agent_name, sub_agent)
+
         # used for sqlite
         self.dialect = self.agent_config.db_type
         self.storage_path = self.agent_config.sub_agent_storage_path(self.sub_agent.system_prompt)
+
+    def _valid_sub_agent(self, sub_agent_name: Optional[str] = None, sub_agent: Optional[SubAgentConfig] = None):
+        if sub_agent:
+            self.sub_agent_name = sub_agent.system_prompt
+            self._valid_sub_agent_in_main(self.sub_agent_name)
+            self.sub_agent = sub_agent
+        elif sub_agent_name:
+            self.sub_agent_name = sub_agent_name
+            self.sub_agent = SubAgentConfig.model_validate(self._valid_sub_agent_in_main(sub_agent_name))
+        else:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message="Subagent name and configuration cannot be empty at the same time",
+            )
+
+    def _valid_sub_agent_in_main(self, sub_agent_name: str) -> Dict[str, Any]:
+        sub_in_main_config = self.agent_config.sub_agent_config(self.sub_agent_name)
+        if not sub_in_main_config:
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Subagent configuration named `{sub_agent_name}` not found in agent configuration",
+            )
+        return sub_in_main_config
 
     def run(
         self,

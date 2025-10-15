@@ -1,4 +1,5 @@
 import os
+from typing import Any, Dict
 
 import pytest
 
@@ -12,12 +13,16 @@ class DummyAgentConfig:
         self.current_namespace = "demo"
         self.current_database = "warehouse"
         self.db_type = "sqlite"
+        self.agentic_nodes = {}
 
     def rag_storage_path(self) -> str:
         return "/tmp/data"
 
     def sub_agent_storage_path(self, sub_agent_name: str):
         return os.path.join(self.rag_storage_path(), "sub_agents", sub_agent_name)
+
+    def sub_agent_config(self, sub_agent_name: str) -> Dict[str, Any]:
+        return self.agentic_nodes.get(sub_agent_name, {})
 
 
 class DummyDBManager:
@@ -32,6 +37,7 @@ class DummyDBManager:
 def bootstrapper():
     agent_config = DummyAgentConfig()
     sub_agent = SubAgentConfig(system_prompt="tester", scoped_context=ScopedContext())
+    agent_config.agentic_nodes["tester"] = sub_agent.model_dump()
     return SubAgentBootstrapper(sub_agent=sub_agent, agent_config=agent_config)
 
 

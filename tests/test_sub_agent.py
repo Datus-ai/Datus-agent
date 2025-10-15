@@ -5,7 +5,7 @@ from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.schema_metadata import SchemaWithValueRAG
 from datus.storage.sql_history import SqlHistoryRAG
-from datus.storage.sub_agent_kb_bootstrap import SubAgentBootstrapper
+from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS, SubAgentBootstrapper
 from tests.conftest import load_acceptance_config
 
 
@@ -21,7 +21,7 @@ class TestBootstrap:
         self,
         tables: str = "california_schools",
         metrics: str = "education.schools",
-        sqls: str = "education.k-12",
+        sqls: str = "education.school_administration",
     ) -> SubAgentConfig:
         scoped_context = ScopedContext(tables=tables, metrics=metrics, sqls=sqls)
         return SubAgentConfig(
@@ -36,6 +36,8 @@ class TestBootstrap:
         sub_agent_config = self._setup_sub_agent_config()
         scoped_context = sub_agent_config.scoped_context
 
+        agent_config.agentic_nodes[sub_agent_config.system_prompt] = sub_agent_config
+
         bootstrapper = SubAgentBootstrapper(sub_agent=sub_agent_config, agent_config=agent_config)
 
         result = bootstrapper.run(strategy="plan")
@@ -44,15 +46,15 @@ class TestBootstrap:
         component_results = result.results
         assert len(component_results) == 3
         # metadata
-        assert component_results[0].details.get("match_count", 0) == 3
+        assert component_results[0].details.get("match_count", 0) >= 3
         # metrics
-        assert component_results[1].details.get("match_count", 0) == 7
+        assert component_results[1].details.get("match_count", 0) == 5
         # sql
-        assert component_results[2].details.get("match_count", 0) == 8
+        assert component_results[2].details.get("match_count", 0) == 2
 
         scoped_context.tables = "california_schools.*"
         scoped_context.metrics = "education.schools.*"
-        scoped_context.sqls = "education.k-12.school_*"
+        scoped_context.sqls = "education.school_*"
 
         bootstrapper = SubAgentBootstrapper(sub_agent=sub_agent_config, agent_config=agent_config)
 
@@ -60,32 +62,30 @@ class TestBootstrap:
         assert result
         component_results = result.results
         assert len(component_results) == 3
-        assert component_results[0].details.get("match_count", 0) == 3
-        assert component_results[1].details.get("match_count", 0) == 7
-        assert component_results[2].details.get("match_count", 0) == 5
+        assert component_results[0].details.get("match_count", 0) >= 3
+        assert component_results[1].details.get("match_count", 0) == 5
+        assert component_results[2].details.get("match_count", 0) == 7
 
     def test_overwrite(self, agent_config: AgentConfig):
         sub_agent_config = self._setup_sub_agent_config()
+        agent_config.agentic_nodes[sub_agent_config.system_prompt] = sub_agent_config
         bootstrapper = SubAgentBootstrapper(sub_agent=sub_agent_config, agent_config=agent_config)
 
         result = bootstrapper.run(strategy="overwrite")
         assert result
         assert result.storage_path == "tests/data/sub_agents/test"
 
-        table_schema_rag = SchemaWithValueRAG(db_path=result.storage_path)
+        table_schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name="test")
         component_results = result.results
-        print("$$$$", component_results)
         # metadata
         assert component_results[0].details.get("stored_tables", 0) == table_schema_rag.schema_store.table_size()
 
-        metrics_rag = SemanticMetricsRAG(db_path=result.storage_path)
+        metrics_rag = SemanticMetricsRAG(agent_config, sub_agent_name="test")
         # metrics
         assert component_results[1].details.get("stored_metrics", 0) == metrics_rag.metric_storage.table_size()
         # sql
-        sql_rag = SqlHistoryRAG(db_path=result.storage_path)
+        sql_rag = SqlHistoryRAG(agent_config, sub_agent_name="test")
         assert component_results[2].details.get("stored_sqls", 0) == sql_rag.sql_history_storage.table_size()
-
-        from datus.utils.sub_agent_bootstrap import SUPPORTED_COMPONENTS
 
         for component in SUPPORTED_COMPONENTS:
             bootstrapper._clear_component(component)

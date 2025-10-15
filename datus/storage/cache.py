@@ -72,7 +72,7 @@ class StorageCache:
         self._schema_holder = StorageCacheHolder(SchemaStorage, agent_config, "database", "tables")
         self._sample_data_holder = StorageCacheHolder(SchemaValueStorage, agent_config, "database", "tables")
         self._metrics_holder = StorageCacheHolder(MetricStorage, agent_config, "metric", "metrics")
-        self._semantic_holder = StorageCacheHolder(SemanticModelStorage, agent_config, "metric" "metrics", "metrics")
+        self._semantic_holder = StorageCacheHolder(SemanticModelStorage, agent_config, "metric", "metrics")
         self._historical_sql_holder = StorageCacheHolder(SqlHistoryStorage, agent_config, "metric", "sqls")
         self._document_holder = StorageCacheHolder(DocumentStore, agent_config, "document", "")
 

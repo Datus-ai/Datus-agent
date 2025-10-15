@@ -25,12 +25,12 @@ class ConfigurationManager:
     def __init__(self, config_path: str = ""):
         self.config_path: Path = parse_config_path(config_path)
 
-        self.data = self._load()
+        self.data = self._load().get("agent", {})
 
     def _load(self) -> Dict[str, Any]:
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f).get("agent") or {}
+                return yaml.safe_load(f) or {}
         except yaml.YAMLError as e:
             print(f"Error parsing YAML file: {e}")
             return {}
