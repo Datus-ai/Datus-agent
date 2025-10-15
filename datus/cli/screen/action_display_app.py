@@ -234,7 +234,6 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 result.append(TextArea(data, language="markdown", theme="monokai"))
                 return result
 
-        function_name = str(action.input.get("function_name", "unknown"))
         if role == ActionRole.TOOL:
             if "success" in data:
                 if data["success"] == 0:
