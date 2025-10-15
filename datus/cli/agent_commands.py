@@ -393,7 +393,7 @@ class AgentCommands:
             # Note: search_table is now in DBFuncTool, not ContextSearchTools
             from datus.tools.tools import db_function_tool_instance
 
-            db_tool = db_function_tool_instance(self.agent_config)
+            db_tool = db_function_tool_instance(self.cli.agent_config)
             result = db_tool.search_table(
                 query_text=input_text,
                 catalog=catalog_name,
