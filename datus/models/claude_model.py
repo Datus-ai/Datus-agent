@@ -846,7 +846,6 @@ class ClaudeModel(LLMBaseModel):
         )
         return agent
 
-
     def _format_tool_result_from_dict(self, data: dict, tool_name: str = "") -> str:
         """Format tool result from dict for display.
 
@@ -943,7 +942,13 @@ class ClaudeModel(LLMBaseModel):
                 args_display = str(arguments)[:80]
 
         # Include arguments in messages (consistent with openai_compatible.py)
-        messages = f"Tool call: {function_name}('{args_display}...')" if function_name and args_display else f"Tool call: {function_name}" if function_name else "Tool call"
+        messages = (
+            f"Tool call: {function_name}('{args_display}...')"
+            if function_name and args_display
+            else f"Tool call: {function_name}"
+            if function_name
+            else "Tool call"
+        )
 
         action = ActionHistory(
             action_id=action_id,

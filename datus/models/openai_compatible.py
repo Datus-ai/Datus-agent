@@ -907,7 +907,6 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         action.output["usage"] = usage_info
 
-
     def _format_tool_result_from_dict(self, data: dict, tool_name: str = "") -> str:
         """Format tool result from dict for display.
 
