@@ -310,6 +310,9 @@ def _build_semantic_model_dict(
     semantic_file_path: str,
     content: dict,
 ):
+    if "." in table_name:
+        table_name = table_name.split(".")[-1]
+
     """Build semantic model dictionary from content."""
     return {
         "id": gen_semantic_model_id(catalog_name, database_name, schema_name, table_name),

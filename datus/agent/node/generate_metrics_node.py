@@ -88,6 +88,7 @@ class GenerateMetricsNode(Node):
 
         missing_tables = []
         for table_name in table_names:
+            table_name = table_name.split(".")[-1]
             yaml_file = os.path.join(model_path, f"{table_name}.yaml")
             yml_file = os.path.join(model_path, f"{table_name}.yml")
 

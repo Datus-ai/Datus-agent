@@ -476,12 +476,35 @@ class GenSQLAgenticNode(AgenticNode):
                     or str(last_successful_output)  # Fallback to string representation
                 )
 
-            # Extract SQL and output from the final response_content
-            sql_content, extracted_output = self._extract_sql_and_output_from_response({"content": response_content})
-            if extracted_output:
-                response_content = extracted_output
+            # Extract SQL directly from summary_report action if available
+            sql_content = None
+            for stream_action in reversed(action_history_manager.get_actions()):
+                if stream_action.action_type == "summary_report" and stream_action.output:
+                    if isinstance(stream_action.output, dict):
+                        sql_content = stream_action.output.get("sql")
+                        # Also get the markdown/content if response_content is still empty
+                        if not response_content:
+                            response_content = (
+                                stream_action.output.get("markdown", "")
+                                or stream_action.output.get("content", "")
+                                or stream_action.output.get("response", "")
+                            )
+                        if sql_content:  # Found SQL, stop searching
+                            logger.debug(f"Extracted SQL from summary_report action: {sql_content[:100]}...")
+                            break
+
+            # Fallback: try to extract SQL and output from response_content if not found
+            if not sql_content:
+                extracted_sql, extracted_output = self._extract_sql_and_output_from_response(
+                    {"content": response_content}
+                )
+                if extracted_sql:
+                    sql_content = extracted_sql
+                if extracted_output:
+                    response_content = extracted_output
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
+            logger.debug(f"Final sql_content: {sql_content[:100] if sql_content else 'None'}...")
 
             # Extract token usage from final actions
             final_actions = action_history_manager.get_actions()
@@ -709,6 +732,7 @@ def prepare_template_context(
     if agent_config:
         context["agent_config"] = agent_config
         context["namespace"] = getattr(agent_config, "current_namespace", None)
+        context["db_name"] = getattr(agent_config, "current_database", None)
         context["workspace_root"] = workspace_root or agent_config.workspace_root
     logger.debug(f"Prepared template context: {context}")
     return context

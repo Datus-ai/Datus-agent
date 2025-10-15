@@ -80,7 +80,7 @@ def find_mcp_directory(mcp_name: str) -> str:
 
     for path in sys.path:
         if "site-packages" in path:
-            datus_mcp_path = Path(path) / "datus-mcp" / mcp_name
+            datus_mcp_path = Path(path) / "mcp" / mcp_name
             if datus_mcp_path.exists():
                 logger.info(f"Found MCP directory via sys.path: {datus_mcp_path}")
                 return str(datus_mcp_path)
@@ -132,7 +132,7 @@ class MCPServer:
         if cls._metricflow_mcp_server is None:
             with cls._lock:
                 if cls._metricflow_mcp_server is None:
-                    directory = os.getenv("METRICFLOW_MCP_DIR", "mcp/mcp-metricflow-server")
+                    directory = os.getenv("METRICFLOW_MCP_DIR")
                     if not directory:
                         try:
                             directory = find_mcp_directory("mcp-metricflow-server")
@@ -249,6 +249,7 @@ class MCPServer:
                             "edit_file",
                             "search_files",
                             "list_directory",
+                            "list_allowed_directories",
                         ]
                     )
 
