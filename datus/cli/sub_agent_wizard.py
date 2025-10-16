@@ -798,8 +798,6 @@ class SubAgentWizard:
         items = []
         try:
             if kind == "tables":
-                # self.cli_instance.at_completer.table_completer.reload_data()
-                # Prefer flatten_data keys for full path; fallback to get_data list
                 if not self.table_completer.flatten_data:
                     self.table_completer.reload_data()
                 if flatten_data := self.table_completer.flatten_data:
