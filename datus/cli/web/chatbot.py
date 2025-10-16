@@ -92,6 +92,19 @@ class StreamlitChatbot:
         """Get current subagent from URL query parameters"""
         return st.query_params.get("subagent")
 
+    @property
+    def should_hide_sidebar(self) -> bool:
+        """Check if sidebar should be hidden (embed mode)"""
+        # Use 'hide_sidebar' instead of 'embed' because 'embed' is a reserved Streamlit parameter
+        hide_param = st.query_params.get("hide_sidebar")
+
+        # Store in session_state if found in URL
+        if hide_param is not None:
+            st.session_state.embed_mode = hide_param == "true"
+
+        # Return from session_state (persists across reruns)
+        return st.session_state.get("embed_mode", False)
+
     def setup_config(
         self, config_path: str = "conf/agent.yml", namespace: str = None, catalog: str = "", database: str = ""
     ) -> bool:
@@ -112,6 +125,30 @@ class StreamlitChatbot:
 
     def render_sidebar(self) -> Dict[str, Any]:
         """Render sidebar with configuration information"""
+        # Skip sidebar rendering in embed mode, but keep config loading
+        if self.should_hide_sidebar:
+            # Still need to initialize config if not done
+            if not self.cli and not st.session_state.get("initialization_attempted", False):
+                startup_config = st.session_state.get("startup_config_path", "conf/agent.yml")
+                startup_namespace = st.session_state.get("startup_namespace", None)
+                startup_catalog = st.session_state.get("startup_catalog", "")
+                startup_database = st.session_state.get("startup_database", "")
+
+                st.session_state.initialization_attempted = True
+
+                if self.setup_config(
+                    startup_config, startup_namespace, catalog=startup_catalog, database=startup_database
+                ):
+                    st.rerun()
+                else:
+                    st.session_state.initialization_attempted = False
+
+            # Update subagent name from URL
+            if self.cli:
+                st.session_state.subagent_name = self.current_subagent
+
+            return {"config_loaded": self.cli is not None}
+
         with st.sidebar:
             st.header("📊 Datus Chat")
 
@@ -395,19 +432,19 @@ class StreamlitChatbot:
 
     def run(self):
         """Main Streamlit app runner"""
-        # Initialize logging for web interface
-        if "log_manager_initialized" not in st.session_state:
-            st.session_state.log_manager_initialized = True
-            logger.info("Web chatbot logging initialized")
-
-        # Page configuration
+        # Page configuration - MUST be the first Streamlit command
         st.set_page_config(
             page_title="Datus AI Chat Assistant",
             page_icon="🤖",
             layout="wide",
-            initial_sidebar_state="expanded",
+            initial_sidebar_state="collapsed" if self.should_hide_sidebar else "expanded",
             menu_items={"Get Help": None, "Report a bug": None, "About": None},
         )
+
+        # Initialize logging for web interface
+        if "log_manager_initialized" not in st.session_state:
+            st.session_state.log_manager_initialized = True
+            logger.info("Web chatbot logging initialized")
 
         # Hide deploy button and toolbar
         st.set_option("client.toolbarMode", "viewer")
@@ -419,29 +456,61 @@ class StreamlitChatbot:
             st.session_state.current_session_id = current_session_id
 
         # Custom CSS for chat styling
-        st.markdown(
-            """
-        <style>
-        .stChatMessage {
-            padding: 1rem;
-            border-radius: 0.5rem;
-            margin-bottom: 1rem;
-        }
-        .user-message {
-            background-color: #e3f2fd;
-        }
-        .assistant-message {
-            background-color: #f5f5f5;
-        }
-        .stExpander {
-            border: 1px solid #ddd;
-            border-radius: 0.5rem;
-            margin-bottom: 0.5rem;
-        }
-        </style>
-        """,
-            unsafe_allow_html=True,
-        )
+        if self.should_hide_sidebar:
+            # Hide sidebar completely in embed mode
+            st.markdown(
+                """
+                <style>
+                .stChatMessage {
+                    padding: 1rem;
+                    border-radius: 0.5rem;
+                    margin-bottom: 1rem;
+                }
+                .user-message {
+                    background-color: #e3f2fd;
+                }
+                .assistant-message {
+                    background-color: #f5f5f5;
+                }
+                .stExpander {
+                    border: 1px solid #ddd;
+                    border-radius: 0.5rem;
+                    margin-bottom: 0.5rem;
+                }
+                [data-testid="stSidebar"] {
+                    display: none;
+                }
+                [data-testid="stSidebarCollapsedControl"] {
+                    display: none;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                """
+                <style>
+                .stChatMessage {
+                    padding: 1rem;
+                    border-radius: 0.5rem;
+                    margin-bottom: 1rem;
+                }
+                .user-message {
+                    background-color: #e3f2fd;
+                }
+                .assistant-message {
+                    background-color: #f5f5f5;
+                }
+                .stExpander {
+                    border: 1px solid #ddd;
+                    border-radius: 0.5rem;
+                    margin-bottom: 0.5rem;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
 
         # Load session from URL if present
         self.load_session_from_url()

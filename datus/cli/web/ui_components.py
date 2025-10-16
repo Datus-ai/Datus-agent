@@ -35,6 +35,22 @@ class UIComponents:
         self.server_host = server_host
         self.server_port = server_port
 
+    @staticmethod
+    def safe_update_query_params(new_params: dict):
+        """Safely update query params while preserving hide_sidebar parameter"""
+        current_params = dict(st.query_params)
+        hide_sidebar_value = current_params.get("hide_sidebar")
+
+        # Update with new params
+        current_params.update(new_params)
+
+        # Restore hide_sidebar if it was present
+        if hide_sidebar_value:
+            current_params["hide_sidebar"] = hide_sidebar_value
+
+        st.query_params.clear()
+        st.query_params.update(current_params)
+
     def render_session_item(self, info: dict) -> None:
         """Render a single session item in sidebar."""
         sid_short = info["session_id"][:8]
@@ -45,7 +61,7 @@ class UIComponents:
             if latest_msg:
                 st.caption(f"**Latest:** {latest_msg[:50]}...")
             if st.button("🔗 Load Session", key=f"load_{info['session_id']}", use_container_width=True):
-                st.query_params.update({"session": info["session_id"]})
+                self.safe_update_query_params({"session": info["session_id"]})
                 st.rerun()
 
     def generate_report_issue_html(self, session_id: Optional[str] = None) -> str:
@@ -226,7 +242,7 @@ class UIComponents:
 
                 with col2:
                     if st.button(f"🚀 Use {subagent_name}", key=f"switch_{subagent_name}"):
-                        st.query_params.update({"subagent": subagent_name})
+                        UIComponents.safe_update_query_params({"subagent": subagent_name})
                         st.rerun()
 
             st.markdown("---")
