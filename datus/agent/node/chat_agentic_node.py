@@ -80,7 +80,7 @@ class ChatAgenticNode(AgenticNode):
         # Only a single database connection is now supported
         db_manager = db_manager_instance(self.agent_config.namespaces)
         conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-        self.db_func_tool = DBFuncTool(conn)
+        self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         self.tools = self.db_func_tool.available_tools() + self.context_search_tools.available_tools()
 

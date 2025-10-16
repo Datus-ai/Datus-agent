@@ -122,11 +122,9 @@ class DBManager:
 
     def _init_conn(self, namespace: str, db_config: DbConfig, database_name: Optional[str] = None) -> BaseSqlConnector:
         if db_config.type == DBType.SQLITE:
-            conn: BaseSqlConnector = SQLiteConnector(db_config.uri)
-            conn.database_name = db_config.database
+            conn: BaseSqlConnector = SQLiteConnector(db_config.uri, database_name=db_config.database)
         elif db_config.type == DBType.DUCKDB:
-            conn = DuckdbConnector(db_config.uri)
-            conn.database_name = db_config.database
+            conn = DuckdbConnector(db_config.uri, database_name=db_config.database)
         elif db_config.type == DBType.SNOWFLAKE:
             conn = SnowflakeConnector(
                 account=db_config.account,

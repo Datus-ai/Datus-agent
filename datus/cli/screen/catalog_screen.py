@@ -24,8 +24,7 @@ from textual.worker import get_current_worker
 from datus.cli.screen.base_widgets import FocusableStatic, InputWithLabel
 from datus.cli.screen.context_screen import ContextScreen
 from datus.storage.catalog_manager import CatalogUpdater
-from datus.storage.lancedb_conditions import and_, eq
-from datus.storage.metric.store import SemanticModelStorage
+from datus.storage.metric.store import SemanticMetricsRAG
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -316,9 +315,8 @@ class CatalogScreen(ContextScreen):
         self.current_node_data = None
         self.is_fullscreen = False
         self.db_connector: BaseSqlConnector = context_data.get("db_connector")
-        from datus.storage.cache import get_storage_cache_instance
 
-        self.semantic_storage: SemanticModelStorage = get_storage_cache_instance(self._agent_config).semantic_storage()
+        self.semantic_storage: SemanticMetricsRAG = SemanticMetricsRAG(self._agent_config)
 
         self.loading_nodes = set()  # Track which nodes are currently loading
         self._current_loading_task = None  # Track current async task
@@ -882,36 +880,9 @@ class CatalogScreen(ContextScreen):
         if not self.semantic_storage:
             return []
 
-        results = self.semantic_storage._search_all(
-            where=and_(
-                eq("catalog_name", catalog_name or ""),
-                eq("database_name", database_name or ""),
-                eq("schema_name", schema_name or ""),
-                eq("table_name", table_name or ""),
-            ),
-            select_fields=[
-                "semantic_model_name",
-                "domain",
-                "layer1",
-                "layer2",
-                "semantic_model_desc",
-                "identifiers",
-                "dimensions",
-                "measures",
-                "semantic_file_path",
-                "catalog_name",
-                "database_name",
-                "schema_name",
-                "table_name",
-            ],
+        return self.semantic_storage.get_semantic_model(
+            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
         )
-        if results is None or results.num_rows == 0:
-            return []
-
-        try:
-            return results.to_pylist()
-        except AttributeError:
-            return []
 
     def action_cursor_down(self) -> None:
         """Move cursor down."""

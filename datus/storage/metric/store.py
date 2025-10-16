@@ -9,7 +9,7 @@ import pyarrow as pa
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
-from datus.storage.lancedb_conditions import And, build_where, eq, in_
+from datus.storage.lancedb_conditions import And, WhereExpr, and_, build_where, eq, in_
 
 logger = logging.getLogger(__file__)
 
@@ -171,6 +171,29 @@ class SemanticMetricsRAG:
     def get_metrics_size(self):
         return self.metric_storage.table_size()
 
+    def search_metrics(
+        self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
+    ) -> List[Dict[str, Any]]:
+        where_clause = SemanticMetricsRAG._build_domain_layer_conditions(
+            [], domain=domain, layer1=layer1, layer2=layer2
+        )
+        return self._search_metrics_detail(query_text, where=where_clause, top_n=top_n)
+
+    @classmethod
+    def _build_domain_layer_conditions(
+        cls, conditions: List[WhereExpr], domain: str = "", layer1: str = "", layer2: str = ""
+    ) -> Optional[str]:
+        if domain:
+            conditions.append(eq("domain", domain))
+        if layer1:
+            conditions.append(eq("layer1", layer1))
+        if layer2:
+            conditions.append(eq("layer2", layer2))
+        if not conditions:
+            return None
+
+        return build_where(And(conditions))
+
     def search_hybrid_metrics(
         self,
         query_text: str,
@@ -210,35 +233,28 @@ class SemanticMetricsRAG:
             logger.info("Semantic search returned no model names; skipping metric search")
             return []
         conditions = [in_("semantic_model_name", semantic_names)]
-        if domain:
-            conditions.append(eq("domain", domain))
-        if layer1:
-            conditions.append(eq("layer1", layer1))
-        if layer2:
-            conditions.append(eq("layer2", layer2))
 
-        metric_condition = And(conditions)
-        metric_where_clause = build_where(metric_condition)
-        logger.info(f"start to search metrics, metric_where: {metric_where_clause}, query_text: {query_text}")
+        metric_where_clause = SemanticMetricsRAG._build_domain_layer_conditions(conditions, domain, layer1, layer2)
+        return self._search_metrics_detail(query_text, metric_where_clause)
+
+    def _search_metrics_detail(
+        self, query_text: str, where: Optional[WhereExpr] = None, top_n=5
+    ) -> List[Dict[str, Any]]:
+        logger.info(f"start to search metrics, metric_where: {where}, query_text: {query_text}")
         metric_search_results = self.metric_storage.search(
             query_txt=query_text,
             select_fields=["llm_text"],
             top_n=top_n,
-            where=metric_condition,
+            where=where,
         )
-
         if metric_search_results is None or metric_search_results.num_rows == 0:
             logger.info("Metric search returned no results")
             return []
-
         try:
-            metric_result = metric_search_results.select(["llm_text"]).to_pylist()
+            return metric_search_results.select(["llm_text"]).to_pylist()
         except Exception as e:
             logger.warning(f"Failed to extract metric results, exception: {str(e)}")
             return []
-
-        logger.info(f"Got the metrics result, size: {len(metric_result)}, query_text: {query_text}")
-        return metric_result
 
     def get_metrics_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
         metric_condition = And(
@@ -286,3 +302,40 @@ class SemanticMetricsRAG:
             if "_distance" in columns:
                 return query_result.remove_column(columns.index("_distance")).to_pylist()
             return query_result.to_pylist()
+
+    def get_semantic_model(
+        self,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_name: str = "",
+        select_fields: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        if not select_fields:
+            select_fields = [
+                "semantic_model_name",
+                "domain",
+                "layer1",
+                "layer2",
+                "semantic_model_desc",
+                "identifiers",
+                "dimensions",
+                "measures",
+                "semantic_file_path",
+                "catalog_name",
+                "database_name",
+                "schema_name",
+                "table_name",
+            ]
+        results = self.semantic_model_storage._search_all(
+            where=and_(
+                eq("catalog_name", catalog_name or ""),
+                eq("database_name", database_name or ""),
+                eq("schema_name", schema_name or ""),
+                eq("table_name", table_name or ""),
+            ),
+            select_fields=select_fields,
+        )
+        if results is None or results.num_rows == 0:
+            return []
+        return results.to_pylist()

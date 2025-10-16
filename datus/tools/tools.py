@@ -4,16 +4,21 @@
 
 # -*- coding: utf-8 -*-
 import json
-from typing import Any, Callable, List, Optional
+from dataclasses import dataclass
+from fnmatch import fnmatchcase
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from agents import FunctionTool, Tool, function_tool
 from pydantic import BaseModel, Field
 
 from datus.configuration.agent_config import AgentConfig
+from datus.schemas.agent_models import SubAgentConfig
+from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.compress_utils import DataCompressor
-from datus.utils.constants import SUPPORT_CATALOG_DIALECTS, SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
+from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
 
 
 class FuncToolResult(BaseModel):
@@ -68,22 +73,295 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
     return final_tool
 
 
+@dataclass
+class TableCoordinate:
+    catalog: str = ""
+    database: str = ""
+    schema: str = ""
+    table: str = ""
+
+
+@dataclass(frozen=True)
+class ScopedTablePattern:
+    raw: str
+    catalog: str = ""
+    database: str = ""
+    schema: str = ""
+    table: str = ""
+
+    def matches(self, coordinate: TableCoordinate) -> bool:
+        return all(
+            _pattern_matches(getattr(self, field), getattr(coordinate, field))
+            for field in ("catalog", "database", "schema", "table")
+        )
+
+
+def _pattern_matches(pattern: str, value: str) -> bool:
+    if not pattern or pattern in ("*", "%"):
+        return True
+    normalized_pattern = pattern.replace("%", "*")
+    return fnmatchcase(value or "", normalized_pattern)
+
+
 class DBFuncTool:
-    def __init__(self, connector: BaseSqlConnector):
+    def __init__(
+        self,
+        connector: BaseSqlConnector,
+        agent_config: Optional[AgentConfig] = None,
+        *,
+        sub_agent_name: Optional[str] = None,
+        scoped_tables: Optional[Iterable[str]] = None,
+    ):
         self.connector = connector
         self.compressor = DataCompressor()
+        self.agent_config = agent_config
+        self.sub_agent_name = sub_agent_name
+        self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
+        self._field_order = self._determine_field_order()
+        self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
+        self._semantic_storage = SemanticMetricsRAG(agent_config, sub_agent_name) if agent_config else None
+        self.has_schema = self.schema_rag and self.schema_rag.schema_store.table_size() > 0
+        self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_semantic_model_size() > 0
+
+    def _reset_database_for_rag(self, database_name: str = "") -> str:
+        if self.connector.dialect in (DBType.SQLITE, DBType.DUCKDB):
+            return self.connector.database_name
+        else:
+            return database_name
+
+    def _determine_field_order(self) -> Sequence[str]:
+        dialect = getattr(self.connector, "dialect", "") or ""
+        fields: List[str] = []
+        if DBType.support_catalog(dialect):
+            fields.append("catalog")
+        if DBType.support_database(dialect) or dialect == DBType.SQLITE:
+            fields.append("database")
+        if DBType.support_schema(dialect):
+            fields.append("schema")
+        fields.append("table")
+        return fields
+
+    def _load_scoped_patterns(self, explicit_tokens: Optional[Iterable[str]]) -> List[ScopedTablePattern]:
+        tokens: List[str] = []
+        if explicit_tokens:
+            tokens.extend(explicit_tokens)
+        else:
+            tokens.extend(self._resolve_scoped_context_tables())
+
+        patterns: List[ScopedTablePattern] = []
+        for token in tokens:
+            scoped_pattern = self._parse_scope_token(token)
+            if scoped_pattern:
+                patterns.append(scoped_pattern)
+        return patterns
+
+    def _resolve_scoped_context_tables(self) -> Sequence[str]:
+        if not self.agent_config:
+            return []
+        scoped_entries: List[str] = []
+
+        if self.sub_agent_name:
+            sub_agent_config = self._load_sub_agent_config(self.sub_agent_name)
+            if sub_agent_config and sub_agent_config.scoped_context and sub_agent_config.scoped_context.tables:
+                scoped_entries.extend(sub_agent_config.scoped_context.as_lists().tables)
+
+        return scoped_entries
+
+    def _load_sub_agent_config(self, sub_agent_name: str) -> Optional[SubAgentConfig]:
+        if not self.agent_config:
+            return None
+        try:
+            config = self.agent_config.sub_agent_config(sub_agent_name)
+        except Exception:
+            return None
+
+        if not config:
+            return None
+        if isinstance(config, SubAgentConfig):
+            return config
+
+        try:
+            return SubAgentConfig.model_validate(config)
+        except Exception:
+            return None
+
+    def _parse_scope_token(self, token: str) -> Optional[ScopedTablePattern]:
+        token = (token or "").strip()
+        if not token:
+            return None
+        parts = [self._normalize_identifier_part(part) for part in token.split(".") if part.strip()]
+        if not parts:
+            return None
+        values: Dict[str, str] = {field: "" for field in self._field_order}
+        for idx, part in enumerate(parts[: len(self._field_order)]):
+            field = self._field_order[idx]
+            values[field] = part
+        return ScopedTablePattern(raw=token, **values)
+
+    def _get_semantic_model(
+        self, catalog: str = "", database: str = "", schema: str = "", table_name: str = ""
+    ) -> Dict[str, Any]:
+        if not self.has_semantic_models:
+            return {}
+        result = self._semantic_storage.get_semantic_model(
+            catalog_name=catalog,
+            database_name=database,
+            schema_name=schema,
+            table_name=table_name,
+            select_fields=["dimensions", "measures", "semantic_model_desc"],
+        )
+        return [] if not result else result[0]
+
+    @staticmethod
+    def _normalize_identifier_part(value: Optional[str]) -> str:
+        if value is None:
+            return ""
+        normalized = str(value).strip()
+        if not normalized:
+            return ""
+        # Strip common quoting characters
+        return normalized.strip("`\"'[]")
+
+    def _default_field_value(self, field: str, explicit: Optional[str]) -> str:
+        if field not in self._field_order:
+            return ""
+        if explicit:
+            return self._normalize_identifier_part(explicit)
+
+        fallback_attr_map = {
+            "catalog": "catalog_name",
+            "database": "database_name",
+            "schema": "schema_name",
+        }
+        fallback_attr = fallback_attr_map.get(field)
+        if fallback_attr and hasattr(self.connector, fallback_attr):
+            return self._normalize_identifier_part(getattr(self.connector, fallback_attr))
+        return ""
+
+    def _build_table_coordinate(
+        self,
+        raw_name: str,
+        catalog: Optional[str] = "",
+        database: Optional[str] = "",
+        schema: Optional[str] = "",
+    ) -> TableCoordinate:
+        coordinate = TableCoordinate(
+            catalog=self._default_field_value("catalog", catalog),
+            database=self._default_field_value("database", database),
+            schema=self._default_field_value("schema", schema),
+            table=self._normalize_identifier_part(raw_name),
+        )
+        parts = [self._normalize_identifier_part(part) for part in raw_name.split(".") if part.strip()]
+        if parts:
+            coordinate.table = parts[-1]
+            idx = len(parts) - 2
+            for field in reversed(self._field_order[:-1]):
+                if idx < 0:
+                    break
+                setattr(coordinate, field, parts[idx])
+                idx -= 1
+        return coordinate
+
+    def _coordinate_from_row(self, row: Dict[str, Any]) -> TableCoordinate:
+        raw_name = row.get("table_name") or row.get("identifier") or ""
+        return self._build_table_coordinate(
+            raw_name=raw_name,
+            catalog=row.get("catalog_name", ""),
+            database=row.get("database_name", ""),
+            schema=row.get("schema_name", ""),
+        )
+
+    def _table_matches_scope(self, coordinate: TableCoordinate) -> bool:
+        if not self._scoped_patterns:
+            return True
+        return any(pattern.matches(coordinate) for pattern in self._scoped_patterns)
+
+    def _filter_metadata_rows(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not self._scoped_patterns:
+            return rows
+        filtered: List[Dict[str, Any]] = []
+        for row in rows:
+            if self._table_matches_scope(self._coordinate_from_row(row)):
+                filtered.append(row)
+        return filtered
+
+    def _filter_table_entries(
+        self,
+        entries: Sequence[Dict[str, Any]],
+        catalog: Optional[str],
+        database: Optional[str],
+        schema: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        if not self._scoped_patterns:
+            return list(entries)
+
+        filtered: List[Dict[str, Any]] = []
+        for entry in entries:
+            coordinate = self._build_table_coordinate(
+                raw_name=str(entry.get("name", "")),
+                catalog=catalog,
+                database=database,
+                schema=schema,
+            )
+            if self._table_matches_scope(coordinate):
+                filtered.append(entry)
+        return filtered
+
+    def _matches_catalog_database(self, pattern: ScopedTablePattern, catalog: str, database: str) -> bool:
+        if pattern.catalog and not _pattern_matches(pattern.catalog, catalog):
+            return False
+        if pattern.database and not _pattern_matches(pattern.database, database):
+            return False
+        return True
+
+    def _database_matches_scope(self, catalog: Optional[str], database: str) -> bool:
+        if not self._scoped_patterns:
+            return True
+        catalog_value = self._default_field_value("catalog", catalog or "")
+        database_value = self._default_field_value("database", database or "")
+
+        wildcard_allowed = False
+        for pattern in self._scoped_patterns:
+            if not self._matches_catalog_database(pattern, catalog_value, database_value):
+                continue
+            if pattern.database:
+                if _pattern_matches(pattern.database, database_value):
+                    return True
+                continue
+            wildcard_allowed = True
+        return wildcard_allowed
+
+    def _schema_matches_scope(self, catalog: Optional[str], database: Optional[str], schema: str) -> bool:
+        if not self._scoped_patterns:
+            return True
+        catalog_value = self._default_field_value("catalog", catalog or "")
+        database_value = self._default_field_value("database", database or "")
+        schema_value = self._default_field_value("schema", schema or "")
+
+        wildcard_allowed = False
+        for pattern in self._scoped_patterns:
+            if not self._matches_catalog_database(pattern, catalog_value, database_value):
+                continue
+            if pattern.schema:
+                if _pattern_matches(pattern.schema, schema_value):
+                    return True
+                continue
+            wildcard_allowed = True
+        return wildcard_allowed
 
     def available_tools(self) -> List[Tool]:
         bound_tools = []
-        methods_to_convert: List[Callable] = [
-            self.list_tables,
-            self.describe_table,
-            self.read_query,
-            self.get_table_ddl,
-        ]
+        methods_to_convert: List[Callable] = [self.list_tables, self.describe_table]
 
-        if self.connector.dialect in SUPPORT_CATALOG_DIALECTS:
-            bound_tools.append(trans_to_function_tool(self.list_catalogs))
+        if self.schema_rag:
+            methods_to_convert.append(self.search_table)
+
+        methods_to_convert.extend(
+            [
+                self.read_query,
+                self.get_table_ddl,
+            ]
+        )
 
         if self.connector.dialect in SUPPORT_DATABASE_DIALECTS:
             bound_tools.append(trans_to_function_tool(self.list_databases))
@@ -95,39 +373,129 @@ class DBFuncTool:
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
 
-    def list_catalogs(self) -> FuncToolResult:
+    def search_table(
+        self,
+        query_text: str,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        top_n: int = 5,
+        simple_sample_data: bool = True,
+    ) -> FuncToolResult:
         """
-        List all catalogs in the database.
+        Retrieve table candidates by semantic similarity over stored schema metadata and optional sample rows.
+
+        Use this tool when the agent needs tables matching a natural-language description.
+
+        Args:
+            query_text: Description of the table you want (e.g. "daily active users per country").
+            catalog_name: Optional catalog filter to narrow the search.
+            database_name: Optional database filter to narrow the search.
+            schema_name: Optional schema filter to narrow the search.
+            top_n: Maximum number of rows to return after scoping filters.
+            simple_sample_data: If True, sample rows omit catalog/database/schema fields for brevity.
 
         Returns:
-            dict: A dictionary with the execution result, containing these keys:
-                  - 'success' (int): 1 for success, 0 for failure.
-                  - 'error' (Optional[str]): Error message on failure.
-                  - 'result' (Optional[List[str]]): A list of catalog names on success.
+            FuncToolResult where:
+                - success=1 with result={"metadata": [...], "sample_data": [...]} when matches remain after filtering.
+                - success=1 with result=[] and error message when no candidates survive the filters.
+                - success=0 with error text if schema storage is unavailable or lookup fails.
         """
+        if not self.has_schema:
+            return FuncToolResult(success=0, error="Table search is unavailable because schema storage is not ready.")
+
         try:
-            catalogs = self.connector.get_catalogs()
-            return FuncToolResult(result=catalogs)
+            # Fetch a wider candidate set when scoped filters are applied to preserve top_n after filtering.
+            search_limit = top_n
+            if self._scoped_patterns:
+                search_limit = max(top_n * 3, top_n + 5)
+
+            metadata, sample_values = self.schema_rag.search_similar(
+                query_text,
+                catalog_name=catalog_name,
+                database_name=self._reset_database_for_rag(database_name),
+                schema_name=schema_name,
+                table_type="full",
+                top_n=search_limit,
+            )
+            result_dict: Dict[str, List[Dict[str, Any]]] = {"metadata": [], "sample_data": []}
+
+            metadata_rows: List[Dict[str, Any]] = []
+            if metadata:
+                metadata_rows = metadata.select(
+                    [
+                        "catalog_name",
+                        "database_name",
+                        "schema_name",
+                        "table_name",
+                        "table_type",
+                        "definition",
+                        "identifier",
+                        "_distance",
+                    ]
+                ).to_pylist()
+            metadata_rows = self._filter_metadata_rows(metadata_rows)
+            if not metadata_rows:
+                return FuncToolResult(success=1, result=[], error="No metadata rows found.")
+
+            current_has_semantic = False
+            if self.has_semantic_models:
+                for metadata_row in metadata_rows:
+                    semantic_model = self._get_semantic_model(
+                        metadata_row["catalog_name"],
+                        metadata_row["database_name"],
+                        metadata_row["schema_name"],
+                        metadata_row["table_name"],
+                    )
+                    if semantic_model:
+                        current_has_semantic = True
+                        metadata_row["description"] = semantic_model["semantic_model_desc"]
+                        metadata_row["dimensions"] = semantic_model["dimensions"]
+                        metadata_row["measures"] = semantic_model["measures"]
+                        break
+
+            result_dict["metadata"] = metadata_rows
+            if current_has_semantic:
+                return FuncToolResult(success=1, result=result_dict)
+
+            sample_rows: List[Dict[str, Any]] = []
+            if sample_values:
+                if simple_sample_data:
+                    selected_fields = ["identifier", "table_type", "sample_rows", "_distance"]
+                else:
+                    selected_fields = [
+                        "identifier",
+                        "catalog_name",
+                        "database_name",
+                        "schema_name",
+                        "table_type",
+                        "table_name",
+                        "sample_rows",
+                        "_distance",
+                    ]
+                sample_rows = sample_values.select(selected_fields).to_pylist()
+            sample_rows = self._filter_metadata_rows(sample_rows)
+            result_dict["sample_data"] = sample_rows[:top_n]
+            return FuncToolResult(result=result_dict)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
     def list_databases(self, catalog: Optional[str] = "", include_sys: Optional[bool] = False) -> FuncToolResult:
         """
-        List all databases in the database system.
+        Enumerate databases accessible through the current connection.
 
         Args:
-            catalog: Optional catalog name to filter databases (depends on database type)
-            include_sys: Whether to include system databases in the results
+            catalog: Optional catalog to scope the lookup (dialect dependent).
+            include_sys: Set True to include system databases; defaults to False.
 
         Returns:
-            dict: A dictionary with the execution result, containing these keys:
-                  - 'success' (int): 1 for success, 0 for failure.
-                  - 'error' (Optional[str]): Error message on failure.
-                  - 'result' (Optional[List[str]]): A list of database names on success.
+            FuncToolResult with result as a list of database names ordered by the connector. On failure success=0 with
+            an explanatory error message.
         """
         try:
             databases = self.connector.get_databases(catalog, include_sys=include_sys)
-            return FuncToolResult(result=databases)
+            filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
+            return FuncToolResult(result=filtered)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
@@ -135,28 +503,22 @@ class DBFuncTool:
         self, catalog: Optional[str] = "", database: Optional[str] = "", include_sys: bool = False
     ) -> FuncToolResult:
         """
-        List all schemas within a database. Schemas are logical containers that organize tables and other database
-         objects.
-
-        Use this tool when you need to:
-        - Discover what schemas exist in a database
-        - Navigate to specific schemas for table exploration
-        - Find schemas related to specific applications or business areas
+        List schema names under the supplied catalog/database coordinate.
 
         Args:
-            catalog: Optional catalog name to filter schemas. Leave empty if not specified.
-            database: Optional database name to filter schemas. Leave empty if not specified.
-            include_sys: Whether to include system schemas (default False). Set to True for maintenance tasks.
+            catalog: Optional catalog filter. Leave blank to rely on connector defaults.
+            database: Optional database filter. Leave blank to rely on connector defaults.
+            include_sys: Set True to include system schemas; defaults to False.
 
         Returns:
-            dict: Schema list containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if operation failed
-                - 'result' (list): List of schema names
+            FuncToolResult with result holding the schema name list. On failure success=0 with an explanatory message.
         """
         try:
+            if database and not self._database_matches_scope(catalog, database):
+                return FuncToolResult(result=[])
             schemas = self.connector.get_schemas(catalog, database, include_sys=include_sys)
-            return FuncToolResult(result=schemas)
+            filtered = [schema for schema in schemas if self._schema_matches_scope(catalog, database, schema)]
+            return FuncToolResult(result=filtered)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
@@ -168,47 +530,43 @@ class DBFuncTool:
         include_views: Optional[bool] = True,
     ) -> FuncToolResult:
         """
-        List all tables, views, and materialized views in the database.
-
+        Return table-like objects (tables, views, materialized views) visible to the connector.
         Args:
-            catalog: Optional catalog name to filter tables
-            database: Optional database name to filter tables
-            schema_name: Optional schema name to filter tables
-            include_views: Whether to include views and materialized views in results
+            catalog: Optional catalog filter.
+            database: Optional database filter.
+            schema_name: Optional schema filter.
+            include_views: When True (default) also include views and materialized views.
 
         Returns:
-            dict: A dictionary with the execution result, containing these keys:
-                  - 'success' (int): 1 for success, 0 for failure.
-                  - 'error' (Optional[str]): Error message on failure.
-                  - 'result' (Optional[List[Dict[str, str]]]): A list of table names and type on success.
+            FuncToolResult with result=[{"type": "table|view|materialized_view", "name": str}, ...]. On failure
+            success=0 with an explanatory error message.
         """
         try:
             result = []
             for tb in self.connector.get_tables(catalog, database, schema_name):
                 result.append({"type": "table", "name": tb})
 
-            if not include_views:
-                return FuncToolResult(result=result)
+            if include_views:
+                # Add views
+                try:
+                    views = self.connector.get_views(catalog, database, schema_name)
+                    for view in views:
+                        result.append({"type": "view", "name": view})
+                except (NotImplementedError, AttributeError):
+                    # Some connectors may not support get_views
+                    pass
 
-            # Add views
-            try:
-                views = self.connector.get_views(catalog, database, schema_name)
-                for view in views:
-                    result.append({"type": "view", "name": view})
-            except (NotImplementedError, AttributeError):
-                # Some connectors may not support get_views
-                pass
+                # Add materialized views
+                try:
+                    materialized_views = self.connector.get_materialized_views(catalog, database, schema_name)
+                    for mv in materialized_views:
+                        result.append({"type": "materialized_view", "name": mv})
+                except (NotImplementedError, AttributeError):
+                    # Some connectors may not support get_materialized_views
+                    pass
 
-            # Add materialized views
-            try:
-                materialized_views = self.connector.get_materialized_views(catalog, database, schema_name)
-                for mv in materialized_views:
-                    result.append({"type": "materialized_view", "name": mv})
-            except (NotImplementedError, AttributeError):
-                # Some connectors may not support get_materialized_views
-                pass
-
-            return FuncToolResult(result=result)
+            filtered_result = self._filter_table_entries(result, catalog, database, schema_name)
+            return FuncToolResult(result=filtered_result)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
@@ -220,50 +578,56 @@ class DBFuncTool:
         schema_name: Optional[str] = "",
     ) -> FuncToolResult:
         """
-        Get the complete schema information for a specific table, including column definitions, data types, and
-         constraints.
-
-        Use this tool when you need to:
-        - Understand the structure of a specific table
-        - Get column names, data types, and constraints for SQL query writing
-        - Analyze table schema for data modeling or analysis
-        - Verify table structure before running queries
-
-        **IMPORTANT**: Only use AFTER search_table_metadata if no match or for partitioned tables.
+        Fetch detailed column metadata (and optional semantic model info) for the given table.
+        When semantic models exist for the table, `table_info`
+        includes additional description/dimension/measure fields.
 
         Args:
-            table_name: Name of the table to describe
-            catalog: Optional catalog name for precise table identification. Leave empty if not specified.
-            database: Optional database name for precise table identification. Leave empty if not specified.
-            schema_name: Optional schema name for precise table identification. Leave empty if not specified.
+            table_name: Table identifier to describe; can be partially qualified.
+            catalog: Optional catalog override. Leave blank to rely on connector defaults.
+            database: Optional database override. Leave blank to rely on connector defaults.
+            schema_name: Optional schema override. Leave blank to rely on connector defaults.
 
         Returns:
-            dict: Table schema information containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if operation failed
-                - 'result' (list): Detailed table schema including columns, data types, and constraints
+            FuncToolResult with result={"table_info": {...}, "columns": [...]}. Scope violations or connector errors
+            surface as success=0 with an explanatory message.
         """
         try:
-            result = self.connector.get_schema(
+            coordinate = self._build_table_coordinate(
+                raw_name=table_name,
+                catalog=catalog,
+                database=database,
+                schema=schema_name,
+            )
+            if not self._table_matches_scope(coordinate):
+                return FuncToolResult(
+                    success=0,
+                    error=f"Table '{table_name}' is outside the scoped context.",
+                )
+            column_result = self.connector.get_schema(
                 catalog_name=catalog, database_name=database, schema_name=schema_name, table_name=table_name
             )
-            return FuncToolResult(result=result)
+            table_info = {}
+            if self.has_semantic_models:
+                semantic_model = self._get_semantic_model(catalog, database, schema_name, table_name)
+                if semantic_model:
+                    table_info["description"] = semantic_model["semantic_model_desc"]
+                    table_info["dimensions"] = semantic_model["dimensions"]
+                    table_info["measures"] = semantic_model["measures"]
+            return FuncToolResult(result={"table_info": table_info, "columns": column_result})
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
     def read_query(self, sql: str) -> FuncToolResult:
         """
-        Execute a SQL query and return the results.
+        Execute arbitrary SQL and return the result rows (optionally compressed).
 
         Args:
-            sql: The SQL query to execute
+            sql: SQL text to run against the connector.
 
         Returns:
-            dict: A dictionary with the execution result, containing these keys:
-                  - 'success' (int): 1 for success, 0 for failure.
-                  - 'error' (Optional[str]): Error message on failure.
-                  - 'result' (Optional[dict]): Query results on success, including original_rows, original_columns,
-                   is_compressed, and compressed_data.
+            FuncToolResult with result=self.compressor.compress(rows) when successful. On failure success=0 with the
+            underlying error message from the connector.
         """
         try:
             result = self.connector.execute_query(
@@ -285,33 +649,32 @@ class DBFuncTool:
         schema_name: Optional[str] = "",
     ) -> FuncToolResult:
         """
-        Get complete DDL definition for a database table.
+        Return the connector's DDL definition for the requested table.
 
-        Use this tool when you need to:
-        - Generate semantic models (LLM needs complete DDL for accurate generation)
-        - Understand table structure including constraints, indexes, and relationships
-        - Analyze foreign key relationships for semantic model generation
+        Use this when the agent needs a full CREATE statement (e.g. for semantic modelling or schema verification).
 
         Args:
-            table_name: Name of the database table
-            catalog: Optional catalog name to filter tables
-            database: Optional database name to filter tables
-            schema_name: Optional schema name to filter tables
+            table_name: Target table identifier (supports partial qualification).
+            catalog: Optional catalog override.
+            database: Optional database override.
+            schema_name: Optional schema override.
 
         Returns:
-            dict: DDL results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'identifier' (str): Full table identifier
-                    - 'catalog_name' (str): Catalog name
-                    - 'database_name' (str): Database name
-                    - 'schema_name' (str): Schema name
-                    - 'table_name' (str): Table name
-                    - 'definition' (str): Complete CREATE TABLE DDL statement
-                    - 'table_type' (str): Table type (table, view, etc.)
+            FuncToolResult with result containing identifier/catalog/database/schema/table_name/table_type/definition.
+            Scoped-context mismatches or connector failures surface as success=0 with an explanatory message.
         """
         try:
+            coordinate = self._build_table_coordinate(
+                raw_name=table_name,
+                catalog=catalog,
+                database=database,
+                schema=schema_name,
+            )
+            if not self._table_matches_scope(coordinate):
+                return FuncToolResult(
+                    success=0,
+                    error=f"Table '{table_name}' is outside the scoped context.",
+                )
             # Get tables with DDL
             tables_with_ddl = self.connector.get_tables_with_ddl(
                 catalog_name=catalog, database_name=database, schema_name=schema_name, tables=[table_name]
@@ -328,12 +691,18 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
 
-def db_function_tool_instance(agent_config: AgentConfig, database_name: str = "") -> DBFuncTool:
+def db_function_tool_instance(
+    agent_config: AgentConfig, database_name: str = "", sub_agent_name: Optional[str] = None
+) -> DBFuncTool:
     db_manager = db_manager_instance(agent_config.namespaces)
     return DBFuncTool(
-        db_manager.get_conn(agent_config.current_namespace, database_name or agent_config.current_database)
+        db_manager.get_conn(agent_config.current_namespace, database_name or agent_config.current_database),
+        agent_config=agent_config,
+        sub_agent_name=sub_agent_name,
     )
 
 
-def db_function_tools(agent_config: AgentConfig, database_name: str = "") -> List[Tool]:
-    return db_function_tool_instance(agent_config, database_name).available_tools()
+def db_function_tools(
+    agent_config: AgentConfig, database_name: str = "", sub_agent_name: Optional[str] = None
+) -> List[Tool]:
+    return db_function_tool_instance(agent_config, database_name, sub_agent_name).available_tools()

@@ -22,6 +22,12 @@ class SQLiteConnector(SQLAlchemyConnector):
             dialect=DBType.SQLITE,
         )
         self.db_path = db_path
+        if database_name := kwargs.get("database_name"):
+            self.database_name = database_name
+        else:
+            from datus.configuration.agent_config import file_stem_from_uri
+
+            self.database_name = file_stem_from_uri(self.connection_string)
 
     def full_name(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""

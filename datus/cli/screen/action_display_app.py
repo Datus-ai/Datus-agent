@@ -315,7 +315,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             result.append(Static("[bold yellow]No Result[/]"))
             return result
         if isinstance(items, dict):
-            if function_name == "search_table_metadata":
+            if function_name == "search_table":
                 metadata = items.get("metadata", [])
                 if not metadata:
                     result.append(Static("[bold]Table metadata not found[/bold]"))

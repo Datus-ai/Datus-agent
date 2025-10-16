@@ -114,7 +114,11 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
             conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-            self.db_func_tool = DBFuncTool(conn)
+            self.db_func_tool = DBFuncTool(
+                conn,
+                agent_config=self.agent_config,
+                sub_agent_name=self.node_config.get("system_prompt"),
+            )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
@@ -182,7 +186,11 @@ class GenSQLAgenticNode(AgenticNode):
                 if not self.db_func_tool:
                     db_manager = db_manager_instance(self.agent_config.namespaces)
                     conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-                    self.db_func_tool = DBFuncTool(conn)
+                    self.db_func_tool = DBFuncTool(
+                        conn,
+                        agent_config=self.agent_config,
+                        sub_agent_name=self.node_config.get("system_prompt"),
+                    )
                 tool_instance = self.db_func_tool
             elif tool_type == "date_parsing_tools":
                 if not self.date_parsing_tools:

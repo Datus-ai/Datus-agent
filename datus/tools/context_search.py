@@ -3,15 +3,13 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
-import os
-from typing import List, Optional
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.cache import get_storage_cache_instance
 from datus.storage.metric.store import SemanticMetricsRAG
-from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.sql_history.store import SqlHistoryRAG
 from datus.tools.tools import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
@@ -23,132 +21,148 @@ class ContextSearchTools:
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
-        self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name)
         self.metric_rag = SemanticMetricsRAG(agent_config, sub_agent_name)
         self.sql_history_store = SqlHistoryRAG(agent_config, sub_agent_name)
-
-        self.doc_rag = get_storage_cache_instance(agent_config).document_storage()
+        self.has_metrics = self.metric_rag.get_metrics_size() > 0
+        self.has_historical_sql = self.sql_history_store.get_sql_history_size() > 0
 
     def available_tools(self) -> List[Tool]:
-        return [
-            trans_to_function_tool(func)
-            for func in (
-                self.search_table_metadata,
-                self.search_metrics,
-                self.search_documents,
-                self.search_historical_sql,
-            )
-        ]
+        tools = []
+        if self.has_metrics:
+            for tool in (self.list_domain_layers_tree, self.search_metrics):
+                tools.append(trans_to_function_tool(tool))
 
-    def search_table_metadata(
-        self,
-        query_text: str,
-        catalog_name: str = "",
-        database_name: str = "",
-        schema_name: str = "",
-        top_n=5,
-        simple_sample_data: bool = True,
-    ) -> FuncToolResult:
+        if self.has_historical_sql:
+            if not self.has_metrics:
+                tools.append(trans_to_function_tool(self.list_domain_layers_tree))
+            tools.append(trans_to_function_tool(self.search_historical_sql))
+        return tools
+
+    def list_domain_layers_tree(self) -> FuncToolResult:
         """
-        Search for database table metadata using natural language queries.
-        This tool helps find relevant tables by searching through table names, schemas (DDL)
-        , and sample data using vector similarity.
+        Aggregate the available domain-layer taxonomy across metrics and SQL history.
 
-        Use this tool when you need to:
-        - Find tables related to a specific business concept or domain
-        - Discover tables containing certain types of data
-        - Locate tables for SQL query development
-        - Understand what tables are available in a database
+        The response has the structure:
+        {
+            "<domain>": {
+                "<layer1>": {
+                    "<layer2>": {
+                        "metrics_size": <int, optional>,
+                        "sql_size": <int, optional>
+                    },
+                    ...
+                },
+                ...
+            },
+            ...
+        }
 
-        **Application Guidance**: Analyze results: 1. If table matches (via definition/sample_data), use it. 2.
-        If partitioned (e.g., date-based in definition), explore correct partition via DBTools. 3. If no match,
-        then use DBTools for broader exploration.
-
-        Args:
-            query_text: Natural language description of what you're looking for (e.g., "customer data",
-             "sales transactions", "user profiles")
-            catalog_name: Optional catalog name to filter search results.
-            database_name: Optional database name to filter search results.
-            schema_name: Optional schema name to filter search results.
-            top_n: Maximum number of results to return (default 5)
-
-        Returns:
-            dict: Search results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if search failed
-                - 'result' (dict): Search results with:
-                    - 'metadata' (list): Table information including catalog_name, database_name, schema_name,
-                         table_name, table_type ('table'/'view'/'mv'), definition (DDL), and identifier
-                    - 'sample_data' (list): Sample rows from matching tables with identifier, table_type,
-                         and sample_rows
+        Use this tool to prime the agent with valid hierarchical filters before calling `search_metrics` or
+        `search_historical_sql`. Counters represent how many records exist for each leaf sourced from metrics and SQL
+        history respectively; keys with missing counts simply have no entries from that store.
         """
         try:
-            metadata, sample_values = self.schema_rag.search_similar(
-                query_text,
-                catalog_name=catalog_name,
-                database_name=database_name,
-                schema_name=schema_name,
-                table_type="full",
-                top_n=top_n,
+            domain_tree: Dict[str, Dict[str, Dict[str, Dict[str, int]]]] = defaultdict(
+                lambda: defaultdict(lambda: defaultdict(dict))
             )
-            result_dict = {"metadata": [], "sample_data": []}
-            if metadata:
-                result_dict["metadata"] = metadata.select(
-                    [
-                        "catalog_name",
-                        "database_name",
-                        "schema_name",
-                        "table_name",
-                        "table_type",
-                        "definition",
-                        "identifier",
-                        "_distance",
-                    ]
-                ).to_pylist()
+            for metrics_item in self._collect_metrics_entries():
+                layer_map = domain_tree[metrics_item["domain"]][metrics_item["layer1"]][metrics_item["layer2"]]
+                layer_map["metrics_size"] = layer_map.get("metrics_size", 0) + 1
 
-            if sample_values:
-                if simple_sample_data:
-                    selected_fields = ["identifier", "table_type", "sample_rows", "_distance"]
-                else:
-                    selected_fields = [
-                        "identifier",
-                        "catalog_name",
-                        "database_name",
-                        "schema_name",
-                        "table_type",
-                        "table_name",
-                        "sample_rows",
-                        "_distance",
-                    ]
-                result_dict["sample_data"] = sample_values.select(selected_fields).to_pylist()
-            return FuncToolResult(success=1, error=None, result=result_dict)
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
+            for sql_item in self._collect_sql_entries():
+                layer_map = domain_tree[sql_item["domain"]][sql_item["layer1"]][sql_item["layer2"]]
+                layer_map["sql_size"] = layer_map.get("sql_size", 0) + 1
+
+            serializable_tree = {
+                domain: {
+                    layer1: {layer2: dict(counts) for layer2, counts in layer2_map.items()}
+                    for layer1, layer2_map in layer1_map.items()
+                }
+                for domain, layer1_map in domain_tree.items()
+            }
+
+            return FuncToolResult(result=serializable_tree)
+        except ValueError as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error("Failed to assemble domain taxonomy: %s", exc)
+            return FuncToolResult(success=0, error=str(exc))
+
+    def _collect_metrics_entries(self) -> Sequence[Dict[str, Any]]:
+        try:
+            return self.metric_rag.search_all_metrics(select_fields=["domain", "layer1", "layer2", "name"])
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to collect metrics taxonomy: %s", exc)
+            return []
+
+    def _collect_sql_entries(self) -> Sequence[Dict[str, Any]]:
+        try:
+            return self.sql_history_store.search_all_sql_history(selected_fields=["domain", "layer1", "layer2", "name"])
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to collect SQL taxonomy: %s", exc)
+            return []
+
+    def _inject_taxonomy_entries(
+        self,
+        rows: Sequence[Dict[str, Any]],
+        domains: Set[str],
+        layer1_map: Dict[str, Set[str]],
+        layer2_map: Dict[Tuple[str, str], Set[str]],
+    ) -> None:
+        for row in rows:
+            domain = self._normalize_taxonomy_value(row.get("domain"))
+            layer1 = self._normalize_taxonomy_value(row.get("layer1"))
+            layer2 = self._normalize_taxonomy_value(row.get("layer2"))
+
+            domain_key = domain
+            if domain:
+                domains.add(domain)
+            else:
+                domain_key = ""
+
+            if layer1:
+                layer1_map.setdefault(domain_key, set()).add(layer1)
+            elif domain_key not in layer1_map:
+                layer1_map[domain_key] = layer1_map.get(domain_key, set())
+
+            if layer2:
+                layer2_map.setdefault((domain_key, layer1 or ""), set()).add(layer2)
+            elif (domain_key, layer1 or "") not in layer2_map:
+                layer2_map[(domain_key, layer1 or "")] = layer2_map.get((domain_key, layer1 or ""), set())
+
+    @staticmethod
+    def _normalize_taxonomy_value(value: Optional[str]) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
 
     def search_metrics(
         self,
         query_text: str,
-        database_name: str = "",
-        schema_name: str = "",
-        top_n=5,
+        domain: str = "",
+        layer1: str = "",
+        layer2: str = "",
+        top_n: int = 5,
     ) -> FuncToolResult:
         """
         Search for business metrics and KPIs using natural language queries.
 
         Args:
             query_text: Natural language description of the metric (e.g., "revenue metrics", "conversion rates")
-            database_name: Optional database name to filter metrics
-            schema_name: Optional schema name to filter metrics
+            domain: Optional business domain filter derived from list_domain_layers_tree
+            layer1: Optional first-layer subject filter derived from list_domain_layers_tree
+            layer2: Optional second-layer subject filter derived from list_domain_layers_tree
             top_n: Maximum number of results to return (default 5)
 
         Returns:
             FuncToolResult with list of matching metrics containing name, description, constraint, and sql_query
         """
         try:
-            metrics = self.metric_rag.search_hybrid_metrics(
+            metrics = self.metric_rag.search_metrics(
                 query_text=query_text,
-                database_name=database_name,
-                schema_name=schema_name,
+                domain=domain,
+                layer1=layer1,
+                layer2=layer2,
                 top_n=top_n,
             )
             return FuncToolResult(success=1, error=None, result=metrics)
@@ -193,49 +207,3 @@ class ContextSearchTools:
         except Exception as e:
             logger.error(f"Failed to search historical SQL for `{query_text}`: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
-
-    def search_documents(self, query_text: str, top_n: int = 5) -> FuncToolResult:
-        """
-        Search through project documentation, specifications, and technical documents.
-        This tool helps find relevant information from project docs, requirements, and specifications.
-
-        Use this tool when you need to:
-        - Find specific information in project documentation
-        - Locate requirements and specifications
-        - Search through technical documentation
-        - Get context from project-related documents
-
-        Args:
-            query_text: Natural language query about what you're looking for in documents (e.g., "API specifications",
-                "data pipeline requirements", "system architecture")
-            top_n: Maximum number of document chunks to return (default 5)
-
-        Returns:
-            dict: Document search results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if search failed
-                - 'result' (list): List of document chunks with title, hierarchy, keywords, language, and chunk_text
-        """
-        try:
-            results = self.doc_rag.search_similar_documents(
-                query_text=query_text,
-                top_n=top_n,
-                select_fields=["title", "hierarchy", "keywords", "language", "chunk_text"],
-            )
-            return FuncToolResult(success=1, error=None, result=results.to_pylist())
-        except Exception as e:
-            logger.error(f"Failed to search documents for query '{query_text}': {str(e)}")
-            return FuncToolResult(success=0, error=str(e))
-
-    @staticmethod
-    def _scoped_storage_available(path: str) -> bool:
-        if not os.path.isdir(path):
-            return False
-        required = (
-            "schema_metadata.lance",
-            "schema_value.lance",
-            "metrics.lance",
-            "semantic_model.lance",
-            "sql_history.lance",
-        )
-        return any(os.path.exists(os.path.join(path, name)) for name in required)

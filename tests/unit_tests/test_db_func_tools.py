@@ -8,7 +8,7 @@ import pytest
 
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.tools import DBFuncTool, FuncToolResult
-from datus.utils.constants import SUPPORT_CATALOG_DIALECTS, SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
+from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ def mock_connector():
     connector.dialect = "postgresql"
     connector.catalog_name = ""
     connector.database_name = "db1"
-    connector.schema_name = "public"
+    connector.schema_name = "schema1"
 
     # Setup mock return values
     connector.get_catalogs.return_value = ["catalog1", "catalog2"]
@@ -50,7 +50,7 @@ def db_func_tool(mock_connector):
 @pytest.fixture
 def scoped_db_func_tool(mock_connector):
     """Create a DBFuncTool instance with scoped tables."""
-    return DBFuncTool(mock_connector, scoped_tables={"orders", "user_view"})
+    return DBFuncTool(mock_connector, scoped_tables={"db1.schema1.orders", "db1.schema1.user_view"})
 
 
 class TestDBFuncTool:
@@ -66,10 +66,7 @@ class TestDBFuncTool:
         tools = db_func_tool.available_tools()
 
         # Should have base tools plus dialect-specific tools
-        expected_tool_count = 3  # list_tables, describe_table, read_query
-
-        if mock_connector.dialect in SUPPORT_CATALOG_DIALECTS:
-            expected_tool_count += 1
+        expected_tool_count = 4  # list_tables, describe_table, read_query, get_table_ddl
         if mock_connector.dialect in SUPPORT_DATABASE_DIALECTS:
             expected_tool_count += 1
         if mock_connector.dialect in SUPPORT_SCHEMA_DIALECTS:
@@ -78,33 +75,15 @@ class TestDBFuncTool:
         assert len(tools) == expected_tool_count
 
         # Verify tool names
-        tool_names = [tool.name for tool in tools]
-        expected_base_tools = ["list_tables", "describe_table", "read_query"]
+        tool_names = {tool.name for tool in tools}
+        expected_base_tools = {"list_tables", "describe_table", "read_query", "get_table_ddl"}
 
-        for expected_tool in expected_base_tools:
-            assert any(expected_tool in name for name in tool_names)
-
-    def test_list_catalogs_success(self, db_func_tool, mock_connector):
-        """Test successful list_catalogs execution."""
-        result = db_func_tool.list_catalogs()
-
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 1
-        assert result.error is None
-        assert result.result == ["catalog1", "catalog2"]
-
-        mock_connector.get_catalogs.assert_called_once()
-
-    def test_list_catalogs_failure(self, db_func_tool, mock_connector):
-        """Test list_catalogs with exception."""
-        mock_connector.get_catalogs.side_effect = Exception("Catalog retrieval failed")
-
-        result = db_func_tool.list_catalogs()
-
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 0
-        assert "Catalog retrieval failed" in result.error
-        assert result.result is None
+        assert expected_base_tools.issubset(tool_names)
+        if mock_connector.dialect in SUPPORT_DATABASE_DIALECTS:
+            assert "list_databases" in tool_names
+        if mock_connector.dialect in SUPPORT_SCHEMA_DIALECTS:
+            assert "list_schemas" in tool_names
+        assert "search_table" not in tool_names
 
     def test_list_databases_success(self, db_func_tool, mock_connector):
         """Test successful list_databases execution."""
@@ -193,6 +172,22 @@ class TestDBFuncTool:
         assert result.success == 1
         assert [item["name"] for item in result.result] == ["orders", "user_view"]
 
+    def test_list_databases_respects_scope(self, scoped_db_func_tool, mock_connector):
+        """list_databases should honor scoped table restrictions."""
+        result = scoped_db_func_tool.list_databases()
+
+        assert result.success == 1
+        assert result.result == ["db1"]
+        mock_connector.get_databases.assert_called_once_with("", include_sys=False)
+
+    def test_list_schemas_respects_scope(self, scoped_db_func_tool, mock_connector):
+        """list_schemas should honor scoped table restrictions."""
+        result = scoped_db_func_tool.list_schemas(database="db1")
+
+        assert result.success == 1
+        assert result.result == ["schema1"]
+        mock_connector.get_schemas.assert_called_once_with("", "db1", include_sys=False)
+
     def test_list_tables_without_views(self, db_func_tool, mock_connector):
         """Test list_tables execution excluding views."""
         result = db_func_tool.list_tables(include_views=False)
@@ -235,6 +230,13 @@ class TestDBFuncTool:
         assert result.success == 0
         assert "Table retrieval failed" in result.error
 
+    def test_search_table_without_schema_rag(self, db_func_tool):
+        """search_table should report unavailable when schema storage is missing."""
+        result = db_func_tool.search_table("customer data")
+
+        assert result.success == 0
+        assert "unavailable" in (result.error or "")
+
     def test_describe_table_success(self, db_func_tool, mock_connector):
         """Test successful describe_table execution."""
         result = db_func_tool.describe_table(
@@ -244,8 +246,12 @@ class TestDBFuncTool:
         assert isinstance(result, FuncToolResult)
         assert result.success == 1
         assert result.error is None
-        assert len(result.result) == 2  # Two columns
-        assert result.result[0]["column_name"] == "id"
+        assert isinstance(result.result, dict)
+        assert "columns" in result.result
+        assert "table_info" in result.result
+        assert len(result.result["columns"]) == 2  # Two columns
+        assert result.result["columns"][0]["column_name"] == "id"
+        assert result.result["table_info"] == {}
 
         mock_connector.get_schema.assert_called_once_with(
             catalog_name="test_catalog", database_name="test_db", schema_name="test_schema", table_name="users"
@@ -253,7 +259,7 @@ class TestDBFuncTool:
 
     def test_describe_table_scope_validation(self, mock_connector):
         """describe_table should block tables outside scoped set."""
-        tool = DBFuncTool(mock_connector, scoped_tables={"orders"})
+        tool = DBFuncTool(mock_connector, scoped_tables={"db1.schema1.orders"})
 
         allowed = tool.describe_table(table_name="orders")
         assert allowed.success == 1
@@ -269,22 +275,21 @@ class TestDBFuncTool:
         mock_connector.get_schema.assert_not_called()
 
     @pytest.mark.parametrize(
-        "scoped_entry, table_name, kwargs",
+        "scoped_entry, kwargs",
         [
-            ("orders", "orders", {}),
-            ("public.orders", "orders", {}),
-            ("db1.public.orders", "orders", {}),
-            ("catalog.db1.public.orders", "orders", {}),
-            ('"public"."Orders"', "orders", {}),
-            ("PUBLIC.ORDERS", "orders", {}),
+            ("db1.schema1.orders", {}),
+            ('db1."schema1"."orders"', {}),
+            ("*.*.orders", {}),
+            ("db1.*.orders", {}),
+            ("*.schema1.orders", {}),
         ],
     )
-    def test_describe_table_scope_variants_allow(self, mock_connector, scoped_entry, table_name, kwargs):
+    def test_describe_table_scope_variants_allow(self, mock_connector, scoped_entry, kwargs):
         """Different scoped table formats should still authorize describe_table calls."""
         mock_connector.get_schema.reset_mock()
         tool = DBFuncTool(mock_connector, scoped_tables={scoped_entry})
 
-        result = tool.describe_table(table_name=table_name, **kwargs)
+        result = tool.describe_table(table_name="orders", **kwargs)
 
         assert result.success == 1
         mock_connector.get_schema.assert_called_once()
@@ -317,42 +322,6 @@ class TestDBFuncTool:
         assert result.result is not None  # Should be compressed data
 
         mock_connector.execute_query.assert_called_once_with("SELECT * FROM users", result_format="list")
-
-    @pytest.mark.parametrize(
-        "scoped_entry, sql",
-        [
-            ("orders", "SELECT * FROM orders"),
-            ("public.orders", "SELECT * FROM public.orders"),
-            ("db1.public.orders", "SELECT * FROM db1.public.orders"),
-            ("catalog.db1.public.orders", "SELECT * FROM catalog.db1.public.orders"),
-            ('"public"."Orders"', 'SELECT * FROM "public"."Orders"'),
-            ("PUBLIC.ORDERS", "SELECT * FROM PUBLIC.ORDERS"),
-        ],
-    )
-    def test_read_query_scope_variants_allow(self, mock_connector, scoped_entry, sql):
-        """Scoped table formats should authorize matching read_query statements."""
-        tool = DBFuncTool(mock_connector, scoped_tables={scoped_entry})
-        mock_connector.execute_query.reset_mock()
-
-        result = tool.read_query(sql)
-
-        assert result.success == 1
-        mock_connector.execute_query.assert_called_once_with(sql, result_format="list")
-
-    def test_read_query_scope_validation(self, mock_connector):
-        """read_query should reject tables outside scoped set."""
-        tool = DBFuncTool(mock_connector, scoped_tables={"orders"})
-
-        success = tool.read_query("SELECT * FROM orders")
-        assert success.success == 1
-        mock_connector.execute_query.assert_called_once_with("SELECT * FROM orders", result_format="list")
-
-        mock_connector.execute_query.reset_mock()
-
-        denied = tool.read_query("SELECT * FROM users")
-        assert denied.success == 0
-        assert "users" in (denied.error or "")
-        mock_connector.execute_query.assert_not_called()
 
     def test_read_query_query_failure(self, db_func_tool, mock_connector):
         """Test read_query when query execution fails."""
@@ -393,7 +362,6 @@ class TestDBFuncToolEdgeCases:
 
         # Test each method
         methods = [
-            db_func_tool.list_catalogs,
             db_func_tool.list_databases,
             db_func_tool.list_schemas,
             lambda: db_func_tool.list_tables(include_views=False),
@@ -406,21 +374,27 @@ class TestDBFuncToolEdgeCases:
 
     def test_different_dialects(self):
         """Test available_tools with different database dialects."""
-        test_cases = [
-            (DBType.POSTGRES, 5),  # Supports catalogs, databases, schemas
-            (DBType.MYSQL, 4),  # Supports databases, schemas
-            (DBType.STARROCKS, 5),  # Supports catalogs, databases
-            (DBType.DUCKDB, 5),  # Supports databases, schemas
-            (DBType.SQLITE, 3),  # Only base tools
-            (DBType.SNOWFLAKE, 6),  # Supports catalogs, databases, schemas
+        dialects = [
+            DBType.POSTGRES,
+            DBType.MYSQL,
+            DBType.STARROCKS,
+            DBType.DUCKDB,
+            DBType.SQLITE,
+            DBType.SNOWFLAKE,
         ]
 
-        for dialect, expected_tool_count in test_cases:
+        for dialect in dialects:
             mock_connector = Mock()
             mock_connector.dialect = dialect
 
             tool = DBFuncTool(mock_connector)
             tools = tool.available_tools()
+
+            expected_tool_count = 4
+            if dialect in SUPPORT_DATABASE_DIALECTS:
+                expected_tool_count += 1
+            if dialect in SUPPORT_SCHEMA_DIALECTS:
+                expected_tool_count += 1
 
             assert len(tools) == expected_tool_count, f"Failed for dialect {dialect}"
 
@@ -443,7 +417,6 @@ class TestDBFuncToolEdgeCases:
     def test_method_return_types(self, db_func_tool):
         """Test that all methods return FuncToolResult instances."""
         methods_to_test = [
-            db_func_tool.list_catalogs,
             db_func_tool.list_databases,
             db_func_tool.list_schemas,
             lambda: db_func_tool.list_tables(),

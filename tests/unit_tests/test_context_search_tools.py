@@ -1,10 +1,7 @@
-"""
-Test cases for ContextSearchTools class in datus/tools/tools.py
-"""
+"""Tests for ContextSearchTools."""
 
 from unittest.mock import Mock, patch
 
-import pyarrow as pa
 import pytest
 
 from datus.configuration.agent_config import AgentConfig
@@ -13,496 +10,92 @@ from datus.tools.tools import FuncToolResult
 
 
 @pytest.fixture
-def mock_agent_config():
-    """Create a mock agent configuration."""
+def mock_agent_config() -> AgentConfig:
     config = Mock(spec=AgentConfig)
     config.rag_storage_path.return_value = "/tmp/test_rag_storage"
-    config.agentic_nodes = {
-        "test": {
-            "system_prompt": "test",
-        }
-    }
     return config
 
 
 @pytest.fixture
-def mock_schema_rag():
-    """Create a mock schema RAG instance."""
-    mock_rag = Mock()
-    mock_rag.search_similar.return_value = (Mock(), Mock())
-    mock_rag.schema_store = Mock()
-    return mock_rag
-
-
-@pytest.fixture
-def mock_metric_rag():
-    """Create a mock metric RAG instance."""
-    mock_rag = Mock()
-    mock_rag.search_hybrid_metrics.return_value = [
-        {
-            "name": "monthly_revenue",
-            "description": "Monthly revenue metric",
-            "sql_query": "SELECT SUM(amount) FROM sales",
-        }
+def context_tools_env(mock_agent_config):
+    metric_rag = Mock()
+    metric_rag.search_all_metrics.return_value = [
+        {"domain": "Sales", "layer1": "Revenue", "layer2": "Monthly", "name": "monthly_sales"},
+        {"domain": "Sales", "layer1": "Revenue", "layer2": "Quarterly", "name": "quarterly_sales"},
     ]
-    return mock_rag
+    metric_rag.search_metrics.return_value = [{"name": "monthly_sales", "sql_query": "SELECT 1"}]
+    metric_rag.get_metrics_size.return_value = 2
 
-
-@pytest.fixture
-def mock_doc_rag():
-    """Create a mock document RAG instance."""
-    mock_rag = Mock()
-    mock_table = Mock()
-    mock_table.to_pylist.return_value = [
-        {
-            "title": "API Documentation",
-            "hierarchy": "Engineering/API",
-            "chunk_text": "API endpoints documentation",
-            "keywords": ["k1", "k2"],
-        }
+    sql_rag = Mock()
+    sql_rag.search_all_sql_history.return_value = [
+        {"domain": "Sales", "layer1": "Revenue", "layer2": "Monthly", "name": "sales_query"},
+        {"domain": "Support", "layer1": "Tickets", "layer2": "Escalations", "name": "support_query"},
     ]
-    mock_rag.search_similar_documents.return_value = mock_table
-    return mock_rag
+    sql_rag.search_sql_history_by_summary.return_value = [{"name": "sales_query", "sql": "SELECT * FROM sales"}]
+    sql_rag.get_sql_history_size.return_value = 2
 
-
-@pytest.fixture
-def mock_ext_knowledge_rag():
-    """Create a mock external knowledge RAG instance."""
-    mock_rag = Mock()
-
-    mock_rag.search_knowledge.return_value = pa.Table.from_pylist(
-        [
-            {
-                "layer1": "Analytics",
-                "layer2": "Customer",
-                "terminology": "CLV",
-                "explanation": "Customer Lifetime Value",
-                "domain": "Marketing",
-                "created_at": "2025-01-01 00:00:00",
-            }
-        ]
-    )
-    return mock_rag
-
-
-@pytest.fixture
-def mock_sql_history_rag():
-    """Create a mock external knowledge RAG instance."""
-    mock_rag = Mock()
-    mock_rag.search_sql_history_by_summary.return_value = [
-        {
-            "id": "sql_history1",
-            "name": "test sql",
-            "domain": "Marketing",
-            "layer1": "layer1",
-            "layer2": "layer2",
-            "sql": "SELECT SUM(amount) FROM sales",
-            "comment": "test sql",
-            "summary": "test sql",
-            "filepath": "/tmp/test_rag_storage",
-            "tags": "test, sql",
-        },
-    ]
-    return mock_rag
-
-
-@pytest.fixture
-def context_search_tools(
-    mock_agent_config, mock_schema_rag, mock_metric_rag, mock_doc_rag, mock_ext_knowledge_rag, mock_sql_history_rag
-):
-    """Create ContextSearchTools instance with mocked dependencies."""
-    with patch("datus.tools.context_search.SchemaWithValueRAG", return_value=mock_schema_rag) as mock_schema, patch(
-        "datus.tools.context_search.SemanticMetricsRAG", return_value=mock_metric_rag
-    ) as mock_metric, patch(
-        "datus.tools.context_search.SqlHistoryRAG", return_value=mock_sql_history_rag
-    ) as mock_sql_history, patch(
-        "datus.tools.context_search.get_storage_cache_instance"
-    ) as mock_cache_factory, patch(
-        "datus.tools.context_search.rag_by_configuration", return_value=mock_ext_knowledge_rag
-    ) as mock_ext:
-        cache_instance = Mock()
-        cache_instance.document_storage.return_value = mock_doc_rag
-        mock_cache_factory.return_value = cache_instance
-
+    with patch("datus.tools.context_search.SemanticMetricsRAG", return_value=metric_rag), patch(
+        "datus.tools.context_search.SqlHistoryRAG", return_value=sql_rag
+    ):
         tools = ContextSearchTools(mock_agent_config)
-
-        # Verify all RAG instances were created
-        assert tools.schema_rag == mock_schema_rag
-        assert tools.metric_rag == mock_metric_rag
-        assert tools.doc_rag == mock_doc_rag
-        assert tools.ext_knowledge_rag == mock_ext_knowledge_rag
-        assert tools.sql_history_store == mock_sql_history_rag
-
-        mock_schema.assert_called_once_with(mock_agent_config, None)
-        mock_metric.assert_called_once_with(mock_agent_config, None)
-        mock_sql_history.assert_called_once_with(mock_agent_config, None)
-        mock_cache_factory.assert_called_once_with(mock_agent_config)
-        cache_instance.document_storage.assert_called_once_with()
-        mock_ext.assert_called_once_with(mock_agent_config)
-
-        return tools
-
-
-def test_sub_agent_initialization_passes_sub_agent_to_rags(
-    mock_agent_config, mock_schema_rag, mock_metric_rag, mock_ext_knowledge_rag, mock_sql_history_rag
-):
-    with patch("datus.tools.context_search.SchemaWithValueRAG", return_value=mock_schema_rag) as mock_schema, patch(
-        "datus.tools.context_search.SemanticMetricsRAG", return_value=mock_metric_rag
-    ) as mock_metric, patch(
-        "datus.tools.context_search.SqlHistoryRAG", return_value=mock_sql_history_rag
-    ) as mock_sql_history, patch(
-        "datus.tools.context_search.get_storage_cache_instance"
-    ) as mock_cache, patch(
-        "datus.tools.context_search.rag_by_configuration", return_value=mock_ext_knowledge_rag
-    ):
-        cache_instance = Mock()
-        cache_instance.document_storage.return_value = Mock()
-        mock_cache.return_value = cache_instance
-
-        ContextSearchTools(mock_agent_config, sub_agent_name="test")
-
-        mock_schema.assert_called_once_with(mock_agent_config, "test")
-        mock_metric.assert_called_once_with(mock_agent_config, "test")
-        mock_sql_history.assert_called_once_with(mock_agent_config, "test")
-        cache_instance.document_storage.assert_called_once_with()
-
-
-def test_initialization_uses_storage_cache_for_documents(
-    mock_agent_config, mock_doc_rag, mock_ext_knowledge_rag, mock_sql_history_rag
-):
-    with patch("datus.tools.context_search.SchemaWithValueRAG") as mock_schema, patch(
-        "datus.tools.context_search.SemanticMetricsRAG"
-    ) as mock_metric, patch("datus.tools.context_search.SqlHistoryRAG", return_value=mock_sql_history_rag), patch(
-        "datus.tools.context_search.get_storage_cache_instance"
-    ) as mock_cache, patch(
-        "datus.tools.context_search.rag_by_configuration", return_value=mock_ext_knowledge_rag
-    ):
-        cache_instance = Mock()
-        cache_instance.document_storage.return_value = mock_doc_rag
-        mock_cache.return_value = cache_instance
-
-        ContextSearchTools(mock_agent_config)
-
-        mock_schema.assert_called_once_with(mock_agent_config, None)
-        mock_metric.assert_called_once_with(mock_agent_config, None)
-        mock_cache.assert_called_once_with(mock_agent_config)
-        cache_instance.document_storage.assert_called_once_with()
-
-
-class TestContextSearchTools:
-    """Test cases for ContextSearchTools class."""
-
-    def test_initialization(self, context_search_tools, mock_agent_config):
-        """Test that ContextSearchTools initializes correctly with all RAG components."""
-        assert context_search_tools is not None
-        assert hasattr(context_search_tools, "schema_rag")
-        assert hasattr(context_search_tools, "metric_rag")
-        assert hasattr(context_search_tools, "doc_rag")
-        assert hasattr(context_search_tools, "ext_knowledge_rag")
-
-    def test_available_tools(self, context_search_tools):
-        """Test that available_tools returns the correct list of tools."""
-        tools = context_search_tools.available_tools()
-
-        assert len(tools) == 5  # Should have 5 tools
-        tool_names = [tool.name for tool in tools]
-        expected_tools = [
-            "search_table_metadata",
-            "search_metrics",
-            "search_documents",
-            "search_external_knowledge",
-            "search_historical_sql",
-        ]
-
-        for expected_tool in expected_tools:
-            assert any(expected_tool in name for name in tool_names)
-
-    def test_search_table_metadata_success(self, context_search_tools, mock_schema_rag):
-        """Test successful search_table_metadata execution."""
-        # Setup mock return values
-        mock_metadata = Mock()
-        mock_sample_values = Mock()
-
-        mock_metadata.select.return_value.to_pylist.return_value = [
-            {"table_name": "users", "table_type": "table", "definition": "CREATE TABLE users (id INT)"}
-        ]
-        mock_sample_values.select.return_value.to_pylist.return_value = [
-            {"identifier": "users", "table_type": "table", "sample_rows": [{"id": 1, "name": "test"}]}
-        ]
-
-        mock_schema_rag.search_similar.return_value = (mock_metadata, mock_sample_values)
-
-        # Execute the method
-        result = context_search_tools.search_table_metadata(
-            query_text="user data",
-            catalog_name="test_catalog",
-            database_name="test_db",
-            schema_name="test_schema",
-            top_n=5,
-        )
-
-        # Verify the result
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 1
-        assert result.error is None
-        assert result.result is not None
-
-        # Verify the search was called with correct parameters
-        mock_schema_rag.search_similar.assert_called_once_with(
-            "user data",
-            catalog_name="test_catalog",
-            database_name="test_db",
-            schema_name="test_schema",
-            table_type="full",
-            top_n=5,
-        )
-
-    def test_search_table_metadata_failure(self, context_search_tools, mock_schema_rag):
-        """Test search_table_metadata with exception."""
-        mock_schema_rag.search_similar.side_effect = Exception("Search failed")
-
-        result = context_search_tools.search_table_metadata(query_text="user data", top_n=5)
-
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 0
-        assert "Search failed" in result.error
-        assert result.result is None
-
-    def test_search_metrics_success(self, context_search_tools, mock_metric_rag):
-        """Test successful search_metrics execution."""
-        # Execute the method
-        result = context_search_tools.search_metrics(
-            query_text="revenue metrics",
-            database_name="test_db",
-            schema_name="test_schema",
-            top_n=5,
-        )
-
-        # Verify the result
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 1
-        assert result.error is None
-        assert len(result.result) == 1
-        assert result.result[0]["name"] == "monthly_revenue"
-
-        # Verify the metric RAG was called correctly
-        mock_metric_rag.search_hybrid_metrics.assert_called_once_with(
-            query_text="revenue metrics",
-            database_name="test_db",
-            schema_name="test_schema",
-            top_n=5,
-        )
-
-    def test_search_metrics_failure(self, context_search_tools, mock_metric_rag):
-        """Test search_metrics with exception."""
-        mock_metric_rag.search_hybrid_metrics.side_effect = Exception("Metric search failed")
-
-        result = context_search_tools.search_metrics(query_text="revenue metrics")
-
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 0
-        assert "Metric search failed" in result.error
-        assert result.result is None
-
-    def test_search_external_knowledge_success(self, context_search_tools, mock_ext_knowledge_rag):
-        """Test successful search_external_knowledge execution."""
-        # Execute the method
-        result = context_search_tools.search_external_knowledge(
-            query_text="customer lifetime value", domain="Marketing", layer1="Analytics", layer2="Customer", top_n=5
-        )
-
-        # Verify the result
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 1
-        assert result.error is None
-        assert len(result.result) == 1
-        assert result.result[0]["terminology"] == "CLV"
-
-        # Verify the external knowledge RAG was called correctly
-        mock_ext_knowledge_rag.search_knowledge.assert_called_once_with(
-            query_text="customer lifetime value", domain="Marketing", layer1="Analytics", layer2="Customer", top_n=5
-        )
-
-    def test_search_external_knowledge_failure(self, context_search_tools, mock_ext_knowledge_rag):
-        """Test search_external_knowledge with exception."""
-        mock_ext_knowledge_rag.search_knowledge.side_effect = Exception("Knowledge search failed")
-
-        result = context_search_tools.search_external_knowledge(
-            query_text="customer lifetime value", domain="Marketing", layer1="Analytics", layer2="Customer"
-        )
-
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 0
-        assert "Knowledge search failed" in result.error
-        assert result.result is None
-
-    def test_search_documents_success(self, context_search_tools, mock_doc_rag):
-        """Test successful search_documents execution."""
-        # Execute the method
-        result = context_search_tools.search_documents(query_text="API documentation", top_n=5)
-
-        # Verify the result
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 1
-        assert result.error is None
-        assert len(result.result) == 1
-        assert result.result[0]["title"] == "API Documentation"
-
-        # Verify the document RAG was called correctly
-        mock_doc_rag.search_similar_documents.assert_called_once_with(
-            query_text="API documentation",
-            top_n=5,
-            select_fields=["title", "hierarchy", "keywords", "language", "chunk_text"],
-        )
-
-    def test_search_documents_failure(self, context_search_tools, mock_doc_rag):
-        """Test search_documents with exception."""
-        mock_doc_rag.search_similar_documents.side_effect = Exception("Document search failed")
-
-        result = context_search_tools.search_documents(query_text="API documentation")
-
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 0
-        assert "Document search failed" in result.error
-        assert result.result is None
-
-    def test_search_historical_sql(self, context_search_tools):
-        result = context_search_tools.search_historical_sql(
-            query_text="revenue query", domain="Sales", layer1="Revenue", layer2="Monthly"
-        )
-
-        # Should return FuncToolResult with success=1 and result list from mock
-        assert isinstance(result, FuncToolResult)
-        assert result.success == 1
-        assert result.result is not None
-        assert result.result[0]["name"] == "test sql"
-
-
-class TestContextSearchToolsEdgeCases:
-    """Test edge cases and error conditions for ContextSearchTools."""
-
-    def test_empty_search_results(self, context_search_tools, mock_schema_rag):
-        """Test search_table_metadata with empty results."""
-        # Setup empty mock return values
-        mock_metadata = Mock()
-        mock_sample_values = Mock()
-
-        mock_metadata.select.return_value.to_pylist.return_value = []
-        mock_sample_values.select.return_value.to_pylist.return_value = []
-
-        mock_schema_rag.search_similar.return_value = (mock_metadata, mock_sample_values)
-
-        result = context_search_tools.search_table_metadata(query_text="nonexistent data")
-
-        assert result.success == 1
-        assert result.result["metadata"] == []
-        assert result.result["sample_data"] == []
-
-    def test_partial_search_results(self, context_search_tools, mock_schema_rag):
-        """Test search_table_metadata with partial results (only metadata, no sample data)."""
-        mock_metadata = Mock()
-        mock_sample_values = Mock()
-
-        mock_metadata.select.return_value.to_pylist.return_value = [{"table_name": "users", "table_type": "table"}]
-        mock_sample_values.select.return_value.to_pylist.return_value = []
-
-        mock_schema_rag.search_similar.return_value = (mock_metadata, mock_sample_values)
-
-        result = context_search_tools.search_table_metadata(query_text="user data")
-
-        assert result.success == 1
-        assert len(result.result["metadata"]) == 1
-        assert result.result["sample_data"] == []
-
-    def test_error_handling_different_exceptions(self, context_search_tools, mock_schema_rag):
-        """Test that different types of exceptions are handled properly."""
-        test_cases = [
-            (ValueError("Invalid parameter"), "Invalid parameter"),
-            (RuntimeError("Connection failed"), "Connection failed"),
-            (Exception("Generic error"), "Generic error"),
-        ]
-
-        for exception, expected_error in test_cases:
-            mock_schema_rag.search_similar.side_effect = exception
-
-            result = context_search_tools.search_table_metadata(query_text="test query")
-
-            assert result.success == 0
-            assert expected_error in result.error
-
-    def test_default_parameter_values(self, context_search_tools, mock_schema_rag):
-        """Test that methods use default parameter values correctly."""
-        # Test search_table_metadata with defaults
-        context_search_tools.search_table_metadata(query_text="test")
-
-        mock_schema_rag.search_similar.assert_called_with(
-            "test", catalog_name="", database_name="", schema_name="", table_type="full", top_n=5
-        )
-
-    def test_method_return_types(self, context_search_tools):
-        """Test that all methods return FuncToolResult instances."""
-        methods_to_test = [
-            lambda: context_search_tools.search_table_metadata("test"),
-            lambda: context_search_tools.search_metrics("test"),
-            lambda: context_search_tools.search_external_knowledge("test", "Marketing", "Analytics", "Customer"),
-            lambda: context_search_tools.search_documents("test"),
-        ]
-
-        for method in methods_to_test:
-            result = method()
-            assert isinstance(result, FuncToolResult)
-
-
-class TestContextSearchToolsIntegration:
-    """Integration-style tests for ContextSearchTools."""
-
-    def test_tool_transformation_integration(self, context_search_tools):
-        """Test that tools can be transformed properly."""
-        from datus.tools.tools import trans_to_function_tool
-
-        # Test that the search_table_metadata method can be transformed
-        tool = trans_to_function_tool(context_search_tools.search_table_metadata)
-
-        assert tool is not None
-        assert hasattr(tool, "name")
-        assert hasattr(tool, "description")
-        assert hasattr(tool, "params_json_schema")
-
-        # Verify the schema doesn't contain 'self'
-        schema = tool.params_json_schema
-        if isinstance(schema, dict):
-            assert "self" not in schema.get("properties", {})
-            if "required" in schema:
-                assert "self" not in schema["required"]
-
-    def test_multiple_concurrent_searches(self, context_search_tools, mock_schema_rag):
-        """Test that multiple search methods can be called concurrently."""
-        import threading
-
-        results = {}
-        errors = {}
-
-        def search_thread(thread_id):
-            try:
-                result = context_search_tools.search_table_metadata(query_text=f"test query {thread_id}")
-                results[thread_id] = result
-            except Exception as e:
-                errors[thread_id] = str(e)
-
-        # Run multiple threads
-        threads = []
-        for i in range(5):
-            thread = threading.Thread(target=search_thread, args=(i,))
-            threads.append(thread)
-            thread.start()
-
-        for thread in threads:
-            thread.join()
-
-        # Verify all threads completed
-        assert len(errors) == 0, f"Errors occurred: {errors}"
-        assert len(results) == 5
-
-        # Verify all results are FuncToolResult instances
-        for result in results.values():
-            assert isinstance(result, FuncToolResult)
+        yield {"tools": tools, "metric_rag": metric_rag, "sql_rag": sql_rag}
+
+
+def test_available_tools(context_tools_env):
+    tools = context_tools_env["tools"].available_tools()
+    tool_names = {tool.name for tool in tools}
+    expected = {
+        "list_domain_layers_tree",
+        "search_metrics",
+        "search_historical_sql",
+    }
+    print("$$$", tool_names)
+    assert expected.issubset(tool_names)
+
+
+def test_list_domain_layers_tree_combined(context_tools_env):
+    result = context_tools_env["tools"].list_domain_layers_tree()
+    assert isinstance(result, FuncToolResult)
+    assert result.success == 1
+    assert result.result == {
+        "Sales": {
+            "Revenue": {
+                "Monthly": {"metrics_size": 1, "sql_size": 1},
+                "Quarterly": {"metrics_size": 1},
+            }
+        },
+        "Support": {"Tickets": {"Escalations": {"sql_size": 1}}},
+    }
+
+
+def test_search_metrics_passes_filters(context_tools_env):
+    tools = context_tools_env["tools"]
+    metric_rag = context_tools_env["metric_rag"]
+
+    result = tools.search_metrics(
+        query_text="revenue",
+        domain="Sales",
+        layer1="Revenue",
+        layer2="Monthly",
+        top_n=3,
+    )
+
+    assert result.success == 1
+    metric_rag.search_metrics.assert_called_once_with(
+        query_text="revenue",
+        domain="Sales",
+        layer1="Revenue",
+        layer2="Monthly",
+        top_n=3,
+    )
+
+
+def test_search_historical_sql(context_tools_env):
+    tools = context_tools_env["tools"]
+    sql_rag = context_tools_env["sql_rag"]
+
+    result = tools.search_historical_sql("sales report", domain="Sales", layer1="Revenue", top_n=2)
+    assert result.success == 1
+    sql_rag.search_sql_history_by_summary.assert_called_once_with(
+        query_text="sales report", domain="Sales", layer1="Revenue", layer2="", top_n=2
+    )

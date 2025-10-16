@@ -375,7 +375,7 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 return f"✓ {count} items"
         if function_name in ["read_query", "query"] and "original_rows" in items:
             return f"✓ {items['original_rows']} rows"
-        if function_name == "search_table_metadata":
+        if function_name == "search_table":
             row_desc = "0 tables " if "metadata" not in items else f"{len(items['metadata'])} tables"
             sample_desc = "0 sample rows " if "sample_data" not in items else f"{len(items['sample_data'])} sample rows"
             return f"✓ {row_desc} and {sample_desc}"
