@@ -232,9 +232,15 @@ class ChatAgenticNode(AgenticNode):
                     if isinstance(stream_action.output, dict):
                         last_successful_output = stream_action.output
                         # Look for content in various possible fields
+                        # Only collect raw_output if it's from a "message" type action (Thinking messages)
+                        raw_output_value = ""
+                        if stream_action.action_type == "message" and "raw_output" in stream_action.output:
+                            raw_output_value = stream_action.output.get("raw_output", "")
+
                         response_content = (
                             stream_action.output.get("content", "")
                             or stream_action.output.get("response", "")
+                            or raw_output_value
                             or response_content
                         )
 
@@ -510,6 +516,8 @@ class ChatAgenticNode(AgenticNode):
         """
         Extract SQL content and formatted output from model response.
 
+        Uses the existing llm_result2json utility for robust JSON parsing.
+
         Args:
             output: Output dictionary from model generation
 
@@ -517,96 +525,54 @@ class ChatAgenticNode(AgenticNode):
             Tuple of (sql_string, output_string) - both can be None if not found
         """
         try:
-            import ast
-            import json
-
-            from datus.utils.json_utils import strip_json_str
+            from datus.utils.json_utils import llm_result2json
 
             content = output.get("content", "")
-            logger.info(f"extract_sql_and_output_from_final_resp: {content}")
+            logger.info(
+                f"extract_sql_and_output_from_final_resp: {content[:200] if isinstance(content, str) else content}"
+            )
 
-            # Try to parse as direct JSON first (new format)
-            if isinstance(content, str) and content.strip():
-                # Try parsing as direct JSON object
+            if not isinstance(content, str) or not content.strip():
+                return None, None
+
+            # First, try direct parsing of the content
+            parsed = llm_result2json(content, expected_type=dict)
+
+            if parsed and isinstance(parsed, dict):
+                # Check if it has sql/output fields directly
+                if "sql" in parsed or "output" in parsed:
+                    sql = parsed.get("sql")
+                    output_text = parsed.get("output")
+
+                    # Unescape output content if present
+                    if output_text and isinstance(output_text, str):
+                        output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+
+                    return sql, output_text
+
+            # If direct parsing failed, try to handle nested raw_output structure
+            # Format: {'raw_output': '{"sql": "...", "output": "..."}'}
+            import ast
+
+            if content.strip().startswith("{'"):
                 try:
-                    import json_repair
+                    parsed_dict = ast.literal_eval(content.strip())
+                    if isinstance(parsed_dict, dict) and "raw_output" in parsed_dict:
+                        # Parse the nested JSON in raw_output
+                        nested_parsed = llm_result2json(parsed_dict["raw_output"], expected_type=dict)
 
-                    # Clean content and try to parse as JSON
-                    cleaned_content = strip_json_str(content.strip())
-                    try:
-                        json_content = json_repair.loads(cleaned_content)
-                    except Exception:
-                        json_content = json.loads(cleaned_content)
+                        if nested_parsed and isinstance(nested_parsed, dict):
+                            sql = nested_parsed.get("sql")
+                            output_text = nested_parsed.get("output")
 
-                    if isinstance(json_content, dict):
-                        sql = json_content.get("sql")
-                        output_text = json_content.get("output")
+                            # Unescape output content
+                            if output_text and isinstance(output_text, str):
+                                output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
 
-                        # Unescape output content
-                        if output_text:
-                            output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                            return sql, output_text
 
-                        logger.debug(f"Extracted from direct JSON: sql={bool(sql)}, output={bool(output_text)}")
-                        return sql, output_text
-                except (ValueError, SyntaxError, json.JSONDecodeError) as e:
-                    logger.debug(f"Content is not direct JSON: {e}")
-
-            # Handle string representation of dictionary with raw_output (legacy format)
-            if isinstance(content, str) and content.strip().startswith("{'"):
-                parsed_dict = None
-
-                # Try ast.literal_eval first (most reliable for proper Python dict strings)
-                try:
-                    parsed_dict = ast.literal_eval(content)
                 except (ValueError, SyntaxError) as e:
-                    logger.debug(f"ast.literal_eval failed: {e}, trying alternative parsing")
-
-                    # Alternative approach: manually extract raw_output using regex
-                    # This handles cases where the dict contains values that can't be parsed by ast.literal_eval
-                    import re
-
-                    # More robust pattern that handles the actual structure in the content
-                    # Look for 'raw_output': ' and then capture everything until the final '} pattern
-                    raw_output_pattern = r"'raw_output':\s*'(.+?)'(?:\s*})?$"
-                    match = re.search(raw_output_pattern, content, re.DOTALL)
-
-                    if match:
-                        raw_output_value = match.group(1)
-                        # Unescape the extracted value
-                        raw_output_value = raw_output_value.replace("\\'", "'").replace("\\\\", "\\")
-                        parsed_dict = {"raw_output": raw_output_value}
-                        logger.debug("Extracted raw_output using regex pattern")
-                    else:
-                        logger.debug("Could not extract raw_output using regex")
-
-                if isinstance(parsed_dict, dict) and "raw_output" in parsed_dict:
-                    try:
-                        # Use strip_json_str to clean raw_output before parsing JSON
-                        cleaned_raw_output = strip_json_str(parsed_dict["raw_output"])
-
-                        # Try with json_repair for better handling of malformed JSON
-                        import json_repair
-
-                        try:
-                            json_content = json_repair.loads(cleaned_raw_output)
-                        except Exception:
-                            # Last resort: try regular json.loads
-                            json_content = json.loads(cleaned_raw_output)
-
-                        # Ensure json_content is a dict before calling get()
-                        if isinstance(json_content, dict):
-                            sql = json_content.get("sql")
-                            output_text = json_content.get("output")
-                        else:
-                            return None, None
-
-                        # Unescape output content
-                        if output_text:
-                            output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
-
-                        return sql, output_text
-                    except (ValueError, SyntaxError, json.JSONDecodeError) as e:
-                        logger.debug(f"Failed to parse raw_output JSON: {e}")
+                    logger.debug(f"Failed to parse Python dict format: {e}")
 
             return None, None
 

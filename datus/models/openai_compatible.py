@@ -730,6 +730,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     input={"function_name": tool_name, "arguments": tool_info["arguments"]},
                                     output={
                                         "success": True,
+                                        "raw_output": output_content,  # Add raw output for action_display_app
                                         "summary": result_summary,
                                         "status_message": result_summary,
                                     },
@@ -738,6 +739,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 complete_action.end_time = datetime.now()
 
                                 logger.debug(f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}")
+
+                                # Add to action_history_manager before yielding (consistent with thinking messages)
+                                action_history_manager.add_action(complete_action)
                                 yield complete_action
 
                                 # Remove from temp storage to avoid duplicates
@@ -761,6 +765,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     status=ActionStatus.SUCCESS,
                                 )
                                 orphan_action.end_time = datetime.now()
+
+                                # Add to action_history_manager before yielding (consistent with other actions)
+                                action_history_manager.add_action(orphan_action)
                                 yield orphan_action
 
                         # Handle thinking messages
@@ -774,43 +781,19 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     text_content = str(content)
 
                                 if text_content and len(text_content.strip()) > 0:
-                                    # Check if this is a JSON output (final result)
-                                    # Skip yielding it here, will be handled in Phase 3 as summary
-                                    parsed = self._try_parse_json_output(text_content)
-                                    if parsed and (parsed.get("sql") or parsed.get("output")):
-                                        # This is the final JSON output, add to manager but don't yield
-                                        # Phase 3 will generate a proper summary report
-                                        thinking_action = ActionHistory(
-                                            action_id=f"final_output_{uuid.uuid4().hex[:8]}",
-                                            role=ActionRole.ASSISTANT,
-                                            messages="Final output (processing...)",
-                                            action_type="final_output",
-                                            input={},
-                                            output={"raw_output": text_content, "parsed": parsed},
-                                            status=ActionStatus.SUCCESS,
-                                        )
-                                        action_history_manager.add_action(thinking_action)
-                                        logger.debug("Detected final JSON output in thinking, skipping yield")
-                                        # Don't yield, let Phase 3 handle it
-                                    else:
-                                        # Regular thinking message, yield it
-                                        thinking_action = ActionHistory(
-                                            action_id=f"thinking_{uuid.uuid4().hex[:8]}",
-                                            role=ActionRole.ASSISTANT,
-                                            messages=f"Thinking: {text_content[:200]}",
-                                            action_type="thinking",
-                                            input={},
-                                            output={"raw_output": text_content},
-                                            status=ActionStatus.SUCCESS,
-                                        )
-                                        action_history_manager.add_action(thinking_action)
-                                        yield thinking_action
-
-                # Phase 2: Generate final summary report and save trace
-                final_output = result.final_output if hasattr(result, "final_output") else ""
-                summary_action = await self._generate_summary_report(final_output, action_history_manager)
-                if summary_action:
-                    yield summary_action
+                                    # Create thinking/final output action and yield it
+                                    # External AgenticNode will parse raw_output for SQL extraction
+                                    thinking_action = ActionHistory(
+                                        action_id=f"assistant_{uuid.uuid4().hex[:8]}",
+                                        role=ActionRole.ASSISTANT,
+                                        messages=f"Thinking: {text_content[:200]}...",
+                                        action_type="response",
+                                        input={},
+                                        output={"raw_output": text_content},
+                                        status=ActionStatus.SUCCESS,
+                                    )
+                                    action_history_manager.add_action(thinking_action)
+                                    yield thinking_action
 
                 # Save LLM trace if method exists
                 if hasattr(self, "_save_llm_trace"):
@@ -924,46 +907,6 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         action.output["usage"] = usage_info
 
-    def _try_parse_json_output(self, content: str) -> Optional[Dict[str, Any]]:
-        """Try to parse content as JSON with sql and output fields.
-
-        Args:
-            content: String content that might be JSON or markdown-wrapped JSON
-
-        Returns:
-            Dict with 'sql' and 'output' keys if successfully parsed, None otherwise
-        """
-        if not content or not isinstance(content, str):
-            return None
-
-        import json
-        import re
-
-        import json_repair
-
-        # Strip markdown code blocks if present
-        content_stripped = content.strip()
-        if content_stripped.startswith("```"):
-            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content_stripped, re.DOTALL)
-            if match:
-                content_stripped = match.group(1).strip()
-
-        # Try direct JSON parsing first, then json_repair
-        try:
-            data = json.loads(content_stripped)
-        except json.JSONDecodeError:
-            try:
-                data = json_repair.loads(content_stripped)
-            except Exception:
-                return None
-
-        # Check if it has the expected structure
-        if isinstance(data, dict) and ("sql" in data or "output" in data or "markdown" in data):
-            output_text = data.get("markdown") or data.get("output", "")
-            return {"sql": data.get("sql"), "output": output_text}
-
-        return None
-
     def _format_tool_result_from_dict(self, data: dict, tool_name: str = "") -> str:
         """Format tool result from dict for display.
 
@@ -1040,65 +983,6 @@ class OpenAICompatibleModel(LLMBaseModel):
             # Not JSON, return truncated string
             summary = content[:100].replace("\n", " ")
             return f"{summary}..." if len(content) > 100 else f"{summary}"
-
-    async def _generate_summary_report(
-        self, final_output: str, action_history_manager: ActionHistoryManager
-    ) -> Optional[ActionHistory]:
-        """Generate a formatted summary report from LLM final output.
-
-        Extracts SQL and Markdown output from the final LLM response and creates
-        a formatted summary action.
-
-        Args:
-            final_output: The final output from result.final_output
-            action_history_manager: Action history manager for context
-
-        Returns:
-            ActionHistory with formatted summary, or None if no structured output found
-        """
-        import uuid
-
-        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-
-        # Parse the final output as JSON with sql and output fields
-        parsed = self._try_parse_json_output(final_output)
-        if not parsed:
-            logger.debug("No structured output found for summary report")
-            return None
-
-        sql = parsed.get("sql", "")
-        output_text = parsed.get("output", "")
-
-        if not sql and not output_text:
-            logger.debug("Parsed output has no SQL or text content")
-            return None
-
-        # Format the summary as Markdown
-        # UI will display SQL separately from output["sql"], so only put Analysis Report in messages
-        display_markdown = f"## Analysis Report\n{output_text}" if output_text else "Summary Report"
-
-        # Create summary action with formatted content in messages
-        summary_action = ActionHistory(
-            action_id=str(uuid.uuid4()),
-            role=ActionRole.ASSISTANT,
-            messages=display_markdown,
-            action_type="summary_report",
-            input={},
-            output={
-                "success": True,
-                "sql": sql,
-                "markdown": output_text,
-                "content": output_text,
-                "response": output_text,
-            },
-            status=ActionStatus.SUCCESS,
-        )
-        summary_action.end_time = datetime.now()
-
-        action_history_manager.add_action(summary_action)
-        logger.info("Generated summary report with SQL and analysis")
-
-        return summary_action
 
     @property
     def model_specs(self) -> Dict[str, Dict[str, int]]:

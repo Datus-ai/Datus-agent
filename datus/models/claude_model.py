@@ -764,8 +764,9 @@ class ClaudeModel(LLMBaseModel):
             try:
                 result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
 
-                # Buffer to reorder events: thinking messages should come before tool calls
-                pending_tool_calls = []
+                # Store tool call info for matching with completion events
+                # Changed from list to dict to match OpenAI implementation pattern
+                pending_tool_calls = {}  # {call_id: tool_info dict}
 
                 while not result.is_complete:
                     async for event in result.stream_events():
@@ -779,36 +780,18 @@ class ClaudeModel(LLMBaseModel):
                         item_type = event.item.type
 
                         if item_type == "tool_call_item":
-                            action = self._process_tool_call_start(event, action_history_manager)
-                            if action:
-                                # Buffer tool calls instead of yielding immediately
-                                pending_tool_calls.append(action)
-                                action = None
+                            # Store tool call info for later matching (don't create ActionHistory yet)
+                            self._store_tool_call_info(event, pending_tool_calls)
                         elif item_type == "tool_call_output_item":
-                            action = self._process_tool_call_complete(event, action_history_manager)
+                            # Create complete action with both input and output
+                            action = self._process_tool_call_complete_v2(
+                                event, action_history_manager, pending_tool_calls
+                            )
                         elif item_type == "message_output_item":
                             action = self._process_message_output(event, action_history_manager)
-                            if action:
-                                # Yield thinking message first
-                                yield action
-                                # Then yield buffered tool calls
-                                for tool_action in pending_tool_calls:
-                                    yield tool_action
-                                pending_tool_calls.clear()
-                                action = None
 
                         if action:
                             yield action
-
-                # Yield any remaining buffered tool calls
-                for tool_action in pending_tool_calls:
-                    yield tool_action
-
-                # Phase 2: Generate final summary report
-                final_output = result.final_output if hasattr(result, "final_output") else ""
-                summary_action = await self._generate_summary_report(final_output, action_history_manager)
-                if summary_action:
-                    yield summary_action
 
             except MaxTurnsExceeded as e:
                 logger.error(f"Max turns exceeded: {str(e)}")
@@ -851,105 +834,6 @@ class ClaudeModel(LLMBaseModel):
             model=async_model,
         )
         return agent
-
-    def _try_parse_json_output(self, content: str) -> Optional[Dict[str, Any]]:
-        """Try to parse content as JSON with sql and output fields.
-
-        Args:
-            content: String content that might be JSON or markdown-wrapped JSON
-
-        Returns:
-            Dict with 'sql' and 'output' keys if successfully parsed, None otherwise
-        """
-        if not content or not isinstance(content, str):
-            return None
-
-        import json
-        import re
-
-        import json_repair
-
-        # Strip markdown code blocks if present
-        content_stripped = content.strip()
-        if content_stripped.startswith("```"):
-            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content_stripped, re.DOTALL)
-            if match:
-                content_stripped = match.group(1).strip()
-
-        # Try direct JSON parsing first, then json_repair
-        try:
-            data = json.loads(content_stripped)
-        except json.JSONDecodeError:
-            try:
-                data = json_repair.loads(content_stripped)
-            except Exception:
-                return None
-
-        # Check if it has the expected structure
-        if isinstance(data, dict) and ("sql" in data or "output" in data or "markdown" in data):
-            output_text = data.get("markdown") or data.get("output", "")
-            return {"sql": data.get("sql"), "output": output_text}
-
-        return None
-
-    async def _generate_summary_report(
-        self, final_output: str, action_history_manager: ActionHistoryManager
-    ) -> Optional[ActionHistory]:
-        """Generate a formatted summary report from LLM final output.
-
-        Extracts SQL and Markdown output from the final LLM response and creates
-        a formatted summary action.
-
-        Args:
-            final_output: The final output from result.final_output
-            action_history_manager: Action history manager for context
-
-        Returns:
-            ActionHistory with formatted summary, or None if no structured output found
-        """
-        import uuid
-
-        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-
-        # Parse the final output as JSON with sql and output fields
-        parsed = self._try_parse_json_output(final_output)
-        if not parsed:
-            logger.debug("No structured output found for summary report")
-            return None
-
-        sql = parsed.get("sql", "")
-        output_text = parsed.get("output", "")
-
-        if not sql and not output_text:
-            logger.debug("Parsed output has no SQL or text content")
-            return None
-
-        # Format the summary as Markdown
-        # UI will display SQL separately from output["sql"], so only put Analysis Report in messages
-        display_markdown = f"## Analysis Report\n{output_text}" if output_text else "Summary Report"
-
-        # Create summary action with formatted content in messages
-        summary_action = ActionHistory(
-            action_id=str(uuid.uuid4()),
-            role=ActionRole.ASSISTANT,
-            messages=display_markdown,
-            action_type="summary_report",
-            input={},
-            output={
-                "success": True,
-                "sql": sql,
-                "markdown": output_text,
-                "content": output_text,
-                "response": output_text,
-            },
-            status=ActionStatus.SUCCESS,
-        )
-        summary_action.end_time = datetime.now()
-
-        action_history_manager.add_action(summary_action)
-        logger.info("Generated summary report with SQL and analysis")
-
-        return summary_action
 
     def _format_tool_result_from_dict(self, data: dict, tool_name: str = "") -> str:
         """Format tool result from dict for display.
@@ -1036,10 +920,29 @@ class ClaudeModel(LLMBaseModel):
         if action_history_manager.find_action_by_id(action_id):
             return None
 
+        # Format arguments for display (similar to openai_compatible.py)
+        args_display = ""
+        if arguments:
+            try:
+                args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
+                args_str = json.dumps(args_dict, ensure_ascii=False)[:80]
+                args_display = args_str
+            except Exception:
+                args_display = str(arguments)[:80]
+
+        # Include arguments in messages (consistent with openai_compatible.py)
+        messages = (
+            f"Tool call: {function_name}('{args_display}...')"
+            if function_name and args_display
+            else f"Tool call: {function_name}"
+            if function_name
+            else "Tool call"
+        )
+
         action = ActionHistory(
             action_id=action_id,
             role=ActionRole.TOOL,
-            messages=f"Tool call: {function_name}" if function_name else "Tool call",
+            messages=messages,
             action_type=function_name or "unknown",
             input={"function_name": function_name, "arguments": arguments, "call_id": call_id},
             status=ActionStatus.PROCESSING,
@@ -1084,8 +987,130 @@ class ClaudeModel(LLMBaseModel):
             matching_action.action_id, output=output_data, end_time=datetime.now(), status=ActionStatus.SUCCESS
         )
 
-        # Don't return the action to avoid duplicate yield
-        return None
+        # Return the updated action so display layer can show the result
+        # Need to get the updated action from action_history_manager
+        updated_action = action_history_manager.find_action_by_id(matching_action.action_id)
+        return updated_action
+
+    def _store_tool_call_info(self, event, temp_tool_calls: dict) -> None:
+        """Store tool call information for later matching with completion event.
+
+        This matches the OpenAI implementation pattern - we don't create ActionHistory
+        until we have both the input and output.
+        """
+        raw_item = event.item.raw_item
+        call_id = getattr(raw_item, "call_id", None)
+        function_name = getattr(raw_item, "name", None)
+        arguments = getattr(raw_item, "arguments", None)
+
+        # Generate call_id if missing
+        if not call_id:
+            call_id = f"tool_{uuid.uuid4().hex[:8]}"
+            logger.warning(f"Tool call missing call_id, generated: {call_id}")
+
+        # Format arguments for display
+        args_display = ""
+        if arguments:
+            try:
+                args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
+                args_str = json.dumps(args_dict, ensure_ascii=False)[:80]
+                args_display = args_str
+            except Exception:
+                args_display = str(arguments)[:80]
+
+        # Store tool call info for matching with result
+        temp_tool_calls[call_id] = {
+            "tool_name": function_name,
+            "arguments": arguments,
+            "args_display": args_display,
+        }
+
+        logger.debug(f"Stored tool call: {function_name} (call_id={call_id[:20] if call_id else 'None'}...)")
+
+    def _process_tool_call_complete_v2(
+        self, event, action_history_manager: ActionHistoryManager, temp_tool_calls: dict
+    ) -> ActionHistory:
+        """Process tool_call_output_item events - V2 implementation matching OpenAI pattern.
+
+        Creates a complete ActionHistory with both input and output, adds to manager once, yields once.
+        """
+        raw_item = getattr(event.item, "raw_item", None)
+        output_content = getattr(event.item, "output", "")
+
+        # Extract call_id
+        call_id = None
+        if raw_item:
+            if isinstance(raw_item, dict):
+                call_id = raw_item.get("call_id")
+            else:
+                call_id = getattr(raw_item, "call_id", None)
+
+        logger.debug(
+            f"🔍 Tool output call_id={call_id}, type={type(output_content)}, " f"stored={list(temp_tool_calls.keys())}"
+        )
+
+        # Try to match with stored tool call
+        if call_id and call_id in temp_tool_calls:
+            # Found matching tool call
+            tool_info = temp_tool_calls[call_id]
+            tool_name = tool_info["tool_name"]
+            args_display = tool_info["args_display"]
+
+            # Format result summary
+            if isinstance(output_content, dict):
+                result_summary = self._format_tool_result_from_dict(output_content, tool_name)
+            elif isinstance(output_content, str):
+                result_summary = self._format_tool_result(output_content, tool_name)
+            else:
+                result_summary = self._format_tool_result(str(output_content), tool_name)
+
+            # Create complete action with both input and output
+            complete_action = ActionHistory(
+                action_id=call_id,
+                role=ActionRole.TOOL,
+                messages=f"Tool call: {tool_name}('{args_display}...')",
+                action_type=tool_name,
+                input={"function_name": tool_name, "arguments": tool_info["arguments"]},
+                output={
+                    "success": True,
+                    "raw_output": output_content,
+                    "summary": result_summary,
+                    "status_message": result_summary,
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            complete_action.end_time = datetime.now()
+
+            logger.debug(f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}")
+
+            # Add to action_history_manager once (not twice like before!)
+            action_history_manager.add_action(complete_action)
+
+            # Remove from temp storage to avoid duplicates
+            del temp_tool_calls[call_id]
+
+            # Return the action to be yielded once
+            return complete_action
+        else:
+            # No matching tool call found
+            logger.warning(f"Orphan tool result: call_id={call_id}, " f"stored={list(temp_tool_calls.keys())[:3]}")
+
+            # Create orphan action
+            orphan_action = ActionHistory(
+                action_id=call_id or f"orphan_{uuid.uuid4().hex[:8]}",
+                role=ActionRole.TOOL,
+                messages="Tool call (orphan)",
+                action_type="tool_result",
+                input={"function_name": "unknown"},
+                output={"success": True, "raw_output": output_content},
+                status=ActionStatus.SUCCESS,
+            )
+            orphan_action.end_time = datetime.now()
+
+            # Add to action_history_manager once
+            action_history_manager.add_action(orphan_action)
+
+            return orphan_action
 
     def _process_message_output(self, event, action_history_manager: ActionHistoryManager) -> ActionHistory:
         """Process message_output_item events."""
