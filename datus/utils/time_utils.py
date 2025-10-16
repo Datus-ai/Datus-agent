@@ -1,3 +1,7 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 """Time utility functions for the Datus Agent."""
 
 from datetime import datetime

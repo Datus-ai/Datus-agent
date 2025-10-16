@@ -1,3 +1,7 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 """
 Datus-CLI REPL (Read-Eval-Print Loop) implementation.
 This module provides the main interactive shell for the CLI.

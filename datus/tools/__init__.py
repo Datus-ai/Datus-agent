@@ -1,3 +1,7 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 """Tool registration module for SQL Agent.
 
 This module automatically registers all available tools from subdirectories.

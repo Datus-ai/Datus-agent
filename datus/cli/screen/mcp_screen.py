@@ -1,3 +1,7 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 """
 Enhanced MCP (Model Context Protocol) server management screen for Datus CLI.
 Provides elegant interactive interface for browsing and selecting MCP servers and tools.
