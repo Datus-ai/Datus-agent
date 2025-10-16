@@ -327,26 +327,6 @@ class DatusCLI:
                 logger.error(f"Error: {str(e)}")
                 self.console.print(f"[bold red]Error:[/] {str(e)}")
 
-    def _process_command(self, user_input: str) -> bool:
-        # Parse and execute the command
-        cmd_type, cmd, args = self._parse_command(user_input)
-        if cmd_type == CommandType.EXIT:
-            return True
-
-        # Execute the command based on type
-        if cmd_type == CommandType.SQL:
-            self._execute_sql(user_input)
-        elif cmd_type == CommandType.TOOL:
-            self._execute_tool_command(cmd, args)
-        elif cmd_type == CommandType.CONTEXT:
-            self._execute_context_command(cmd, args)
-        elif cmd_type == CommandType.CHAT:
-            self._execute_chat_command(args, subagent_name=cmd)
-        elif cmd_type == CommandType.INTERNAL:
-            self._execute_internal_command(cmd, args)
-
-        return False
-
     def _async_init_agent(self):
         """Initialize the agent asynchronously in a background thread."""
         if self.agent_initializing or self.agent_ready:
