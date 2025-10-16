@@ -196,7 +196,6 @@ class SubAgentCommands:
             config,
             components=selected_components,
             strategy=strategy,
-            console=self.cli_instance.console,
         )
         self._render_bootstrap_report(result)
 

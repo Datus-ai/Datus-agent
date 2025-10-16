@@ -153,20 +153,19 @@ class SubAgentManager:
         *,
         components: Optional[Sequence[str]] = None,
         strategy: SubAgentBootstrapStrategy = "overwrite",
-        console=None,
     ) -> BootstrapResult:
-        bootstrapper = self._build_bootstrapper(config, console=console)
+        bootstrapper = self._build_bootstrapper(config)
         selected = list(components) if components else None
         return bootstrapper.run(selected, strategy)
 
     def clear_scoped_kb(self, config: Optional[SubAgentConfig]):
         self._build_bootstrapper(config).clear_all_components()
 
-    def _build_bootstrapper(self, config: SubAgentConfig, console=None) -> SubAgentBootstrapper:
-        return SubAgentBootstrapper(
-            sub_agent=config,
-            agent_config=self._agent_config,
-        )
+    def _build_bootstrapper(
+        self,
+        config: SubAgentConfig,
+    ) -> SubAgentBootstrapper:
+        return SubAgentBootstrapper(sub_agent=config, agent_config=self._agent_config, check_exists=False)
 
     def _write_prompt_template(self, config: SubAgentConfig) -> str:
         try:

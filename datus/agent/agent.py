@@ -553,17 +553,17 @@ class Agent:
         agent_nodes = getattr(self.global_config, "agentic_nodes", {}) or {}
         if not agent_nodes:
             return
-
+        current_namespace = self.global_config.current_namespace
         for name, raw_config in agent_nodes.items():
             try:
                 sub_config = SubAgentConfig.model_validate(raw_config)
             except ValidationError as exc:
                 logger.warning(f"Skipping sub-agent '{name}' due to invalid configuration: {exc}")
                 continue
-            if not sub_config.is_in_namespace(self.global_config.current_namespace):
+            if not sub_config.is_in_namespace(current_namespace):
                 logger.debug(
                     f"Skipping sub-agent '{name}' for component '{component}' "
-                    f" because namespace '{self.global_config.current_namespace}' is not enabled",
+                    f" because there is no corresponding scope context configured under namespace {current_namespace}"
                 )
                 continue
 

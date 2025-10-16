@@ -63,18 +63,31 @@ class SubAgentBootstrapper:
         agent_config: AgentConfig,
         sub_agent: Optional[SubAgentConfig] = None,
         sub_agent_name: Optional[str] = None,
+        check_exists: bool = True,
     ):
+        """
+        :param agent_config: Agent configuration
+        :param sub_agent: Subagent configuration
+        :param sub_agent_name: Subagent name
+        :param check_exists: Check if sub_agent exists in agent_config
+        """
         self.agent_config = agent_config
-        self._valid_sub_agent(sub_agent_name, sub_agent)
+        self._valid_sub_agent(sub_agent_name, sub_agent, check_exists)
 
         # used for sqlite
         self.dialect = self.agent_config.db_type
         self.storage_path = self.agent_config.sub_agent_storage_path(self.sub_agent.system_prompt)
 
-    def _valid_sub_agent(self, sub_agent_name: Optional[str] = None, sub_agent: Optional[SubAgentConfig] = None):
+    def _valid_sub_agent(
+        self,
+        sub_agent_name: Optional[str] = None,
+        sub_agent: Optional[SubAgentConfig] = None,
+        check_exists: bool = True,
+    ):
         if sub_agent:
             self.sub_agent_name = sub_agent.system_prompt
-            self._valid_sub_agent_in_main(self.sub_agent_name)
+            if check_exists:
+                self._valid_sub_agent_in_main(self.sub_agent_name)
             self.sub_agent = sub_agent
         elif sub_agent_name:
             self.sub_agent_name = sub_agent_name
