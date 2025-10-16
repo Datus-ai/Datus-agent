@@ -1,3 +1,3 @@
 """Datus - AI-powered SQL command-line interface"""
 
-__version__ = "0.2.1-rc4"
+__version__ = "0.2.1-rc5"
