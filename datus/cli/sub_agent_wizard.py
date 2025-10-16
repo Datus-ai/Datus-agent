@@ -800,6 +800,8 @@ class SubAgentWizard:
             if kind == "tables":
                 # self.cli_instance.at_completer.table_completer.reload_data()
                 # Prefer flatten_data keys for full path; fallback to get_data list
+                if not self.table_completer.flatten_data:
+                    self.table_completer.reload_data()
                 if flatten_data := self.table_completer.flatten_data:
                     for key, meta in flatten_data.items():
                         disp = key
@@ -811,7 +813,8 @@ class SubAgentWizard:
                     if isinstance(data, list):
                         items = [(v, v) for v in data]
             elif kind == "metrics":
-                self.cli_instance.at_completer.metric_completer.reload_data()
+                if not self.cli_instance.at_completer.metric_completer.flatten_data:
+                    self.cli_instance.at_completer.metric_completer.reload_data()
                 if self.cli_instance.at_completer.metric_completer.flatten_data:
                     for key, meta in self.cli_instance.at_completer.metric_completer.flatten_data.items():
                         desc = meta.get("agent_description") if isinstance(meta, dict) else None
@@ -820,7 +823,8 @@ class SubAgentWizard:
                             disp = disp[:77] + "..."
                         items.append((key, disp))
             elif kind == "sqls":
-                self.cli_instance.at_completer.sql_completer.reload_data()
+                if not self.cli_instance.at_completer.sql_completer.flatten_data:
+                    self.cli_instance.at_completer.sql_completer.reload_data()
                 if self.cli_instance.at_completer.sql_completer.flatten_data:
                     for key, meta in self.cli_instance.at_completer.sql_completer.flatten_data.items():
                         summary = meta.get("summary") if isinstance(meta, dict) else None
