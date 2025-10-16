@@ -1,8 +1,8 @@
+#!/usr/bin/env python3
+
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
-#!/usr/bin/env python3
 """
 Simplified SQL reasoning implementation that doesn't require MCP/tool calling
 """
