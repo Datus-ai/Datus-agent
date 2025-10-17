@@ -417,18 +417,13 @@ class DBFuncTool:
             return FuncToolResult(success=0, error="Table search is unavailable because schema storage is not ready.")
 
         try:
-            # Fetch a wider candidate set when scoped filters are applied to preserve top_n after filtering.
-            search_limit = top_n
-            if self._scoped_patterns:
-                search_limit = max(top_n * 3, top_n + 5)
-
             metadata, sample_values = self.schema_rag.search_similar(
                 query_text,
                 catalog_name=catalog_name,
                 database_name=self._reset_database_for_rag(database_name),
                 schema_name=schema_name,
                 table_type="full",
-                top_n=search_limit,
+                top_n=top_n,
             )
             result_dict: Dict[str, List[Dict[str, Any]]] = {"metadata": [], "sample_data": []}
 
@@ -447,6 +442,8 @@ class DBFuncTool:
                     ]
                 ).to_pylist()
             metadata_rows = self._filter_metadata_rows(metadata_rows)
+            # Enforce post-filter limit
+            metadata_rows = metadata_rows[:top_n]
             if not metadata_rows:
                 return FuncToolResult(success=1, result=[], error="No metadata rows found.")
 
@@ -487,7 +484,7 @@ class DBFuncTool:
                     ]
                 sample_rows = sample_values.select(selected_fields).to_pylist()
             sample_rows = self._filter_metadata_rows(sample_rows)
-            result_dict["sample_data"] = sample_rows[:top_n]
+            result_dict["sample_data"] = sample_rows
             return FuncToolResult(result=result_dict)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
