@@ -210,7 +210,7 @@ class DBFuncTool:
             table_name=table_name,
             select_fields=["dimensions", "measures", "semantic_model_desc"],
         )
-        return [] if not result else result[0]
+        return {} if not result else result[0]
 
     @staticmethod
     def _normalize_identifier_part(value: Optional[str]) -> str:
