@@ -1407,7 +1407,7 @@ class SubAgentWizard:
             if not name or not description:
                 self._show_error_dialog("Agent Name and Description are required.")
                 return False
-            if not re.match(r"^[a-z][a-z0-9_]*$", name):
+            if not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", name):
                 self._show_error_dialog(f"Invalid Agent Name: {name}. Must match: ^[a-z][a-z0-9_]*$")
                 return False
 
@@ -1631,7 +1631,7 @@ class SubAgentWizard:
                         "Tips: Enter → Description | Ctrl-N Next | Esc/Ctrl-C Cancel",
                         style="class:tip",
                     ),
-                    Label("Agent Name (required, a-z0-9_, lowercase start):", style="class:label"),
+                    Label("Agent Name (required, a-zA-Z0-9_, letter start):", style="class:label"),
                     Window(
                         BufferControl(buffer=self.name_buffer),
                         height=1,
