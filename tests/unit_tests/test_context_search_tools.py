@@ -49,7 +49,6 @@ def test_available_tools(context_tools_env):
         "search_metrics",
         "search_historical_sql",
     }
-    print("$$$", tool_names)
     assert expected.issubset(tool_names)
 
 
