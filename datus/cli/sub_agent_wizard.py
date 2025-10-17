@@ -1408,7 +1408,7 @@ class SubAgentWizard:
                 self._show_error_dialog("Agent Name and Description are required.")
                 return False
             if not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", name):
-                self._show_error_dialog(f"Invalid Agent Name: {name}. Must match: ^[a-z][a-z0-9_]*$")
+                self._show_error_dialog(f"Invalid Agent Name: {name}. Must match: ^[a-zA-Z][a-zA-Z0-9_]*$")
                 return False
 
             # Check for existing agent name
