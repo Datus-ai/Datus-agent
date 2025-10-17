@@ -596,230 +596,242 @@ class OpenAICompatibleModel(LLMBaseModel):
         async def _stream_operation():
             async_client = create_openai_client(AsyncOpenAI, self.api_key, self.base_url)
 
-            # Configure stream_options to include usage information for token tracking
-            model_settings = ModelSettings(extra_body={"stream_options": {"include_usage": True}})
+            try:
+                # Configure stream_options to include usage information for token tracking
+                model_settings = ModelSettings(extra_body={"stream_options": {"include_usage": True}})
 
-            model_params = {"model": self.model_name}
-            async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+                model_params = {"model": self.model_name}
+                async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
-            # Use multiple_mcp_servers context manager with empty dict if no MCP servers
-            async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
-                agent_kwargs = {
-                    "name": kwargs.pop("agent_name", "Tools_Agent"),
-                    "instructions": instruction,
-                    "output_type": output_type,
-                    "model": async_model,
-                    "model_settings": model_settings,
-                }
+                # Use multiple_mcp_servers context manager with empty dict if no MCP servers
+                async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+                    agent_kwargs = {
+                        "name": kwargs.pop("agent_name", "Tools_Agent"),
+                        "instructions": instruction,
+                        "output_type": output_type,
+                        "model": async_model,
+                        "model_settings": model_settings,
+                    }
 
-                # Only add mcp_servers if we have connected servers
-                if connected_servers:
-                    agent_kwargs["mcp_servers"] = list(connected_servers.values())
+                    # Only add mcp_servers if we have connected servers
+                    if connected_servers:
+                        agent_kwargs["mcp_servers"] = list(connected_servers.values())
 
-                # Only add tools if we have them
-                if tools:
-                    agent_kwargs["tools"] = tools
+                    # Only add tools if we have them
+                    if tools:
+                        agent_kwargs["tools"] = tools
 
-                # Add hooks to agent if provided (AgentHooks)
-                if hooks:
-                    agent_kwargs["hooks"] = hooks
+                    # Add hooks to agent if provided (AgentHooks)
+                    if hooks:
+                        agent_kwargs["hooks"] = hooks
 
-                agent = Agent(**agent_kwargs)
+                    agent = Agent(**agent_kwargs)
 
-                try:
-                    result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
-                except MaxTurnsExceeded as e:
-                    logger.error(f"Max turns exceeded in streaming: {str(e)}")
-                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+                    try:
+                        result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+                    except MaxTurnsExceeded as e:
+                        logger.error(f"Max turns exceeded in streaming: {str(e)}")
+                        raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
 
-                # Streaming phase: yield progress actions in real-time
-                # After streaming completes, generate final summary report
-                import uuid
+                    # Streaming phase: yield progress actions in real-time
+                    # After streaming completes, generate final summary report
+                    import uuid
 
-                from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+                    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
-                # Phase 1: Stream events with detailed progress
-                # Track tool calls and results for immediate feedback
-                temp_tool_calls = {}  # {call_id: ActionHistory}
+                    # Phase 1: Stream events with detailed progress
+                    # Track tool calls and results for immediate feedback
+                    temp_tool_calls = {}  # {call_id: ActionHistory}
 
-                while not result.is_complete:
-                    async for event in result.stream_events():
-                        if not hasattr(event, "type") or event.type != "run_item_stream_event":
-                            continue
+                    while not result.is_complete:
+                        async for event in result.stream_events():
+                            if not hasattr(event, "type") or event.type != "run_item_stream_event":
+                                continue
 
-                        if not (hasattr(event, "item") and hasattr(event.item, "type")):
-                            continue
+                            if not (hasattr(event, "item") and hasattr(event.item, "type")):
+                                continue
 
-                        item_type = event.item.type
+                            item_type = event.item.type
 
-                        # Handle tool call start
-                        if item_type == "tool_call_item":
-                            raw_item = getattr(event.item, "raw_item", None)
-                            if raw_item:
-                                tool_name = getattr(raw_item, "name", None)
-                                if not tool_name:
-                                    logger.warning(f"Tool call has no name field: {type(raw_item)}, {dir(raw_item)}")
-                                    tool_name = "unknown"
+                            # Handle tool call start
+                            if item_type == "tool_call_item":
+                                raw_item = getattr(event.item, "raw_item", None)
+                                if raw_item:
+                                    tool_name = getattr(raw_item, "name", None)
+                                    if not tool_name:
+                                        logger.warning(
+                                            f"Tool call has no name field: {type(raw_item)}, {dir(raw_item)}"
+                                        )
+                                        tool_name = "unknown"
 
-                                arguments = getattr(raw_item, "arguments", "{}")
-                                call_id = getattr(raw_item, "call_id", None)
-
-                                # Generate call_id if missing
-                                if not call_id:
-                                    call_id = f"tool_{uuid.uuid4().hex[:8]}"
-                                    logger.warning(f"Tool call missing call_id, generated: {call_id}")
-
-                                # Try to format arguments
-                                try:
-                                    args_dict = json.loads(arguments) if arguments else {}
-                                    args_str = json.dumps(args_dict, ensure_ascii=False)[:80]
-                                except Exception:
-                                    args_str = str(arguments)[:80]
-
-                                # Store tool call info for matching with result
-                                temp_tool_calls[call_id] = {
-                                    "tool_name": tool_name,
-                                    "arguments": arguments,
-                                    "args_display": args_str,
-                                }
-
-                                logger.debug(
-                                    f"Stored tool call: {tool_name} (call_id={call_id[:20] if call_id else 'None'}...)"
-                                )
-
-                        # Handle tool call completion
-                        elif item_type == "tool_call_output_item":
-                            raw_item = getattr(event.item, "raw_item", None)
-                            output_content = getattr(event.item, "output", "")
-
-                            # Extract call_id from raw_item
-                            # raw_item can be either a dict or an object
-                            call_id = None
-                            if raw_item:
-                                if isinstance(raw_item, dict):
-                                    call_id = raw_item.get("call_id")
-                                else:
+                                    arguments = getattr(raw_item, "arguments", "{}")
                                     call_id = getattr(raw_item, "call_id", None)
 
-                            logger.debug(
-                                f"🔍 Tool output call_id={call_id}, type={type(output_content)}, "
-                                f"stored={list(temp_tool_calls.keys())}"
-                            )
+                                    # Generate call_id if missing
+                                    if not call_id:
+                                        call_id = f"tool_{uuid.uuid4().hex[:8]}"
+                                        logger.warning(f"Tool call missing call_id, generated: {call_id}")
 
-                            # Try to match with stored tool call
-                            if call_id and call_id in temp_tool_calls:
-                                # Found matching tool call
-                                tool_info = temp_tool_calls[call_id]
-                                tool_name = tool_info["tool_name"]
-                                args_display = tool_info["args_display"]
+                                    # Try to format arguments
+                                    try:
+                                        args_dict = json.loads(arguments) if arguments else {}
+                                        args_str = json.dumps(args_dict, ensure_ascii=False)[:80]
+                                    except Exception:
+                                        args_str = str(arguments)[:80]
 
-                                # Format result summary (only count info)
-                                # output_content might already be a dict or string
-                                if isinstance(output_content, dict):
-                                    result_summary = self._format_tool_result_from_dict(output_content, tool_name)
-                                elif isinstance(output_content, str):
-                                    result_summary = self._format_tool_result(output_content, tool_name)
-                                else:
-                                    # Log unexpected type and try to convert
-                                    logger.warning(f"Unexpected output_content type: {type(output_content)}")
-                                    result_summary = self._format_tool_result(str(output_content), tool_name)
+                                    # Store tool call info for matching with result
+                                    temp_tool_calls[call_id] = {
+                                        "tool_name": tool_name,
+                                        "arguments": arguments,
+                                        "args_display": args_str,
+                                    }
 
-                                # Create complete action with both input and output
-                                # Put result_summary as the status message to replace default "Success"
-                                complete_action = ActionHistory(
-                                    action_id=call_id,
-                                    role=ActionRole.TOOL,
-                                    messages=f"Tool call: {tool_name}('{args_display}...')",
-                                    action_type=tool_name,
-                                    input={"function_name": tool_name, "arguments": tool_info["arguments"]},
-                                    output={
-                                        "success": True,
-                                        "raw_output": output_content,  # Add raw output for action_display_app
-                                        "summary": result_summary,
-                                        "status_message": result_summary,
-                                    },
-                                    status=ActionStatus.SUCCESS,
-                                )
-                                complete_action.end_time = datetime.now()
+                                    logger.debug(
+                                        f"Stored tool call: {tool_name} "
+                                        f"(call_id={call_id[:20] if call_id else 'None'}...)"
+                                    )
 
-                                logger.debug(f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}")
+                            # Handle tool call completion
+                            elif item_type == "tool_call_output_item":
+                                raw_item = getattr(event.item, "raw_item", None)
+                                output_content = getattr(event.item, "output", "")
 
-                                # Add to action_history_manager before yielding (consistent with thinking messages)
-                                action_history_manager.add_action(complete_action)
-                                yield complete_action
+                                # Extract call_id from raw_item
+                                # raw_item can be either a dict or an object
+                                call_id = None
+                                if raw_item:
+                                    if isinstance(raw_item, dict):
+                                        call_id = raw_item.get("call_id")
+                                    else:
+                                        call_id = getattr(raw_item, "call_id", None)
 
-                                # Remove from temp storage to avoid duplicates
-                                del temp_tool_calls[call_id]
-
-                            else:
-                                # No matching tool call found
-                                logger.warning(
-                                    f"Orphan tool result: call_id={call_id}, "
-                                    f"stored={list(temp_tool_calls.keys())[:3]}"
+                                logger.debug(
+                                    f"🔍 Tool output call_id={call_id}, type={type(output_content)}, "
+                                    f"stored={list(temp_tool_calls.keys())}"
                                 )
 
-                                # Yield result anyway
-                                orphan_action = ActionHistory(
-                                    action_id=call_id or f"orphan_{uuid.uuid4().hex[:8]}",
-                                    role=ActionRole.TOOL,
-                                    messages="Tool call (orphan)",
-                                    action_type="tool_result",
-                                    input={"function_name": "unknown"},
-                                    output={"success": True},
-                                    status=ActionStatus.SUCCESS,
-                                )
-                                orphan_action.end_time = datetime.now()
+                                # Try to match with stored tool call
+                                if call_id and call_id in temp_tool_calls:
+                                    # Found matching tool call
+                                    tool_info = temp_tool_calls[call_id]
+                                    tool_name = tool_info["tool_name"]
+                                    args_display = tool_info["args_display"]
 
-                                # Add to action_history_manager before yielding (consistent with other actions)
-                                action_history_manager.add_action(orphan_action)
-                                yield orphan_action
+                                    # Format result summary (only count info)
+                                    # output_content might already be a dict or string
+                                    if isinstance(output_content, dict):
+                                        result_summary = self._format_tool_result_from_dict(output_content, tool_name)
+                                    elif isinstance(output_content, str):
+                                        result_summary = self._format_tool_result(output_content, tool_name)
+                                    else:
+                                        # Log unexpected type and try to convert
+                                        logger.warning(f"Unexpected output_content type: {type(output_content)}")
+                                        result_summary = self._format_tool_result(str(output_content), tool_name)
 
-                        # Handle thinking messages
-                        elif item_type == "message_output_item":
-                            raw_item = getattr(event.item, "raw_item", None)
-                            if raw_item and hasattr(raw_item, "content"):
-                                content = raw_item.content
-                                if isinstance(content, list) and content:
-                                    text_content = content[0].text if hasattr(content[0], "text") else str(content[0])
-                                else:
-                                    text_content = str(content)
-
-                                if text_content and len(text_content.strip()) > 0:
-                                    # Create thinking/final output action and yield it
-                                    # External AgenticNode will parse raw_output for SQL extraction
-                                    thinking_action = ActionHistory(
-                                        action_id=f"assistant_{uuid.uuid4().hex[:8]}",
-                                        role=ActionRole.ASSISTANT,
-                                        messages=f"Thinking: {text_content[:200]}...",
-                                        action_type="response",
-                                        input={},
-                                        output={"raw_output": text_content},
+                                    # Create complete action with both input and output
+                                    # Put result_summary as the status message to replace default "Success"
+                                    complete_action = ActionHistory(
+                                        action_id=call_id,
+                                        role=ActionRole.TOOL,
+                                        messages=f"Tool call: {tool_name}('{args_display}...')",
+                                        action_type=tool_name,
+                                        input={"function_name": tool_name, "arguments": tool_info["arguments"]},
+                                        output={
+                                            "success": True,
+                                            "raw_output": output_content,  # Add raw output for action_display_app
+                                            "summary": result_summary,
+                                            "status_message": result_summary,
+                                        },
                                         status=ActionStatus.SUCCESS,
                                     )
-                                    action_history_manager.add_action(thinking_action)
-                                    yield thinking_action
+                                    complete_action.end_time = datetime.now()
 
-                # Save LLM trace if method exists
-                if hasattr(self, "_save_llm_trace"):
-                    # For tools calls, we need to extract messages from the result
-                    messages = [{"role": "user", "content": prompt}]
-                    if instruction:
-                        messages.insert(0, {"role": "system", "content": instruction})
+                                    logger.debug(
+                                        f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}"
+                                    )
 
-                    # Get complete conversation history including tool calls
-                    conversation_history = None
-                    if hasattr(result, "to_input_list"):
-                        try:
-                            conversation_history = result.to_input_list()
-                        except Exception as e:
-                            logger.debug(f"Failed to get conversation history: {e}")
+                                    # Add to action_history_manager before yielding (consistent with thinking messages)
+                                    action_history_manager.add_action(complete_action)
+                                    yield complete_action
 
-                    final_output = result.final_output if hasattr(result, "final_output") else ""
-                    self._save_llm_trace(messages, final_output, conversation_history)
+                                    # Remove from temp storage to avoid duplicates
+                                    del temp_tool_calls[call_id]
 
-                # After streaming completes, extract usage information from the final result
-                # and add it to the final assistant action
-                await self._extract_and_distribute_token_usage(result, action_history_manager)
+                                else:
+                                    # No matching tool call found
+                                    logger.warning(
+                                        f"Orphan tool result: call_id={call_id}, "
+                                        f"stored={list(temp_tool_calls.keys())[:3]}"
+                                    )
+
+                                    # Yield result anyway
+                                    orphan_action = ActionHistory(
+                                        action_id=call_id or f"orphan_{uuid.uuid4().hex[:8]}",
+                                        role=ActionRole.TOOL,
+                                        messages="Tool call (orphan)",
+                                        action_type="tool_result",
+                                        input={"function_name": "unknown"},
+                                        output={"success": True, "raw_output": output_content},
+                                        status=ActionStatus.SUCCESS,
+                                    )
+                                    orphan_action.end_time = datetime.now()
+
+                                    # Add to action_history_manager before yielding (consistent with other actions)
+                                    action_history_manager.add_action(orphan_action)
+                                    yield orphan_action
+
+                            # Handle thinking messages
+                            elif item_type == "message_output_item":
+                                raw_item = getattr(event.item, "raw_item", None)
+                                if raw_item and hasattr(raw_item, "content"):
+                                    content = raw_item.content
+                                    if isinstance(content, list) and content:
+                                        text_content = (
+                                            content[0].text if hasattr(content[0], "text") else str(content[0])
+                                        )
+                                    else:
+                                        text_content = str(content)
+
+                                    if text_content and len(text_content.strip()) > 0:
+                                        # Create thinking/final output action and yield it
+                                        # External AgenticNode will parse raw_output for SQL extraction
+                                        thinking_action = ActionHistory(
+                                            action_id=f"assistant_{uuid.uuid4().hex[:8]}",
+                                            role=ActionRole.ASSISTANT,
+                                            messages=f"Thinking: {text_content[:200]}...",
+                                            action_type="response",
+                                            input={},
+                                            output={"raw_output": text_content},
+                                            status=ActionStatus.SUCCESS,
+                                        )
+                                        action_history_manager.add_action(thinking_action)
+                                        yield thinking_action
+
+                    # Save LLM trace if method exists
+                    if hasattr(self, "_save_llm_trace"):
+                        # For tools calls, we need to extract messages from the result
+                        messages = [{"role": "user", "content": prompt}]
+                        if instruction:
+                            messages.insert(0, {"role": "system", "content": instruction})
+
+                        # Get complete conversation history including tool calls
+                        conversation_history = None
+                        if hasattr(result, "to_input_list"):
+                            try:
+                                conversation_history = result.to_input_list()
+                            except Exception as e:
+                                logger.debug(f"Failed to get conversation history: {e}")
+
+                        final_output = result.final_output if hasattr(result, "final_output") else ""
+                        self._save_llm_trace(messages, final_output, conversation_history)
+
+                    # After streaming completes, extract usage information from the final result
+                    # and add it to the final assistant action
+                    await self._extract_and_distribute_token_usage(result, action_history_manager)
+            finally:
+                # Close the async client to prevent event loop errors
+                await async_client.close()
+                logger.debug("Closed AsyncOpenAI client")
 
         # Execute the streaming operation directly without retry logic
         async for action in _stream_operation():

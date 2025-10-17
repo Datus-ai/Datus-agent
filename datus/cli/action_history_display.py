@@ -327,12 +327,6 @@ class ActionContentGenerator(BaseActionContentGenerator):
         if not isinstance(output_data, dict):
             return "✓ Completed (preview unavailable)"
 
-        # Check if there's a pre-computed summary/status_message from model
-        if "summary" in output_data and output_data["summary"]:
-            return f"✓ {output_data['summary']}"
-        if "status_message" in output_data and output_data["status_message"]:
-            return f"✓ {output_data['status_message']}"
-
         # Use raw_output if available, otherwise use the data directly
         data = output_data.get("raw_output", output_data)
         logger.debug(f"raw_output for extracting text: {data}")
