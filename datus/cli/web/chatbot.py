@@ -98,14 +98,8 @@ class StreamlitChatbot:
     @property
     def should_hide_sidebar(self) -> bool:
         """Check if sidebar should be hidden (embed mode)"""
-        # Use 'hide_sidebar' instead of 'embed' because 'embed' is a reserved Streamlit parameter
-        hide_param = st.query_params.get("hide_sidebar")
-
-        # Store in session_state if found in URL
-        if hide_param is not None:
-            st.session_state.embed_mode = hide_param == "true"
-
         # Return from session_state (persists across reruns)
+        # Query params are read in run() method after set_page_config
         return st.session_state.get("embed_mode", False)
 
     def setup_config(
@@ -439,9 +433,14 @@ class StreamlitChatbot:
             page_title="Datus AI Chat Assistant",
             page_icon="🤖",
             layout="wide",
-            initial_sidebar_state="collapsed" if self.should_hide_sidebar else "expanded",
+            initial_sidebar_state="expanded",
             menu_items={"Get Help": None, "Report a bug": None, "About": None},
         )
+
+        # Read query params and update session_state (after set_page_config)
+        hide_param = st.query_params.get("hide_sidebar")
+        if hide_param is not None:
+            st.session_state.embed_mode = hide_param == "true"
 
         # Initialize logging for web interface
         if "log_manager_initialized" not in st.session_state:

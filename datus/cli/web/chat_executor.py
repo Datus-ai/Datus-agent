@@ -93,22 +93,29 @@ class ChatExecutor:
 
             # Execute async generator with proper event loop handling
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
 
-            async def run_stream():
-                async for message in collect_actions():
-                    yield message
+            try:
 
-            async_gen = run_stream()
-            while True:
-                try:
-                    result = loop.run_until_complete(async_gen.__anext__())
-                    yield result
-                except StopAsyncIteration:
-                    break
+                async def run_stream():
+                    """Wrapper to iterate the async generator to completion"""
+                    try:
+                        async for message in collect_actions():
+                            yield message
+                    except StopAsyncIteration:
+                        pass
 
-            # Store collected actions for caller to access
-            self.last_actions = incremental_actions
+                async_gen = run_stream()
+                while True:
+                    try:
+                        result = loop.run_until_complete(async_gen.__anext__())
+                        yield result
+                    except StopAsyncIteration:
+                        break
+
+                # Store collected actions for caller to access
+                self.last_actions = incremental_actions
+            finally:
+                loop.close()
 
         except Exception as e:
             logger.exception(f"Execution error: {e}")
@@ -149,7 +156,7 @@ class ChatExecutor:
                         output_preview = f" → {output_str}..." if len(str(action.output)) > 80 else f" → {output_str}"
 
                 return f"✓Tool call: {function_name}{input_preview}{output_preview}"
-            elif action.status == ActionStatus.RUNNING:
+            elif action.status == ActionStatus.PROCESSING:
                 return f"⟳Tool call: {function_name}{input_preview}..."
             else:
                 return f"✗Tool call: {function_name}{input_preview}"
@@ -188,6 +195,18 @@ class ChatExecutor:
         sql = final_action.output.get("sql")
         response = final_action.output.get("response")
 
+        # Handle None response
+        if response is None:
+            return sql, None
+
+        # Handle dict response (already parsed)
+        if isinstance(response, dict):
+            return sql, response.get("raw_output", str(response))
+
+        # Only process string responses
+        if not isinstance(response, str):
+            return sql, str(response)
+
         # Extract SQL and output using ChatCommands
         extracted_sql, extracted_output = None, response
         if cli and cli.chat_commands:
@@ -201,6 +220,7 @@ class ChatExecutor:
         if isinstance(extracted_output, dict):
             return None, extracted_output.get("raw_output", str(extracted_output))
 
+        # Try to parse response as Python literal (only for strings)
         try:
             import ast
 
