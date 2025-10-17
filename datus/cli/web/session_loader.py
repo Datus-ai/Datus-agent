@@ -12,10 +12,11 @@ Handles loading chat sessions from SQLite database, including:
 """
 
 import json
-import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import structlog
@@ -39,14 +40,30 @@ class SessionLoader:
             List of message dictionaries with role, content, timestamp, SQL, and progress
         """
         messages = []
-        db_path = os.path.join(os.path.expanduser("~/.datus/sessions"), f"{session_id}.db")
 
-        if not os.path.exists(db_path):
+        # Validate session_id to prevent path traversal
+        # Only allow alphanumeric, underscore, hyphen, and dot
+        if not re.match(r"^[A-Za-z0-9_.-]+$", session_id):
+            logger.warning(f"Invalid session_id format (potential path traversal): {session_id}")
+            return messages
+
+        # Build path with pathlib and resolve to absolute path
+        sessions_dir = Path.home() / ".datus" / "sessions"
+        db_path = (sessions_dir / f"{session_id}.db").resolve()
+
+        # Ensure resolved path is within sessions directory
+        try:
+            db_path.relative_to(sessions_dir.resolve())
+        except ValueError:
+            logger.warning(f"Session path outside of sessions directory (path traversal attempt): {db_path}")
+            return messages
+
+        if not db_path.exists():
             logger.warning(f"Session database not found: {db_path}")
             return messages
 
         try:
-            with sqlite3.connect(db_path) as conn:
+            with sqlite3.connect(str(db_path)) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """

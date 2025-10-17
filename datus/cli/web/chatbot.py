@@ -428,16 +428,7 @@ class StreamlitChatbot:
 
     def run(self):
         """Main Streamlit app runner"""
-        # Page configuration - MUST be the first Streamlit command
-        st.set_page_config(
-            page_title="Datus AI Chat Assistant",
-            page_icon="🤖",
-            layout="wide",
-            initial_sidebar_state="expanded",
-            menu_items={"Get Help": None, "Report a bug": None, "About": None},
-        )
-
-        # Read query params and update session_state (after set_page_config)
+        # Read query params and update session_state
         hide_param = st.query_params.get("hide_sidebar")
         if hide_param is not None:
             st.session_state.embed_mode = hide_param == "true"
@@ -772,6 +763,15 @@ def run_web_interface(args):
 def main():
     """Main entry point"""
     import sys
+
+    # Page configuration - MUST be the first Streamlit command
+    st.set_page_config(
+        page_title="Datus AI Chat Assistant",
+        page_icon="🤖",
+        layout="wide",
+        initial_sidebar_state="expanded",
+        menu_items={"Get Help": None, "Report a bug": None, "About": None},
+    )
 
     # Parse command line arguments
     namespace = None
