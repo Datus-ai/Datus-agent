@@ -1,3 +1,7 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 """
 UI components and rendering utilities for web interface.
 
@@ -205,7 +209,7 @@ class UIComponents:
         if not available_subagents:
             return
 
-        with st.expander("🔧 Access Specialized Subagents", expanded=False):
+        with st.expander("🔧 Access Specialized Subagents", expanded=True):
             st.markdown("**Available specialized subagents:**")
 
             # Display each available subagent
@@ -274,15 +278,21 @@ class UIComponents:
         st.markdown("### 💬 AI Response")
         st.markdown(response)
 
-    def render_action_history(self, actions: List[ActionHistory], chat_id: str = None) -> None:
-        """Render complete action history with full details."""
+    def render_action_history(self, actions: List[ActionHistory], chat_id: str = None, expanded: bool = False) -> None:
+        """Render complete action history with full details.
+
+        Args:
+            actions: List of ActionHistory objects to render
+            chat_id: Chat ID for the conversation
+            expanded: Whether to expand the details by default (True for session page, False for normal page)
+        """
         if not actions:
             return
 
         chat_id = chat_id or "default"
 
-        # Display complete execution history (collapsed by default)
-        with st.expander(f"🔍 View Full Execution Details ({len(actions)} steps)", expanded=False):
+        # Display complete execution history
+        with st.expander(f"🔍 View Full Execution Details ({len(actions)} steps)", expanded=expanded):
             st.caption("Complete execution trace with all intermediate steps")
 
             content_generator = ActionContentGenerator(enable_truncation=False)

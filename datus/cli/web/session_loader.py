@@ -1,3 +1,7 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 """
 Session loading and management for web interface.
 
@@ -10,9 +14,13 @@ Handles loading chat sessions from SQLite database, including:
 import json
 import os
 import sqlite3
+import uuid
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import structlog
+
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -53,6 +61,7 @@ class SessionLoader:
                 # Aggregate consecutive assistant messages
                 current_assistant_group = None
                 assistant_progress = []
+                current_actions = []  # Collect ActionHistory objects for detailed view
                 last_timestamp = None
 
                 for message_data, created_at in cursor.fetchall():
@@ -65,9 +74,13 @@ class SessionLoader:
                         if role == "user":
                             # Before adding user message, flush any pending assistant group
                             if current_assistant_group:
+                                # Add collected actions to the assistant group
+                                if current_actions:
+                                    current_assistant_group["actions"] = current_actions.copy()
                                 messages.append(current_assistant_group)
                                 current_assistant_group = None
                                 assistant_progress = []
+                                current_actions = []
 
                             # Add user message
                             messages.append(
@@ -85,19 +98,59 @@ class SessionLoader:
                                 current_assistant_group = {"role": "assistant", "content": "", "timestamp": created_at}
                                 last_timestamp = created_at
 
-                            # Add tool call to progress
+                            # Parse arguments
                             try:
-                                args_preview = json.loads(arguments) if arguments else {}
-                                args_str = str(args_preview)[:60]
+                                args_dict = json.loads(arguments) if arguments else {}
+                                args_str = str(args_dict)[:60]
                                 assistant_progress.append(f"✓ Tool call: {tool_name}({args_str})")
                             except (json.JSONDecodeError, ValueError, TypeError):
+                                args_dict = {}
                                 assistant_progress.append(f"✓ Tool call: {tool_name}")
+
+                            # Create ActionHistory for tool call
+                            action = ActionHistory(
+                                action_id=str(uuid.uuid4()),
+                                role=ActionRole.TOOL,
+                                messages=f"Tool call: {tool_name}",
+                                action_type=tool_name,
+                                input={"function_name": tool_name, **args_dict},
+                                output=None,  # Will be filled by next function_call_output
+                                status=ActionStatus.PROCESSING,
+                                start_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
+                            )
+                            current_actions.append(action)
                             continue
 
                         # Handle function outputs (tool results)
                         if msg_type == "function_call_output":
-                            # These are captured but not displayed separately
-                            # The output is implied by the next thinking message
+                            # Update the last action with output
+                            if current_actions:
+                                last_action = current_actions[-1]
+
+                                # Extract output directly from message_json
+                                output_text = message_json.get("output", "")
+
+                                # Try to parse as Python literal (the output is stored as string repr of dict)
+                                output_data = {}
+                                if output_text:
+                                    try:
+                                        # Try ast.literal_eval first (safer than eval)
+                                        import ast
+
+                                        output_data = ast.literal_eval(output_text)
+                                    except (ValueError, SyntaxError):
+                                        # If that fails, try json.loads
+                                        try:
+                                            output_data = json.loads(output_text)
+                                        except json.JSONDecodeError:
+                                            # Last resort: store as string
+                                            output_data = {"result": output_text}
+
+                                last_action.output = output_data
+                                last_action.status = ActionStatus.SUCCESS
+                                last_action.end_time = (
+                                    datetime.fromisoformat(created_at) if created_at else datetime.now()
+                                )
                             continue
 
                         # Handle assistant messages (thinking and final output)
@@ -131,9 +184,14 @@ class SessionLoader:
                                                 current_assistant_group["progress_messages"] = assistant_progress.copy()
                                                 current_assistant_group["timestamp"] = last_timestamp or created_at
 
+                                                # Add collected actions
+                                                if current_actions:
+                                                    current_assistant_group["actions"] = current_actions.copy()
+
                                                 messages.append(current_assistant_group)
                                                 current_assistant_group = None
                                                 assistant_progress = []
+                                                current_actions = []
                                                 continue
                                         except json.JSONDecodeError:
                                             pass
@@ -150,6 +208,20 @@ class SessionLoader:
                                     # Add to progress
                                     assistant_progress.append(f"💭Thinking: {text}")
 
+                                    # Create ActionHistory for thinking
+                                    thinking_action = ActionHistory(
+                                        action_id=str(uuid.uuid4()),
+                                        role=ActionRole.ASSISTANT,
+                                        messages=text,
+                                        action_type="thinking",
+                                        input=None,
+                                        output=None,
+                                        status=ActionStatus.SUCCESS,
+                                        start_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
+                                        end_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
+                                    )
+                                    current_actions.append(thinking_action)
+
                     except (json.JSONDecodeError, TypeError) as e:
                         logger.debug(f"Skipping malformed message: {e}")
                         continue
@@ -160,6 +232,8 @@ class SessionLoader:
                         current_assistant_group["content"] = "Processing completed"
                     if assistant_progress:
                         current_assistant_group["progress_messages"] = assistant_progress
+                    if current_actions:
+                        current_assistant_group["actions"] = current_actions.copy()
                     messages.append(current_assistant_group)
 
         except Exception as e:

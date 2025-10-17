@@ -1,3 +1,7 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 """
 Streamlit Chatbot for Datus Agent
 
@@ -67,7 +71,6 @@ class StreamlitChatbot:
             "current_actions": [],
             "chat_session_initialized": False,
             "cli_instance": None,
-            "rendered_action_ids": set(),
             "current_chat_id": None,
             "subagent_name": None,
             "view_session_id": None,
@@ -295,7 +298,6 @@ class StreamlitChatbot:
         """Clear chat history and session"""
         st.session_state.messages = []
         st.session_state.current_actions = []
-        st.session_state.rendered_action_ids = set()
         st.session_state.current_chat_id = None
 
         if self.cli and self.cli.chat_commands:
@@ -543,29 +545,48 @@ class StreamlitChatbot:
         # Display chat history
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
-                # Show progress for assistant messages (if available)
-                if message["role"] == "assistant" and "progress_messages" in message:
-                    progress_messages = message["progress_messages"]
-                    if progress_messages:
-                        with st.status(
-                            f"✓ Completed ({len(progress_messages)} steps)", state="complete", expanded=False
-                        ):
-                            st.caption("Click to expand and view execution steps")
-                            for msg in progress_messages:
-                                st.text(f"• {msg}")
+                # Display user messages
+                if message["role"] == "user":
+                    st.markdown(message["content"])
 
-                st.markdown(message["content"])
+                # Display assistant messages
+                elif message["role"] == "assistant":
+                    # Different display based on readonly mode
+                    if st.session_state.session_readonly_mode:
+                        # Session page: Only show expanded action history
+                        actions_data = message.get("actions", [])
+                        chat_id = message.get("chat_id", "default")
+                        if actions_data:
+                            self.ui.render_action_history(actions_data, chat_id, expanded=True)
+                    else:
+                        # Normal page: Show progress summary, AI response, SQL, and collapsed details at bottom
+                        # Show progress summary if available
+                        progress_messages = message.get("progress_messages", [])
+                        if progress_messages:
+                            with st.status(
+                                f"✓ Completed ({len(progress_messages)} steps)", state="complete", expanded=False
+                            ):
+                                st.caption("Click to expand and view execution steps")
+                                for msg in progress_messages:
+                                    st.text(f"• {msg}")
 
-                # Show SQL if available
-                if "sql" in message and message["sql"]:
-                    user_msg = ""
-                    if st.session_state.messages:
-                        user_msgs = [m["content"] for m in st.session_state.messages if m["role"] == "user"]
-                        if user_msgs:
-                            user_msg = user_msgs[-1]
-                    self.ui.display_sql_with_copy(
-                        message["sql"], user_msg, st.session_state.session_readonly_mode, self.save_success_story
-                    )
+                        # Show AI response summary
+                        st.markdown(message["content"])
+
+                        # Show SQL if available
+                        if "sql" in message and message["sql"]:
+                            user_msg = ""
+                            if st.session_state.messages:
+                                user_msgs = [m["content"] for m in st.session_state.messages if m["role"] == "user"]
+                                if user_msgs:
+                                    user_msg = user_msgs[-1]
+                            self.ui.display_sql_with_copy(message["sql"], user_msg, False, self.save_success_story)
+
+                        # Show collapsed action history at bottom
+                        actions_data = message.get("actions", [])
+                        chat_id = message.get("chat_id", "default")
+                        if actions_data:
+                            self.ui.render_action_history(actions_data, chat_id, expanded=False)
 
         # Chat input - disabled in read-only mode
         if not st.session_state.session_readonly_mode:
@@ -617,12 +638,13 @@ class StreamlitChatbot:
                         with st.status(
                             f"✓ Completed ({len(progress_messages)} steps)", state="complete", expanded=False
                         ):
-                            st.caption("Click to expand and view all execution steps")
+                            st.caption("Click to expand and view execution steps")
                             for msg in progress_messages:
                                 st.text(f"• {msg}")
 
                     # Get complete actions from chat executor
                     actions = self.chat_executor.last_actions
+                    logger.info(f"Chat execution completed: {len(actions) if actions else 0} actions collected")
 
                     # Extract SQL and response
                     sql, response = self.extract_sql_and_response(actions)
@@ -640,24 +662,26 @@ class StreamlitChatbot:
                     if sql:
                         self.ui.display_sql_with_copy(sql, prompt, False, self.save_success_story)
 
-                    # Display detailed action history (collapsed by default, contains complete data)
-                    action_render_id = f"{chat_id}_actions"
-                    if actions and action_render_id not in st.session_state.rendered_action_ids:
-                        self.ui.render_action_history(actions, chat_id)
-                        st.session_state.rendered_action_ids.add(action_render_id)
+                    # Display collapsed action history at bottom
+                    if actions:
+                        self.ui.render_action_history(actions, chat_id, expanded=False)
 
-                    # Save to chat history with complete data including progress
+                    # Save to chat history with complete data
                     assistant_message = {
                         "role": "assistant",
                         "content": response or "Unable to generate valid response",
                         "sql": sql,
                         "actions": actions,
                         "chat_id": chat_id,
-                        "progress_messages": progress_messages,  # Save progress for history display
+                        "progress_messages": progress_messages,
                     }
+                    logger.info(
+                        f"Saving message: chat_id={chat_id}, has_sql={sql is not None}, "
+                        f"actions_count={len(actions) if actions else 0}"
+                    )
                     st.session_state.messages.append(assistant_message)
 
-                    # Trigger rerun to update sidebar with new session_id
+                    # Trigger rerun to update sidebar with new session_id and display via history loop
                     st.rerun()
         else:
             # Show disabled input in read-only mode

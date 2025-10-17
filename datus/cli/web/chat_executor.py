@@ -1,3 +1,7 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 """
 Chat execution and streaming for web interface.
 
@@ -76,7 +80,7 @@ class ChatExecutor:
                     # For thinking messages, check content without emoji and prefix
                     if formatted.startswith("💭Thinking:"):
                         # Extract actual content without "💭Thinking: "
-                        thinking_content = formatted[12:].strip()  # Remove "💭Thinking: "
+                        thinking_content = formatted[11:].strip()  # Remove "💭Thinking: "
 
                         # Skip if we've seen this exact thinking content before
                         if thinking_content in seen_thinking_content:
