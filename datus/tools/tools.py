@@ -461,6 +461,7 @@ class DBFuncTool:
                         metadata_row["description"] = semantic_model["semantic_model_desc"]
                         metadata_row["dimensions"] = semantic_model["dimensions"]
                         metadata_row["measures"] = semantic_model["measures"]
+                        # Only enrich the top match to prioritize the most relevant table
                         break
 
             result_dict["metadata"] = metadata_rows
