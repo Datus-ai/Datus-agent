@@ -15,7 +15,9 @@ maximizing reuse of existing Datus CLI components including:
 
 import csv
 import os
+import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
@@ -79,6 +81,32 @@ class StreamlitChatbot:
         for key, value in defaults.items():
             if key not in st.session_state:
                 st.session_state[key] = value
+
+    @staticmethod
+    def sanitize_csv_field(value: Optional[str]) -> Optional[str]:
+        """
+        Sanitize a CSV field to prevent formula injection.
+
+        If the field starts with =, +, -, or @, prefix it with a single quote
+        to neutralize Excel formula injection attacks.
+
+        Args:
+            value: The field value to sanitize
+
+        Returns:
+            Sanitized value safe for CSV export
+        """
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        # Check if first character is a formula trigger
+        if value and value[0] in "=+-@":
+            return "'" + value
+
+        return value
 
     @property
     def cli(self) -> DatusCLI:
@@ -332,21 +360,29 @@ class StreamlitChatbot:
         # Generate session link with current server host and port
         session_link = f"http://{self.server_host}:{self.server_port}?session={session_id}"
 
-        # Create benchmark directory
-        benchmark_dir = os.path.expanduser(f"~/.datus/benchmark/{subagent_name}")
-        os.makedirs(benchmark_dir, exist_ok=True)
+        # Create benchmark directory safely (sanitize and contain)
+        base_dir = Path(os.path.expanduser("~/.datus/benchmark")).resolve()
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", subagent_name)
+        target_dir = (base_dir / safe_name).resolve()
+        try:
+            target_dir.relative_to(base_dir)
+        except ValueError:
+            logger.warning(f"Rejected unsafe subagent_name: {subagent_name!r}")
+            st.error("Unsafe subagent name.")
+            return
+        target_dir.mkdir(parents=True, exist_ok=True)
 
         # CSV file path
-        csv_path = os.path.join(benchmark_dir, "success_story.csv")
+        csv_path = str(target_dir / "success_story.csv")
 
-        # Prepare row data
+        # Prepare row data with CSV injection protection
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         row = {
-            "session_link": session_link,
+            "session_link": self.sanitize_csv_field(session_link),
             "session_id": session_id,
             "subagent_name": subagent_name,
-            "user_message": user_message,
-            "sql": sql,
+            "user_message": self.sanitize_csv_field(user_message),
+            "sql": self.sanitize_csv_field(sql),
             "timestamp": timestamp,
         }
 
