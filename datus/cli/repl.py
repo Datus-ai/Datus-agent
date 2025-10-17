@@ -894,6 +894,7 @@ class DatusCLI:
             (".tables", "List all tables"),
             (".schemas", "List all schemas or show detailed schema information"),
             (".schema schema_name", "Switch current schema"),
+            (".table_schema table_name", "Show table field details"),
             (".indexes table_name", "Show indexes for a table"),
             (".namespace namespace", "Switch current namespace"),
             (".mcp", "Manage MCP (Model Configuration Protocol) servers"),

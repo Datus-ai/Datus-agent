@@ -50,7 +50,10 @@ def db_func_tool(mock_connector):
 @pytest.fixture
 def scoped_db_func_tool(mock_connector):
     """Create a DBFuncTool instance with scoped tables."""
-    return DBFuncTool(mock_connector, scoped_tables={"db1.schema1.orders", "db1.schema1.user_view"})
+    return DBFuncTool(
+        mock_connector,
+        scoped_tables={"db1.schema1.orders", "db1.schema1.user_view", "db2.*.orders", "*.schema1.*"},
+    )
 
 
 class TestDBFuncTool:
@@ -170,14 +173,20 @@ class TestDBFuncTool:
         result = scoped_db_func_tool.list_tables(include_views=True)
 
         assert result.success == 1
-        assert [item["name"] for item in result.result] == ["orders", "user_view"]
+        assert [item["name"] for item in result.result] == [
+            "users",
+            "orders",
+            "user_view",
+            "order_view",
+            "sales_mv",
+        ]
 
     def test_list_databases_respects_scope(self, scoped_db_func_tool, mock_connector):
         """list_databases should honor scoped table restrictions."""
         result = scoped_db_func_tool.list_databases()
 
         assert result.success == 1
-        assert result.result == ["db1"]
+        assert result.result == ["db1", "db2"]
         mock_connector.get_databases.assert_called_once_with("", include_sys=False)
 
     def test_list_schemas_respects_scope(self, scoped_db_func_tool, mock_connector):
@@ -187,6 +196,146 @@ class TestDBFuncTool:
         assert result.success == 1
         assert result.result == ["schema1"]
         mock_connector.get_schemas.assert_called_once_with("", "db1", include_sys=False)
+
+    def test_list_schemas_wildcard_allows_other_database(self, scoped_db_func_tool, mock_connector):
+        """Wildcard entries should allow schemas for additional databases."""
+        mock_connector.get_schemas.reset_mock()
+        mock_connector.get_schemas.return_value = ["schema1", "schema2"]
+
+        result = scoped_db_func_tool.list_schemas(database="db2")
+
+        assert result.success == 1
+        assert result.result == ["schema1", "schema2"]
+        mock_connector.get_schemas.assert_called_once_with("", "db2", include_sys=False)
+
+    def test_list_databases_wildcard_scope_allows_multiple(self):
+        """Wildcard scopes should permit every matching database."""
+        connector = Mock(spec=BaseSqlConnector)
+        connector.dialect = "postgresql"
+        connector.catalog_name = ""
+        connector.database_name = "db1"
+        connector.schema_name = "schema1"
+        connector.get_databases.return_value = ["db1", "analytics"]
+
+        tool = DBFuncTool(connector, scoped_tables={"*.schema1.orders"})
+
+        result = tool.list_databases()
+        assert result.success == 1
+        assert result.result == ["db1", "analytics"]
+        connector.get_databases.assert_called_once_with("", include_sys=False)
+
+    def test_list_databases_wildcard_scope_filters_non_matching(self):
+        """Wildcard scopes should drop databases that do not match."""
+        connector = Mock(spec=BaseSqlConnector)
+        connector.dialect = "postgresql"
+        connector.catalog_name = ""
+        connector.database_name = "db1"
+        connector.schema_name = "schema1"
+        connector.get_databases.return_value = ["db1", "sales", "analytics"]
+
+        tool = DBFuncTool(connector, scoped_tables={"db*.schema1.orders"})
+
+        result = tool.list_databases()
+        assert result.success == 1
+        assert result.result == ["db1"]
+        connector.get_databases.assert_called_once_with("", include_sys=False)
+
+    def test_list_schemas_wildcard_scope(self):
+        """Wildcard scopes should retain every schema for the matched database."""
+        connector = Mock(spec=BaseSqlConnector)
+        connector.dialect = "postgresql"
+        connector.catalog_name = ""
+        connector.database_name = "db1"
+        connector.schema_name = "schema1"
+
+        def fake_schemas(_catalog, database, include_sys=False):
+            return ["schema1", "schema2"] if database == "db1" else ["other"]
+
+        connector.get_schemas.side_effect = fake_schemas
+
+        tool = DBFuncTool(connector, scoped_tables={"db1.*.orders"})
+
+        result = tool.list_schemas(database="db1")
+        assert result.success == 1
+        assert result.result == ["schema1", "schema2"]
+        connector.get_schemas.assert_called_once_with("", "db1", include_sys=False)
+
+    def test_list_schemas_wildcard_scope_filters_non_matching(self):
+        """Wildcard scopes should return empty when the database is out of scope."""
+        connector = Mock(spec=BaseSqlConnector)
+        connector.dialect = "postgresql"
+        connector.catalog_name = ""
+        connector.database_name = "db1"
+        connector.schema_name = "schema1"
+        connector.get_schemas.return_value = ["schema3"]
+
+        tool = DBFuncTool(connector, scoped_tables={"db1.schema*.orders"})
+
+        result = tool.list_schemas(database="reports")
+        assert result.success == 1
+        assert result.result == []
+        connector.get_schemas.assert_not_called()
+
+    def test_list_tables_wildcard_scope_filters_by_schema(self):
+        """Wildcard scopes should allow matching schemas and exclude others."""
+        connector = Mock(spec=BaseSqlConnector)
+        connector.dialect = "postgresql"
+        connector.catalog_name = ""
+        connector.database_name = "db1"
+        connector.schema_name = "schema1"
+
+        def fake_tables(_catalog, _database, schema):
+            return ["orders", "users"] if schema == "schema1" else ["misc"]
+
+        def fake_views(_catalog, _database, schema):
+            return ["view1"] if schema == "schema1" else ["view_misc"]
+
+        def fake_materialized_views(_catalog, _database, schema):
+            return ["mv1"] if schema == "schema1" else ["mv_misc"]
+
+        connector.get_tables.side_effect = fake_tables
+        connector.get_views.side_effect = fake_views
+        connector.get_materialized_views.side_effect = fake_materialized_views
+
+        tool = DBFuncTool(connector, scoped_tables={"*.schema1.*"})
+
+        allowed = tool.list_tables(database="analytics", schema_name="schema1", include_views=True)
+        assert allowed.success == 1
+        assert [entry["name"] for entry in allowed.result] == ["orders", "users", "view1", "mv1"]
+        connector.get_tables.assert_called_with("", "analytics", "schema1")
+        connector.get_views.assert_called_with("", "analytics", "schema1")
+        connector.get_materialized_views.assert_called_with("", "analytics", "schema1")
+
+        connector.get_tables.reset_mock()
+        connector.get_views.reset_mock()
+        connector.get_materialized_views.reset_mock()
+
+        blocked = tool.list_tables(database="analytics", schema_name="schema2", include_views=True)
+        assert blocked.success == 1
+        assert blocked.result == []
+        connector.get_tables.assert_called_once_with("", "analytics", "schema2")
+        connector.get_views.assert_called_once_with("", "analytics", "schema2")
+        connector.get_materialized_views.assert_called_once_with("", "analytics", "schema2")
+
+    def test_list_tables_wildcard_scope_filters_non_matching_database(self):
+        """Wildcard scopes should filter out tables from databases outside scope."""
+        connector = Mock(spec=BaseSqlConnector)
+        connector.dialect = "postgresql"
+        connector.catalog_name = ""
+        connector.database_name = "db1"
+        connector.schema_name = "schema1"
+        connector.get_tables.return_value = ["orders"]
+        connector.get_views.return_value = []
+        connector.get_materialized_views.return_value = []
+
+        tool = DBFuncTool(connector, scoped_tables={"db1.*.orders"})
+
+        result = tool.list_tables(database="inventory", schema_name="schema1")
+        assert result.success == 1
+        assert result.result == []
+        connector.get_tables.assert_called_once_with("", "inventory", "schema1")
+        connector.get_views.assert_called_once_with("", "inventory", "schema1")
+        connector.get_materialized_views.assert_called_once_with("", "inventory", "schema1")
 
     def test_list_tables_without_views(self, db_func_tool, mock_connector):
         """Test list_tables execution excluding views."""
