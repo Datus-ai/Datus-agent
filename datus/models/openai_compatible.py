@@ -771,7 +771,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                         messages="Tool call (orphan)",
                                         action_type="tool_result",
                                         input={"function_name": "unknown"},
-                                        output={"success": True},
+                                        output={"success": True, "raw_output": output_content},
                                         status=ActionStatus.SUCCESS,
                                     )
                                     orphan_action.end_time = datetime.now()
