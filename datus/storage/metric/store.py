@@ -177,7 +177,7 @@ class SemanticMetricsRAG:
         where_clause = SemanticMetricsRAG._build_domain_layer_conditions(
             [], domain=domain, layer1=layer1, layer2=layer2
         )
-        return self._search_metrics_detail(query_text, where=where_clause, top_n=top_n)
+        return self._search_metrics_details(query_text=query_text, where=where_clause, top_n=top_n)
 
     @classmethod
     def _build_domain_layer_conditions(
@@ -235,9 +235,9 @@ class SemanticMetricsRAG:
         conditions = [in_("semantic_model_name", semantic_names)]
 
         metric_where_clause = SemanticMetricsRAG._build_domain_layer_conditions(conditions, domain, layer1, layer2)
-        return self._search_metrics_detail(query_text, metric_where_clause)
+        return self._search_metrics_details(query_text, metric_where_clause)
 
-    def _search_metrics_detail(
+    def _search_metrics_details(
         self, query_text: str, where: Optional[WhereExpr] = None, top_n=5
     ) -> List[Dict[str, Any]]:
         logger.info(f"start to search metrics, metric_where: {where}, query_text: {query_text}")
