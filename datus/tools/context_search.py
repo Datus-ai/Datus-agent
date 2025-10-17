@@ -35,12 +35,12 @@ class ContextSearchTools:
         if self.has_historical_sql:
             if not self.has_metrics:
                 tools.append(trans_to_function_tool(self.list_domain_layers_tree))
-            tools.append(trans_to_function_tool(self.search_historical_sql))
+            tools.append(trans_to_function_tool(self.search_reference_sql))
         return tools
 
     def list_domain_layers_tree(self) -> FuncToolResult:
         """
-        Aggregate the available domain-layer taxonomy across metrics and SQL history.
+        Aggregate the available domain-layer taxonomy across metrics and reference SQL.
 
         The response has the structure:
         {
@@ -58,8 +58,8 @@ class ContextSearchTools:
         }
 
         Use this tool to prime the agent with valid hierarchical filters before calling `search_metrics` or
-        `search_historical_sql`. Counters represent how many records exist for each leaf sourced from metrics and SQL
-        history respectively; keys with missing counts simply have no entries from that store.
+        `search_reference_sql`. Counters represent how many records exist for each leaf sourced from metrics and SQL
+        reference respectively; keys with missing counts simply have no entries from that store.
         """
         try:
             domain_tree: Dict[str, Dict[str, Dict[str, Dict[str, int]]]] = defaultdict(
@@ -170,22 +170,22 @@ class ContextSearchTools:
             logger.error(f"Failed to search metrics for table '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def search_historical_sql(
+    def search_reference_sql(
         self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
     ) -> FuncToolResult:
         """
-        Perform a vector search to match historical SQL queries by intent.
+        Perform a vector search to match reference SQL queries by intent.
 
         **Application Guidance**: If matches are found, MUST reuse the 'sql' directly if it aligns perfectly, or adjust
         minimally (e.g., change table names or add conditions). Avoid generating new SQL.
-        Example: If historical SQL is "SELECT * FROM users WHERE active=1" for "active users", reuse or adjust to
+        Example: If reference SQL is "SELECT * FROM users WHERE active=1" for "active users", reuse or adjust to
         "SELECT * FROM users WHERE active=1 AND join_date > '2023'".
 
         Args:
             query_text: The natural language query text representing the desired SQL intent.
-            domain: Domain name for the historical SQL intent. Leave empty if not specified in context.
-            layer1: Semantic Layer1 for the historical SQL intent. Leave empty if not specified in context.
-            layer2: Semantic Layer2 for the historical SQL intent. Leave empty if not specified in context.
+            domain: Domain name for the reference SQL intent. Leave empty if not specified in context.
+            layer1: Semantic Layer1 for the reference SQL intent. Leave empty if not specified in context.
+            layer2: Semantic Layer2 for the reference SQL intent. Leave empty if not specified in context.
             top_n: The number of top results to return (default 5).
 
         Returns:

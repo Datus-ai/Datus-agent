@@ -384,8 +384,20 @@ class DBFuncTool:
     ) -> FuncToolResult:
         """
         Retrieve table candidates by semantic similarity over stored schema metadata and optional sample rows.
+        Use this tool  when the agent needs tables matching a natural-language description.
+        This tool  helps find relevant tables by searching through table names, schemas (DDL),
+        and sample data using semantic search.
 
-        Use this tool when the agent needs tables matching a natural-language description.
+        Use this tool when you need to:
+        - Find tables related to a specific business concept or domain
+        - Discover tables containing certain types of data
+        - Locate tables for SQL query development
+        - Understand what tables are available in a database
+
+        **Application Guidance**:
+        1. If table matches (via definition/description/dimensions/measures/sample_data), use it directly
+        2. If partitioned (e.g., date-based in definition), explore correct partition via describe_table
+        3. If no match, use list_tables for broader exploration
 
         Args:
             query_text: Description of the table you want (e.g. "daily active users per country").

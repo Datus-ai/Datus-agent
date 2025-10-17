@@ -94,7 +94,7 @@ def test_search_historical_sql(context_tools_env):
     tools = context_tools_env["tools"]
     sql_rag = context_tools_env["sql_rag"]
 
-    result = tools.search_historical_sql("sales report", domain="Sales", layer1="Revenue", top_n=2)
+    result = tools.search_reference_sql("sales report", domain="Sales", layer1="Revenue", top_n=2)
     assert result.success == 1
     sql_rag.search_sql_history_by_summary.assert_called_once_with(
         query_text="sales report", domain="Sales", layer1="Revenue", layer2="", top_n=2
