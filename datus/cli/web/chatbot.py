@@ -380,7 +380,7 @@ class StreamlitChatbot:
         row = {
             "session_link": self.sanitize_csv_field(session_link),
             "session_id": session_id,
-            "subagent_name": subagent_name,
+            "subagent_name": self.sanitize_csv_field(subagent_name),
             "user_message": self.sanitize_csv_field(user_message),
             "sql": self.sanitize_csv_field(sql),
             "timestamp": timestamp,
