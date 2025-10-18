@@ -15,7 +15,7 @@ from typing import Optional
 from pydantic import Field
 
 from datus.schemas.base import BaseInput, BaseResult
-from datus.schemas.node_models import HistoricalSql, Metric, TableSchema
+from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 
 
 class GenSQLNodeInput(BaseInput):
@@ -33,7 +33,7 @@ class GenSQLNodeInput(BaseInput):
     prompt_language: Optional[str] = Field(default="en", description="Language for prompt template")
     schemas: Optional[list[TableSchema]] = Field(default=None, description="Table schemas to use")
     metrics: Optional[list[Metric]] = Field(default=None, description="Metrics to use")
-    historical_sql: Optional[list[HistoricalSql]] = Field(default=None, description="Historical SQL to reference")
+    reference_sql: Optional[list[ReferenceSql]] = Field(default=None, description="Reference SQL to reference")
     agent_description: Optional[str] = Field(default=None, description="Custom agent description override")
     custom_rules: Optional[list[str]] = Field(default=None, description="Additional custom rules for this interaction")
 

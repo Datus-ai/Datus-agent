@@ -202,7 +202,7 @@ class GenerationHooks(AgentHooks):
 
             # Skip processing if this file has already been processed
             if file_path in self.processed_files:
-                logger.info(f"File {file_path} already processed, skipping write_file_sql_history")
+                logger.info(f"File {file_path} already processed, skipping write_file_reference_sql")
                 return
 
             # Mark file as processed
@@ -240,7 +240,7 @@ class GenerationHooks(AgentHooks):
         except GenerationCancelledException:
             raise
         except Exception as e:
-            logger.error(f"Error handling write_file_sql_history result: {e}", exc_info=True)
+            logger.error(f"Error handling write_file_reference_sql result: {e}", exc_info=True)
             self.console.print(f"[red]Error: {e}[/]")
 
     async def _get_sync_confirmation(self, yaml_content: str, file_path: str):
@@ -385,7 +385,7 @@ class GenerationHooks(AgentHooks):
             return False
 
     def _is_sql_history_yaml(self, yaml_content: str) -> bool:
-        """Check if YAML content is SQL history (contains sql_history or has id+sql+summary fields)."""
+        """Check if YAML content is Reference SQL (contains reference_sql or has id+sql+summary fields)."""
         import yaml
 
         try:
@@ -582,7 +582,7 @@ class GenerationHooks(AgentHooks):
                 # Direct format without sql_history wrapper
                 sql_history_data = doc
             else:
-                return {"success": False, "error": "No sql_history data found in YAML file"}
+                return {"success": False, "error": "No reference_sql data found in YAML file"}
 
             # Generate ID if not present or if it's a placeholder
             sql_query = sql_history_data.get("sql", "")
@@ -599,10 +599,10 @@ class GenerationHooks(AgentHooks):
 
             # Check for duplicate
             if item_id in existing_ids:
-                logger.info(f"SQL history {item_id} already exists in Knowledge Base, skipping")
+                logger.info(f"Reference SQL {item_id} already exists in Knowledge Base, skipping")
                 return {
                     "success": True,
-                    "message": f"SQL history '{sql_history_data.get('name', '')}' already exists, skipped",
+                    "message": f"Reference SQL '{sql_history_data.get('name', '')}' already exists, skipped",
                 }
 
             # Ensure all required fields are present

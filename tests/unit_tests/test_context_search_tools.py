@@ -47,7 +47,7 @@ def test_available_tools(context_tools_env):
     expected = {
         "list_domain_layers_tree",
         "search_metrics",
-        "search_historical_sql",
+        "search_reference_sql",
     }
     assert expected.issubset(tool_names)
 

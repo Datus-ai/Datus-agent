@@ -19,10 +19,11 @@ from pygments.styles.default import DefaultStyle
 from pygments.token import Token
 
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.node_models import HistoricalSql, Metric, TableSchema
+from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.path_utils import get_file_fuzzy_matches
+from datus.utils.reference_paths import REFERENCE_PATH_REGEX, normalize_reference_path
 
 logger = get_logger(__name__)
 
@@ -177,8 +178,8 @@ class SQLCompleter(Completer):
             "!dastart": None,
             "!sl": None,
             "!schema_linking": None,
-            "!sh": None,
-            "!search_history": None,
+            "!sq": None,
+            "!search_sql": None,
             "!sm": None,
             "!search_metrics": None,
             "!gen": None,
@@ -192,7 +193,6 @@ class SQLCompleter(Completer):
             # Context commands
             "@catalog": None,
             "@subject": None,
-            "@sql": None,
             # Internal commands
             ".help": None,
             ".exit": None,
@@ -417,10 +417,10 @@ class CustomSqlLexer(SqlLexer):
 
     tokens = {
         "root": [
-            (r"@Table(?:\s[^ \t\n]+)?", Token.AtTables),
-            (r"@Metrics(?:\s[^ \t\n]+)?", Token.AtMetrics),
-            (r"@SqlHistory(?:\s[^ \t\n]+)?", Token.AtSqlHistory),
-            (r"@File(?:\s[^ \t\n]+)?", Token.AtFiles),
+            (rf"@Table(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtTables),
+            (rf"@Metrics(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtMetrics),
+            (rf"@ReferenceSql(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtReferenceSql),
+            (r"@File(?:\s+[^\r\n@]+)?", Token.AtFiles),
         ]
         + SqlLexer.tokens["root"],
     }
@@ -432,17 +432,18 @@ class CustomPygmentsStyle(DefaultStyle):
     styles = {
         Token.AtTables: "#00CED1 bold",  # Pink
         Token.AtMetrics: "#FFD700 bold",  # Gold
-        Token.AtSqlHistory: "#32CD32 bold",  # Green
+        Token.AtReferenceSql: "#32CD32 bold",  # Green
         Token.AtFiles: "ansiblue bold",  # Blue
     }
 
 
 class DynamicAtReferenceCompleter(Completer):
-    def __init__(self, max_completions=10):
+    def __init__(self, max_completions=10, quote_leaf=False):
         self._data: Union[Dict[str, Any], List[str]] = {}
         self.flatten_data: Dict[str, Any] = {}
         self.max_level = 0
         self.max_completions = max_completions
+        self.quote_leaf = quote_leaf
 
     def clear(self):
         self._data = {}
@@ -471,6 +472,25 @@ class DynamicAtReferenceCompleter(Completer):
         if not self._data:
             self._data = self.load_data()
         return self._data
+
+    def _format_leaf_for_completion(self, leaf: str) -> str:
+        """Wrap final component in quotes when required."""
+        if not self.quote_leaf or not leaf:
+            return leaf
+        trimmed = leaf.strip()
+        if trimmed.startswith('"') and trimmed.endswith('"') and len(trimmed) >= 2:
+            return trimmed
+        return f'"{trimmed}"'
+
+    def format_path_for_completion(self, path: str) -> str:
+        """Format full path when presenting completions."""
+        if not self.quote_leaf or not path:
+            return path
+        segments = path.split(".")
+        if not segments:
+            return path
+        segments[-1] = self._format_leaf_for_completion(segments[-1])
+        return ".".join(segments)
 
     def get_completions(self, document, complete_event):
         """Provide completions for specified type
@@ -501,8 +521,10 @@ class DynamicAtReferenceCompleter(Completer):
             if not isinstance(current_dict, (dict, list)):
                 return
         # Handle case where last level is a list
-        prefix_lower = prefix.lower()
-        suggestions = [k for k in current_dict if k.lower().startswith(prefix_lower)]
+        prefix_for_match = prefix.strip().lower()
+        if self.quote_leaf:
+            prefix_for_match = prefix_for_match.lstrip('"')
+        suggestions = [k for k in current_dict if k.lower().startswith(prefix_for_match)]
         # Smart filtering: show more items when user types more characters
         if len(prefix) >= 3:
             # User typed enough characters, can show more options
@@ -520,6 +542,9 @@ class DynamicAtReferenceCompleter(Completer):
             display_text = s
             if not is_last_level:
                 display_text = f"{s}."
+            else:
+                completion_text = self._format_leaf_for_completion(s)
+                display_text = completion_text
 
             if is_last_level and isinstance(current_dict, dict) and s in current_dict and current_dict[s]:
                 display_text = f"{display_text}: {current_dict[s]}"
@@ -730,7 +755,7 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
     """Dynamic completer specifically for tables and metrics"""
 
     def __init__(self, agent_config: AgentConfig):
-        super().__init__()
+        super().__init__(quote_leaf=True)
         self.agent_config = agent_config
         self.max_level = 4
 
@@ -755,9 +780,9 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         return result
 
 
-class SqlHistoryCompleter(DynamicAtReferenceCompleter):
+class ReferenceSqlCompleter(DynamicAtReferenceCompleter):
     def __init__(self, agent_config: AgentConfig):
-        super().__init__()
+        super().__init__(quote_leaf=True)
         self.agent_config = agent_config
 
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
@@ -794,7 +819,7 @@ class AtReferenceCompleter(Completer):
         self.parser = AtReferenceParser()
         self.table_completer = TableCompleter(agent_config)
         self.metric_completer = MetricsCompleter(agent_config)
-        self.sql_completer = SqlHistoryCompleter(agent_config)
+        self.sql_completer = ReferenceSqlCompleter(agent_config)
 
         # Get workspace_root from chat node configuration or storage configuration
         workspace_root = None
@@ -824,13 +849,13 @@ class AtReferenceCompleter(Completer):
         self.completer_dict = {
             "Table": self.table_completer,
             "Metrics": self.metric_completer,
-            "SqlHistory": self.sql_completer,
+            "ReferenceSql": self.sql_completer,
             "File": self.file_completer,
         }
         self.type_options = {
             "Table": "📊 Table",
             "Metrics": "📈 Metrics",
-            "SqlHistory": "💻 SqlHistory",
+            "ReferenceSql": "💻 ReferenceSql",
             "File": "📁 File",
         }
 
@@ -841,7 +866,7 @@ class AtReferenceCompleter(Completer):
         self.metric_completer.reload_data()
         self.sql_completer.reload_data()
 
-    def parse_at_context(self, user_input: str) -> Tuple[List[TableSchema], List[Metric], List[HistoricalSql]]:
+    def parse_at_context(self, user_input: str) -> Tuple[List[TableSchema], List[Metric], List[ReferenceSql]]:
         user_input = user_input.strip()
         if not user_input:
             return ([], [], [])
@@ -861,7 +886,7 @@ class AtReferenceCompleter(Completer):
         if parse_result["sqls"]:
             for key in parse_result["sqls"]:
                 if key in self.sql_completer.flatten_data:
-                    sqls.append(HistoricalSql.from_dict(self.sql_completer.flatten_data[key]))
+                    sqls.append(ReferenceSql.from_dict(self.sql_completer.flatten_data[key]))
         return (tables, metrics, sqls)
 
     def get_completions(self, document, complete_event) -> Iterable[Completion]:
@@ -874,10 +899,6 @@ class AtReferenceCompleter(Completer):
             return
 
         prefix = text[at_pos:]
-
-        # Limit number of spaces
-        if prefix.count(" ") > 1:
-            return
 
         if " " not in prefix[1:]:
             # User is typing after @ without space, do fuzzy matching
@@ -892,24 +913,27 @@ class AtReferenceCompleter(Completer):
                 # Yield fuzzy match results first
                 for match in table_matches[:5]:
                     # Extract the actual path from the match string
-                    display = f"📊 {match}"
+                    formatted = self.table_completer.format_path_for_completion(match)
+                    display = f"📊 {formatted}"
                     yield Completion(
-                        f"@Table {match}",  # Remove the @ from completion
+                        f"@Table {formatted}",  # Remove the @ from completion
                         start_position=-len(prefix),
                         display=display,
                         style="class:fuzzy",
                     )
 
                 for match in metric_matches[:5]:
-                    display = f"📈 {match}"
+                    formatted = self.metric_completer.format_path_for_completion(match)
+                    display = f"📈 {formatted}"
                     yield Completion(
-                        f"@Metrics {match}", start_position=-len(prefix), display=display, style="class:fuzzy"
+                        f"@Metrics {formatted}", start_position=-len(prefix), display=display, style="class:fuzzy"
                     )
 
                 for match in sql_matches[:5]:
-                    display = f"💻 {match}"
+                    formatted = self.sql_completer.format_path_for_completion(match)
+                    display = f"💻 {formatted}"
                     yield Completion(
-                        f"@SqlHistory {match}", start_position=-len(prefix), display=display, style="class:fuzzy"
+                        f"@ReferenceSql {formatted}", start_position=-len(prefix), display=display, style="class:fuzzy"
                     )
 
                 for file_path in file_matches:
@@ -1008,7 +1032,7 @@ class SubagentCompleter(Completer):
 
 class AtReferenceParser:
     """
-    Independent parser for extracting @Table, @Metrics, and @SqlHistory references from text.
+    Independent parser for extracting @Table, @Metrics, and @ReferenceSql references from text.
     This parser only extracts the reference paths, not the actual data.
     """
 
@@ -1016,9 +1040,9 @@ class AtReferenceParser:
         """Initialize the parser with regex patterns."""
         # Regular expressions for matching different types of references
         self.patterns = {
-            "Table": re.compile(r"@Table\s+([^\s]+)", re.IGNORECASE),
-            "Metrics": re.compile(r"@Metrics\s+([^\s]+)", re.IGNORECASE),
-            "Sqls": re.compile(r"@SqlHistory\s+([^\s]+)", re.IGNORECASE),
+            "Table": re.compile(rf"@Table\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
+            "Metrics": re.compile(rf"@Metrics\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
+            "Sqls": re.compile(rf"@ReferenceSql\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
         }
 
     def parse_input(self, text: str) -> Dict[str, List[str]]:
@@ -1029,24 +1053,27 @@ class AtReferenceParser:
             text: Input text containing @references
 
         Returns:
-            Dictionary with keys 'tables', 'metrics', 'sql_history', 'files',
+            Dictionary with keys 'tables', 'metrics', 'reference_sql', 'files',
             each containing a list of extracted paths
         """
         results = {"tables": [], "metrics": [], "sqls": []}
 
         # Extract Table references
         for match in self.patterns["Table"].finditer(text):
-            path = match.group(1)
-            results["tables"].append(path)
+            path = normalize_reference_path(match.group(1))
+            if path:
+                results["tables"].append(path)
 
         # Extract Metric references
         for match in self.patterns["Metrics"].finditer(text):
-            path = match.group(1)
-            results["metrics"].append(path)
+            path = normalize_reference_path(match.group(1))
+            if path:
+                results["metrics"].append(path)
 
-        # Extract SqlHistory references
+        # Extract ReferenceSql references
         for match in self.patterns["Sqls"].finditer(text):
-            path = match.group(1)
-            results["sqls"].append(path)
+            path = normalize_reference_path(match.group(1))
+            if path:
+                results["sqls"].append(path)
 
         return results

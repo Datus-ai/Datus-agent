@@ -36,7 +36,7 @@ class GenSQLAgenticNode(AgenticNode):
 
     This node provides specialized SQL generation capabilities with:
     - Enhanced system prompt with template variables
-    - Limited context support (tables, metrics, sql_history)
+    - Limited context support (tables, metrics, reference_sql)
     - Tool detection and dynamic template preparation
     - Configurable tool sets and MCP server integration
     - Session-based conversation management
@@ -687,7 +687,7 @@ def prepare_template_context(
         # Filter and format limited context data
         context["tables"] = scoped_context.tables
         context["metrics"] = scoped_context.metrics
-        context["sql_history"] = scoped_context.sqls
+        context["reference_sql"] = scoped_context.sqls
 
     # Add rules from configuration
     context["rules"] = node_config.rules or []

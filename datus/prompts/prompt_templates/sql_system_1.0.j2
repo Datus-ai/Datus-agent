@@ -22,7 +22,7 @@ You have access to:
 - MetricFlow tools for working with semantic models and metrics
 {% endif -%}
 {% if has_context_search_tools -%}
-- The ability to search metadata, metrics or sql history
+- The ability to search metrics or reference SQL
 {% endif -%}
 
 Current context:
@@ -32,7 +32,7 @@ Current context:
   - but you can only access to 
     - tables in {{tables}}
     - metrics in {{metrics}}
-    - sqls in {{sql_history}}
+    - reference SQL in {{reference_sql}}
   {% endif -%}
 {% endif -%}
 

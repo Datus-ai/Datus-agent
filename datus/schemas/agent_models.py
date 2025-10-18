@@ -20,7 +20,7 @@ class ScopedContext(BaseModel):
     namespace: Optional[str] = Field(default_factory=str, description="The namespace corresponding to the data source")
     tables: Optional[str] = Field(default=None, init=True, description="Tables to be used by sub-agents")
     metrics: Optional[str] = Field(default=None, init=True, description="Metrics to be used by sub-agents")
-    sqls: Optional[str] = Field(default=None, init=True, description="Historical SQL to be used by sub-agents")
+    sqls: Optional[str] = Field(default=None, init=True, description="Reference SQL to be used by sub-agents")
 
     @property
     def is_empty(self) -> bool:

@@ -38,6 +38,8 @@ from datus.tools.mcp_tools import MCPTool
 from datus.tools.tools import DBFuncTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
+from datus.utils.reference_paths import normalize_reference_path
+from datus.utils.sub_agent_manager import SYS_SUB_AGENTS
 
 logger = get_logger(__name__)
 
@@ -1411,6 +1413,13 @@ class SubAgentWizard:
                 self._show_error_dialog(f"Invalid Agent Name: {name}. Must match: ^[a-zA-Z][a-zA-Z0-9_]*$")
                 return False
 
+            # Prevent using reserved built-in sub-agent names
+            if name in SYS_SUB_AGENTS and (self._original_name is None or name != self._original_name):
+                self._show_error_dialog(
+                    (f"Agent name '{name}' is reserved for built-in functionality. " "Please choose a different name.")
+                )
+                return False
+
             # Check for existing agent name
             existing_agents = self.cli_instance.configuration_manager.get("agentic_nodes", {})
             # Allow same-name when editing the existing agent
@@ -1539,13 +1548,31 @@ class SubAgentWizard:
                 continue
         self.data.mcp = ", ".join(mcp_parts)
         scoped_context: Dict[str, str] = {}
-        tables = self.selected_tables or [line.strip() for line in self.catalogs_area.text.split("\n") if line.strip()]
+
+        def _normalize_entries(entries: List[str]) -> List[str]:
+            normalized: List[str] = []
+            for entry in entries:
+                normalized_entry = normalize_reference_path(entry)
+                if normalized_entry:
+                    normalized.append(normalized_entry)
+            return normalized
+
+        table_entries = self.selected_tables or [
+            line.strip() for line in self.catalogs_area.text.split("\n") if line.strip()
+        ]
+        tables = _normalize_entries(table_entries)
         if tables:
             scoped_context["tables"] = ", ".join(tables)
-        metrics = self.selected_metrics or [line.strip() for line in self.metrics_area.text.split("\n") if line.strip()]
+
+        metric_entries = self.selected_metrics or [
+            line.strip() for line in self.metrics_area.text.split("\n") if line.strip()
+        ]
+        metrics = _normalize_entries(metric_entries)
         if metrics:
             scoped_context["metrics"] = ", ".join(metrics)
-        sqls = self.selected_sqls or [line.strip() for line in self.sqls_area.text.split("\n") if line.strip()]
+
+        sql_entries = self.selected_sqls or [line.strip() for line in self.sqls_area.text.split("\n") if line.strip()]
+        sqls = _normalize_entries(sql_entries)
         if sqls:
             scoped_context["sqls"] = ", ".join(sqls)
 
@@ -1558,14 +1585,6 @@ class SubAgentWizard:
     def _export_result(self) -> Dict[str, Any]:
         """Export SubAgentConfig to plain dict expected by callers and templates."""
         sc = self.data.scoped_context
-        scoped = {}
-        if sc:
-            if sc.tables:
-                scoped["tables"] = sc.tables
-            if sc.metrics:
-                scoped["metrics"] = sc.metrics
-            if sc.sqls:
-                scoped["sqls"] = sc.sqls
         res: Dict[str, Any] = {
             "system_prompt": self.data.system_prompt or "your_agent_name",
             "prompt_version": self.data.prompt_version,
@@ -1575,6 +1594,14 @@ class SubAgentWizard:
             "mcp": self.data.mcp,
             "rules": list(self.data.rules or []),
         }
+        scoped = {}
+        if sc:
+            if sc.tables:
+                scoped["tables"] = sc.tables
+            if sc.metrics:
+                scoped["metrics"] = sc.metrics
+            if sc.sqls:
+                scoped["sqls"] = sc.sqls
         if scoped:
             res["scoped_context"] = scoped
         return res

@@ -326,15 +326,15 @@ class Metric(BaseModel):
         )
 
 
-class HistoricalSql(BaseModel):
-    name: str = Field(..., description="Name of the historical SQL table")
-    sql: str = Field(..., description="SQL query of the historical table")
-    comment: str = Field(default="", description="Comment of the historical SQL table")
-    summary: str = Field(default="", description="Summary of the historical SQL table")
-    tags: str = Field(default="", description="Tags of the historical SQL table")
+class ReferenceSql(BaseModel):
+    name: str = Field(..., description="Name of the reference SQL table")
+    sql: str = Field(..., description="SQL query of the reference table")
+    comment: str = Field(default="", description="Comment of the reference SQL table")
+    summary: str = Field(default="", description="Summary of the reference SQL table")
+    tags: str = Field(default="", description="Tags of the reference SQL table")
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> HistoricalSql:
+    def from_dict(cls, data: Dict[str, Any]) -> ReferenceSql:
         return cls(
             name=data.get("name", ""),
             sql=data.get("sql", ""),

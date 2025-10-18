@@ -15,6 +15,8 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+SYS_SUB_AGENTS = {"gen_semantic_model", "gen_metrics", "gen_sql_summary"}
+
 
 class SubAgentManager:
     """Encapsulates sub-agent configuration and prompt management operations."""

@@ -13,7 +13,7 @@ from datus.cli.sub_agent_wizard import run_wizard
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS
 from datus.utils.loggings import get_logger
-from datus.utils.sub_agent_manager import SubAgentManager
+from datus.utils.sub_agent_manager import SYS_SUB_AGENTS, SubAgentManager
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
@@ -85,7 +85,7 @@ class SubAgentCommands:
         self.cli_instance.console.print(" - [bold]remove <agent_name>[/]: Remove a configured sub-agent.")
         self.cli_instance.console.print(
             " - [bold]bootstrap <agent_name>[/]: Build scoped knowledge base "
-            "[dim](--components metadata,metrics,sql_history --plan to simulate)[/]"
+            "[dim](--components metadata,metrics,reference_sql --plan to simulate)[/]"
         )
 
     def _cmd_add_agent(self):
@@ -93,6 +93,11 @@ class SubAgentCommands:
         self._do_update_agent()
 
     def _cmd_update_agent(self, sub_agent_name):
+        if sub_agent_name in SYS_SUB_AGENTS:
+            self.cli_instance.console.print(
+                f"[bold red]Error:[/] System sub-agent '[cyan]{sub_agent_name}[/]' cannot be modified."
+            )
+            return
         existing = self.sub_agent_manager.get_agent(sub_agent_name)
         if existing is None:
             self.cli_instance.console.print("[bold red]Error:[/] Agent not found.")
@@ -268,6 +273,11 @@ class SubAgentCommands:
 
     def _remove_agent(self, agent_name: str):
         """Removes a sub-agent's configuration from agent.yml."""
+        if agent_name in SYS_SUB_AGENTS:
+            self.cli_instance.console.print(
+                f"[bold red]Error:[/] System sub-agent '[cyan]{agent_name}[/]' cannot be removed."
+            )
+            return
         removed = False
         try:
             removed = self.sub_agent_manager.remove_agent(agent_name)
@@ -285,6 +295,11 @@ class SubAgentCommands:
     def _do_update_agent(
         self, data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None, original_name: Optional[str] = None
     ):
+        if original_name and original_name in SYS_SUB_AGENTS:
+            self.cli_instance.console.print(
+                f"[bold red]Error:[/] System sub-agent '[cyan]{original_name}[/]' cannot be modified."
+            )
+            return
         try:
             result = run_wizard(self.cli_instance, data)
         except Exception as e:
@@ -302,6 +317,11 @@ class SubAgentCommands:
             elif isinstance(data, dict):
                 original_name = data.get("system_prompt")
         agent_name = result.system_prompt
+        if agent_name in SYS_SUB_AGENTS:
+            self.cli_instance.console.print(
+                f"[bold red]Error:[/] '{agent_name}' is reserved for built-in sub-agents and cannot be used."
+            )
+            return
         try:
             save_result = self.sub_agent_manager.save_agent(result, previous_name=original_name)
         except Exception as exc:

@@ -260,9 +260,9 @@ class MetricsPanel(Vertical):
         return False
 
 
-class SqlHistoryPanel(Vertical):
+class ReferenceSqlPanel(Vertical):
     """
-    A panel for displaying and editing SQL history details using DetailField components.
+    A panel for displaying and editing reference SQL details using DetailField components.
     """
 
     can_focus = True  # Allow this panel to receive focus
@@ -382,7 +382,7 @@ def _sql_details_cache(
 
 
 class SubjectScreen(ContextScreen):
-    """Screen for browsing domain metrics alongside SQL history."""
+    """Screen for browsing domain metrics alongside reference SQL."""
 
     CSS = """
         #tree-container {
@@ -472,6 +472,7 @@ class SubjectScreen(ContextScreen):
         Binding("f4", "show_path", "Show Path"),
         Binding("f5", "exit_with_selection", "Select"),
         # Binding("f6", "change_edit_mode", "Change to edit/readonly mode "),
+        Binding("q", "quit_if_idle", "Quit", show=False),
         Binding("ctrl+e", "start_edit", "Edit", show=True, priority=True),
         Binding("ctrl+w", "save_edit", "Save", show=True, priority=True),
         Binding("ctrl+q", "cancel_or_exit", "Exit", show=True, priority=True),
@@ -479,7 +480,7 @@ class SubjectScreen(ContextScreen):
 
     def __init__(self, title: str, context_data: Dict, inject_callback=None):
         """
-        Initialize the catalogs screen.
+        Initialize the subject screen.
 
         Args:
             context_data: Dictionary containing database connection info
@@ -526,7 +527,7 @@ class SubjectScreen(ContextScreen):
                 )
                 yield Static(id="panel-divider", classes="hidden")
                 yield ScrollableContainer(
-                    Label("Select a node to view SQL history", id="sql-panel"),
+                    Label("Select a node to view reference SQL", id="sql-panel"),
                     id="sql-panel-container",
                     can_focus=False,
                 )
@@ -537,12 +538,18 @@ class SubjectScreen(ContextScreen):
         self._build_tree()
 
     def on_key(self, event: events.Key) -> None:
+        ctrl_pressed = getattr(event, "ctrl", False)
         if event.key in {"enter", "right"}:
             self.action_load_details()
         elif event.key == "escape":
             self.action_cancel_or_exit()
-        elif event.key == "q" and event.ctrl:
+        elif event.key == "q" and ctrl_pressed:
             self.action_cancel_or_exit()
+            event.prevent_default()
+            event.stop()
+            return
+        elif event.key == "q":
+            self.action_quit_if_idle()
             event.prevent_default()
             event.stop()
             return
@@ -562,7 +569,7 @@ class SubjectScreen(ContextScreen):
                 return "tree", widget
             if isinstance(widget, MetricsPanel):
                 return "metrics", widget
-            if isinstance(widget, SqlHistoryPanel):
+            if isinstance(widget, ReferenceSqlPanel):
                 return "sql", widget
             widget = widget.parent
         return None, None
@@ -573,7 +580,7 @@ class SubjectScreen(ContextScreen):
         messages = {
             "tree": "✏️ Editing tree node",
             "metrics": "✏️ Editing metrics details",
-            "sql": "✏️ Editing SQL history",
+            "sql": "✏️ Editing reference SQL",
         }
         header.sub_title = messages.get(component, "")
         header.refresh()
@@ -641,7 +648,7 @@ class SubjectScreen(ContextScreen):
         tree.root.expand()
 
         if not tree_data:
-            tree.root.add_leaf("📂 No metrics or SQL history found", data={"type": "empty"})
+            tree.root.add_leaf("📂 No metrics or reference SQL found", data={"type": "empty"})
             return
 
         for domain in sorted(tree_data.keys()):
@@ -752,12 +759,12 @@ class SubjectScreen(ContextScreen):
             return
 
         # Switch layout to editable panels if we're currently in read-only mode.
-        panel: Optional[MetricsPanel | SqlHistoryPanel] = None
+        panel: Optional[MetricsPanel | ReferenceSqlPanel] = None
         if self.readonly:
             self.readonly = False
             self._show_subject_details(self.selected_data)
 
-        if isinstance(current_widget, (MetricsPanel, SqlHistoryPanel)):
+        if isinstance(current_widget, (MetricsPanel, ReferenceSqlPanel)):
             panel = current_widget
         else:
             panel = self._get_panel(component)
@@ -784,12 +791,12 @@ class SubjectScreen(ContextScreen):
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
         sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
 
-        panel: Optional[MetricsPanel | SqlHistoryPanel] = None
+        panel: Optional[MetricsPanel | ReferenceSqlPanel] = None
         if component == "metrics":
             if query := metrics_container.query(MetricsPanel):
                 panel = query.first()
         elif component == "sql":
-            if query := sql_container.query(SqlHistoryPanel):
+            if query := sql_container.query(ReferenceSqlPanel):
                 panel = query.first()
 
         if panel is None:
@@ -896,11 +903,11 @@ class SubjectScreen(ContextScreen):
             sql_container.mount(FocusableStatic(group))
             self._toggle_visibility(sql_container, True)
         else:
-            sql_container.mount(Static("[dim]No SQL history for this item[/dim]"))
+            sql_container.mount(Static("[dim]No reference SQL for this item[/dim]"))
             self._toggle_visibility(sql_container, False)
 
     def _render_editable_panels(self, metrics: List[Dict[str, Any]], sql_entries: List[Dict[str, Any]]) -> None:
-        """Render editable panels (MetricsPanel / SqlHistoryPanel)."""
+        """Render editable panels (MetricsPanel / ReferenceSqlPanel)."""
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
         sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
 
@@ -919,11 +926,11 @@ class SubjectScreen(ContextScreen):
             self._toggle_visibility(metrics_container, False)
 
         if sql_entries:
-            sql_panel = SqlHistoryPanel(sql_entries[0], readonly=False)
+            sql_panel = ReferenceSqlPanel(sql_entries[0], readonly=False)
             sql_container.mount(sql_panel)
             self._toggle_visibility(sql_container, True)
         else:
-            sql_container.mount(Static("[dim]No SQL history for this item[/dim]"))
+            sql_container.mount(Static("[dim]No reference SQL for this item[/dim]"))
             self._toggle_visibility(sql_container, False)
 
     def _build_parent_selection_tree(
@@ -1419,14 +1426,24 @@ class SubjectScreen(ContextScreen):
         self.selected_data = {}
         self.app.exit()
 
-    def _get_panel(self, component: str) -> Optional[MetricsPanel | SqlHistoryPanel]:
+    def action_quit_if_idle(self) -> None:
+        """Exit quickly when there is no active edit or dialog."""
+        if self._active_dialog is not None and self._active_dialog.is_active:
+            return
+        if self._editing_component in {"metrics", "sql", "tree"}:
+            return
+        if not self.readonly:
+            return
+        self.action_exit_without_selection()
+
+    def _get_panel(self, component: str) -> Optional[MetricsPanel | ReferenceSqlPanel]:
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
         sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
         if component == "metrics":
             query = metrics_container.query(MetricsPanel)
             return query.first() if query else None
         if component == "sql":
-            query = sql_container.query(SqlHistoryPanel)
+            query = sql_container.query(ReferenceSqlPanel)
             return query.first() if query else None
         return None
 

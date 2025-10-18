@@ -389,7 +389,7 @@ class WorkflowScreen(Screen):
 
             # Add SQL contexts
             if hasattr(context, "sql_contexts") and context.sql_contexts:
-                content += "\n### SQL History\n"
+                content += "\n### Reference SQL\n"
                 for i, sql_ctx in enumerate(context.sql_contexts[-3:]):  # Show last 3
                     if hasattr(sql_ctx, "sql_query"):
                         query = sql_ctx.sql_query

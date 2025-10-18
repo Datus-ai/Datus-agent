@@ -524,26 +524,26 @@ class AgentCommands:
 
     def cmd_search_history(self, args: str):
         """
-        Command to search historical SQL queries. Corresponds to !sh
+        Command to search reference SQL queries. Corresponds to !sh
         """
-        self.console.print("[bold blue]Search SQL History[/]")
-        input_text = args.strip() or self.cli.prompt_input("Enter search text for SQL history")
+        self.console.print("[bold blue]Search Reference SQL[/]")
+        input_text = args.strip() or self.cli.prompt_input("Enter search text for reference SQL")
         if not input_text:
             self.console.print("[bold red]Error:[/] Input text cannot be empty.")
             return
 
         domain, layer1, layer2 = self._prompt_logic_layer()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-        with self.console.status("[bold green]Searching SQL history...[/]"):
+        with self.console.status("[bold green]Searching reference SQL...[/]"):
             result = self.context_search_tools.search_reference_sql(
                 query_text=input_text, domain=domain, layer1=layer1, layer2=layer2, top_n=int(top_n.strip())
             )
 
         if result.success and result.result:
             history = result.result
-            self.console.print(f"[bold]Found [green]{len(history)}[/] historical SQL queries.[/]")
+            self.console.print(f"[bold]Found [green]{len(history)}[/] reference SQL queries.[/]")
             table = Table(
-                title="SQL History Search Results",
+                title="Reference SQL Search Results",
                 show_header=True,
                 border_style="blue",
                 header_style="bold cyan",
@@ -575,9 +575,9 @@ class AgentCommands:
                 )
             self.console.print(table)
         elif not result.success:
-            self.console.print(f"[bold red]Error searching SQL history:[/] {result.error}")
+            self.console.print(f"[bold red]Error searching reference SQL:[/] {result.error}")
         else:
-            self.console.print("[yellow]No historical SQL queries found.[/]")
+            self.console.print("[yellow]No reference SQL queries found.[/]")
 
     def cmd_save(self, args: str):
         """

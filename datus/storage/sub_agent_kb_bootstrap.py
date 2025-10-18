@@ -20,14 +20,15 @@ from datus.storage.sql_history.store import SqlHistoryRAG
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.reference_paths import normalize_reference_path
 
 logger = get_logger(__name__)
 
-SUPPORTED_COMPONENTS = ("metadata", "metrics", "sql_history")
+SUPPORTED_COMPONENTS = ("metadata", "metrics", "reference_sql")
 COMPONENT_DIRECTORIES = {
     "metadata": ("schema_metadata.lance", "schema_value.lance"),
     "metrics": ("semantic_model.lance", "metrics.lance"),
-    "sql_history": ("sql_history.lance",),
+    "reference_sql": ("sql_history.lance",),
 }
 # TODO: Implement incremental strategy for partial updates
 SubAgentBootstrapStrategy = Literal["overwrite", "plan"]
@@ -141,7 +142,7 @@ class SubAgentBootstrapper:
         handlers = {
             "metadata": ("tables", self._handle_metadata),
             "metrics": ("metrics", self._handle_metrics),
-            "sql_history": ("sqls", self._handle_sql_history),
+            "reference_sql": ("sqls", self._handle_sql_history),
         }
         for component in normalized_components:
             attr_name, handler = handlers[component]
@@ -482,7 +483,7 @@ class SubAgentBootstrapper:
         invalid: List[str] = []
         max_depth = len(fields)
         for raw in tokens:
-            token = raw.strip()
+            token = normalize_reference_path(raw)
             if not token:
                 continue
             parts = [p.strip() for p in token.split(".") if p.strip()]
@@ -514,7 +515,7 @@ class SubAgentBootstrapper:
         )
 
     # --------------------------------------------------------------------- #
-    # SQL History
+    # reference SQL
     # --------------------------------------------------------------------- #
     def _handle_sql_history(
         self,
@@ -523,17 +524,17 @@ class SubAgentBootstrapper:
     ) -> ComponentResult:
         if not historical_sql:
             return ComponentResult(
-                component="sql_history",
+                component="reference_sql",
                 status="skipped",
-                message="No SQL history identifiers defined in scoped context.",
+                message="No reference SQL identifiers defined in scoped context.",
             )
 
         global_path = self.agent_config.rag_storage_path()
-        if not self._ensure_source_ready(global_path, "sql_history"):
+        if not self._ensure_source_ready(global_path, "reference_sql"):
             return ComponentResult(
-                component="sql_history",
+                component="reference_sql",
                 status="error",
-                message="Global SQL history store is not initialized.",
+                message="Global reference SQL store is not initialized.",
             )
 
         source = SqlHistoryRAG(self.agent_config)
@@ -545,9 +546,9 @@ class SubAgentBootstrapper:
         if not condition_map:
             details = {"invalid": invalid_tokens} if invalid_tokens else None
             return ComponentResult(
-                component="sql_history",
+                component="reference_sql",
                 status="skipped",
-                message="No valid SQL history filters resolved from scoped context.",
+                message="No valid reference SQL filters resolved from scoped context.",
                 details=details,
             )
 
@@ -565,21 +566,21 @@ class SubAgentBootstrapper:
                 "invalid": invalid_tokens,
             }
             return ComponentResult(
-                component="sql_history",
+                component="reference_sql",
                 status="plan",
-                message="SQL history plan generated.",
+                message="reference SQL plan generated.",
                 details=details,
             )
 
         if not sql_rows:
             return ComponentResult(
-                component="sql_history",
+                component="reference_sql",
                 status="skipped",
-                message="No SQL history entries matched scoped context.",
+                message="No reference SQL entries matched scoped context.",
                 details={"missing": missing, "invalid": invalid_tokens},
             )
 
-        self._clear_component("sql_history")
+        self._clear_component("reference_sql")
 
         target = SqlHistoryRAG(self.agent_config, self.sub_agent.system_prompt)
         target.store_batch(sql_rows)
@@ -591,9 +592,9 @@ class SubAgentBootstrapper:
             "invalid": invalid_tokens,
         }
         return ComponentResult(
-            component="sql_history",
+            component="reference_sql",
             status="success",
-            message=f"Stored {len(sql_rows)} SQL history entries.",
+            message=f"Stored {len(sql_rows)} reference SQL entries.",
             details=details,
         )
 

@@ -205,5 +205,5 @@ class ContextSearchTools:
             )
             return FuncToolResult(success=1, error=None, result=result)
         except Exception as e:
-            logger.error(f"Failed to search historical SQL for `{query_text}`: {str(e)}")
+            logger.error(f"Failed to search reference SQL for `{query_text}`: {str(e)}")
             return FuncToolResult(success=0, error=str(e))

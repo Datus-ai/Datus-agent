@@ -332,7 +332,7 @@ class InteractiveInit:
             return False
 
     def _optional_setup(self):
-        """Step 4: Optional setup for metadata and SQL history."""
+        """Step 4: Optional setup for metadata and reference SQL."""
         console.print("[bold yellow][4/5] Optional Setup[/bold yellow]")
 
         # Initialize metadata knowledge base
@@ -343,8 +343,8 @@ class InteractiveInit:
             else:
                 console.print("❌ Metadata initialization failed")
 
-        # Initialize SQL history
-        if Confirm.ask("- Initialize SQL history from workspace?", default=False):
+        # Initialize reference SQL
+        if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
             default_sql_dir = str(Path(self.workspace_path) / "sql_history")
             sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
 
@@ -352,7 +352,7 @@ class InteractiveInit:
                 console.print(f"→ Scanning {sql_dir} for SQL files...")
                 sql_count = self._initialize_sql_history(sql_dir)
                 if sql_count > 0:
-                    console.print(f"✔ Imported {sql_count} SQL files into history")
+                    console.print(f"✔ Imported {sql_count} SQL files into reference")
                 else:
                     console.print("⚠️ No SQL files found in specified directory")
             else:
@@ -600,20 +600,20 @@ class InteractiveInit:
             if not sql_files:
                 return 0
 
-            args = self._create_bootstrap_args(["sql_history"], sql_dir=sql_dir, validate_only=False)
+            args = self._create_bootstrap_args(["reference_sql"], sql_dir=sql_dir, validate_only=False)
             agent = self._create_agent_with_config(args)
             result = agent.bootstrap_kb()
 
             # Log detailed results
             if isinstance(result, dict):
                 if "message" in result:
-                    logger.info(f"SQL history bootstrap completed: {result['message']}")
+                    logger.info(f"Reference SQL bootstrap completed: {result['message']}")
                 if "processed_count" in result:
                     logger.info(f"Bootstrap success: {result['processed_count']} SQL files processed")
                 elif "sql_count" in result:
                     logger.info(f"Bootstrap success: {result['sql_count']} SQL files processed")
             else:
-                logger.info(f"SQL history bootstrap result: {result}")
+                logger.info(f"Reference SQL bootstrap result: {result}")
 
             if result is not False:
                 return len(sql_files)
@@ -621,7 +621,7 @@ class InteractiveInit:
                 return 0
 
         except Exception as e:
-            logger.error(f"SQL history initialization failed: {e}")
+            logger.error(f"Reference SQL initialization failed: {e}")
             return 0
 
     def _copy_files(self):

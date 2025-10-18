@@ -370,14 +370,13 @@ class ActionContentGenerator(BaseActionContentGenerator):
         if function_name in ["read_query", "query"] and "original_rows" in items:
             return f"✓ {items['original_rows']} rows"
         if function_name == "search_table":
-            table_data = data if isinstance(data, dict) else {}
-            metadata_count = len(table_data.get("metadata") or [])
-            sample_count = len(table_data.get("sample_data") or [])
+            metadata_count = len(items.get("metadata") or [])
+            sample_count = len(items.get("sample_data") or [])
             return f"✓ {metadata_count} tables and {sample_count} sample rows"
         if function_name == "search_metrics":
             return f"✓ {len(items)} metrics"
-        if function_name == "search_historical_sql":
-            return f"✓ {len(items)} historical SQLs"
+        if function_name == "search_reference_sql":
+            return f"✓ {len(items)} reference SQLs"
         if function_name == "search_external_knowledge":
             return f"✓ {len(items)} extensions of knowledge"
         if function_name == "search_documents":

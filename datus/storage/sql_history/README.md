@@ -1,4 +1,4 @@
-# SQL History Storage Module
+# Reference SQL Storage Module
 
 This module handles the storage, processing, and analysis of SQL query history files. It provides functionality to extract SQL statements from files, analyze them with LLM, and store them in a searchable knowledge base.
 
@@ -62,17 +62,17 @@ Comment-SQL     Validation    Metadata    Vector DB
 ## Usage
 
 ```bash
-# Basic usage - initialize SQL history with overwrite mode
+# Basic usage - initialize reference SQL with overwrite mode
 python -m datus.main bootstrap-kb \
   --namespace your_namespace \
-  --components sql_history \
+  --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --kb_update_strategy overwrite
 
 # Incremental update - only process new SQL files
 python -m datus.main bootstrap-kb \
   --namespace your_namespace \
-  --components sql_history \
+  --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --kb_update_strategy incremental
 
@@ -87,7 +87,7 @@ python -m datus.main bootstrap-kb \
 # Debug mode with detailed logging
 python -m datus.main bootstrap-kb \
   --namespace your_namespace \
-  --components sql_history \
+  --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --kb_update_strategy overwrite \
   --debug
@@ -95,7 +95,7 @@ python -m datus.main bootstrap-kb \
 # Validate-only mode - process and validate SQL files without LLM analysis or storage
 python -m datus.main bootstrap-kb \
   --namespace your_namespace \
-  --components sql_history \
+  --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --validate-only
 ```

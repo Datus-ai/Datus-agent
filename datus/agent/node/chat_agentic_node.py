@@ -190,9 +190,9 @@ class ChatAgenticNode(AgenticNode):
             if user_input.metrics:
                 enhanced_parts.append(f"Metrics: \n{json.dumps([item.model_dump() for item in user_input.metrics])}")
 
-            if user_input.historical_sql:
+            if user_input.reference_sql:
                 enhanced_parts.append(
-                    f"Historical SQL: \n{json.dumps([item.model_dump() for item in user_input.historical_sql])}"
+                    f"Reference SQL: \n{json.dumps([item.model_dump() for item in user_input.reference_sql])}"
                 )
 
             if enhanced_parts:

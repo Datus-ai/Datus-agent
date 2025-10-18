@@ -80,7 +80,7 @@ def test_search_history(mock_args, capsys, schema_linking_input: List[Dict[str, 
     """
     input_data = schema_linking_input[0]["input"]
     with patch("datus.cli.repl.PromptSession.prompt") as mock_repl_prompt:
-        mock_repl_prompt.side_effect = ["!sh", EOFError]
+        mock_repl_prompt.side_effect = ["!sq", EOFError]
 
         with patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt:
             mock_internal_prompt.side_effect = [
@@ -97,9 +97,9 @@ def test_search_history(mock_args, capsys, schema_linking_input: List[Dict[str, 
     captured = capsys.readouterr()
     stdout = captured.out
 
-    assert "Search SQL History" in stdout
-    assert "SQL History Search Results" in stdout
-    assert "Error searching SQL history:" not in stdout
+    assert "Search Reference SQL" in stdout
+    assert "Reference SQL Search Results" in stdout
+    assert "Error searching reference sql:" not in stdout
 
 
 # This is now a true integration test

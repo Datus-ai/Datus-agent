@@ -752,15 +752,15 @@ class Agent:
                     "message": f"ext_knowledge bootstrap completed, "
                     f"knowledge_size={self.ext_knowledge_store.table_size()}",
                 }
-            elif component == "sql_history":
+            elif component == "reference_sql":
                 sql_history_path = os.path.join(dir_path, "sql_history.lance")
                 if kb_update_strategy == "overwrite":
                     if os.path.exists(sql_history_path):
                         shutil.rmtree(sql_history_path)
                         logger.info(f"Deleted existing directory {sql_history_path}")
-                    self.global_config.save_storage_config("sql_history")
+                    self.global_config.save_storage_config("reference_sql")
                 else:
-                    self.global_config.check_init_storage_config("sql_history")
+                    self.global_config.check_init_storage_config("reference_sql")
 
                 # Initialize SQL history storage
                 from datus.storage.sql_history import SqlHistoryRAG
@@ -775,7 +775,7 @@ class Agent:
                     pool_size=pool_size,
                 )
                 if isinstance(result, dict) and result.get("status") != "error":
-                    self._refresh_scoped_agents("sql_history", kb_update_strategy)
+                    self._refresh_scoped_agents("reference_sql", kb_update_strategy)
                 return result
             results[component] = True
 

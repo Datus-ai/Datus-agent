@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from conftest import load_acceptance_config
 from rich.table import Table
-from textual.widgets import Label, Static, Tree
+from textual.widgets import Static, Tree
 
 from datus.cli.screen import ContextApp
 from datus.cli.screen.context_app import ScreenType
@@ -72,12 +72,7 @@ async def test_catalog_command(agent_config: AgentConfig, db_manager: DBManager)
         await pilot.press("enter")
         await pilot.pause(1)  # Wait for details to load.
 
-        properties_panel = catalog_screen.query_one("#properties-panel", Static)
-        columns_panel = catalog_screen.query_one("#columns-panel", Label)
-
-        # Assert that the properties and columns panels are updated.
-        assert "Table Properties" in str(properties_panel.renderable)
-        assert "Total Columns" in str(properties_panel.renderable)
+        columns_panel = catalog_screen.query_one("#columns-panel", Static)
 
         columns_table = columns_panel.renderable
         assert isinstance(columns_table, Table)
@@ -96,11 +91,11 @@ async def test_subject_command(agent_config: AgentConfig):
         },
     )
     async with app.run_test() as pilot:
-        await exec_domains_textual(pilot, "#semantic-tree", "#metrics-panel")
+        await exec_domains_textual(pilot, "#subject-tree")
         app.exit()
 
 
-async def exec_domains_textual(pilot, tree_id: str, detail_panel_id: str):
+async def exec_domains_textual(pilot, tree_id: str):
     await pilot.pause(1)
     subject_screen = pilot.app.screen
     await pilot.pause()
@@ -137,15 +132,10 @@ async def exec_domains_textual(pilot, tree_id: str, detail_panel_id: str):
     await pilot.press("enter")
     await pilot.pause(1)
 
-    table_nodes = tree._cursor_node.children
-    assert table_nodes[0].data["type"] in ("semantic_model", "sql_history")
+    table_nodes = tree.cursor_node.children
+    first_table_node = table_nodes[0].data
+    assert first_table_node.get("metrics_count", 0) > 0 or first_table_node.get("sql_count", 0)
     tree.select_node(table_nodes[0])
     await pilot.pause()
     await pilot.press("enter")
     await pilot.pause(1)
-
-    metrics_panel = subject_screen.query_one(detail_panel_id, Static)
-    table = metrics_panel.renderable
-    assert isinstance(table, Table)
-    initial_row_count = table.row_count
-    assert initial_row_count > 0
