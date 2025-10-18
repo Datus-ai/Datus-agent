@@ -1,106 +1,99 @@
+<table width="100%">
+  <tr>
+    <td align="left">
+      <a href="https://www.apache.org/licenses/LICENSE-2.0">
+        <img src="https://img.shields.io/badge/license-Apache%202.0-blueviolet?style=for-the-badge" alt="Apache 2.0 License">
+      </a>
+    </td>
+    <td align="right">
+      <a href="https://datus.ai">Website</a> |
+      <a href="https://docs.datus.ai/">Docs</a> |
+      <a href="https://docs.datus.ai/getting_started/Quickstart/">QuickStart</a> |
+      <a href="https://docs.datus.ai/release_notes/">ReleaseNotes</a>
+    </td>
+  </tr>
+</table>
+
 ## 🎯 Overview
 
-**Datus** is an AI-powered agent that transforms data engineering and metric management into a conversational experience.
+**Datus** is an open-source data engineering agent that builds evolvable context for your data system. 
 
-![DatusArchitecure](assets/datus_architecture.svg)
+Data engineering needs a shift from "building tables and pipelines" to "delivering scoped, domain-aware agents for analysts and business users. 
 
-With the **Datus Agent** you can:
+![DatusArchitecure](docs/assets/datus_architecture.svg)
 
-- **Simplify Data Engineering Development:**
-    - Enable data engineers to develop and debug using natural language, reducing entry barriers and increasing productivity.
-- **Standardize and Manage Metrics:**
-    - Extract and unify metrics consistently, ensuring your BI and AI tools always access accurate and reliable definitions.
-- **Self-Improving:**
-    - Convert iterative CoT reasoning workflows into structured datasets, enabling SFT and RL for ongoing, automatic improvements in model accuracy and performance.
-
-
-## ✨ Why Choose Datus Agent?
+* Datus-CLI: An AI-powered command-line interface for data engineers—think "Claude Code for data engineers." Write SQL, build subagents, and construct context interactively.
+* Datus-Chat: A web chatbot providing multi-turn conversations with built-in feedback mechanisms (upvotes, issue reports, success stories) for data analysts.
+* Datus-API: APIs for other agents or applications that need stable, accurate data services.
 
 ## 🚀 Key Features
 
-### 💬 **Conversational Data Engineering**
+### 🧩 Contextual Data Engineering  
+Automatically builds a **living semantic map** of your company’s data — combining metadata, metrics, SQL history, and external knowledge — so engineers and analysts collaborate through context instead of raw SQL.
 
-- **Natural Language Workflows** - Use `/` to execute complex task in plain language
-- **Intelligent SQL Generation** - `!gen` creates optimized SQL with `!fix` for instant corrections
-- **Live Workflow Monitoring** - `!darun_screen` shows real-time execution status
-- **Schema Intelligence** - `!sl` provides smart table and column recommendations
+### 💬 Agentic Chat  
+A **Claude-Code-like CLI** for data engineers.  
+Chat with your data, recall tables or metrics instantly, and run agentic actions — all in one terminal.
 
-### 📈 **Smart Metrics Management**
+### 🧠 Subagents for Every Domain  
+Turn data domains into **domain-aware chatbots**.  
+Each subagent encapsulates the right context, tools, and rules — making data access accurate, reusable, and safe.
 
-- **Automated Metric Generation** - `!gen_metrics` extracts business metrics from your queries
-- **Semantic Model Creation** - `!gen_semantic_model` builds comprehensive data models
-- **Streaming Analytics** - Real-time metric generation with `!gen_metrics_stream` variants
-- **Context-Aware Operations** - `!set` manages different workflow contexts
-
-### 🔄 **Self-Improving AI System**
-
-- **Reasoning Mode** - `!reason` provides step-by-step analysis with detailed CoT for complex problems
-- **Standard log Output -** Comprehensively record the user’s reasoning process to generate high-value data for subsequent model refinement and evolution
+### 🔁 Continuous Learning Loop  
+Every query and feedback improves the model.  
+Datus learns from success stories and user corrections to evolve reasoning accuracy over time.
 
 
-## 💡 Use Cases
+---
 
-Data Pipeline Development
+## 🧰 Installation
 
 ```bash
-# Natural language query execution
-!reason "create a pipeline that aggregates daily sales by region"
+pip install datus-agent==0.2.1
 
-# View recommended tables
-!sl
-# Schema linking found: sales_data, regions, daily_transactions
-
-# Generate and refine SQL
-!gen
-# Generated: SELECT region_id, DATE(sale_date) as day, SUM(amount)...
-
-!fix add product category grouping
-# Updated SQL with category dimension added
-
+datus-agent init
 ```
 
-Metric Standardization
+## 🧭 User Journey
 
-```bash
-# Check existing metrics
-@subject
+### 1️⃣ Initial Exploration
 
-# Generate new metrics from analysis
-!gen_metrics_stream
-# Streaming metric generation...
-# ✓ Monthly Active Users (MAU)
-# ✓ Average Order Value (AOV)
-# ✓ Customer Lifetime Value (CLV)
+A Data Engineer (DE) starts by chatting with the database using /chat.
+They run simple questions, test joins, and refine prompts using @table or @file.
+Each round of feedback (e.g., “Join table1 and table2 by PK”) helps the model improve accuracy.
+`datus-cli --namespace demo`
+`/Check the top 10 bank by assets lost @Table duckdb-demo.main.bank_failures`
 
-# Create semantic model
-!gen_semantic_model
-# Generated comprehensive data model with relationships
+### 2️⃣ Building Context
 
-```
+The DE imports SQL history and generates summaries or semantic models:
 
-Intelligent Debugging
+`/gen_semantic_model xxx`
+`@subject`
+They edit or refine models in @subject, combining AI-generated drafts with human corrections.
+Now, /chat can reason using both SQL history and semantic context.
 
-```
-# Start debugging session
-!dastart "debug ETL memory error"
+### 3️⃣ Creating a Subagent
 
-# Explore context
-@context_screen
-# Visual display of current tables, schemas, and resources
+When the context matures, the DE defines a domain-specific chatbot (Subagent):
 
-# Run reasoning analysis
-!reason_stream
-# Analyzing: Large dataset (10TB) without partitioning detected
-# Suggesting: Date-based partitioning, chunked processing
+`.subagent add mychatbot`
 
-# Apply fix
-!fix implement suggested partitioning stratege
-```
+They describe its purpose, add rules, choose tools, and limit scope (e.g., 5 tables).
+Each subagent becomes a reusable, scoped assistant for a specific business area.
 
-## Get more
+### 4️⃣ Delivering to Analysts
 
-* 🚦 [Quick Start ](Quickstart.md)
-* 🤝 [Contribution](Contribute.md)
-* 📝 [Release Notes](Release_notes.md)
-* 🌱 [Good First Issue](good_first_issue.md)
-* 🏗️ [Architecture](Architecture.md)
+The Subagent is deployed to a web interface:
+`http://localhost:8501/?subagent=mychatbot`
+
+Analysts chat directly, upvote correct answers, or report issues for feedback.
+Results can be saved via !export.
+
+### 5️⃣ Refinement & Iteration
+
+Feedback from analysts loops back to improve the subagent:
+engineers fix SQL, add rules, and update context.
+Over time, the chatbot becomes more accurate, self-evolving, and domain-aware.
+
+For detailed guidance, please follow our [tutorial](https://docs.datus.ai/getting_started/contextual_data_engineering/).
