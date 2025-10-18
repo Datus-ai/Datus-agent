@@ -1,11 +1,12 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.2.1-rc6" # this is a alpha version, use for testing only
+version = "0.2.1" # this is a alpha version, use for testing only
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
+license-files = ["LICENSE*", "NOTICE*"]
 authors = [
     {name = "Datus Team", email = "harrison.zhao@datus.ai"}
 ]
@@ -18,7 +19,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Topic :: Database",
     "Topic :: Software Development :: Libraries :: Python Modules",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
 ]
@@ -87,7 +87,7 @@ Repository = "https://github.com/datus-ai/datus-agent"
 datus-agent = "datus.main:main"
 datus-cli = "datus.cli.main:main"
 datus = "datus.cli.main:main"
-datus-init = "datus.cli.init:main"
+datus-init = "datus.cli.interactive_init:main"
 
 [build-system]
 requires = ["setuptools>=80.9.0", "wheel"]
