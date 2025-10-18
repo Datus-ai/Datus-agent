@@ -1,8 +1,8 @@
 
 <p align="center">
   <a href="https://datus.ai">Website</a> | <a href="https://docs.datus.ai/">Docs</a> | <a href="https://docs.datus.ai/getting_started/Quickstart/">QuickStart</a> | <a href="https://docs.datus.ai/release_notes/">ReleaseNotes</a> 
+  [![Apache 2.0 License](https://img.shields.io/badge/license-Apache%202.0-blueviolet?style=for-the-badge)](https://www.apache.org/licenses/LICENSE-2.0)
 </p>
-[![Apache 2.0 License](https://img.shields.io/badge/license-Apache%202.0-blueviolet?style=for-the-badge)](https://www.apache.org/licenses/LICENSE-2.0)
 
 ## 🎯 Overview
 
