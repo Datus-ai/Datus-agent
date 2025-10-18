@@ -3,15 +3,11 @@
   <a href="https://docs.datus.ai/">Docs</a> |
   <a href="https://docs.datus.ai/getting_started/Quickstart/">QuickStart</a> |
   <a href="https://docs.datus.ai/release_notes/">ReleaseNotes</a>
-</p>
-
-<p align="center">
+  <br><br>
   <a href="https://www.apache.org/licenses/LICENSE-2.0">
     <img src="https://img.shields.io/badge/license-Apache%202.0-blueviolet?style=for-the-badge" alt="Apache 2.0 License">
   </a>
 </p>
-
----
 
 ## 🎯 Overview
 
@@ -83,7 +79,6 @@ Each subagent becomes a reusable, scoped assistant for a specific business area.
 
 ### 4️⃣ Delivering to Analysts
 
-`datus-cli --namespace 
 The Subagent is deployed to a web interface:
 `http://localhost:8501/?subagent=mychatbot`
 
