@@ -75,7 +75,7 @@ Each subagent becomes a reusable, scoped assistant for a specific business area.
 
 `datus-cli --namespace 
 The Subagent is deployed to a web interface:
-http://localhost:8501/?subagent=mychatbot
+`http://localhost:8501/?subagent=mychatbot`
 
 Analysts chat directly, upvote correct answers, or report issues for feedback.
 Results can be saved via !export.
@@ -85,3 +85,5 @@ Results can be saved via !export.
 Feedback from analysts loops back to improve the subagent:
 engineers fix SQL, add rules, and update context.
 Over time, the chatbot becomes more accurate, self-evolving, and domain-aware.
+
+For detailed guidance, please follow our [step-by-step tutorial](https://docs.datus.ai/getting_started/contextual_data_engineering/).
