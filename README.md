@@ -1,15 +1,15 @@
-[![Apache 2.0 License](https://img.shields.io/badge/license-Apache%202.0-blueviolet?style=for-the-badge)](https://www.apache.org/licenses/LICENSE-2.0)
+
+<p align="center">
+  <a href="https://datus.ai">Website</a> | <a href="https://docs.datus.ai/">Docs</a> | <a href="https://docs.datus.ai/getting_started/Quickstart/">QuickStart</a> | <a href="https://docs.datus.ai/release_notes/">ReleaseNotes</a> | [![Apache 2.0 License](https://img.shields.io/badge/license-Apache%202.0-blueviolet?style=for-the-badge)](https://www.apache.org/licenses/LICENSE-2.0)
+</p>
 
 ## 🎯 Overview
 
-* **Datus** is an open-source data engineering agent that builds evolvable context for your data system. 
-* Data engineering needs a shift from "building tables and pipelines" to "delivering scoped, domain-aware subagents for analysts and business users. 
+**Datus** is an open-source data engineering agent that builds evolvable context for your data system. 
+
+Data engineering needs a shift from "building tables and pipelines" to "delivering scoped, domain-aware agents for analysts and business users. 
 
 ![DatusArchitecure](docs/assets/datus_architecture.svg)
-
-<p align="center">
-  <a href="https://datus.ai">Website</a> | <a href="https://docs.datus.ai/">Docs</a> | <a href="https://docs.datus.ai/getting_started/Quickstart/">QuickStart</a> | <a href="https://docs.datus.ai/release_notes/">ReleaseNotes</a> 
-</p>
 
 * Datus-CLI: An AI-powered command-line interface for data engineers—think "Claude Code for data engineers." Write SQL, build subagents, and construct context interactively.
 * Datus-Chat: A web chatbot providing multi-turn conversations with built-in feedback mechanisms (upvotes, issue reports, success stories) for data analysts.
