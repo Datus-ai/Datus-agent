@@ -98,8 +98,11 @@ class ChatAgenticNode(AgenticNode):
             # Add filesystem MCP server with configurable root path
             import os
 
-            # Resolve workspace_root using priority-based resolution with ~ expansion
-            root_path = self._resolve_workspace_root()
+            root_path = "."
+            if agent_config and hasattr(agent_config, "workspace_root"):
+                workspace_root = agent_config.workspace_root
+                if workspace_root is not None:
+                    root_path = workspace_root
 
             # Handle relative vs absolute paths
             if root_path and os.path.isabs(root_path):
