@@ -2,8 +2,8 @@
 
 ## 🎯 Overview
 
-**Datus** is an open-source data engineering agent that builds evolvable context for your data system. 
-Data engineering needs a shift from "building tables and pipelines" to "delivering scoped, domain-aware subagents for analysts and business users. 
+* **Datus** is an open-source data engineering agent that builds evolvable context for your data system. 
+* Data engineering needs a shift from "building tables and pipelines" to "delivering scoped, domain-aware subagents for analysts and business users. 
 
 ![DatusArchitecure](docs/assets/datus_architecture.svg)
 
