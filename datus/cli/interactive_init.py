@@ -481,14 +481,20 @@ class InteractiveInit:
                 )
             else:
                 # For URI-based connectors (sqlite, duckdb, postgresql)
-                uri = os.path.expanduser(db_config_data.get("uri", ""))
+                uri = db_config_data.get("uri", "")
 
-                # For SQLite, verify the file exists before testing connection
-                if db_type == "sqlite":
-                    # Extract path from URI (handle both sqlite:///path and plain path formats)
-                    db_path = uri.replace("sqlite:///", "") if uri.startswith("sqlite:///") else uri
-                    if not Path(db_path).exists():
-                        return False, f"SQLite database file does not exist: {db_path}"
+                # Handle ~ expansion and extract file path
+                db_path = None
+                if uri.startswith(f"{db_type}:///"):
+                    db_path = uri[len(db_type) + 4 :]  # Remove 'dbtype:///' prefix
+                    db_path = os.path.expanduser(db_path)
+                    uri = f"{db_type}:///{db_path}"
+                else:
+                    uri = os.path.expanduser(uri)
+                    db_path = uri
+
+                if db_type == "sqlite" and not Path(db_path).exists():
+                    return False, f"SQLite database file does not exist: {db_path}"
 
                 db_config = DbConfig(
                     type=db_type,
