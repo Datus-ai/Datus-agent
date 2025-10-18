@@ -1577,14 +1577,6 @@ class SubAgentWizard:
     def _export_result(self) -> Dict[str, Any]:
         """Export SubAgentConfig to plain dict expected by callers and templates."""
         sc = self.data.scoped_context
-        scoped = {}
-        if sc:
-            if sc.tables:
-                scoped["tables"] = sc.tables
-            if sc.metrics:
-                scoped["metrics"] = sc.metrics
-            if sc.sqls:
-                scoped["sqls"] = sc.sqls
         res: Dict[str, Any] = {
             "system_prompt": self.data.system_prompt or "your_agent_name",
             "prompt_version": self.data.prompt_version,
@@ -1594,6 +1586,14 @@ class SubAgentWizard:
             "mcp": self.data.mcp,
             "rules": list(self.data.rules or []),
         }
+        scoped = {}
+        if sc:
+            if sc.tables:
+                scoped["tables"] = sc.tables
+            if sc.metrics:
+                scoped["metrics"] = sc.metrics
+            if sc.sqls:
+                scoped["sqls"] = sc.sqls
         if scoped:
             res["scoped_context"] = scoped
         return res

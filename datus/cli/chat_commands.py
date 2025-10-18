@@ -187,7 +187,6 @@ class ChatCommands:
         else:
             from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
-            logger.info(f"$$$ SQLS {at_sqls} $$$")
             return (
                 ChatNodeInput(
                     user_message=user_message,

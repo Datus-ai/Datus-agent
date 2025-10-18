@@ -142,7 +142,7 @@ class SubAgentBootstrapper:
         handlers = {
             "metadata": ("tables", self._handle_metadata),
             "metrics": ("metrics", self._handle_metrics),
-            "sql_history": ("sqls", self._handle_sql_history),
+            "reference_sql": ("sqls", self._handle_sql_history),
         }
         for component in normalized_components:
             attr_name, handler = handlers[component]
