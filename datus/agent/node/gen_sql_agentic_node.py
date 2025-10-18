@@ -231,39 +231,6 @@ class GenSQLAgenticNode(AgenticNode):
             logger.error(f"Failed to setup filesystem MCP server: {e}")
         return None
 
-    def _resolve_workspace_root(self) -> str:
-        """
-        Resolve workspace_root with priority: node-specific > global storage > legacy > default.
-
-        Returns:
-            Resolved workspace_root path
-        """
-        # Priority: node-specific workspace_root > global storage.workspace_root > legacy > default "."
-        node_workspace_root = self.node_config.get("workspace_root")
-        if node_workspace_root:
-            logger.debug(f"Using node-specific workspace_root: {node_workspace_root}")
-            return node_workspace_root
-
-        if (
-            self.agent_config
-            and hasattr(self.agent_config, "storage")
-            and hasattr(self.agent_config.storage, "workspace_root")
-        ):
-            global_workspace_root = self.agent_config.storage.workspace_root
-            if global_workspace_root:
-                logger.debug(f"Using global workspace_root: {global_workspace_root}")
-                return global_workspace_root
-
-        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
-            # Fallback to old workspace_root location
-            workspace_root = self.agent_config.workspace_root
-            if workspace_root is not None:
-                logger.debug(f"Using legacy workspace_root: {workspace_root}")
-                return workspace_root
-
-        logger.debug("Using default workspace_root: .")
-        return "."
-
     def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
         """Setup MCP server from conf/.mcp.json using mcp_manager."""
         try:
