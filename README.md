@@ -2,7 +2,8 @@
 
 ## 🎯 Overview
 
-**Datus** is a data engineering agent that transforms data engineering and metric management into a conversational experience.
+**Datus** is an open-source data engineering agent that builds evolvable context for your data system. 
+Data engineering needs a shift from "building tables and pipelines" to "delivering scoped, domain-aware subagents for analysts and business users. 
 
 ![DatusArchitecure](docs/assets/datus_architecture.svg)
 
@@ -10,6 +11,9 @@
   <a href="https://datus.ai">Website</a> | <a href="https://docs.datus.ai/">Docs</a> | <a href="https://docs.datus.ai/getting_started/Quickstart/">QuickStart</a> | <a href="https://docs.datus.ai/release_notes/">ReleaseNotes</a> 
 </p>
 
+* Datus-CLI: An AI-powered command-line interface for data engineers—think "Claude Code for data engineers." Write SQL, build subagents, and construct context interactively.
+* Datus-Chat: A web chatbot providing multi-turn conversations with built-in feedback mechanisms (upvotes, issue reports, success stories) for data analysts.
+* Datus-API: APIs for other agents or applications that need stable, accurate data services.
 
 ## 🚀 Key Features
 
@@ -35,6 +39,8 @@ Datus learns from success stories and user corrections to evolve reasoning accur
 
 ```bash
 pip install datus-agent==0.2.1
+
+datus-agent init
 ```
 
 ## 🧭 User Journey
@@ -44,40 +50,37 @@ pip install datus-agent==0.2.1
 A Data Engineer (DE) starts by chatting with the database using /chat.
 They run simple questions, test joins, and refine prompts using @table or @file.
 Each round of feedback (e.g., “Join table1 and table2 by PK”) helps the model improve accuracy.
+`datus-cli --namespace demo`
+`/Check the top 10 bank by assets lost @Table duckdb-demo.main.bank_failures`
 
-```
-
-```
-
-2️⃣ Building Context
+### 2️⃣ Building Context
 
 The DE imports SQL history and generates summaries or semantic models:
 
-!gen_sql_summary  /gen_semantic_model
-
-
+`/gen_semantic_model xxx`
+`@subject`
 They edit or refine models in @subject, combining AI-generated drafts with human corrections.
 Now, /chat can reason using both SQL history and semantic context.
 
-3️⃣ Creating a Subagent
+### 3️⃣ Creating a Subagent
 
 When the context matures, the DE defines a domain-specific chatbot (Subagent):
 
-.subagent add chatbot
-
+`.subagent add mychatbot`
 
 They describe its purpose, add rules, choose tools, and limit scope (e.g., 5 tables).
 Each subagent becomes a reusable, scoped assistant for a specific business area.
 
-4️⃣ Delivering to Analysts
+### 4️⃣ Delivering to Analysts
 
+`datus-cli --namespace 
 The Subagent is deployed to a web interface:
-http://localhost:8501/?subagent=wangzhe_new_commerial
+http://localhost:8501/?subagent=mychatbot
 
 Analysts chat directly, upvote correct answers, or report issues for feedback.
 Results can be saved via !export.
 
-5️⃣ Refinement & Iteration
+### 5️⃣ Refinement & Iteration
 
 Feedback from analysts loops back to improve the subagent:
 engineers fix SQL, add rules, and update context.
