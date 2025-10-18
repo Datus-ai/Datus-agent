@@ -375,7 +375,7 @@ class ActionContentGenerator(BaseActionContentGenerator):
             return f"✓ {metadata_count} tables and {sample_count} sample rows"
         if function_name == "search_metrics":
             return f"✓ {len(items)} metrics"
-        if function_name == "search_historical_sql":
+        if function_name == "search_reference_sql":
             return f"✓ {len(items)} reference SQLs"
         if function_name == "search_external_knowledge":
             return f"✓ {len(items)} extensions of knowledge"

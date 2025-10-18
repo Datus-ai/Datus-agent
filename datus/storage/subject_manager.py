@@ -137,7 +137,7 @@ class SubjectUpdater:
         if not where:
             return
         self.sql_storage.update(where, cleaned_update_payload)
-        logger.debug("Updated the historical details in the main space successfully")
+        logger.debug("Updated the reference SQL details in the main space successfully")
         for name, value in self._agent_config.agentic_nodes.items():
             sub_agent_config = SubAgentConfig.model_validate(value)
             if sub_agent_config.is_in_namespace(self._agent_config.current_namespace):
