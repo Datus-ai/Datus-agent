@@ -4,7 +4,7 @@
 
 **Datus** is a data engineering agent that transforms data engineering and metric management into a conversational experience.
 
-![DatusArchitecure](assets/datus_architecture.svg)
+![DatusArchitecure](docs/assets/datus_architecture.svg)
 
 <p align="center">
   <a href="https://datus.ai">Website</a> | <a href="https://docs.datus.ai/">Docs</a> | <a href="https://docs.datus.ai/getting_started/Quickstart/">QuickStart</a> | <a href="https://docs.datus.ai/release_notes/">ReleaseNotes</a> 
