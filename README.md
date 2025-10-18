@@ -1,16 +1,14 @@
-<div style="display: flex; justify-content: space-between; align-items: center;">
-  <div>
-    <a href="https://datus.ai">Website</a> |
-    <a href="https://docs.datus.ai/">Docs</a> |
-    <a href="https://docs.datus.ai/getting_started/Quickstart/">QuickStart</a> |
-    <a href="https://docs.datus.ai/release_notes/">ReleaseNotes</a>
-  </div>
-  <div>
+<p>
+  <a href="https://datus.ai">Website</a> |
+  <a href="https://docs.datus.ai/">Docs</a> |
+  <a href="https://docs.datus.ai/getting_started/Quickstart/">QuickStart</a> |
+  <a href="https://docs.datus.ai/release_notes/">ReleaseNotes</a>
+  <span style="float: right;">
     <a href="https://www.apache.org/licenses/LICENSE-2.0">
       <img src="https://img.shields.io/badge/license-Apache%202.0-blueviolet?style=for-the-badge" alt="Apache 2.0 License">
     </a>
-  </div>
-</div>
+  </span>
+</p>
 
 ## 🎯 Overview
 
