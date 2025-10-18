@@ -9,6 +9,7 @@ Interactive initialization command for Datus Agent.
 This module provides an interactive CLI for setting up the basic configuration
 without requiring users to manually write conf/agent.yml files.
 """
+import os
 import sys
 from getpass import getpass
 from pathlib import Path
@@ -171,8 +172,8 @@ class InteractiveInit:
             "claude": {
                 "type": "claude",
                 "base_url": "https://api.anthropic.com",
-                "model": "claude-sonnet-4-20250514",
-                "options": ["claude-sonnet-4-5", "claude-sonnet-4", "claude-opus-4-1", "claude-opus-4"],
+                "model": "claude-haiku-4-5",
+                "options": ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-opus-4"],
             },
             "kimi": {
                 "type": "openai",
@@ -305,6 +306,9 @@ class InteractiveInit:
             return True
         else:
             console.print(f"❌ Database connectivity test failed: {error_msg}\n")
+            # Remove failed database configuration
+            if self.namespace_name in self.config["agent"]["namespace"]:
+                del self.config["agent"]["namespace"][self.namespace_name]
             return False
 
     def _configure_workspace(self) -> bool:
@@ -477,9 +481,24 @@ class InteractiveInit:
                 )
             else:
                 # For URI-based connectors (sqlite, duckdb, postgresql)
+                uri = db_config_data.get("uri", "")
+
+                # Handle ~ expansion and extract file path
+                db_path = None
+                if uri.startswith(f"{db_type}:///"):
+                    db_path = uri[len(db_type) + 4 :]  # Remove 'dbtype:///' prefix
+                    db_path = os.path.expanduser(db_path)
+                    uri = f"{db_type}:///{db_path}"
+                else:
+                    uri = os.path.expanduser(uri)
+                    db_path = uri
+
+                if db_type == "sqlite" and not Path(db_path).exists():
+                    return False, f"SQLite database file does not exist: {db_path}"
+
                 db_config = DbConfig(
                     type=db_type,
-                    uri=db_config_data.get("uri", ""),
+                    uri=uri,
                     database=db_config_data.get("name", self.namespace_name),
                 )
 
