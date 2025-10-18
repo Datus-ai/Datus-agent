@@ -20,7 +20,7 @@ agent:
       vendor: anthropic
       base_url: https://api.anthropic.com
       api_key: ${ANTHROPIC_API_KEY}
-      model: claude-3-sonnet-20241022
+      model: claude-haiku-4-5
 
     deepseek_v3:
       type: deepseek
@@ -240,3 +240,48 @@ agent:
       - reasoning
       - reflect
       config: multi/agent3.yaml
+
+  agentic_nodes:
+    gen_semantic_model:
+      model: anthropic
+      system_prompt: gen_semantic_model
+      prompt_version: "1.0"
+      tools: db_tools.*, generation_tools.*, filesystem_tools.*
+      hooks: generation_hooks
+      mcp: metricflow_mcp
+      workspace_root: ~/.datus/data/semantic_models
+      agent_description: "Semantic model generation assistant"
+      rules:
+        - Use get_table_ddl tool to get complete table DDL with constraints
+        - Generate comprehensive semantic models with dimensions, measures, and identifiers
+        - Use write_file tool to save YAML files
+        - Use metricflow_mcp `mf validate-configs` tool to validate configurations
+        - Focus on one table per semantic model
+
+    gen_metrics:
+      model: anthropic
+      system_prompt: gen_metrics
+      prompt_version: "1.0"
+      tools: generation_tools.*, filesystem_tools.*
+      hooks: generation_hooks
+      mcp: metricflow_mcp
+      max_turns: 40
+      workspace_root: ~/.datus/data/semantic_models
+      agent_description: "Metric definition generation assistant"
+      rules:
+        - Analyze user-provided SQL queries to generate MetricFlow metrics
+        - Use list_allowed_directories to find existing semantic model files
+        - Use read_file to read semantic model and understand measures
+        - Use check_metric_exists tool to avoid duplicate generation
+        - Use edit_file to append metrics to existing semantic model (DO NOT use write_file)
+        - Use metricflow_mcp `mf validate-configs` tool to validate configurations
+        - After validation, call end_generation tool to trigger sync confirmation
+
+    gen_sql_summary:
+      model: deepseek_v3
+      system_prompt: gen_sql_summary
+      prompt_version: "1.0"
+      tools: generation_tools.prepare_sql_summary_context, generation_tools.generate_sql_summary_id, filesystem_tools.write_file
+      hooks: generation_hooks
+      workspace_root: ~/.datus/data/sql_history
+      agent_description: "SQL history analysis assistant"
