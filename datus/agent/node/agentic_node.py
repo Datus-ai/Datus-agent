@@ -118,8 +118,9 @@ class AgenticNode(ABC):
         if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
             version = self.agent_config.prompt_version
 
-        # Resolve workspace_root using priority-based resolution with ~ expansion
-        root_path = self._resolve_workspace_root()
+        root_path = "."
+        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
+            root_path = self.agent_config.workspace_root
 
         # Construct template name: {template_name}_system_{version}
         template_name = f"{self.get_node_name()}_system"
