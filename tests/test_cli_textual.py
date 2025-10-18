@@ -138,7 +138,7 @@ async def exec_domains_textual(pilot, tree_id: str, detail_panel_id: str):
     await pilot.pause(1)
 
     table_nodes = tree._cursor_node.children
-    assert table_nodes[0].data["type"] in ("semantic_model", "sql_history")
+    assert table_nodes[0].data["type"] in ("metrics", "sql_history")
     tree.select_node(table_nodes[0])
     await pilot.pause()
     await pilot.press("enter")

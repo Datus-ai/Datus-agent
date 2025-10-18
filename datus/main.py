@@ -95,7 +95,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--components",
         type=str,
         nargs="+",
-        choices=["metrics", "metadata", "table_lineage", "document", "ext_knowledge", "sql_history"],
+        choices=["metrics", "metadata", "table_lineage", "document", "ext_knowledge", "reference_sql"],
         default=["metadata"],
         help="Knowledge base components to initialize",
     )
@@ -145,17 +145,17 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument("--layer2", type=str, help="Layer2 of the metrics")
     bootstrap_parser.add_argument("--ext_knowledge", type=str, help="Path to external knowledge CSV file")
     bootstrap_parser.add_argument(
-        "--sql_dir", type=str, help="Directory containing SQL files for sql_history component"
+        "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"
     )
     bootstrap_parser.add_argument(
         "--subject_tree",
         type=str,
-        help="Predefined taxonomy structure for sql_history classification (e.g., 'domain/layer1/layer2')",
+        help="Predefined taxonomy structure for reference_sql classification (e.g., 'domain/layer1/layer2')",
     )
     bootstrap_parser.add_argument(
         "--validate-only",
         action="store_true",
-        help="Only process and validate SQL files, then exit (for sql_history component)",
+        help="Only process and validate SQL files, then exit (for reference_sql component)",
     )
 
     # benchmark command

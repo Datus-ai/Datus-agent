@@ -52,7 +52,7 @@ def run_command(
 def clean_build():
     """Clean build artifacts"""
     print("🧹 Cleaning build artifacts...")
-    dirs_to_clean = ["build", "dist", "*.egg-info"]
+    dirs_to_clean = ["dist", "*.egg-info"]
     cleaned_count = 0
 
     for pattern in dirs_to_clean:
@@ -141,9 +141,15 @@ def check_package():
 def main():
     """Main function"""
     if len(sys.argv) < 2:
+        script_display = Path(__file__).resolve()
+        try:
+            script_display = script_display.relative_to(Path.cwd())
+        except ValueError:
+            pass
+        script_display = script_display.as_posix()
         print("🚀 Datus Agent Package Builder")
         print("=" * 40)
-        print("Usage: python build_package.py <command>")
+        print(f"Usage: python {script_display} <command>")
         print("\n📋 Available Commands:")
         print("  🧹 clean       - Clean build artifacts")
         print("  🔨 build       - Build the package")
@@ -156,9 +162,9 @@ def main():
         print("  🔄 all         - Clean, build, check, and test")
         print("  📤 publish     - Clean, build, check, and upload to PyPI")
         print("\n💡 Examples:")
-        print("  python build_package.py build")
-        print("  python build_package.py all")
-        print("  python build_package.py publish")
+        print(f"  python {script_display} build")
+        print(f"  python {script_display} all")
+        print(f"  python {script_display} publish")
         sys.exit(1)
 
     command = sys.argv[1]

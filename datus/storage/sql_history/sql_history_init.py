@@ -266,7 +266,7 @@ def init_sql_history(
         logger.warning("No --sql_dir provided, SQL history storage initialized but empty")
         return {
             "status": "success",
-            "message": "sql_history storage initialized (empty - no --sql_dir provided)",
+            "message": "reference_sql storage initialized (empty - no --sql_dir provided)",
             "valid_entries": 0,
             "processed_entries": 0,
             "invalid_entries": 0,
@@ -297,7 +297,7 @@ def init_sql_history(
         logger.info("No valid SQL items found to process")
         return {
             "status": "success",
-            "message": f"sql_history bootstrap completed ({build_mode} mode) - no valid items",
+            "message": f"reference_sql bootstrap completed ({build_mode} mode) - no valid items",
             "valid_entries": 0,
             "processed_entries": 0,
             "invalid_entries": len(invalid_items) if invalid_items else 0,
@@ -354,7 +354,7 @@ def init_sql_history(
 
     return {
         "status": "success",
-        "message": f"sql_history bootstrap completed ({build_mode} mode)",
+        "message": f"reference_sql bootstrap completed ({build_mode} mode)",
         "valid_entries": len(valid_items) if valid_items else 0,
         "processed_entries": processed_count,
         "invalid_entries": len(invalid_items) if invalid_items else 0,

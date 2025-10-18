@@ -198,7 +198,7 @@ class FilesystemFuncTool:
         Args:
             path: The path of the file to write
             content: The content to write to the file
-            file_type: Type of file being written (e.g., "sql_history", "semantic_model").
+            file_type: Type of file being written (e.g., "reference_sql", "semantic_model").
                        Used by hooks for special handling.
 
         Returns:

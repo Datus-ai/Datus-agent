@@ -85,7 +85,7 @@ class SubAgentCommands:
         self.cli_instance.console.print(" - [bold]remove <agent_name>[/]: Remove a configured sub-agent.")
         self.cli_instance.console.print(
             " - [bold]bootstrap <agent_name>[/]: Build scoped knowledge base "
-            "[dim](--components metadata,metrics,sql_history --plan to simulate)[/]"
+            "[dim](--components metadata,metrics,reference_sql --plan to simulate)[/]"
         )
 
     def _cmd_add_agent(self):

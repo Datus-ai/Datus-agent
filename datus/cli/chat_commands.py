@@ -187,6 +187,7 @@ class ChatCommands:
         else:
             from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
+            logger.info(f"$$$ SQLS {at_sqls} $$$")
             return (
                 ChatNodeInput(
                     user_message=user_message,
@@ -195,7 +196,7 @@ class ChatCommands:
                     db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
                     schemas=at_tables,
                     metrics=at_metrics,
-                    historical_sql=at_sqls,
+                    reference_sql=at_sqls,
                     plan_mode=plan_mode,
                 ),
                 "chat",

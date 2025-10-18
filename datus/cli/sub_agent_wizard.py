@@ -38,6 +38,7 @@ from datus.tools.mcp_tools import MCPTool
 from datus.tools.tools import DBFuncTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
+from datus.utils.reference_paths import normalize_reference_path
 
 logger = get_logger(__name__)
 
@@ -1539,13 +1540,31 @@ class SubAgentWizard:
                 continue
         self.data.mcp = ", ".join(mcp_parts)
         scoped_context: Dict[str, str] = {}
-        tables = self.selected_tables or [line.strip() for line in self.catalogs_area.text.split("\n") if line.strip()]
+
+        def _normalize_entries(entries: List[str]) -> List[str]:
+            normalized: List[str] = []
+            for entry in entries:
+                normalized_entry = normalize_reference_path(entry)
+                if normalized_entry:
+                    normalized.append(normalized_entry)
+            return normalized
+
+        table_entries = self.selected_tables or [
+            line.strip() for line in self.catalogs_area.text.split("\n") if line.strip()
+        ]
+        tables = _normalize_entries(table_entries)
         if tables:
             scoped_context["tables"] = ", ".join(tables)
-        metrics = self.selected_metrics or [line.strip() for line in self.metrics_area.text.split("\n") if line.strip()]
+
+        metric_entries = self.selected_metrics or [
+            line.strip() for line in self.metrics_area.text.split("\n") if line.strip()
+        ]
+        metrics = _normalize_entries(metric_entries)
         if metrics:
             scoped_context["metrics"] = ", ".join(metrics)
-        sqls = self.selected_sqls or [line.strip() for line in self.sqls_area.text.split("\n") if line.strip()]
+
+        sql_entries = self.selected_sqls or [line.strip() for line in self.sqls_area.text.split("\n") if line.strip()]
+        sqls = _normalize_entries(sql_entries)
         if sqls:
             scoped_context["sqls"] = ", ".join(sqls)
 
