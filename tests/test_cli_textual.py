@@ -132,7 +132,7 @@ async def exec_domains_textual(pilot, tree_id: str):
     await pilot.press("enter")
     await pilot.pause(1)
 
-    table_nodes = tree._cursor_node.children
+    table_nodes = tree.cursor_node.children
     first_table_node = table_nodes[0].data
     assert first_table_node.get("metrics_count", 0) > 0 or first_table_node.get("sql_count", 0)
     tree.select_node(table_nodes[0])

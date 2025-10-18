@@ -39,6 +39,7 @@ from datus.tools.tools import DBFuncTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.reference_paths import normalize_reference_path
+from datus.utils.sub_agent_manager import SYS_SUB_AGENTS
 
 logger = get_logger(__name__)
 
@@ -1410,6 +1411,13 @@ class SubAgentWizard:
                 return False
             if not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", name):
                 self._show_error_dialog(f"Invalid Agent Name: {name}. Must match: ^[a-zA-Z][a-zA-Z0-9_]*$")
+                return False
+
+            # Prevent using reserved built-in sub-agent names
+            if name in SYS_SUB_AGENTS and (self._original_name is None or name != self._original_name):
+                self._show_error_dialog(
+                    (f"Agent name '{name}' is reserved for built-in functionality. " "Please choose a different name.")
+                )
                 return False
 
             # Check for existing agent name
