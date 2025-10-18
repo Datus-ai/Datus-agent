@@ -97,9 +97,9 @@ def test_search_history(mock_args, capsys, schema_linking_input: List[Dict[str, 
     captured = capsys.readouterr()
     stdout = captured.out
 
-    assert "Search SQL History" in stdout
-    assert "SQL History Search Results" in stdout
-    assert "Error searching SQL history:" not in stdout
+    assert "Search reference sql" in stdout
+    assert "Reference SQL Search Results" in stdout
+    assert "Error searching reference sql:" not in stdout
 
 
 # This is now a true integration test

@@ -70,7 +70,7 @@ class SubjectUpdater:
         self.metrics_storage.update(where, update_values, unique_filter=unique_filter)
         logger.debug("Updated the domain layers of matrics in the main space successfully")
         self.sql_storage.update(where, update_values)
-        logger.debug("Updated the domain layers of historical SQL in the main space successfully")
+        logger.debug("Updated the domain layers of reference SQL in the main space successfully")
         for name, value in self._agent_config.agentic_nodes.items():
             sub_agent_config = SubAgentConfig.model_validate(value)
             if sub_agent_config.is_in_namespace(self._agent_config.current_namespace):
@@ -143,6 +143,6 @@ class SubjectUpdater:
             if sub_agent_config.is_in_namespace(self._agent_config.current_namespace):
                 try:
                     self._sub_agent_storage_sql(sub_agent_config).update(where, update_values, unique_filter=None)
-                    logger.debug(f"Updated the historical SQL details in the sub_agent `{name}` successfully")
+                    logger.debug(f"Updated the reference SQL details in the sub_agent `{name}` successfully")
                 except Exception as e:
-                    logger.warning(f"Failed to update the historical SQL details in the sub_agent `{name}`: {e}")
+                    logger.warning(f"Failed to update the reference SQL details in the sub_agent `{name}`: {e}")

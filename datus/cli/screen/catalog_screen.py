@@ -283,6 +283,7 @@ class CatalogScreen(ContextScreen):
         # Binding("f3", "preview_details", "Preview"),
         Binding("f4", "show_path", "Show Path"),
         Binding("f5", "exit_with_selection", "Select"),
+        Binding("q", "quit_if_idle", "Quit", show=False),
         Binding("escape", "exit_or_cancel", "Exit", show=False),
         Binding("ctrl+r", "retry_current_node", "Retry", show=False),
         Binding("ctrl+e", "start_edit", "Edit", show=True, priority=True),
@@ -953,6 +954,12 @@ class CatalogScreen(ContextScreen):
             self.inject_callback(self.selected_path, self.selected_data)
         # Exit the screen
         self.app.exit()
+
+    def action_quit_if_idle(self) -> None:
+        """Exit quickly when not editing."""
+        if not self._semantic_readonly:
+            return
+        self.action_exit_without_selection()
 
     def action_exit_or_cancel(self):
         if self._semantic_readonly:

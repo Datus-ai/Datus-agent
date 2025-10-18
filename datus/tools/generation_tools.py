@@ -200,7 +200,7 @@ class GenerationTools:
             )
 
         except Exception as e:
-            logger.error(f"Error getting SQL history taxonomy: {e}")
+            logger.error(f"Error getting reference SQL taxonomy: {e}")
             return FuncToolResult(success=0, error=f"Failed to get taxonomy: {str(e)}")
 
     def _check_sql_name_exists(self, name: str) -> FuncToolResult:
@@ -479,9 +479,9 @@ class GenerationTools:
             # Generate the ID using the same utility as the storage system
             generated_id = gen_sql_history_id(sql_query, comment)
 
-            logger.info(f"Generated SQL history ID: {generated_id}")
+            logger.info(f"Generated reference SQL ID: {generated_id}")
             return FuncToolResult(result=generated_id)
 
         except Exception as e:
-            logger.error(f"Error generating SQL history ID: {e}")
+            logger.error(f"Error generating reference SQL ID: {e}")
             return FuncToolResult(success=0, error=f"Failed to generate ID: {str(e)}")

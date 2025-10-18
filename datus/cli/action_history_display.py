@@ -376,7 +376,7 @@ class ActionContentGenerator(BaseActionContentGenerator):
         if function_name == "search_metrics":
             return f"✓ {len(items)} metrics"
         if function_name == "search_historical_sql":
-            return f"✓ {len(items)} historical SQLs"
+            return f"✓ {len(items)} reference SQLs"
         if function_name == "search_external_knowledge":
             return f"✓ {len(items)} extensions of knowledge"
         if function_name == "search_documents":

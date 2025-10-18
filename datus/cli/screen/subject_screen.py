@@ -472,6 +472,7 @@ class SubjectScreen(ContextScreen):
         Binding("f4", "show_path", "Show Path"),
         Binding("f5", "exit_with_selection", "Select"),
         # Binding("f6", "change_edit_mode", "Change to edit/readonly mode "),
+        Binding("q", "quit_if_idle", "Quit", show=False),
         Binding("ctrl+e", "start_edit", "Edit", show=True, priority=True),
         Binding("ctrl+w", "save_edit", "Save", show=True, priority=True),
         Binding("ctrl+q", "cancel_or_exit", "Exit", show=True, priority=True),
@@ -479,7 +480,7 @@ class SubjectScreen(ContextScreen):
 
     def __init__(self, title: str, context_data: Dict, inject_callback=None):
         """
-        Initialize the catalogs screen.
+        Initialize the subject screen.
 
         Args:
             context_data: Dictionary containing database connection info
@@ -537,12 +538,18 @@ class SubjectScreen(ContextScreen):
         self._build_tree()
 
     def on_key(self, event: events.Key) -> None:
+        ctrl_pressed = getattr(event, "ctrl", False)
         if event.key in {"enter", "right"}:
             self.action_load_details()
         elif event.key == "escape":
             self.action_cancel_or_exit()
-        elif event.key == "q" and event.ctrl:
+        elif event.key == "q" and ctrl_pressed:
             self.action_cancel_or_exit()
+            event.prevent_default()
+            event.stop()
+            return
+        elif event.key == "q":
+            self.action_quit_if_idle()
             event.prevent_default()
             event.stop()
             return
@@ -923,7 +930,7 @@ class SubjectScreen(ContextScreen):
             sql_container.mount(sql_panel)
             self._toggle_visibility(sql_container, True)
         else:
-            sql_container.mount(Static("[dim]No eference SQL for this item[/dim]"))
+            sql_container.mount(Static("[dim]No reference SQL for this item[/dim]"))
             self._toggle_visibility(sql_container, False)
 
     def _build_parent_selection_tree(
@@ -1418,6 +1425,16 @@ class SubjectScreen(ContextScreen):
         self.selected_path = ""
         self.selected_data = {}
         self.app.exit()
+
+    def action_quit_if_idle(self) -> None:
+        """Exit quickly when there is no active edit or dialog."""
+        if self._active_dialog is not None and self._active_dialog.is_active:
+            return
+        if self._editing_component in {"metrics", "sql", "tree"}:
+            return
+        if not self.readonly:
+            return
+        self.action_exit_without_selection()
 
     def _get_panel(self, component: str) -> Optional[MetricsPanel | ReferenceSqlPanel]:
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)

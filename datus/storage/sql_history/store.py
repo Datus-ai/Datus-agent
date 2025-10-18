@@ -126,7 +126,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         Returns:
             Dict containing existing domains, layer1_categories, layer2_categories, and common_tags
         """
-        logger.info("Extracting existing taxonomy from stored SQL history")
+        logger.info("Extracting existing taxonomy from stored reference SQL")
 
         # Ensure table is ready
         self._ensure_table_ready()
@@ -200,7 +200,7 @@ class SqlHistoryRAG:
 
     def store_batch(self, sql_history_items: List[Dict[str, Any]]):
         """Store batch of SQL history items."""
-        logger.info(f"store sql history items: {len(sql_history_items)} items")
+        logger.info(f"store reference SQL items: {len(sql_history_items)} items")
         self.sql_history_storage.store_batch(sql_history_items)
 
     def search_all_sql_history(
@@ -239,7 +239,7 @@ class SqlHistoryRAG:
             where_condition = And(conditions)
             where_clause = build_where(where_condition)
 
-        logger.info(f"Searching SQL history by summary: {query_text}, where: {where_clause}")
+        logger.info(f"Searching reference SQL by summary: {query_text}, where: {where_clause}")
         search_results = self.sql_history_storage.search(
             query_text,
             top_n=top_n,
@@ -250,10 +250,10 @@ class SqlHistoryRAG:
             result_list = search_results.select(
                 ["name", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags"]
             ).to_pylist()
-            logger.info(f"Found {len(result_list)} SQL history results for query: {query_text}")
+            logger.info(f"Found {len(result_list)} reference SQL results for query: {query_text}")
             return result_list
         else:
-            logger.info(f"No SQL history results found for query: {query_text}")
+            logger.info(f"No reference SQL results found for query: {query_text}")
             return []
 
     def get_sql_history_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:

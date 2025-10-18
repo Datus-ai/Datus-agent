@@ -263,7 +263,7 @@ def init_sql_history(
         Dict containing initialization results and statistics
     """
     if not hasattr(args, "sql_dir") or not args.sql_dir:
-        logger.warning("No --sql_dir provided, SQL history storage initialized but empty")
+        logger.warning("No --sql_dir provided, reference SQL storage initialized but empty")
         return {
             "status": "success",
             "message": "reference_sql storage initialized (empty - no --sql_dir provided)",
@@ -345,7 +345,7 @@ def init_sql_history(
         storage.store_batch(enriched_items)
 
         processed_count = len(enriched_items)
-        logger.info(f"Stored {processed_count} SQL history entries")
+        logger.info(f"Stored {processed_count} reference SQL entries")
     else:
         logger.info("No new items to process in incremental mode")
 

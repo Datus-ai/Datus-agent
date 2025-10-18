@@ -515,7 +515,7 @@ class SubAgentBootstrapper:
         )
 
     # --------------------------------------------------------------------- #
-    # SQL History
+    # reference SQL
     # --------------------------------------------------------------------- #
     def _handle_sql_history(
         self,
@@ -526,7 +526,7 @@ class SubAgentBootstrapper:
             return ComponentResult(
                 component="reference_sql",
                 status="skipped",
-                message="No SQL history identifiers defined in scoped context.",
+                message="No reference SQL identifiers defined in scoped context.",
             )
 
         global_path = self.agent_config.rag_storage_path()
@@ -534,7 +534,7 @@ class SubAgentBootstrapper:
             return ComponentResult(
                 component="reference_sql",
                 status="error",
-                message="Global SQL history store is not initialized.",
+                message="Global reference SQL store is not initialized.",
             )
 
         source = SqlHistoryRAG(self.agent_config)
@@ -548,7 +548,7 @@ class SubAgentBootstrapper:
             return ComponentResult(
                 component="reference_sql",
                 status="skipped",
-                message="No valid SQL history filters resolved from scoped context.",
+                message="No valid reference SQL filters resolved from scoped context.",
                 details=details,
             )
 
@@ -568,7 +568,7 @@ class SubAgentBootstrapper:
             return ComponentResult(
                 component="reference_sql",
                 status="plan",
-                message="SQL history plan generated.",
+                message="reference SQL plan generated.",
                 details=details,
             )
 
@@ -576,7 +576,7 @@ class SubAgentBootstrapper:
             return ComponentResult(
                 component="reference_sql",
                 status="skipped",
-                message="No SQL history entries matched scoped context.",
+                message="No reference SQL entries matched scoped context.",
                 details={"missing": missing, "invalid": invalid_tokens},
             )
 
@@ -594,7 +594,7 @@ class SubAgentBootstrapper:
         return ComponentResult(
             component="reference_sql",
             status="success",
-            message=f"Stored {len(sql_rows)} SQL history entries.",
+            message=f"Stored {len(sql_rows)} reference SQL entries.",
             details=details,
         )
 
