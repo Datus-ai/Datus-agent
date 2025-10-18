@@ -16,7 +16,7 @@ def normalize_reference_path(path: str) -> str:
         return ""
 
     text = path.strip()
-    if not text.startswith('"'):
+    if '"' not in text:
         # Already normalized (or no quoted segments). Strip trailing punctuation in a lightweight way.
         return text.rstrip(".,;:!?)]}")
 
