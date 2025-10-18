@@ -36,12 +36,26 @@ def normalize_reference_path(path: str) -> str:
     if not cleaned:
         return ""
 
-    segments = [segment.strip() for segment in cleaned.split(".")]
+    # Split on '.' only when not inside double quotes
+    segments: List[str] = []
+    seg_buf: List[str] = []
+    in_quotes = False
+    for ch in cleaned:
+        if ch == '"':
+            in_quotes = not in_quotes
+            seg_buf.append(ch)
+        elif ch == "." and not in_quotes:
+            segments.append("".join(seg_buf).strip())
+            seg_buf = []
+        else:
+            seg_buf.append(ch)
+    if seg_buf:
+        segments.append("".join(seg_buf).strip())
+    segments = [s for s in segments if s]  # drop empty parts
     if not segments:
         return ""
-
+    # Unquote only the final component if enclosed in double quotes
     last = segments[-1]
     if last.startswith('"') and last.endswith('"') and len(last) >= 2:
-        last = last[1:-1]
-    segments[-1] = last
+        segments[-1] = last[1:-1]
     return ".".join(segments)
