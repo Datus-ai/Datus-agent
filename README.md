@@ -96,4 +96,4 @@ Feedback from analysts loops back to improve the subagent:
 engineers fix SQL, add rules, and update context.
 Over time, the chatbot becomes more accurate, self-evolving, and domain-aware.
 
-For detailed guidance, please follow our [step-by-step tutorial](https://docs.datus.ai/getting_started/contextual_data_engineering/).
+For detailed guidance, please follow our [tutorial](https://docs.datus.ai/getting_started/contextual_data_engineering/).
