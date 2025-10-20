@@ -11,6 +11,20 @@ from datus.tools.tools import DBFuncTool, FuncToolResult
 from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
 
 
+class FakeRecordBatch:
+    """Minimal Arrow-like table for select/to_pylist behavior in tests."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def select(self, fields):
+        selected = [{field: row.get(field) for field in fields} for row in self._rows]
+        return FakeRecordBatch(selected)
+
+    def to_pylist(self):
+        return list(self._rows)
+
+
 @pytest.fixture
 def mock_connector():
     """Create a mock database connector."""
@@ -461,6 +475,26 @@ class TestDBFuncTool:
         assert result.success == 0
         assert "Schema retrieval failed" in result.error
 
+    def test_describe_table_includes_semantic_details(self, db_func_tool, mock_connector):
+        """Semantic model details should enrich describe_table output."""
+        db_func_tool.has_semantic_models = True
+        db_func_tool._get_semantic_model = Mock(
+            return_value={
+                "semantic_model_desc": "Orders semantic model",
+                "dimensions": ["customer_id"],
+                "measures": ["total_sales"],
+            }
+        )
+
+        result = db_func_tool.describe_table(table_name="orders")
+
+        assert result.success == 1
+        table_info = result.result["table_info"]
+        assert table_info["description"] == "Orders semantic model"
+        assert table_info["dimensions"] == ["customer_id"]
+        assert table_info["measures"] == ["total_sales"]
+        mock_connector.get_schema.assert_called_once()
+
     def test_read_query_success(self, db_func_tool, mock_connector):
         """Test successful read_query execution."""
         result = db_func_tool.read_query("SELECT * FROM users")
@@ -471,6 +505,19 @@ class TestDBFuncTool:
         assert result.result is not None  # Should be compressed data
 
         mock_connector.execute_query.assert_called_once_with("SELECT * FROM users", result_format="list")
+
+    def test_read_query_snowflake_uses_arrow(self, db_func_tool, mock_connector):
+        """Snowflake dialect should request Arrow results."""
+        mock_connector.dialect = DBType.SNOWFLAKE
+        mock_query_result = Mock()
+        mock_query_result.success = True
+        mock_query_result.sql_return = [{"id": 1}]
+        mock_connector.execute_query.return_value = mock_query_result
+
+        result = db_func_tool.read_query("SELECT * FROM snowflake_table")
+
+        assert result.success == 1
+        mock_connector.execute_query.assert_called_once_with("SELECT * FROM snowflake_table", result_format="arrow")
 
     def test_read_query_query_failure(self, db_func_tool, mock_connector):
         """Test read_query when query execution fails."""
@@ -496,6 +543,140 @@ class TestDBFuncTool:
         assert "Connection failed" in result.error
         assert result.result is None
         mock_connector.execute_query.assert_called_once_with("SELECT * FROM users", result_format="list")
+
+    def test_get_table_ddl_success(self, db_func_tool, mock_connector):
+        """get_table_ddl should return connector DDL info."""
+        mock_connector.get_tables_with_ddl.return_value = [
+            {"identifier": "db1.schema1.orders", "definition": "CREATE TABLE orders (...)"},
+        ]
+
+        result = db_func_tool.get_table_ddl("orders")
+
+        assert result.success == 1
+        assert result.result["identifier"] == "db1.schema1.orders"
+        mock_connector.get_tables_with_ddl.assert_called_once_with(
+            catalog_name="", database_name="", schema_name="", tables=["orders"]
+        )
+
+    def test_get_table_ddl_not_found(self, db_func_tool, mock_connector):
+        """Empty DDL responses should surface as errors."""
+        mock_connector.get_tables_with_ddl.return_value = []
+
+        result = db_func_tool.get_table_ddl("missing")
+
+        assert result.success == 0
+        assert "not found" in (result.error or "").lower()
+
+    def test_get_table_ddl_scope_violation(self, mock_connector):
+        """Scoped tables should block DDL retrieval outside the allowed set."""
+        mock_connector.get_tables_with_ddl.return_value = [
+            {"identifier": "db1.schema1.orders", "definition": "CREATE TABLE orders (...)"}
+        ]
+        tool = DBFuncTool(mock_connector, scoped_tables={"db1.schema1.orders"})
+
+        denied = tool.get_table_ddl("users")
+
+        assert denied.success == 0
+        assert "outside the scoped context" in (denied.error or "")
+        mock_connector.get_tables_with_ddl.assert_not_called()
+
+    def test_get_table_ddl_failure(self, db_func_tool, mock_connector):
+        """Connector exceptions should propagate as tool errors."""
+        mock_connector.get_tables_with_ddl.side_effect = Exception("DDL fetch failed")
+
+        result = db_func_tool.get_table_ddl("orders")
+
+        assert result.success == 0
+        assert "DDL fetch failed" in (result.error or "")
+
+    def test_catalog_scoped_tables_filter_results(self):
+        """Catalog-qualified scopes should restrict databases, schemas, and tables."""
+        connector = Mock(spec=BaseSqlConnector)
+        connector.dialect = DBType.SNOWFLAKE
+        connector.catalog_name = "cat1"
+        connector.database_name = "analytics"
+        connector.schema_name = "public"
+
+        connector.get_databases.return_value = ["analytics", "sales"]
+        connector.get_schemas.return_value = ["public", "marketing"]
+
+        def fake_tables(_catalog, _database, schema):
+            if schema == "public":
+                return ["orders", "users"]
+            return ["history"]
+
+        connector.get_tables.side_effect = fake_tables
+        connector.get_views.return_value = []
+        connector.get_materialized_views.return_value = []
+
+        tool = DBFuncTool(connector, scoped_tables={"cat1.analytics.public.orders"})
+
+        allowed_db = tool.list_databases()
+        assert allowed_db.result == ["analytics"]
+
+        connector.get_databases.assert_called_with("", include_sys=False)
+        connector.get_databases.reset_mock()
+
+        blocked_db = tool.list_databases(catalog="cat2")
+        assert blocked_db.result == []
+        connector.get_databases.assert_called_once_with("cat2", include_sys=False)
+
+        allowed_schema = tool.list_schemas(catalog="cat1", database="analytics")
+        assert allowed_schema.result == ["public"]
+
+        blocked_schema = tool.list_schemas(catalog="cat1", database="sales")
+        assert blocked_schema.result == []
+
+        allowed_tables = tool.list_tables(catalog="cat1", database="analytics", schema_name="public")
+        assert [entry["name"] for entry in allowed_tables.result] == ["orders"]
+
+        blocked_tables = tool.list_tables(catalog="cat1", database="analytics", schema_name="marketing")
+        assert blocked_tables.result == []
+
+    def test_scoped_tables_loaded_from_agent_config(self, monkeypatch, mock_connector):
+        """When scoped tables come from AgentConfig, describe_table should respect them."""
+
+        class StubSchemaStore:
+            def table_size(self):
+                return 0
+
+        class StubSchemaRAG:
+            def __init__(self, *args, **kwargs):
+                self.schema_store = StubSchemaStore()
+
+        class StubSemanticRAG:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def get_semantic_model_size(self):
+                return 0
+
+        monkeypatch.setattr("datus.tools.tools.SchemaWithValueRAG", StubSchemaRAG)
+        monkeypatch.setattr("datus.tools.tools.SemanticMetricsRAG", StubSemanticRAG)
+
+        class DummyAgentConfig:
+            def __init__(self):
+                self.agentic_nodes = {
+                    "sales": {
+                        "system_prompt": "Sales agent",
+                        "scoped_context": {"tables": "db1.schema1.orders, db1.schema1.customers"},
+                    }
+                }
+
+            def sub_agent_config(self, name: str):
+                return self.agentic_nodes.get(name, {})
+
+        tool = DBFuncTool(mock_connector, agent_config=DummyAgentConfig(), sub_agent_name="sales")
+
+        mock_connector.get_schema.reset_mock()
+        allowed = tool.describe_table("orders")
+        assert allowed.success == 1
+        mock_connector.get_schema.assert_called_once()
+
+        mock_connector.get_schema.reset_mock()
+        denied = tool.describe_table("users")
+        assert denied.success == 0
+        mock_connector.get_schema.assert_not_called()
 
 
 class TestDBFuncToolEdgeCases:
@@ -580,6 +761,144 @@ class TestDBFuncToolEdgeCases:
 
 class TestDBFuncToolIntegration:
     """Integration-style tests for DBFuncTool."""
+
+    def _build_metadata_batch(self):
+        return FakeRecordBatch(
+            [
+                {
+                    "catalog_name": "",
+                    "database_name": "db1",
+                    "schema_name": "public",
+                    "table_name": "orders",
+                    "table_type": "table",
+                    "definition": "CREATE TABLE orders (...);",
+                    "identifier": "db1.public.orders",
+                    "_distance": 0.05,
+                }
+            ]
+        )
+
+    def _build_sample_batch(self):
+        return FakeRecordBatch(
+            [
+                {
+                    "identifier": "db1.public.orders",
+                    "table_type": "table",
+                    "sample_rows": [{"id": 1, "total": 10}],
+                    "_distance": 0.07,
+                }
+            ]
+        )
+
+    def test_search_table_returns_metadata_and_samples(self, db_func_tool):
+        """search_table should emit metadata and sample rows when available."""
+        db_func_tool.has_schema = True
+        db_func_tool.schema_rag = Mock()
+        db_func_tool.schema_rag.search_similar.return_value = (
+            self._build_metadata_batch(),
+            self._build_sample_batch(),
+        )
+
+        result = db_func_tool.search_table("orders table")
+
+        assert result.success == 1
+        metadata = result.result["metadata"]
+        samples = result.result["sample_data"]
+        assert metadata[0]["table_name"] == "orders"
+        assert samples[0]["sample_rows"] == [{"id": 1, "total": 10}]
+
+    def test_search_table_enriches_semantic_model(self, db_func_tool):
+        """When semantic models exist, metadata rows should include enriched context."""
+        db_func_tool.has_schema = True
+        db_func_tool.schema_rag = Mock()
+        db_func_tool.schema_rag.search_similar.return_value = (self._build_metadata_batch(), self._build_sample_batch())
+        db_func_tool.has_semantic_models = True
+        db_func_tool._get_semantic_model = Mock(
+            return_value={
+                "semantic_model_desc": "Orders summary",
+                "dimensions": ["order_id"],
+                "measures": ["total_amount"],
+            }
+        )
+
+        result = db_func_tool.search_table("orders table")
+
+        assert result.success == 1
+        metadata = result.result["metadata"]
+        assert metadata[0]["description"] == "Orders summary"
+        assert metadata[0]["dimensions"] == ["order_id"]
+        assert metadata[0]["measures"] == ["total_amount"]
+        assert result.result["sample_data"] == []
+        db_func_tool._get_semantic_model.assert_called_once()
+
+    def test_search_table_no_metadata_after_filter(self, db_func_tool):
+        """Filtered-out metadata rows should return an empty result with message."""
+        db_func_tool.has_schema = True
+        db_func_tool.schema_rag = Mock()
+        db_func_tool.schema_rag.search_similar.return_value = (self._build_metadata_batch(), self._build_sample_batch())
+        db_func_tool._filter_metadata_rows = Mock(return_value=[])
+
+        result = db_func_tool.search_table("orders table")
+
+        assert result.success == 1
+        assert result.result == []
+        assert "No metadata rows found." in (result.error or "")
+
+    def test_search_table_respects_scoped_patterns(self, mock_connector):
+        """search_table results should be filtered by scoped table patterns."""
+        tool = DBFuncTool(mock_connector, scoped_tables={"db1.schema1.orders"})
+        tool.has_schema = True
+        tool.schema_rag = Mock()
+
+        metadata_rows = FakeRecordBatch(
+            [
+                {
+                    "catalog_name": "",
+                    "database_name": "db1",
+                    "schema_name": "schema1",
+                    "table_name": "orders",
+                    "table_type": "table",
+                    "definition": "CREATE TABLE orders (...);",
+                    "identifier": "db1.schema1.orders",
+                    "_distance": 0.02,
+                },
+                {
+                    "catalog_name": "",
+                    "database_name": "db2",
+                    "schema_name": "analytics",
+                    "table_name": "users",
+                    "table_type": "table",
+                    "definition": "CREATE TABLE users (...);",
+                    "identifier": "db2.analytics.users",
+                    "_distance": 0.03,
+                },
+            ]
+        )
+
+        sample_rows = FakeRecordBatch(
+            [
+                {
+                    "identifier": "db1.schema1.orders",
+                    "table_type": "table",
+                    "sample_rows": [{"id": 1, "total": 10}],
+                    "_distance": 0.02,
+                },
+                {
+                    "identifier": "db2.analytics.users",
+                    "table_type": "table",
+                    "sample_rows": [{"id": 99, "name": "ignored"}],
+                    "_distance": 0.05,
+                },
+            ]
+        )
+
+        tool.schema_rag.search_similar.return_value = (metadata_rows, sample_rows)
+
+        result = tool.search_table("orders")
+
+        assert result.success == 1
+        assert [row["table_name"] for row in result.result["metadata"]] == ["orders"]
+        assert [row["identifier"] for row in result.result["sample_data"]] == ["db1.schema1.orders"]
 
     def test_tool_transformation_integration(self, db_func_tool):
         """Test that tools can be transformed properly."""

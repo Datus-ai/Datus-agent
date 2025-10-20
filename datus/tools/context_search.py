@@ -4,7 +4,7 @@
 
 # -*- coding: utf-8 -*-
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 from agents import Tool
 
@@ -66,12 +66,10 @@ class ContextSearchTools:
                 lambda: defaultdict(lambda: defaultdict(dict))
             )
             for metrics_item in self._collect_metrics_entries():
-                layer_map = domain_tree[metrics_item["domain"]][metrics_item["layer1"]][metrics_item["layer2"]]
-                layer_map["metrics_size"] = layer_map.get("metrics_size", 0) + 1
+                ContextSearchTools._fill_in_domain_layer_tree(domain_tree, metrics_item, "metrics_size")
 
             for sql_item in self._collect_sql_entries():
-                layer_map = domain_tree[sql_item["domain"]][sql_item["layer1"]][sql_item["layer2"]]
-                layer_map["sql_size"] = layer_map.get("sql_size", 0) + 1
+                ContextSearchTools._fill_in_domain_layer_tree(domain_tree, sql_item, "sql_size")
 
             serializable_tree = {
                 domain: {
@@ -88,6 +86,16 @@ class ContextSearchTools:
             logger.error("Failed to assemble domain taxonomy: %s", exc)
             return FuncToolResult(success=0, error=str(exc))
 
+    @classmethod
+    def _fill_in_domain_layer_tree(
+        cls, domain_tree: Dict[str, Dict[str, Dict[str, Dict[str, int]]]], item: Dict[str, Any], item_type: str
+    ):
+        domain = (item.get("domain") or "").strip()
+        layer1 = (item.get("layer1") or "").strip()
+        layer2 = (item.get("layer2") or "").strip()
+        layer_map = domain_tree[domain][layer1][layer2]
+        layer_map[item_type] = layer_map.get(item_type, 0) + 1
+
     def _collect_metrics_entries(self) -> Sequence[Dict[str, Any]]:
         try:
             return self.metric_rag.search_all_metrics(select_fields=["domain", "layer1", "layer2", "name"])
@@ -101,40 +109,6 @@ class ContextSearchTools:
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("Failed to collect SQL taxonomy: %s", exc)
             return []
-
-    def _inject_taxonomy_entries(
-        self,
-        rows: Sequence[Dict[str, Any]],
-        domains: Set[str],
-        layer1_map: Dict[str, Set[str]],
-        layer2_map: Dict[Tuple[str, str], Set[str]],
-    ) -> None:
-        for row in rows:
-            domain = self._normalize_taxonomy_value(row.get("domain"))
-            layer1 = self._normalize_taxonomy_value(row.get("layer1"))
-            layer2 = self._normalize_taxonomy_value(row.get("layer2"))
-
-            domain_key = domain
-            if domain:
-                domains.add(domain)
-            else:
-                domain_key = ""
-
-            if layer1:
-                layer1_map.setdefault(domain_key, set()).add(layer1)
-            elif domain_key not in layer1_map:
-                layer1_map[domain_key] = layer1_map.get(domain_key, set())
-
-            if layer2:
-                layer2_map.setdefault((domain_key, layer1 or ""), set()).add(layer2)
-            elif (domain_key, layer1 or "") not in layer2_map:
-                layer2_map[(domain_key, layer1 or "")] = layer2_map.get((domain_key, layer1 or ""), set())
-
-    @staticmethod
-    def _normalize_taxonomy_value(value: Optional[str]) -> str:
-        if value is None:
-            return ""
-        return str(value).strip()
 
     def search_metrics(
         self,
@@ -205,5 +179,5 @@ class ContextSearchTools:
             )
             return FuncToolResult(success=1, error=None, result=result)
         except Exception as e:
-            logger.error(f"Failed to search reference SQL for `{query_text}`: {str(e)}")
+            logger.error(f"Failed to search reference SQL for `{query_text}`: {e}")
             return FuncToolResult(success=0, error=str(e))
