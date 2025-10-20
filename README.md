@@ -12,7 +12,7 @@
       <a href="https://docs.datus.ai/"><img src="https://img.shields.io/badge/Document-654FF0" alt="Document"></a> 
     </td>
     <td align="right">
-      <a href="https://docs.datus.ai/getting_started/Quickstart/"><img src="https://img.shields.io/badge/Quick%20Start-3423A6" alt="Release Note"></a> 
+      <a href="https://docs.datus.ai/getting_started/Quickstart/"><img src="https://img.shields.io/badge/Quick%20Start-3423A6" alt="Quick Start"></a> 
     </td>
     <td align="right">
       <a href="https://docs.datus.ai/release_notes/"><img src="https://img.shields.io/badge/Release%20Note-092540" alt="Release Note"></a> 
