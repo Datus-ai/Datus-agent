@@ -17,7 +17,6 @@ import csv
 import os
 import re
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
@@ -38,13 +37,19 @@ logger = structlog.get_logger("web_chatbot")
 _LOGGING_INITIALIZED = False
 
 
-def initialize_logging(debug: bool = False, log_dir: str = "~/.datus/logs") -> None:
+def initialize_logging(debug: bool = False, log_dir: str = None) -> None:
     """Configure logging for the Streamlit subprocess to match CLI behavior."""
 
     global _LOGGING_INITIALIZED, logger
 
     if _LOGGING_INITIALIZED:
         return
+
+    # Use path manager default if not specified
+    if log_dir is None:
+        from datus.utils.path_manager import get_path_manager
+
+        log_dir = str(get_path_manager().logs_dir)
 
     configure_logging(debug=debug, log_dir=log_dir, console_output=False)
     logger = setup_web_chatbot_logging(debug=debug, log_dir=log_dir)
@@ -361,7 +366,9 @@ class StreamlitChatbot:
         session_link = f"http://{self.server_host}:{self.server_port}?session={session_id}"
 
         # Create benchmark directory safely (sanitize and contain)
-        base_dir = Path(os.path.expanduser("~/.datus/benchmark")).resolve()
+        from datus.utils.path_manager import get_path_manager
+
+        base_dir = get_path_manager().benchmark_dir.resolve()
         safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", subagent_name)
         target_dir = (base_dir / safe_name).resolve()
         try:

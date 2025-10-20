@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -114,6 +113,10 @@ def configuration_manager(config_path: str = "", reload: bool = False) -> Config
 
 
 def parse_config_path(config_file: str = "") -> Path:
+    from datus.utils.path_manager import get_path_manager
+
+    path_manager = get_path_manager()
+
     if config_file:
         config_path = Path(config_file).expanduser()
         if config_path.exists():
@@ -123,11 +126,11 @@ def parse_config_path(config_file: str = "") -> Path:
             raise DatusException(
                 code=ErrorCode.COMMON_FILE_NOT_FOUND, message=f"Agent configuration file not found: {config_path}"
             )
-    if os.path.exists("conf/agent.yml"):
-        return Path("conf/agent.yml")
-    home_config = Path.home() / ".datus" / "conf" / "agent.yml"
-    if home_config.exists():
-        return home_config
+
+    # Use path manager to resolve config path
+    resolved_path = path_manager.resolve_config_path("agent.yml")
+    if resolved_path.exists():
+        return resolved_path
 
     raise DatusException(
         code=ErrorCode.COMMON_FILE_NOT_FOUND,

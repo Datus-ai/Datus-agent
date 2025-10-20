@@ -34,11 +34,16 @@ class InteractiveInit:
         self.workspace_path = ""
         self.namespace_name = ""
         self.user_home = user_home if user_home else Path.home()
-        self.datus_dir = self.user_home / ".datus"
-        self.data_dir = self.datus_dir / "data"
-        self.conf_dir = self.datus_dir / "conf"
-        self.template_dir = self.datus_dir / "template"
-        self.sample_dir = self.datus_dir / "sample"
+
+        # Use path manager for directory paths
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+        self.datus_dir = path_manager.datus_home
+        self.data_dir = path_manager.data_dir
+        self.conf_dir = path_manager.conf_dir
+        self.template_dir = path_manager.template_dir
+        self.sample_dir = path_manager.sample_dir
         try:
             text = read_data_file_text(resource_path="conf/agent.yml.qs", encoding="utf-8")
             self.config = yaml.safe_load(text)
@@ -363,12 +368,11 @@ class InteractiveInit:
     def _save_configuration(self) -> bool:
         """Save configuration to file."""
         # Use ~/.datus/conf/agent.yml as the configuration path
-        conf_dir = Path.home() / ".datus" / "conf"
-        conf_dir.mkdir(parents=True, exist_ok=True)
+        self.conf_dir.mkdir(parents=True, exist_ok=True)
 
         # Save configuration
         try:
-            config_path = conf_dir / "agent.yml"
+            config_path = self.conf_dir / "agent.yml"
             with open(config_path, "w", encoding="utf-8") as f:
                 yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True)
 

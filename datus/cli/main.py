@@ -9,7 +9,6 @@ Main entry point for the CLI application.
 """
 
 import argparse
-from pathlib import Path
 
 from datus import __version__
 from datus.cli.repl import DatusCLI
@@ -54,8 +53,8 @@ class ArgumentParser:
             "--history_file",
             dest="history_file",
             type=str,
-            default=str(Path.home() / ".datus_history"),
-            help="Path to history file",
+            default=None,
+            help="Path to history file (default: ~/.datus/history)",
         )
         self.parser.add_argument(
             "--config",

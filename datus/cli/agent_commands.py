@@ -8,7 +8,6 @@ This module provides a class to handle all agent-related commands.
 """
 
 import asyncio
-import os.path
 import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
@@ -592,9 +591,11 @@ class AgentCommands:
         file_type = self.cli.prompt_input(
             "Enter file type (json/csv/sql/all)", default="all", choices=["json", "csv", "sql", "all"]
         )
-        target_dir = self.cli.prompt_input(
-            "Enter output directory (optional)", default=os.path.expanduser("~/.datus/output")
-        )
+
+        from datus.utils.path_manager import get_path_manager
+
+        default_output_dir = str(get_path_manager().output_dir)
+        target_dir = self.cli.prompt_input("Enter output directory (optional)", default=default_output_dir)
         from datetime import datetime
 
         file_name = self.cli.prompt_input("Enter file name(optional)", default=datetime.now().strftime("%Y%m%d%H%M%S"))

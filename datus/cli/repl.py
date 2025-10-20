@@ -77,7 +77,12 @@ class DatusCLI:
         self.plan_mode_active = False
 
         # Setup history
-        history_file = Path(args.history_file)
+        if args.history_file:
+            history_file = Path(args.history_file)
+        else:
+            from datus.utils.path_manager import get_path_manager
+
+            history_file = get_path_manager().history_file_path()
         history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history = FileHistory(str(history_file))
         self.agent_config = load_agent_config(**vars(self.args))

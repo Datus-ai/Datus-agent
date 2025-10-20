@@ -50,7 +50,9 @@ class DynamicLogManager:
             if _is_source_environment():
                 log_dir = "./logs"
             else:
-                log_dir = "~/.datus/logs"
+                from datus.utils.path_manager import get_path_manager
+
+                log_dir = str(get_path_manager().logs_dir)
         # Expand user directory and convert to absolute path
         self.log_dir = os.path.abspath(os.path.expanduser(log_dir))
         self.root_logger = logging.getLogger()
@@ -169,7 +171,9 @@ def configure_logging(debug=False, log_dir=None, console_output=True) -> Dynamic
         if _is_source_environment():
             log_dir = "./logs"
         else:
-            log_dir = "~/.datus/logs"
+            from datus.utils.path_manager import get_path_manager
+
+            log_dir = str(get_path_manager().logs_dir)
 
     # Create or get log manager with specified parameters
     global _log_manager
@@ -226,7 +230,9 @@ def setup_web_chatbot_logging(debug=False, log_dir=None):
         if _is_source_environment():
             log_dir = "./logs"
         else:
-            log_dir = "~/.datus/logs"
+            from datus.utils.path_manager import get_path_manager
+
+            log_dir = str(get_path_manager().logs_dir)
 
     # Expand user directory and convert to absolute path
     log_dir = os.path.abspath(os.path.expanduser(log_dir))

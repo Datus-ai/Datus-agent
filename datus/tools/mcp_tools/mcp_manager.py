@@ -89,6 +89,10 @@ class MCPManager:
             config_path: Path to the config file (searches in order:
                 config_path > conf/.mcp.json > ~/.datus/conf/.mcp.json)
         """
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+
         json_path = None
         if config_path:
             json_path = Path(config_path).expanduser()
@@ -97,7 +101,7 @@ class MCPManager:
             json_path = Path("conf/.mcp.json")
 
         if not json_path:
-            home_config = Path.home() / ".datus" / "conf" / ".mcp.json"
+            home_config = path_manager.mcp_config_path()
             if home_config.exists():
                 json_path = home_config
 
@@ -109,9 +113,8 @@ class MCPManager:
             if Path("conf").exists():
                 self.config_path = Path("conf/.mcp.json")
             else:
-                home_conf_dir = Path.home() / ".datus" / "conf"
-                home_conf_dir.mkdir(parents=True, exist_ok=True)
-                self.config_path = home_conf_dir / ".mcp.json"
+                path_manager.ensure_dirs("conf")
+                self.config_path = path_manager.mcp_config_path()
 
         self.config: MCPConfig = MCPConfig()
         self._lock = threading.Lock()

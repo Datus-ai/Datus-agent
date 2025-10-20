@@ -26,8 +26,10 @@ logger = get_logger(__name__)
 
 def _default_paths() -> Tuple[Path, Path]:
     """Return default pid and log file paths."""
-    home = Path.home()
-    pid_file = home / ".datus" / "run" / "datus-agent-api.pid"
+    from datus.utils.path_manager import get_path_manager
+
+    path_manager = get_path_manager()
+    pid_file = path_manager.pid_file_path("datus-agent-api")
     log_file = Path("logs") / "datus-agent-api.log"  # Use logs/ directory like other modules
     return pid_file, log_file
 

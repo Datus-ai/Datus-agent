@@ -32,7 +32,9 @@ class PromptManager:
             templates_dir: Directory containing template files.
                           Defaults to check ~/.datus/template first, then fallback to 'prompt_templates'.
         """
-        self.user_templates_dir = Path.home() / ".datus" / "template"
+        from datus.utils.path_manager import get_path_manager
+
+        self.user_templates_dir = get_path_manager().template_dir
         if templates_dir is None:
             # Check user templates directory first
             default_templates_dir = Path(__file__).parent / "prompt_templates"
@@ -71,12 +73,11 @@ class PromptManager:
         filename = f"{template_name}_{version}.j2"
 
         # Check user templates directory first
-        user_templates_dir = Path.home() / ".datus" / "template"
-        user_file_path = user_templates_dir / filename
+        user_file_path = self.user_templates_dir / filename
 
         if user_file_path.exists():
             # Update the environment to use user templates directory
-            self.templates_dir = user_templates_dir
+            self.templates_dir = self.user_templates_dir
             self._env = Environment(
                 loader=FileSystemLoader(str(self.templates_dir)), trim_blocks=True, lstrip_blocks=True
             )
@@ -95,7 +96,7 @@ class PromptManager:
             return default_file_path
 
         raise FileNotFoundError(
-            f"Prompt Template file '{filename}' not found in user directory ({user_templates_dir})"
+            f"Prompt Template file '{filename}' not found in user directory ({self.user_templates_dir})"
             f" or default directory ({self.default_templates_dir})"
         )
 
@@ -169,10 +170,8 @@ class PromptManager:
         template_names = set()
 
         # Check user templates directory first
-        user_templates_dir = Path.home() / ".datus" / "template"
-
-        if user_templates_dir.exists():
-            for file_path in user_templates_dir.glob("*.j2"):
+        if self.user_templates_dir.exists():
+            for file_path in self.user_templates_dir.glob("*.j2"):
                 match = re.match(r"(.+)_(\d+\.\d+)\.j2$", file_path.name)
                 if match:
                     template_names.add(match.group(1))
@@ -198,11 +197,10 @@ class PromptManager:
         versions = set()
 
         # Check user templates directory first
-        user_templates_dir = Path.home() / ".datus" / "template"
         pattern = f"{template_name}_*.j2"
 
-        if user_templates_dir.exists():
-            for file_path in user_templates_dir.glob(pattern):
+        if self.user_templates_dir.exists():
+            for file_path in self.user_templates_dir.glob(pattern):
                 match = re.search(r"_(\d+\.\d+)\.j2$", file_path.name)
                 if match:
                     versions.add(match.group(1))
@@ -213,7 +211,7 @@ class PromptManager:
             if match:
                 version = match.group(1)
                 # Only add if not already found in user directory
-                user_file = user_templates_dir / f"{template_name}_{version}.j2"
+                user_file = self.user_templates_dir / f"{template_name}_{version}.j2"
                 if not user_file.exists():
                     versions.add(version)
 

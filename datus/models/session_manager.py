@@ -72,7 +72,12 @@ class SessionManager:
         Args:
             session_dir: Directory to store session databases. If None, uses default location.
         """
-        self.session_dir = session_dir or os.path.expanduser("~/.datus/sessions")
+        if session_dir:
+            self.session_dir = session_dir
+        else:
+            from datus.utils.path_manager import get_path_manager
+
+            self.session_dir = str(get_path_manager().sessions_dir)
         os.makedirs(self.session_dir, exist_ok=True)
         self._sessions: Dict[str, ExtendedSQLiteSession] = {}
 

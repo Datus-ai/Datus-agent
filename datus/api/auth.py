@@ -34,6 +34,10 @@ def load_auth_config(config_path: Optional[str] = None) -> Dict:
         config_path: Path to the config file (searches in order:
             config_path > conf/auth_clients.yml > ~/.datus/conf/auth_clients.yml)
     """
+    from datus.utils.path_manager import get_path_manager
+
+    path_manager = get_path_manager()
+
     yaml_path = None
     if config_path:
         yaml_path = Path(config_path).expanduser()
@@ -42,7 +46,7 @@ def load_auth_config(config_path: Optional[str] = None) -> Dict:
         yaml_path = Path("conf/auth_clients.yml")
 
     if not yaml_path:
-        home_config = Path.home() / ".datus" / "conf" / "auth_clients.yml"
+        home_config = path_manager.auth_config_path()
         if home_config.exists():
             yaml_path = home_config
 
