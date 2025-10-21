@@ -25,7 +25,7 @@ def test_config_exception():
     ):
         load_agent_config(config="tests/conf/wrong_nodes_agent.yml", reload=True)
 
-    agent_config = load_agent_config(reload=True)
+    agent_config = load_agent_config(config="tests/conf/agent.yml", reload=True)
 
     with pytest.raises(DatusException, match="Unsupported value `abc` for field `benchmark`"):
         agent_config.override_by_args(namespace="snowflake", benchmark="abc")
