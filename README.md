@@ -57,11 +57,15 @@ Datus learns from success stories and user corrections to evolve reasoning accur
 
 ## 🧰 Installation
 
+**Requirements:** Python >= 3.12
+
 ```bash
 pip install datus-agent==0.2.1
 
 datus-agent init
 ```
+
+For detailed installation instructions, see the [Quickstart Guide](https://docs.datus.ai/getting_started/Quickstart/).
 
 ## 🧭 User Journey
 
@@ -69,9 +73,11 @@ datus-agent init
 
 A Data Engineer (DE) starts by chatting with the database using /chat.
 They run simple questions, test joins, and refine prompts using @table or @file.
-Each round of feedback (e.g., “Join table1 and table2 by PK”) helps the model improve accuracy.
+Each round of feedback (e.g., "Join table1 and table2 by PK") helps the model improve accuracy.
 `datus-cli --namespace demo`
 `/Check the top 10 bank by assets lost @Table duckdb-demo.main.bank_failures`
+
+Learn more: [CLI Introduction](https://docs.datus.ai/cli/introduction/)
 
 ### 2️⃣ Building Context
 
@@ -82,6 +88,8 @@ The DE imports SQL history and generates summaries or semantic models:
 They edit or refine models in @subject, combining AI-generated drafts with human corrections.
 Now, /chat can reason using both SQL history and semantic context.
 
+Learn more: [Knowledge Base Introduction](https://docs.datus.ai/knowledge_base/introduction/)
+
 ### 3️⃣ Creating a Subagent
 
 When the context matures, the DE defines a domain-specific chatbot (Subagent):
@@ -91,6 +99,8 @@ When the context matures, the DE defines a domain-specific chatbot (Subagent):
 They describe its purpose, add rules, choose tools, and limit scope (e.g., 5 tables).
 Each subagent becomes a reusable, scoped assistant for a specific business area.
 
+Learn more: [Subagent Introduction](https://docs.datus.ai/subagent/introduction/)
+
 ### 4️⃣ Delivering to Analysts
 
 The Subagent is deployed to a web interface:
@@ -98,6 +108,8 @@ The Subagent is deployed to a web interface:
 
 Analysts chat directly, upvote correct answers, or report issues for feedback.
 Results can be saved via !export.
+
+Learn more: [Web Chatbot Introduction](https://docs.datus.ai/web_chatbot/introduction/)
 
 ### 5️⃣ Refinement & Iteration
 
