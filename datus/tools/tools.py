@@ -262,28 +262,10 @@ class DBFuncTool:
                 idx -= 1
         return coordinate
 
-    def _coordinate_from_row(self, row: Dict[str, Any]) -> TableCoordinate:
-        raw_name = row.get("table_name") or row.get("identifier") or ""
-        return self._build_table_coordinate(
-            raw_name=raw_name,
-            catalog=row.get("catalog_name", ""),
-            database=row.get("database_name", ""),
-            schema=row.get("schema_name", ""),
-        )
-
     def _table_matches_scope(self, coordinate: TableCoordinate) -> bool:
         if not self._scoped_patterns:
             return True
         return any(pattern.matches(coordinate) for pattern in self._scoped_patterns)
-
-    def _filter_metadata_rows(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        if not self._scoped_patterns:
-            return rows
-        filtered: List[Dict[str, Any]] = []
-        for row in rows:
-            if self._table_matches_scope(self._coordinate_from_row(row)):
-                filtered.append(row)
-        return filtered
 
     def _filter_table_entries(
         self,
@@ -441,9 +423,6 @@ class DBFuncTool:
                         "_distance",
                     ]
                 ).to_pylist()
-            metadata_rows = self._filter_metadata_rows(metadata_rows)
-            # Enforce post-filter limit
-            metadata_rows = metadata_rows[:top_n]
             if not metadata_rows:
                 return FuncToolResult(success=1, result=[], error="No metadata rows found.")
 
@@ -484,7 +463,6 @@ class DBFuncTool:
                         "_distance",
                     ]
                 sample_rows = sample_values.select(selected_fields).to_pylist()
-            sample_rows = self._filter_metadata_rows(sample_rows)
             result_dict["sample_data"] = sample_rows
             return FuncToolResult(result=result_dict)
         except Exception as e:
