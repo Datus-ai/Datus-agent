@@ -129,9 +129,16 @@ class SemanticAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
         try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            # Use semantic_model_dir with namespace subdirectory
+            from datus.utils.path_manager import get_path_manager
+
+            path_manager = get_path_manager()
+            namespace = getattr(self.agent_config, "current_namespace", "default") if self.agent_config else "default"
+            semantic_model_dir = str(path_manager.semantic_model_path(namespace))
+
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=semantic_model_dir)
             self.tools.extend(self.filesystem_func_tool.available_tools())
+            logger.info(f"Setup filesystem tools with semantic_model_dir: {semantic_model_dir}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
@@ -219,8 +226,15 @@ class SemanticAgenticNode(AgenticNode):
                 tool_instance = self.generation_tools
             elif tool_type == "filesystem_tools":
                 if not hasattr(self, "filesystem_func_tool") or not self.filesystem_func_tool:
-                    root_path = self._resolve_workspace_root()
-                    self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+                    # Use semantic_model_dir with namespace subdirectory
+                    from datus.utils.path_manager import get_path_manager
+
+                    path_manager = get_path_manager()
+                    namespace = (
+                        getattr(self.agent_config, "current_namespace", "default") if self.agent_config else "default"
+                    )
+                    semantic_model_dir = str(path_manager.semantic_model_path(namespace))
+                    self.filesystem_func_tool = FilesystemFuncTool(root_path=semantic_model_dir)
                 tool_instance = self.filesystem_func_tool
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
@@ -354,10 +368,14 @@ class SemanticAgenticNode(AgenticNode):
         # Add agent description from configuration or input
         context["agent_description"] = user_input.agent_description or self.node_config.get("agent_description", "")
 
-        # Add namespace and workspace info
+        # Add namespace and semantic_model_dir
         if self.agent_config:
-            context["namespace"] = getattr(self.agent_config, "current_namespace", None)
-            context["workspace_root"] = self._resolve_workspace_root()
+            from datus.utils.path_manager import get_path_manager
+
+            path_manager = get_path_manager()
+            namespace = getattr(self.agent_config, "current_namespace", "default")
+            context["namespace"] = namespace
+            context["semantic_model_dir"] = str(path_manager.semantic_model_path(namespace))
 
         logger.debug(f"Prepared template context: {context}")
         return context
@@ -386,8 +404,12 @@ class SemanticAgenticNode(AgenticNode):
         if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
             version = self.agent_config.prompt_version
 
-        # Use shared workspace_root resolution logic
-        root_path = self._resolve_workspace_root()
+        # Get semantic_model_dir with namespace subdirectory
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+        namespace = getattr(self.agent_config, "current_namespace", "default") if self.agent_config else "default"
+        semantic_model_dir = str(path_manager.semantic_model_path(namespace))
 
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt")
@@ -400,8 +422,7 @@ class SemanticAgenticNode(AgenticNode):
             # Prepare template variables
             template_vars = {
                 "agent_config": self.agent_config,
-                "namespace": getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
-                "workspace_root": root_path,
+                "semantic_model_dir": semantic_model_dir,
                 "conversation_summary": conversation_summary,
             }
 

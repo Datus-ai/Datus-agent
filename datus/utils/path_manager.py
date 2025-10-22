@@ -115,6 +115,16 @@ class DatusPathManager:
         """Trajectory directory: ~/.datus/trajectory"""
         return self._datus_home / "trajectory"
 
+    @property
+    def semantic_models_dir(self) -> Path:
+        """Semantic models directory: ~/.datus/semantic_models"""
+        return self._datus_home / "semantic_models"
+
+    @property
+    def sql_summaries_dir(self) -> Path:
+        """SQL summaries directory: ~/.datus/sql_summaries"""
+        return self._datus_home / "sql_summaries"
+
     # Configuration file paths
 
     def agent_config_path(self) -> Path:
@@ -187,6 +197,30 @@ class DatusPathManager:
         """
         return self.sessions_dir / f"{session_id}.db"
 
+    def semantic_model_path(self, namespace: str) -> Path:
+        """
+        Semantic model path for a namespace.
+
+        Args:
+            namespace: Namespace name
+
+        Returns:
+            Path: ~/.datus/semantic_models/{namespace}
+        """
+        return self.semantic_models_dir / namespace
+
+    def sql_summary_path(self, namespace: str) -> Path:
+        """
+        SQL summary path for a namespace.
+
+        Args:
+            namespace: Namespace name
+
+        Returns:
+            Path: ~/.datus/sql_summaries/{namespace}
+        """
+        return self.sql_summaries_dir / namespace
+
     # Utility methods
 
     def resolve_config_path(self, filename: str, local_path: Optional[str] = None) -> Path:
@@ -241,6 +275,8 @@ class DatusPathManager:
                 self.output_dir,
                 self.metricflow_dir,
                 self.workspace_dir,
+                self.semantic_models_dir,
+                self.sql_summaries_dir,
             ]
             for directory in standard_dirs:
                 directory.mkdir(parents=True, exist_ok=True)

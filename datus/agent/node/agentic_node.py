@@ -103,6 +103,10 @@ class AgenticNode(ABC):
 
         The template name follows the pattern: {get_node_name()}_system_{version}
 
+        NOTE: workspace_root in template variables is DEPRECATED.
+        Specialized nodes should use built-in directories (semantic_model_dir, sql_summary_dir)
+        instead of workspace_root.
+
         Args:
             conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use, overrides agent config version
@@ -133,7 +137,7 @@ class AgenticNode(ABC):
                 # Add common template variables
                 agent_config=self.agent_config,
                 namespace=getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
-                workspace_root=root_path,
+                workspace_root=root_path,  # DEPRECATED: Use semantic_model_dir or sql_summary_dir instead
                 # Add conversation summary if available
                 conversation_summary=conversation_summary,
             )
@@ -494,6 +498,12 @@ class AgenticNode(ABC):
         """
         Resolve workspace_root with priority: node-specific > global storage > legacy > default.
         Expands ~ to user home directory if present.
+
+        DEPRECATED: This method is maintained for backward compatibility with other nodes.
+        New specialized nodes (SemanticAgenticNode, SqlSummaryAgenticNode) should use
+        built-in directories from path_manager:
+        - semantic_model_path(namespace) for semantic models
+        - sql_summary_path(namespace) for SQL summaries
 
         Returns:
             Resolved workspace_root path with ~ expanded
