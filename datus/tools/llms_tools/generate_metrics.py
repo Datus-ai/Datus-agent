@@ -17,7 +17,6 @@ from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, Gen
 from datus.storage.metric.llm_text_generator import generate_metric_llm_text
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
-from datus.utils.env import get_metricflow_env
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -31,9 +30,15 @@ async def generate_metrics_with_mcp_stream(
     tool_config: Dict[str, Any],
     db_config: DbConfig,
     tools: List[Tool],
+    namespace: str,
+    base_path: str,
     action_history_manager: Optional[ActionHistoryManager] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
-    """Generate metrics with streaming support and action history tracking."""
+    """Generate metrics with streaming support and action history tracking.
+
+    Args:
+        base_path: Base path for storage (from agent_config.rag_base_path)
+    """
     if not isinstance(input_data, GenerateMetricsInput):
         raise ValueError("Input must be a GenerateMetricsInput instance")
 
@@ -45,10 +50,12 @@ async def generate_metrics_with_mcp_stream(
     )
 
     # Setup MCP servers
+    import os
+    semantic_models_path = os.path.join(base_path, "semantic_models")
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
-        database_name=input_data.sql_task.database_name, db_config=db_config
+        namespace=namespace
     )
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=get_metricflow_env("MF_MODEL_PATH"))
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=semantic_models_path)
     mcp_servers = {
         "metricflow_mcp_server": metricflow_mcp_server,
         "filesystem_mcp_server": filesystem_mcp_server,
@@ -76,16 +83,23 @@ def generate_metrics_with_mcp(
     db_config: DbConfig,
     tools: List[Tool],
     tool_config: Dict[str, Any],
+    namespace: str,
+    base_path: str,
 ) -> GenerateMetricsResult:
-    """Generate metrics for the given SQL query."""
+    """Generate metrics for the given SQL query.
+
+    Args:
+        base_path: Base path for storage (from agent_config.rag_base_path)
+    """
     if not isinstance(input_data, GenerateMetricsInput):
         raise ValueError("Input must be a GenerateMetricsInput instance")
 
+    import os
+    semantic_models_path = os.path.join(base_path, "semantic_models")
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
-        database_name=input_data.sql_task.database_name,
-        db_config=db_config,
+        namespace=namespace
     )
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=get_metricflow_env("MF_MODEL_PATH"))
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=semantic_models_path)
 
     instruction = prompt_manager.get_raw_template("generate_metrics_system", input_data.prompt_version)
     max_turns = tool_config.get("max_turns", 30)

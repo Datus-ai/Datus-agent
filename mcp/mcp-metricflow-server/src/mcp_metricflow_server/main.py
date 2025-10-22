@@ -1,13 +1,14 @@
 """Main entry point for MCP MetricFlow Server."""
 
+import argparse
 import logging
+import os
 from typing import Any
 
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 
-from .config import MetricFlowConfig
 from .tools import register_metricflow_tools
 
 # Configure logging
@@ -19,16 +20,20 @@ SERVER_VERSION = "0.1.0"
 
 async def main() -> None:
     """Main server entry point."""
-    # Load configuration from environment
-    config = MetricFlowConfig.from_env()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="MCP MetricFlow Server")
+    parser.add_argument("--namespace", help="Datus namespace to use for configuration")
+    args = parser.parse_args()
 
-    logger.info(f"Starting MCP MetricFlow Server with config: {config.model_dump()}")
+    namespace = args.namespace
+
+    logger.info(f"Starting MCP MetricFlow Server with namespace: {namespace}")
 
     # Create MCP server
     server = Server("mcp-metricflow-server")
 
     # Register MetricFlow tools
-    register_metricflow_tools(server, config)
+    register_metricflow_tools(server, namespace)
 
     # Add server info
     @server.list_resources()

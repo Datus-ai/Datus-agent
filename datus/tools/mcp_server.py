@@ -8,9 +8,6 @@ from pathlib import Path
 
 from agents.mcp import MCPServerStdio, MCPServerStdioParams, create_static_tool_filter
 
-from datus.configuration.agent_config import DbConfig
-from datus.utils.constants import DBType
-from datus.utils.env import load_metricflow_env_settings
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -114,25 +111,7 @@ class MCPServer:
     _lock = threading.Lock()
 
     @classmethod
-    def _extract_db_path_from_uri(cls, uri: str, db_type: str) -> str:
-        """Extract database path from URI and convert to absolute path."""
-        # Remove protocol prefix if present
-        if uri.startswith(f"{db_type.lower()}:///"):
-            db_path = uri.replace(f"{db_type.lower()}:///", "")
-        else:
-            db_path = uri
-
-        # Expand user home directory (handle ~ paths)
-        db_path = str(Path(db_path).expanduser())
-
-        # Convert relative path to absolute path, if not already absolute
-        if not os.path.isabs(db_path):
-            db_path = os.path.abspath(db_path)
-
-        return db_path
-
-    @classmethod
-    def get_metricflow_mcp_server(cls, database_name: str, db_config: DbConfig):
+    def get_metricflow_mcp_server(cls, namespace: str):
         if cls._metricflow_mcp_server is None:
             with cls._lock:
                 if cls._metricflow_mcp_server is None:
@@ -145,39 +124,8 @@ class MCPServer:
                             return None
                     logger.info(f"Using MetricFlow MCP server with directory: {directory}")
 
-                    # Try to load env_settings from ~/.datus/metricflow/env_settings.yml first
-                    env_settings = load_metricflow_env_settings()
-
-                    # Fallback to existing logic if config file doesn't exist or failed to load
-                    if not env_settings:
-                        env_settings = {
-                            "MF_MODEL_PATH": os.getenv("MF_MODEL_PATH", "/tmp"),
-                            "MF_PATH": os.getenv("MF_PATH", ""),
-                        }
-                        if db_config.type in (DBType.DUCKDB, DBType.SQLITE):
-                            env_settings["MF_DWH_SCHEMA"] = db_config.schema or "default_schema"
-                            env_settings["MF_DWH_DIALECT"] = db_config.type
-                            # Handle sqlite:// URI format properly
-                            if db_config.uri.startswith(f"{db_config.type}://"):
-                                # Handle both sqlite:///path (3 slashes) and sqlite:////path (4 slashes)
-                                uri_prefix = f"{db_config.type}://"
-                                file_path = db_config.uri[len(uri_prefix) :]
-                                # For 4-slash format (sqlite:////path), remove one leading slash
-                                if file_path.startswith("//"):
-                                    file_path = file_path[1:]
-                                # file_path should now be /absolute/path for both 3 and 4 slash formats
-                                env_settings["MF_DWH_DB"] = str(Path(file_path).expanduser())
-                            else:
-                                env_settings["MF_DWH_DB"] = str(Path(db_config.uri).expanduser())
-                        elif db_config.type == DBType.STARROCKS:
-                            env_settings["MF_DWH_SCHEMA"] = db_config.schema
-                            env_settings["MF_DWH_DIALECT"] = DBType.MYSQL.value
-                            env_settings["MF_DWH_HOST"] = db_config.host
-                            env_settings["MF_DWH_PORT"] = db_config.port
-                            env_settings["MF_DWH_USER"] = db_config.username
-                            env_settings["MF_DWH_PASSWORD"] = db_config.password
-                            env_settings["MF_DWH_DB"] = database_name
-
+                    # MetricFlow can now read Datus config directly via DatusConfigHandler
+                    # Pass the namespace via --namespace command line argument
                     mcp_server_params = MCPServerStdioParams(
                         command="uv",
                         args=[
@@ -185,8 +133,10 @@ class MCPServer:
                             directory,
                             "run",
                             "mcp-metricflow-server",
+                            "--namespace",
+                            namespace,
                         ],
-                        env=env_settings,
+                        env=os.environ.copy(),
                     )
                     cls._metricflow_mcp_server = SilentMCPServerStdio(
                         params=mcp_server_params, client_session_timeout_seconds=20

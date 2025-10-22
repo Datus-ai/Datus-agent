@@ -14,7 +14,6 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_server import MCPServer
-from datus.utils.env import get_metricflow_env
 from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
@@ -29,9 +28,15 @@ async def generate_semantic_model_with_mcp_stream(
     input_data: GenerateSemanticModelInput,
     db_config: DbConfig,
     tool_config: Dict[str, Any],
+    namespace: str,
+    base_path: str,
     action_history_manager: Optional[ActionHistoryManager] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
-    """Generate semantic model with streaming support and action history tracking."""
+    """Generate semantic model with streaming support and action history tracking.
+
+    Args:
+        base_path: Base path for storage (from agent_config.rag_base_path)
+    """
     if not isinstance(input_data, GenerateSemanticModelInput):
         raise ValueError("Input must be a GenerateSemanticModelInput instance")
 
@@ -42,9 +47,11 @@ async def generate_semantic_model_with_mcp_stream(
     )
 
     # Setup MCP servers
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=get_metricflow_env("MF_MODEL_PATH"))
+    import os
+    semantic_models_path = os.path.join(base_path, "semantic_models")
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=semantic_models_path)
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
-        database_name=input_data.sql_task.database_name, db_config=db_config
+        namespace=namespace
     )
     mcp_servers = {
         "filesystem_mcp_server": filesystem_mcp_server,
@@ -72,14 +79,22 @@ def generate_semantic_model_with_mcp(
     input_data: GenerateSemanticModelInput,
     db_config: DbConfig,
     tool_config: Dict[str, Any],
+    namespace: str,
+    base_path: str,
 ) -> GenerateSemanticModelResult:
-    """Generate semantic model for the given SQL query."""
+    """Generate semantic model for the given SQL query.
+
+    Args:
+        base_path: Base path for storage (from agent_config.rag_base_path)
+    """
     if not isinstance(input_data, GenerateSemanticModelInput):
         raise ValueError("Input must be a GenerateSemanticModelInput instance")
 
-    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=get_metricflow_env("MF_MODEL_PATH"))
+    import os
+    semantic_models_path = os.path.join(base_path, "semantic_models")
+    filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=semantic_models_path)
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
-        database_name=input_data.sql_task.database_name, db_config=db_config
+        namespace=namespace
     )
 
     instruction = prompt_manager.get_raw_template("generate_semantic_model_system", input_data.prompt_version)

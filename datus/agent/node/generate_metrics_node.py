@@ -176,7 +176,7 @@ class GenerateMetricsNode(Node):
 
                         filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=os.getenv("MF_MODEL_PATH"))
                         metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
-                            database_name=database_name, db_config=self.agent_config.current_db_config(database_name)
+                            namespace=self.agent_config.current_namespace
                         )
 
                         # Use await instead of asyncio.run since we're already in async context
@@ -300,6 +300,8 @@ class GenerateMetricsNode(Node):
                 self.input,
                 self.agent_config.current_db_config(self.input.sql_task.database_name),
                 self.tools,
+                namespace=self.agent_config.current_namespace,
+                base_path=self.agent_config.rag_base_path,
             )
         except Exception as e:
             logger.error(f"Metrics generation execution error: {str(e)}")
@@ -384,6 +386,8 @@ class GenerateMetricsNode(Node):
                 tools=self.tools,
                 db_config=self.agent_config.current_db_config(self.input.sql_task.database_name),
                 tool_config={},
+                namespace=self.agent_config.current_namespace,
+                base_path=self.agent_config.rag_base_path,
                 action_history_manager=action_history_manager,
             ):
                 yield action

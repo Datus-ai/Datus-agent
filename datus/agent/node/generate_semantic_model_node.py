@@ -153,6 +153,8 @@ class GenerateSemanticModelNode(Node):
                     tables_with_ddl[0]["definition"],
                     self.input,
                     self.agent_config.current_db_config(database_name),
+                    namespace=self.agent_config.current_namespace,
+                    base_path=self.agent_config.rag_base_path,
                 )
 
         except Exception as e:
@@ -234,6 +236,8 @@ class GenerateSemanticModelNode(Node):
                     input_data=self.input,
                     db_config=self.agent_config.current_db_config(database_name),
                     tool_config={},
+                    namespace=self.agent_config.current_namespace,
+                    base_path=self.agent_config.rag_base_path,
                     action_history_manager=action_history_manager,
                 ):
                     yield action

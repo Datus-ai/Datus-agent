@@ -1,19 +1,23 @@
 """MCP Tools for MetricFlow Server."""
 
-from typing import List
+from typing import List, Optional
 
 from mcp.server import Server
 
 from mcp import types
 
-from .config import MetricFlowConfig
 from .prompts import get_prompt
 from .server import MetricFlowServer
 
 
-def register_metricflow_tools(server: Server, config: MetricFlowConfig) -> None:
-    """Register MetricFlow tools with the MCP server."""
-    metricflow_server = MetricFlowServer(config)
+def register_metricflow_tools(server: Server, namespace: Optional[str] = None) -> None:
+    """Register MetricFlow tools with the MCP server.
+
+    Args:
+        server: MCP server instance
+        namespace: Datus namespace for configuration
+    """
+    metricflow_server = MetricFlowServer(namespace)
 
     @server.list_tools()
     async def handle_list_tools() -> List[types.Tool]:

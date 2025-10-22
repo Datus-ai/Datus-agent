@@ -1,18 +1,21 @@
 """MetricFlow Server - Main logic for executing MetricFlow CLI commands."""
 
+import os
 import subprocess
 from typing import List, Optional
 
-from .config import MetricFlowConfig
 from .types import MetricFlowCommandResult
-
 
 class MetricFlowServer:
     """Server for executing MetricFlow CLI commands."""
 
-    def __init__(self, config: MetricFlowConfig):
-        """Initialize the MetricFlow server with configuration."""
-        self.config = config
+    def __init__(self, namespace: Optional[str] = None):
+        """Initialize the MetricFlow server with configuration.
+
+        Args:
+            namespace: Datus namespace for configuration
+        """
+        self.namespace = namespace
 
     def _run_mf_command(self, command: List[str]) -> MetricFlowCommandResult:
         """
@@ -25,14 +28,12 @@ class MetricFlowServer:
             MetricFlowCommandResult with command output and status
         """
         # Build full command with global options first
-        full_command = [self.config.mf_path]
+        # Use 'mf' command directly (available after pip install datus-metricflow)
+        full_command = ["mf"]
 
-        # Add verbose flag if enabled (as global option)
-        if self.config.verbose:
-            full_command.append("-v")
-
-        # Note: MetricFlow CLI doesn't support --environment parameter
-        # Environment variables should be set directly if needed
+        # Add namespace if configured (as global option)
+        if self.namespace:
+            full_command.extend(["--namespace", self.namespace])
 
         # Add the command
         full_command.extend(command)
@@ -41,10 +42,10 @@ class MetricFlowServer:
             # Execute the command
             process = subprocess.Popen(
                 args=full_command,
-                cwd=self.config.project_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                env=os.environ.copy(),
             )
             output, _ = process.communicate()
 

@@ -80,21 +80,26 @@ class LLMTool(BaseTool):
         input_data: GenerateMetricsInput,
         db_config: DbConfig,
         tools: List[Tool],
+        namespace: str,
+        base_path: str,
         tool_config=None,
     ) -> GenerateMetricsResult:
         if tool_config is None:
             tool_config = {}
         return generate_metrics_with_mcp(
-            self.model, input_data, tools=tools, db_config=db_config, tool_config=tool_config
+            self.model, input_data, tools=tools, db_config=db_config, tool_config=tool_config,
+            namespace=namespace, base_path=base_path
         )
 
     def generate_semantic_model(
-        self, table_definition: str, input_data: GenerateSemanticModelInput, db_config: DbConfig, tool_config=None
+        self, table_definition: str, input_data: GenerateSemanticModelInput, db_config: DbConfig,
+        namespace: str, base_path: str, tool_config=None
     ) -> GenerateSemanticModelResult:
         if tool_config is None:
             tool_config = {}
         return generate_semantic_model_with_mcp(
-            self.model, table_definition, input_data, db_config=db_config, tool_config=tool_config
+            self.model, table_definition, input_data, db_config=db_config, tool_config=tool_config,
+            namespace=namespace, base_path=base_path
         )
 
     def compare_sql(self, input_data: CompareInput) -> CompareResult:
