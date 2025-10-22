@@ -51,10 +51,9 @@ async def generate_metrics_with_mcp_stream(
 
     # Setup MCP servers
     import os
+
     semantic_models_path = os.path.join(base_path, "semantic_models")
-    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
-        namespace=namespace
-    )
+    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(namespace=namespace)
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=semantic_models_path)
     mcp_servers = {
         "metricflow_mcp_server": metricflow_mcp_server,
@@ -95,10 +94,9 @@ def generate_metrics_with_mcp(
         raise ValueError("Input must be a GenerateMetricsInput instance")
 
     import os
+
     semantic_models_path = os.path.join(base_path, "semantic_models")
-    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
-        namespace=namespace
-    )
+    metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(namespace=namespace)
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=semantic_models_path)
 
     instruction = prompt_manager.get_raw_template("generate_metrics_system", input_data.prompt_version)

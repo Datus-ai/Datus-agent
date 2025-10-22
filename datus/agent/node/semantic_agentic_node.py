@@ -254,9 +254,7 @@ class SemanticAgenticNode(AgenticNode):
                 logger.warning("Database config not found")
                 return None
 
-            metricflow_server = MCPServer.get_metricflow_mcp_server(
-                namespace=self.agent_config.current_namespace
-            )
+            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_namespace)
             if metricflow_server:
                 logger.info(f"Added metricflow MCP server for database: {db_config.database}")
                 return metricflow_server
