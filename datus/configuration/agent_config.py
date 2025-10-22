@@ -135,7 +135,7 @@ class AgentConfig:
     schema_linking_rate: str
     search_metrics_rate: str
     _reflection_nodes: Dict[str, List[str]]
-    _output_dir: str
+    _save_dir: str
     _current_namespace: str
     _current_database: str
     _trajectory_dir: str
@@ -157,16 +157,16 @@ class AgentConfig:
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
         # use default embedding model if not provided
 
-        self._output_dir = kwargs.get("output_dir", "output")
+        # Save directory is now fixed at {agent.home}/save
         # Trajectory directory is now fixed at {agent.home}/trajectory
         from datus.utils.path_manager import get_path_manager
 
+        self._save_dir = str(get_path_manager().save_dir)
         self._trajectory_dir = str(get_path_manager().trajectory_dir)
 
         self._init_storage_config(kwargs.get("storage", {}))
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
         self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
-        self._output_dir = kwargs.get("output_dir", "output")
         self.db_type = ""
 
         self.benchmark_paths = {
@@ -314,7 +314,7 @@ class AgentConfig:
 
     @property
     def output_dir(self) -> str:
-        return f"{self._output_dir}/{self._current_namespace}"
+        return f"{self._save_dir}/{self._current_namespace}"
 
     @property
     def trajectory_dir(self) -> str:
@@ -386,8 +386,13 @@ class AgentConfig:
             if benchmark_path:
                 self.benchmark_paths[benchmark_platform] = benchmark_path
 
+        # output_dir parameter has been deprecated - save path is now fixed at {agent.home}/save
         if kwargs.get("output_dir", ""):
-            self._output_dir = kwargs["output_dir"]
+            logger.warning(
+                "The --output_dir parameter is deprecated and will be ignored. "
+                "Save path is now fixed at {agent.home}/save. "
+                "Configure agent.home in agent.yml to change the root directory."
+            )
 
         # trajectory_dir parameter has been deprecated - trajectory path is now fixed at {agent.home}/trajectory
         if kwargs.get("trajectory_dir", ""):

@@ -211,7 +211,6 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # trajectory_dir parameter has been deprecated - trajectory path is now fixed at {agent.home}/trajectory
-    # Keeping parameter for backward compatibility but it will be ignored
     generate_dataset_parser.add_argument(
         "--dataset_name", type=str, required=True, help="Name for the output dataset file"
     )
@@ -271,7 +270,13 @@ def create_parser() -> argparse.ArgumentParser:
     # Node configuration group (available for run and benchmark)
     for p in [run_parser, benchmark_parser]:
         node_group = p.add_argument_group("Node Configuration")
-        node_group.add_argument("--output_dir", type=str, default="output", help="Directory for output files")
+        # output_dir parameter deprecated - save path is now fixed at {agent.home}/save
+        node_group.add_argument(
+            "--output_dir",
+            type=str,
+            default="save",
+            help="(Deprecated) Directory for output files - now fixed at {agent.home}/save",
+        )
         # trajectory_dir parameter deprecated - trajectory path is now fixed at {agent.home}/trajectory
         node_group.add_argument(
             "--schema_linking_rate",
@@ -313,8 +318,6 @@ def main():
 
     configure_logging(args.debug)
     setup_exception_handler()
-    os.makedirs(getattr(args, "output_dir", "output"), exist_ok=True)
-    os.makedirs("save", exist_ok=True)
 
     # Handle init command separately as it doesn't require existing configuration
     if args.action == "init":

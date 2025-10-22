@@ -96,9 +96,9 @@ class DatusPathManager:
         return self._datus_home / "benchmark"
 
     @property
-    def output_dir(self) -> Path:
-        """Output directory: ~/.datus/output"""
-        return self._datus_home / "output"
+    def save_dir(self) -> Path:
+        """Save directory: ~/.datus/save"""
+        return self._datus_home / "save"
 
     @property
     def metricflow_dir(self) -> Path:
@@ -272,7 +272,7 @@ class DatusPathManager:
                 self.sample_dir,
                 self.run_dir,
                 self.benchmark_dir,
-                self.output_dir,
+                self.save_dir,
                 self.metricflow_dir,
                 self.workspace_dir,
                 self.semantic_models_dir,
