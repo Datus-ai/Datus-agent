@@ -5,8 +5,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from datus.configuration.agent_config import AgentConfig
-from datus.tools.context_search import ContextSearchTools
-from datus.tools.tools import FuncToolResult
+from datus.tools.func_tool import ContextSearchTools
+from datus.tools.func_tool.base import FuncToolResult
 
 METRIC_ENTRIES = [
     {"domain": "Sales", "layer1": "Revenue", "layer2": "Monthly", "name": "monthly_sales"},

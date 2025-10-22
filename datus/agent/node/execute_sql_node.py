@@ -10,7 +10,6 @@ from datus.agent.node import Node
 from datus.agent.workflow import Workflow
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
-from datus.tools.db_tools import DBTool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -85,15 +84,15 @@ class ExecuteSQLNode(Node):
     def _execute_sql(self) -> ExecuteSQLResult:
         """Execute SQL query action to run the generated query."""
         try:
-            tool = DBTool(self._sql_connector())
-            if not tool:
+            db_connector = self._sql_connector()
+            if not db_connector:
                 logger.error("Database connection not initialized in workflow")
                 return ExecuteSQLResult(
                     success=False,
                     error="Database connection not initialized in workflow",
                 )
             logger.debug(f"SQL execution input: {self.input}")
-            result = tool.execute(self.input)
+            result = db_connector.execute(self.input)
             logger.debug(f"SQL execution result: {result}")
             return result
         except ValidationError as e:
@@ -135,9 +134,8 @@ class ExecuteSQLNode(Node):
             # Initialize database connection
             try:
                 sql_connector = self._sql_connector()
-                tool = DBTool(sql_connector)
 
-                if not tool:
+                if not sql_connector:
                     connection_action.status = ActionStatus.FAILED
                     connection_action.output = {"error": "Database connection not initialized"}
                     logger.error("Database connection not initialized in workflow")

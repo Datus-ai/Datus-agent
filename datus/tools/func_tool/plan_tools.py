@@ -13,7 +13,7 @@ from uuid import uuid4
 from agents import SQLiteSession, Tool
 from pydantic import BaseModel, Field
 
-from datus.tools.tools import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

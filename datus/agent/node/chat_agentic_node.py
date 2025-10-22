@@ -17,11 +17,11 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.schemas.node_models import TableSchema
-from datus.tools.context_search import ContextSearchTools
 from datus.tools.date_parsing_tools import DateParsingTools
 from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.func_tool import ContextSearchTools, DBFuncTool
+from datus.tools.mcp_tools import MCPServer
 from datus.tools.filesystem_tools.filesystem_tool import FilesystemFuncTool
-from datus.tools.tools import DBFuncTool
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 

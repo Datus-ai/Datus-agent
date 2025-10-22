@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from datus.configuration.agent_config import AgentConfig
 from datus.models.gemini_model import GeminiModel
 from datus.models.openai_model import OpenAIModel
-from datus.tools.tools import db_function_tools
+from datus.tools.func_tool import db_function_tools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config

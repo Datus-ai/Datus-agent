@@ -4,25 +4,16 @@
 
 import os
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from agents import Tool
 from pydantic import BaseModel, Field
 from wcmatch import glob
 
+from datus.tools.func_tool import FuncToolResult
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-
-
-class FuncToolResult(BaseModel):
-    success: int = Field(
-        default=1, description="Whether the execution is successful or not, 1 is success, 0 is failure", init=True
-    )
-    error: Optional[str] = Field(
-        default=None, description="Error message: field is not empty when success=0", init=True
-    )
-    result: Optional[Any] = Field(default=None, description="Result of the execution", init=True)
 
 
 class EditOperation(BaseModel):
@@ -69,7 +60,7 @@ class FilesystemFuncTool:
 
     def available_tools(self) -> List[Tool]:
         """Get all available filesystem tools"""
-        from datus.tools.tools import trans_to_function_tool
+        from datus.tools.func_tool import trans_to_function_tool
 
         bound_tools = []
         methods_to_convert = [

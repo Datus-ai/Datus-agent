@@ -5,15 +5,17 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List
 
+from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.storage.sql_history.init_utils import gen_sql_history_id
-from datus.tools.llms_tools import LLMTool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 
-def extract_summaries_batch(llm_tool: LLMTool, items: List[Dict[str, Any]], pool_size: int = 4) -> List[Dict[str, Any]]:
+def extract_summaries_batch(
+    model: LLMBaseModel, items: List[Dict[str, Any]], pool_size: int = 4
+) -> List[Dict[str, Any]]:
     """
     Extract summaries for SQL items using parallel processing.
 
@@ -28,9 +30,7 @@ def extract_summaries_batch(llm_tool: LLMTool, items: List[Dict[str, Any]], pool
     logger.info(f"Extracting summaries for {len(items)} SQL items using {pool_size} threads")
 
     with ThreadPoolExecutor(max_workers=pool_size) as executor:
-        futures = [
-            executor.submit(extract_single_summary, llm_tool, item, index) for index, item in enumerate(items, 1)
-        ]
+        futures = [executor.submit(extract_single_summary, model, item, index) for index, item in enumerate(items, 1)]
 
         items_with_summaries = []
         processed_count = 0
@@ -49,7 +49,7 @@ def extract_summaries_batch(llm_tool: LLMTool, items: List[Dict[str, Any]], pool
     return items_with_summaries
 
 
-def extract_single_summary(llm_tool: LLMTool, item: Dict[str, Any], index: int) -> Dict[str, Any]:
+def extract_single_summary(model: LLMBaseModel, item: Dict[str, Any], index: int) -> Dict[str, Any]:
     """
     Extract summary for a single SQL history item.
 
@@ -72,7 +72,7 @@ def extract_single_summary(llm_tool: LLMTool, item: Dict[str, Any], index: int) 
         )
         logger.debug(f"Prompt of extract_single_summary: {prompt}")
 
-        parsed_data = llm_tool.model.generate_with_json_output(prompt)
+        parsed_data = model.generate_with_json_output(prompt)
         logger.debug(f"Parsed data of extract_single_summary: {parsed_data}")
         item["summary"] = parsed_data.get("summary", item.get("comment", ""))
         item["name"] = parsed_data.get("name", "")
@@ -90,7 +90,7 @@ def extract_single_summary(llm_tool: LLMTool, item: Dict[str, Any], index: int) 
 
 
 def generate_classification_taxonomy(
-    llm_tool: LLMTool, items: List[Dict[str, Any]], existing_taxonomy: Dict[str, Any] = None
+    model: LLMBaseModel, items: List[Dict[str, Any]], existing_taxonomy: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """
     Generate classification taxonomy based on all SQL summaries and comments.
@@ -130,7 +130,7 @@ def generate_classification_taxonomy(
             )
         logger.debug(f"Prompt of generate_classification_taxonomy: {prompt}")
 
-        taxonomy = llm_tool.model.generate_with_json_output(prompt)
+        taxonomy = model.generate_with_json_output(prompt)
         logger.debug(f"Parsed data of generate_classification_taxonomy: {taxonomy}")
 
         # Normalize names to ensure no spaces
@@ -189,7 +189,7 @@ def generate_classification_taxonomy(
 
 
 def classify_items_batch(
-    llm_tool: LLMTool, items: List[Dict[str, Any]], taxonomy: Dict[str, Any], pool_size: int = 4
+    model: LLMBaseModel, items: List[Dict[str, Any]], taxonomy: Dict[str, Any], pool_size: int = 4
 ) -> List[Dict[str, Any]]:
     """
     Classify SQL items based on generated taxonomy using parallel processing.
@@ -207,8 +207,7 @@ def classify_items_batch(
 
     with ThreadPoolExecutor(max_workers=pool_size) as executor:
         futures = [
-            executor.submit(classify_single_item, llm_tool, item, taxonomy, index)
-            for index, item in enumerate(items, 1)
+            executor.submit(classify_single_item, model, item, taxonomy, index) for index, item in enumerate(items, 1)
         ]
 
         classified_items = []
@@ -229,7 +228,7 @@ def classify_items_batch(
 
 
 def classify_single_item(
-    llm_tool: LLMTool, item: Dict[str, Any], taxonomy: Dict[str, Any], index: int
+    model: LLMBaseModel, item: Dict[str, Any], taxonomy: Dict[str, Any], index: int
 ) -> Dict[str, Any]:
     """
     Classify a single SQL item based on taxonomy.
@@ -255,7 +254,7 @@ def classify_single_item(
         )
         logger.debug(f"Prompt of classify_single_item: {prompt}")
 
-        parsed_data = llm_tool.model.generate_with_json_output(prompt)
+        parsed_data = model.generate_with_json_output(prompt)
         logger.debug(f"Parsed data of classify_single_item: {parsed_data}")
 
         item["domain"] = parsed_data.get("domain", "").replace(" ", "_").lower()

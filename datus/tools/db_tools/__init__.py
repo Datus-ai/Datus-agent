@@ -3,7 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from .base import BaseSqlConnector
-from .db_tool import DBTool
 from .snowflake_connector import SnowflakeConnector
 from .sqlalchemy_connector import SQLAlchemyConnector
 from .sqlite_connector import SQLiteConnector
@@ -15,5 +14,4 @@ __all__ = [
     "StarRocksConnector",
     "SQLAlchemyConnector",
     "BaseSqlConnector",
-    "DBTool",
 ]

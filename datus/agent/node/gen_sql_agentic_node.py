@@ -20,11 +20,10 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
-from datus.tools.context_search import ContextSearchTools
-from datus.tools.date_parsing_tools import DateParsingTools
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.mcp_server import MCPServer
-from datus.tools.tools import DBFuncTool
+from datus.tools.func_tool import ContextSearchTools, DBFuncTool
+from datus.tools.func_tool.date_parsing_tools import DateParsingTools
+from datus.tools.mcp_tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -202,7 +201,7 @@ class GenSQLAgenticNode(AgenticNode):
 
             if hasattr(tool_instance, method_name):
                 method = getattr(tool_instance, method_name)
-                from datus.tools.tools import trans_to_function_tool
+                from datus.tools.func_tool import trans_to_function_tool
 
                 self.tools.append(trans_to_function_tool(method))
                 logger.debug(f"Added specific tool method: {tool_type}.{method_name}")

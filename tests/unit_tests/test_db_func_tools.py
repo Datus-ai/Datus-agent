@@ -7,7 +7,8 @@ from unittest.mock import Mock
 import pytest
 
 from datus.tools.db_tools import BaseSqlConnector
-from datus.tools.tools import DBFuncTool, FuncToolResult
+from datus.tools.func_tool import DBFuncTool
+from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
 
 
@@ -833,7 +834,7 @@ class TestDBFuncToolIntegration:
 
     def test_tool_transformation_integration(self, db_func_tool):
         """Test that tools can be transformed properly."""
-        from datus.tools.tools import trans_to_function_tool
+        from datus.tools.func_tool import trans_to_function_tool
 
         # Test that a method can be transformed
         tool = trans_to_function_tool(db_func_tool.list_tables)

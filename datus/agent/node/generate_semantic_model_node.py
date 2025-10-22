@@ -12,8 +12,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.storage.metric.init_utils import gen_semantic_model_id
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.llms_tools import LLMTool
-from datus.tools.llms_tools.generate_semantic_model import generate_semantic_model_with_mcp_stream
+from datus.tools.llms_tools import generate_semantic_model_with_mcp, generate_semantic_model_with_mcp_stream
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_table_name_parts
 
@@ -148,13 +147,14 @@ class GenerateSemanticModelNode(Node):
                 logger.debug(f"Tables with DDL: {tables_with_ddl}")
 
                 # Generate semantic model
-                tool = LLMTool(self.model)
-                return tool.generate_semantic_model(
+                return generate_semantic_model_with_mcp(
+                    self.model,
                     tables_with_ddl[0]["definition"],
                     self.input,
                     self.agent_config.current_db_config(database_name),
                     namespace=self.agent_config.current_namespace,
                     base_path=self.agent_config.rag_base_path,
+                    tool_config={},
                 )
 
         except Exception as e:

@@ -28,3 +28,4 @@ class CompareResult(BaseResult):
 
     explanation: str = Field(..., description="Detailed comparison analysis")
     suggest: str = Field(..., description="Suggestions for the SQL query")
+    tokens_used: int = Field(default=0, description="Total tokens consumed during comparison")

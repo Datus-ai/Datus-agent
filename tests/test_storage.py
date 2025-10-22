@@ -14,6 +14,7 @@ from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.utils.benchmark_utils import load_bird_dev_tasks
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import configure_logging, get_logger
 
@@ -196,3 +197,27 @@ def test_store_exception(rag_storage: SchemaWithValueRAG):
         rag_storage.store_batch(schemas=[{"id": "1", "title": "1"}], values=[])
 
     assert exc_info.value.code == ErrorCode.STORAGE_SAVE_FAILED
+
+
+def test_get_table_and_values():
+    """Test get table and values functionality"""
+    agent_config = load_agent_config(reload=True, namespace="snowflake")
+    rag_storage = SchemaWithValueRAG(agent_config)
+    # Use test data from YAML
+    input_data = {
+        "database_type": DBType.SNOWFLAKE,
+        "database_name": "ETHEREUM_BLOCKCHAIN",
+        "table_names": [
+            "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES",
+            "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRANSACTIONS",
+            "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.BLOCKS",
+        ],
+    }
+    schemas, values = rag_storage.search_tables(
+        tables=input_data["table_names"], database_name=input_data["database_name"]
+    )
+
+    logger.debug(f"Result schemas: {schemas}")
+    assert len(schemas) == 3, "Invalid schema count"
+    assert len(values) == 3, "Invalid value count"
+    # agent_config.current_namespace = "bird_sqlite"

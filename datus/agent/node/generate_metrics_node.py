@@ -13,8 +13,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.llms_tools import LLMTool
-from datus.tools.llms_tools.generate_metrics import generate_metrics_with_mcp_stream
+from datus.tools.llms_tools import generate_metrics_with_mcp, generate_metrics_with_mcp_stream
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names, parse_table_name_parts
@@ -168,7 +167,7 @@ class GenerateMetricsNode(Node):
                         # Use the model's generate_with_mcp directly with proper async handling
                         from datus.prompts.generate_semantic_model import get_generate_semantic_model_prompt
                         from datus.prompts.prompt_manager import prompt_manager
-                        from datus.tools.mcp_server import MCPServer
+                        from datus.tools.mcp_tools.mcp_server import MCPServer
                         from datus.utils.json_utils import extract_json_str
 
                         # Setup for direct MCP call
@@ -308,14 +307,15 @@ class GenerateMetricsNode(Node):
                     logger.info("All required semantic model files exist")
 
             # Generate metrics
-            tool = LLMTool(self.model)
             logger.debug(f"Generate metrics input: {type(self.input)} {self.input}")
-            return tool.generate_metrics(
+            return generate_metrics_with_mcp(
+                self.model,
                 self.input,
                 self.agent_config.current_db_config(self.input.sql_task.database_name),
                 self.tools,
                 namespace=self.agent_config.current_namespace,
                 base_path=self.agent_config.rag_base_path,
+                tool_config={},
             )
         except Exception as e:
             logger.error(f"Metrics generation execution error: {str(e)}")

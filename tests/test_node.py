@@ -10,7 +10,6 @@ from pydantic import BaseModel, ValidationError
 
 from datus.agent.node import Node
 from datus.configuration.agent_config import AgentConfig
-from datus.configuration.agent_config_loader import load_agent_config
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseResult
 from datus.schemas.compare_node_models import CompareInput, CompareResult
@@ -30,8 +29,7 @@ from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.tools.llms_tools.llms import LLMTool
-from datus.tools.tools import db_function_tools
+from datus.tools.func_tool import db_function_tools
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
@@ -166,20 +164,6 @@ def function_tools(agent_config: AgentConfig) -> List[Tool]:
     return db_function_tools(agent_config)
 
 
-@pytest.fixture
-def llm_tools():
-    llm_tool = LLMTool(load_agent_config()["deep_seek_ark"])
-
-    logger.info("Testing LLM tool connectivity")
-    try:
-        response = llm_tool.test("Hello, can you hear me?")
-        logger.info(f"LLM tool test successful {response}")
-        return llm_tool
-    except Exception as e:
-        logger.error(f"LLM tool test failed: {str(e)}")
-        raise pytest.skip(f"LLM tool not available: {str(e)}")
-
-
 def save_to_yaml(content: BaseModel, filename: str):
     """Save a Pydantic model instance to a YAML file"""
     with open(filename, "w") as f:
@@ -277,7 +261,8 @@ class TestNode:
 
     def test_schema_linking_fallback(self, agent_config: AgentConfig):
         """Test schema linking node with fallback"""
-        agent_config.current_namespace = "local_sqlite2"
+        agent_config.current_namespace = "bird_sqlite"
+        agent_config.rag_base_path = "/tmp/test_data"
         node = Node.new_instance(
             node_id="schema_link",
             description="Schema Linking",
@@ -286,7 +271,7 @@ class TestNode:
                 input_text="",
                 database_type=DBType.SQLITE,
                 catalog_name="",
-                database_name="",
+                database_name="california_schools",
                 schema_name="",
             ),
             agent_config=agent_config,
@@ -439,7 +424,7 @@ class TestNode:
 
             # Execute node with valid dependencies
             result = node.run()
-            logger.debug(f"Reasoning node result: {result.to_str()}")
+            logger.info(f"Reasoning node result: {result.to_str()}")
             # Verify execution results
             assert isinstance(result, ReasoningResult), "Result type mismatch"
 
@@ -622,6 +607,8 @@ class TestNode:
         self, generate_semantic_model_input, agent_config, function_tools: List[Tool]
     ):
         """Test generate semantic model node"""
+        pre_namespace = agent_config.current_namespace
+        agent_config.current_namespace = "duckdb"
         try:
             # Create generate semantic model input from test data
             for case in generate_semantic_model_input:
@@ -642,9 +629,13 @@ class TestNode:
         except Exception as e:
             logger.error(f"Generate semantic model node test failed: {str(e)}")
             raise
+        finally:
+            agent_config.current_namespace = pre_namespace
 
     def test_generate_metrics_node(self, generate_metrics_input, agent_config, function_tools: List[Tool]):
         """Test generate metrics node"""
+        pre_namespace = agent_config.current_namespace
+        agent_config.current_namespace = "duckdb"
         try:
             # Create generate metrics input from test data
             for case in generate_metrics_input:
@@ -666,6 +657,8 @@ class TestNode:
         except Exception as e:
             logger.error(f"Generate metrics node test failed: {str(e)}")
             raise
+        finally:
+            agent_config.current_namespace = pre_namespace
 
     def test_search_metrics_node(self, search_metrics_input, agent_config: AgentConfig):
         """Test schema linking node"""

@@ -10,8 +10,7 @@ from datus.agent.workflow import Workflow
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
-from datus.tools.llms_tools import LLMTool
-from datus.tools.llms_tools.reasoning_sql import reasoning_sql_with_mcp_stream
+from datus.tools.llms_tools.reasoning_sql import reasoning_sql_with_mcp, reasoning_sql_with_mcp_stream
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -190,8 +189,9 @@ class ReasonSQLNode(Node):
             ReasoningResult containing the generated SQL query
         """
         try:
-            tool = LLMTool(self.model)
-            result = tool.reasoning_sql(self.input, self.tools)
+            result = reasoning_sql_with_mcp(
+                self.model, self.input, self.tools, tool_config={"max_turns": self.input.max_turns}
+            )
             logger.debug(
                 f"_reason_sql got result from tool: type={type(result)}, success={getattr(result, 'success', 'N/A')}"
             )

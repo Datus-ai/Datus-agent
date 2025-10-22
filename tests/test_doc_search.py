@@ -5,10 +5,13 @@ from typing import Any, Dict
 import pytest
 
 from datus.agent.node import Node
+from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
-from datus.tools.search_tools import SearchTool
+from datus.storage.document.doc_init import import_documents
+from datus.storage.document.store import document_store
 from datus.utils.loggings import get_logger
+from tests.conftest import load_acceptance_config
 
 logger = get_logger(__name__)
 
@@ -20,9 +23,8 @@ def document_input() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def document_search_tool():
-    """Create a SearchTool instance"""
-    return SearchTool()
+def agent_config() -> AgentConfig:
+    return load_acceptance_config(namespace="snowflake")
 
 
 class TestDocumentNode:
@@ -45,26 +47,13 @@ class TestDocumentNode:
         assert isinstance(node, Node)
         assert isinstance(node.input, DocSearchInput)
 
-    def test_document_import(self, document_search_tool):
-        """Test document import functionality"""
-        doc_dir = Path(__file__).parent.parent / "benchmark" / "spider2" / "spider2-snow" / "resource" / "documents"
-
-        if not doc_dir.exists():
-            pytest.skip(f"Documents directory not found: {doc_dir}")
-
-        count, titles = document_search_tool.import_documents(str(doc_dir))
-
-        assert count > 0, "No documents were imported"
-        assert len(titles) > 0, "No document titles were returned"
-        logger.info(f"Imported {count} documents: {', '.join(titles[:5])}...")
-
-    def test_internal_search(self, document_input, document_search_tool):
+    def test_internal_search(self, document_input, agent_config: AgentConfig):
         """Test internal document search functionality"""
         doc_dir = Path(__file__).parent.parent / "benchmark" / "spider2" / "spider2-snow" / "resource" / "documents"
         if not doc_dir.exists():
             pytest.skip(f"Documents directory not found: {doc_dir}")
 
-        document_search_tool.import_documents(str(doc_dir))
+        import_documents(document_store(agent_config.rag_storage_path()), str(doc_dir))
 
         input_data = DocSearchInput(**document_input)
         node = Node.new_instance(
@@ -72,9 +61,11 @@ class TestDocumentNode:
             description="Document Search",
             node_type=NodeType.TYPE_DOC_SEARCH,
             input_data=input_data,
+            agent_config=agent_config,
         )
 
-        result = node.run()
+        node.run()
+        result = node.result
         assert isinstance(result, DocSearchResult)
         assert (
             result.success
@@ -86,7 +77,7 @@ class TestDocumentNode:
             if docs:
                 logger.info(f"First document sample: {docs[0][:200]}...")
 
-    def test_external_search(self):
+    def test_external_search(self, agent_config: AgentConfig):
         """Test external document search using TAVILY_API"""
         if not os.environ.get("TAVILY_API_KEY"):
             pytest.skip("TAVILY_API_KEY environment variable not set")
@@ -98,9 +89,11 @@ class TestDocumentNode:
             description="External Document Search",
             node_type=NodeType.TYPE_DOC_SEARCH,
             input_data=input_data,
+            agent_config=agent_config,
         )
 
-        result = node.run()
+        node.run()
+        result = node.result
         assert isinstance(result, DocSearchResult)
         assert (
             result.success

@@ -138,6 +138,40 @@ def test_get_tables_with_ddl(connector: SnowflakeConnector):
     assert filtered[0]["table_name"] == sample_table
 
 
+def test_execute_multiple_queries_arrow(snowflake_connector: SnowflakeConnector):
+    """Test execution of multiple SQL queries with Arrow format"""
+    queries = [
+        "SELECT 1",
+        "SELECT CURRENT_TIMESTAMP()",
+        "SELECT * from CRYPTO.CRYPTO_BITCOIN_CASH.TRANSACTIONS limit 5",
+    ]
+    results = snowflake_connector.execute_queries_arrow(queries)
+    assert len(results) == 3
+
+    for result in results:
+        assert result.success is True
+        assert result.error is None
+        assert result.result_format == "arrow"
+
+        # Verify each result can be processed as a pandas DataFrame
+
+        df = result.sql_return
+        if isinstance(df, pyarrow.lib.Table):
+            df = df.to_pandas()
+        assert isinstance(df, pd.DataFrame), "Result should be a pandas DataFrame"
+
+    # Verify the third query returns the expected number of rows
+    assert results[2].row_count == 5, "Should return exactly 5 rows for the third query"
+
+    # Test data manipulation with pandas
+    df = results[2].sql_return
+    assert len(df.columns) > 0, "DataFrame should have columns"
+    if isinstance(df, pyarrow.lib.Table):
+        df = df.to_pandas()
+    # Log sample data for debugging
+    print("Sample data from Arrow result:", df.head(2))
+
+
 def test_get_sample_rows(connector: SnowflakeConnector):
     sample_rows = connector.get_sample_rows(catalog_name="", database_name="BBC", table_type="table")
     assert len(sample_rows) > 0

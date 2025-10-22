@@ -6,15 +6,34 @@ from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.node_models import Metric
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
-from datus.tools.metric_tools.search_metrics import SearchMetricsTool
+from datus.storage.metric.store import SemanticMetricsRAG
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 
 class SearchMetricsNode(Node):
+    def __init__(
+        self,
+        node_id: str,
+        description: str,
+        node_type: str,
+        input_data: SearchMetricsInput = None,
+        agent_config: Optional[AgentConfig] = None,
+    ):
+        super().__init__(
+            node_id=node_id,
+            description=description,
+            node_type=node_type,
+            input_data=input_data,
+            agent_config=agent_config,
+        )
+        self._store: SemanticMetricsRAG | None = None
+
     def setup_input(self, workflow: Workflow) -> Dict:
         logger.info("Setup search metrics input")
 
@@ -34,6 +53,12 @@ class SearchMetricsNode(Node):
         )
         self.input = next_input
         return {"success": True, "message": "Search Metrics appears valid"}
+
+    @property
+    def store(self) -> SemanticMetricsRAG:
+        if not self._store:
+            self._store = SemanticMetricsRAG(self.agent_config)
+        return self._store
 
     def execute(self):
         self.result = self._execute_search_metrics()
@@ -64,18 +89,14 @@ class SearchMetricsNode(Node):
             return self.get_bad_result("RAG storage path does not exist.")
         else:
             try:
-                tool = SearchMetricsTool(agent_config=self.agent_config)
-                if tool:
-                    result = tool.execute(self.input, self.model)
-                    logger.info(f"Search metrics result: found {result}")
-                    if not result:
-                        logger.info("No search result , please check your config or table data")
-                        return self.get_bad_result("No search result , please check your config or table data")
-                    else:
-                        return result
+                result = self._search_hybrid_metrics()
+
+                logger.info(f"Search metrics result: found {result}")
+                if not result:
+                    logger.info("No search result , please check your config or table data")
+                    return self.get_bad_result("No search result , please check your config or table data")
                 else:
-                    logger.warning("Search metrics tool not found")
-                    return self.get_bad_result("Search metrics tool not found")
+                    return result
 
             except Exception as e:
                 logger.warning(f"Search metrics tool initialization failed: {e}")
@@ -145,3 +166,27 @@ class SearchMetricsNode(Node):
         except Exception as e:
             logger.error(f"Metrics search streaming error: {str(e)}")
             raise
+
+    def _search_hybrid_metrics(self) -> SearchMetricsResult:
+        sql_task = self.input.sql_task
+        metric_results = self.store.search_hybrid_metrics(
+            query_text=sql_task.task,
+            domain=sql_task.domain,
+            layer1=sql_task.layer1,
+            layer2=sql_task.layer2,
+            catalog_name=sql_task.catalog_name,
+            database_name=sql_task.database_name,
+            schema_name=sql_task.schema_name,
+            top_n=self.input.top_n_by_rate(),
+        )
+
+        # Convert dictionaries to proper model instances
+        metric_list = [Metric.from_dict(metric) for metric in metric_results]
+
+        return SearchMetricsResult(
+            success=True,
+            error=None,
+            sql_task=self.input.sql_task,
+            metrics=metric_list,
+            metrics_count=len(metric_list),
+        )

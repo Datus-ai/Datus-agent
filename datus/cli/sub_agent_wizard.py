@@ -33,9 +33,8 @@ from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.cli.autocomplete import TableCompleter
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
-from datus.tools.context_search import ContextSearchTools
+from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 from datus.tools.mcp_tools import MCPTool
-from datus.tools.tools import DBFuncTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.reference_paths import normalize_reference_path

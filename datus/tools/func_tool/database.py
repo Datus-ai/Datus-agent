@@ -3,13 +3,11 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
-import json
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
-from agents import FunctionTool, Tool, function_tool
-from pydantic import BaseModel, Field
+from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
@@ -17,60 +15,9 @@ from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
-
-
-class FuncToolResult(BaseModel):
-    success: int = Field(
-        default=1, description="Whether the execution is successful or not, 1 is success, 0 is failure", init=True
-    )
-    error: Optional[str] = Field(
-        default=None, description="Error message: field is not empty when success=0", init=True
-    )
-    result: Optional[Any] = Field(default=None, description="Result of the execution", init=True)
-
-
-def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
-    """
-    Transfer a bound method to a function tool.
-    This method is to solve the problem that '@function_tool' can only be applied to static methods
-    """
-    tool_template = function_tool(bound_method)
-
-    corrected_schema = json.loads(json.dumps(tool_template.params_json_schema))
-    if "self" in corrected_schema.get("properties", {}):
-        del corrected_schema["properties"]["self"]
-    if "self" in corrected_schema.get("required", []):
-        corrected_schema["required"].remove("self")
-
-    # The invoker MUST be an 'async' function.
-    # We define a closure to correctly capture the 'bound_method' for each iteration.
-    def create_async_invoker(method_to_call: Callable) -> Callable:
-        async def final_invoker(tool_ctx, args_str: str) -> dict:
-            """
-            This is an async wrapper for tool methods.
-            The agent framework will 'await' this coroutine.
-            """
-            # The actual work (JSON parsing, method call)
-            args_dict = json.loads(args_str)
-            result_dict = method_to_call(**args_dict)
-
-            if isinstance(result_dict, FuncToolResult):
-                result_dict = result_dict.model_dump()
-            return result_dict
-
-        return final_invoker
-
-    async_invoker = create_async_invoker(bound_method)
-
-    final_tool = FunctionTool(
-        name=tool_template.name,
-        description=tool_template.description,
-        params_json_schema=corrected_schema,
-        on_invoke_tool=async_invoker,  # <--- Assign the async function
-    )
-    return final_tool
 
 
 @dataclass

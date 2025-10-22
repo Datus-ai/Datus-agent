@@ -10,7 +10,7 @@ from agents import Tool
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.tools.date_tools import DateParserTool
-from datus.tools.tools import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

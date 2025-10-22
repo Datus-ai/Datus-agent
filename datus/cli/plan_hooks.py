@@ -32,7 +32,7 @@ class PlanModeHooks(AgentHooks):
     def __init__(self, console: Console, session: SQLiteSession):
         self.console = console
         self.session = session
-        from datus.tools.plan_tools import SessionTodoStorage
+        from datus.tools.func_tool.plan_tools import SessionTodoStorage
 
         self.todo_storage = SessionTodoStorage(session)
         self.plan_phase = "generating"
@@ -316,7 +316,7 @@ class PlanModeHooks(AgentHooks):
             return False
 
     def get_plan_tools(self):
-        from datus.tools.plan_tools import PlanTool
+        from datus.tools.func_tool.plan_tools import PlanTool
 
         plan_tool = PlanTool(self.session)
         plan_tool.storage = self.todo_storage

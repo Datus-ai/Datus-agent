@@ -66,7 +66,7 @@ class TestBirdDevOutput:
             for task in tasks:
                 task_gen_sql = task["gen_sql"]
                 table_names = extract_table_names(task_gen_sql, dialect=DBType.SQLITE)
-                table_schemas, _ = rag_storage.search_tables(db_name, table_names)
+                table_schemas, _ = rag_storage.search_tables(tables=table_names, database_name=db_name)
                 sql_result = sql_connector.execute(ExecuteSQLInput(sql_query=task_gen_sql))
                 output_result = tool.execute(
                     input_data=OutputInput(

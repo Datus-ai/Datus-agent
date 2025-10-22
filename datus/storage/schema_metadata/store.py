@@ -14,6 +14,7 @@ from datus.schemas.node_models import TableSchema, TableValue
 from datus.storage.base import BaseEmbeddingStore, WhereExpr
 from datus.storage.embedding_models import EmbeddingModel
 from datus.storage.lancedb_conditions import Node, and_, build_where, eq, or_
+from datus.utils.constants import DBType
 from datus.utils.json_utils import json2csv
 from datus.utils.loggings import get_logger
 
@@ -350,7 +351,14 @@ class SchemaWithValueRAG:
             catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_type=table_type
         )
 
-    def search_tables(self, database_name: str, tables: list[str]) -> Tuple[List[TableSchema], List[TableValue]]:
+    def search_tables(
+        self,
+        tables: list[str],
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        dialect: DBType | str = DBType.SQLITE,
+    ) -> Tuple[List[TableSchema], List[TableValue]]:
         """
         Search schemas and values for given table names.
         """
@@ -362,28 +370,62 @@ class SchemaWithValueRAG:
         table_conditions = []
         for full_table in tables:
             parts = full_table.split(".")
-            if len(parts) == 3:
-                # Format: database_name.schema_name.table_name
+            table_name = parts[-1]
+            if len(parts) == 4:
                 table_conditions.append(
-                    and_(
-                        eq("database_name", parts[0]),
-                        eq("schema_name", parts[1]),
-                        eq("table_name", parts[2]),
+                    _build_where_clause(
+                        table_name=table_name,
+                        catalog_name=parts[0],
+                        database_name=parts[1],
+                        schema_name=parts[2],
+                        table_type="full",
+                    )
+                )
+            elif len(parts) == 3:
+                # Format: database_name.schema_name.table_name
+                if dialect == DBType.STARROCKS:
+                    catalog_name = parts[0]
+                    database_name = parts[1]
+                    schema_name = ""
+                else:
+                    database_name = parts[0]
+                    schema_name = parts[1]
+
+                table_conditions.append(
+                    _build_where_clause(
+                        table_name=table_name,
+                        catalog_name=catalog_name,
+                        database_name=database_name,
+                        schema_name=schema_name,
+                        table_type="full",
                     )
                 )
             elif len(parts) == 2:
                 # Format: database_name.table_name(Maybe need fix for other dialects)
+                if dialect in (DBType.SQLITE, DBType.MYSQL, DBType.STARROCKS):
+                    database_name = parts[0]
+                    schema_name = ""
+                else:
+                    database_name = ""
+                    schema_name = parts[0]
+
                 table_conditions.append(
-                    and_(
-                        eq("database_name", parts[0]),
-                        eq("table_name", parts[1]),
+                    _build_where_clause(
+                        table_name=table_name,
+                        catalog_name=catalog_name,
+                        database_name=database_name,
+                        schema_name=schema_name,
+                        table_type="full",
                     )
                 )
             else:
                 table_conditions.append(
-                    and_(
-                        eq("database_name", database_name),
-                        eq("table_name", full_table),
+                    _build_where_clause(
+                        table_name=table_name,
+                        catalog_name=catalog_name,
+                        database_name=database_name,
+                        schema_name=schema_name,
+                        table_type="full",
                     )
                 )
 

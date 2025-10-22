@@ -4,7 +4,7 @@ import pytest
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.tools.tools import DBFuncTool
+from datus.tools.func_tool import DBFuncTool
 from datus.utils.compress_utils import DataCompressor
 from tests.conftest import load_acceptance_config
 

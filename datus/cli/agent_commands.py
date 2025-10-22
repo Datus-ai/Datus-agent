@@ -29,9 +29,9 @@ from datus.schemas.generate_semantic_model_node_models import GenerateSemanticMo
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
-from datus.tools.context_search import ContextSearchTools
+from datus.tools.func_tool import db_function_tool_instance
+from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.output_tools import OutputTool
-from datus.tools.tools import db_function_tool_instance
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree

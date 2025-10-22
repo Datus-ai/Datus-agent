@@ -507,8 +507,6 @@ class Workflow:
         return workflow
 
     def _init_tools(self):
-        # self.db_tool_instance = db_function_tool_instance(self._global_config)
-        # self.tools = self.db_tool_instance.available_tools()
-        from datus.tools.tools import db_function_tools
+        from datus.tools.func_tool import db_function_tools
 
         self.tools = db_function_tools(self._global_config, self.task.database_name)

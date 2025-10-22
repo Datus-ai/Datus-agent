@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 from datus.configuration.agent_config import AgentConfig
 from datus.models.qwen_model import QwenModel
-from datus.tools.tools import db_function_tools
+from datus.tools.func_tool import db_function_tools
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
 

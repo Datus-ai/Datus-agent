@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
@@ -11,7 +11,7 @@ from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaL
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.base import BaseTool
 from datus.tools.db_tools.base import BaseSqlConnector
-from datus.tools.llms_tools.llms import LLMTool
+from datus.tools.llms_tools.match_schema import MatchSchemaTool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -70,7 +70,7 @@ class SchemaLineageTool(BaseTool):
 
         # Leave exceptions to the higher-ups to handle.
         if input_param.matching_rate == "from_llm":
-            tool = LLMTool(model)
+            tool = MatchSchemaTool(model, storage=self.store.schema_store)
             if not tool:
                 return SchemaLinkingResult(
                     success=False,
@@ -80,7 +80,7 @@ class SchemaLineageTool(BaseTool):
                     table_schemas=[],
                     table_values=[],
                 )
-            return tool.match_schema(input_param, rag_storage=self.store.schema_store)
+            return tool.execute(input_param)
         return self._search_similar_schemas(input_param, input_param.top_n_by_rate())
 
     def _search_similar_schemas(self, input_param: SchemaLinkingInput, top_n: int = 5) -> SchemaLinkingResult:
@@ -123,11 +123,6 @@ class SchemaLineageTool(BaseTool):
             catalog_name=input_param.catalog_name,
             top_n=top_n,
         )
-
-    def get_table_and_values(
-        self, database_name: str, table_names: List[str]
-    ) -> Tuple[List[TableSchema], List[TableValue]]:
-        return self.store.search_tables(database_name, table_names)
 
     def get_schems_by_db(self, connector: BaseSqlConnector, input_param: SchemaLinkingInput) -> SchemaLinkingResult:
         from datus.schemas.node_models import TableSchema

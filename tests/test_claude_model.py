@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.claude_model import ClaudeModel
-from datus.tools.tools import db_function_tools
+from datus.tools.func_tool import db_function_tools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config

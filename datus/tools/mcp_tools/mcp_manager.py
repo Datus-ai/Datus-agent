@@ -19,7 +19,6 @@ from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdioParams
 from agents.mcp.server import MCPServerSse, MCPServerSseParams, MCPServerStreamableHttp, MCPServerStreamableHttpParams
 
-from datus.tools.mcp_server import SilentMCPServerStdio
 from datus.tools.mcp_tools.mcp_config import (
     AnyMCPServerConfig,
     MCPConfig,
@@ -28,6 +27,7 @@ from datus.tools.mcp_tools.mcp_config import (
     ToolFilterConfig,
     expand_config_env_vars,
 )
+from datus.tools.mcp_tools.mcp_server import SilentMCPServerStdio
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

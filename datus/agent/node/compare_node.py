@@ -6,18 +6,19 @@ from datetime import datetime
 from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
+from datus.agent.node.compare_agentic_node import CompareAgenticNode
 from datus.agent.workflow import Workflow
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput, CompareResult
 from datus.schemas.node_models import SQLContext
-from datus.tools.llms_tools import LLMTool
-from datus.tools.llms_tools.compare_sql import compare_sql_with_mcp_stream
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
 
 class CompareNode(Node):
+    @optional_traceable()
     def execute(self):
         self.result = self._execute_compare()
 
@@ -56,24 +57,35 @@ class CompareNode(Node):
             return {"success": False, "message": f"Comparison context update failed: {str(e)}"}
 
     def _execute_compare(self) -> CompareResult:
-        """Execute comparison analysis between SQL and expectation."""
+        """
+        Execute SQL comparison in a synchronous (non-streaming) mode.
+        """
+        if not isinstance(self.input, CompareInput):
+            raise ValueError("Input must be a CompareInput instance")
 
         if not self.model:
-            return CompareResult(
-                success=False,
-                error="SQL comparison model not provided",
-                explanation="",
-                suggest="",
-            )
+            raise ValueError("Model is not initialized for CompareAgenticNode")
 
         try:
-            tool = LLMTool(self.model)
-            logger.debug(f"Compare SQL input: {type(self.input)} {self.input}")
+            _, _, messages = CompareAgenticNode._prepare_prompt_components(self.input)
+            logger.debug("CompareAgenticNode executing with prompt messages: %s", messages)
 
-            return tool.compare_sql(self.input)
-        except Exception as e:
-            logger.error(f"SQL comparison execution error: {str(e)}")
-            return CompareResult(success=False, error=str(e), explanation="", suggest="")
+            raw_result = self.model.generate_with_json_output(messages)
+            result_dict = CompareAgenticNode._parse_comparison_output(raw_result)
+
+            return CompareResult(
+                success=True,
+                explanation=result_dict.get("explanation", "No explanation provided"),
+                suggest=result_dict.get("suggest", "No suggestions provided"),
+            )
+        except Exception as exc:
+            logger.error(f"CompareAgenticNode synchronous execution failed: {exc}")
+            return CompareResult(
+                success=False,
+                error=str(exc),
+                explanation="Comparison analysis failed",
+                suggest="Please check the input parameters and try again",
+            )
 
     async def _compare_sql_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
@@ -111,13 +123,14 @@ class CompareNode(Node):
             setup_action.end_time = datetime.now()
 
             # Stream the comparison process
-            async for action in compare_sql_with_mcp_stream(
+            compare_agentic_node = CompareAgenticNode(
+                agent_config=self.agent_config,
                 model=self.model,
-                input_data=self.input,
                 tools=self.tools,
-                tool_config={"max_turns": 10},
-                action_history_manager=action_history_manager,
-            ):
+                max_turns=10,
+            )
+
+            async for action in compare_agentic_node.execute_stream(self.input, action_history_manager):
                 yield action
 
         except Exception as e:

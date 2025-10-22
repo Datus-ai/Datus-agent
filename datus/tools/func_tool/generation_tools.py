@@ -9,7 +9,7 @@ from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import SemanticMetricsRAG
-from datus.tools.tools import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

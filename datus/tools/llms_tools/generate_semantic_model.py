@@ -13,7 +13,8 @@ from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
-from datus.tools.mcp_server import MCPServer
+from datus.tools.mcp_tools import MCPServer
+from datus.utils.env import get_metricflow_env
 from datus.utils.json_utils import extract_json_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
