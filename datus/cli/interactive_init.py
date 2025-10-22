@@ -54,7 +54,7 @@ class InteractiveInit:
                     "target": "",
                     "models": {},
                     "namespace": {},
-                    "storage": {"base_path": "data", "embedding_device_type": "cpu"},
+                    "storage": {"embedding_device_type": "cpu"},  # base_path removed - now fixed at {home}/data
                     "nodes": {
                         "schema_linking": {"matching_rate": "fast"},
                         "generate_sql": {"prompt_version": "1.0"},

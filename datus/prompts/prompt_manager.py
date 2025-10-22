@@ -24,32 +24,27 @@ logger = get_logger(__name__)
 class PromptManager:
     """Manages file-based versioned prompt templates with Jinja2 rendering support."""
 
-    def __init__(self, templates_dir: Optional[str] = None):
+    def __init__(self):
         """
         Initialize the prompt manager.
 
-        Args:
-            templates_dir: Directory containing template files.
-                          Defaults to check ~/.datus/template first, then fallback to 'prompt_templates'.
+        User templates are stored in {agent.home}/template/ (fixed path).
+        Falls back to built-in prompt_templates/ directory if user template not found.
+        Configure agent.home in agent.yml to change the root directory.
         """
         from datus.utils.path_manager import get_path_manager
 
         self.user_templates_dir = get_path_manager().template_dir
-        if templates_dir is None:
-            # Check user templates directory first
-            default_templates_dir = Path(__file__).parent / "prompt_templates"
-
-            if self.user_templates_dir.exists():
-                templates_dir = self.user_templates_dir
-                logger.info(f"Using user template directory: {self.user_templates_dir}")
-            else:
-                templates_dir = default_templates_dir
-                logger.info(f"Using default template directory: {default_templates_dir}")
-        else:
-            logger.info(f"Using custom template directory: {templates_dir}")
-        logger.info(f"Using template directory: {templates_dir}")
-        self.templates_dir = Path(templates_dir)
         self.default_templates_dir = Path(__file__).parent / "prompt_templates"
+
+        # Use user template directory if it exists, otherwise use default
+        if self.user_templates_dir.exists():
+            self.templates_dir = self.user_templates_dir
+            logger.info(f"Using user template directory: {self.user_templates_dir}")
+        else:
+            self.templates_dir = self.default_templates_dir
+            logger.info(f"Using default template directory: {self.default_templates_dir}")
+
         self._env = Environment(loader=FileSystemLoader(str(self.templates_dir)), trim_blocks=True, lstrip_blocks=True)
 
     def _get_template_path(self, template_name: str, version: Optional[str] = None) -> Path:

@@ -232,7 +232,7 @@ class GenSQLAgenticNode(AgenticNode):
         return None
 
     def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
-        """Setup MCP server from conf/.mcp.json using mcp_manager."""
+        """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
         try:
             from datus.tools.mcp_tools.mcp_manager import MCPManager
 
@@ -277,7 +277,7 @@ class GenSQLAgenticNode(AgenticNode):
                     if server:
                         mcp_servers["filesystem_mcp"] = server
 
-                # Handle MCP servers from conf/.mcp.json using mcp_manager
+                # Handle MCP servers from {agent.home}/conf/.mcp.json using mcp_manager
                 else:
                     server = self._setup_mcp_server_from_config(server_name)
                     if server:

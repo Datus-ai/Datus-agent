@@ -139,8 +139,12 @@ HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
 
 You can modify Jinja templates as needed to adjust prompts to your business and model. Combined with workflow and node configurations, this allows flexible customization.
 
+Templates are stored in `{agent.home}/template/` (default: `~/.datus/template/`). Configure `agent.home` in `agent.yml` to use a different root directory.
+
 ```bash
 ls ~/.datus/template
+# Or if you configured a custom home:
+# ls /your/custom/home/template
 ```
 
 Example templates: `evaluation_1.0.j2`, `gen_sql_system_1.0.j2`, etc.

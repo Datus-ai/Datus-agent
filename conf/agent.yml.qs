@@ -15,7 +15,7 @@ agent:
       model: kimi-k2-turbo-preview
 
   storage:
-    base_path: ~/.datus/data #rag storage base path, meta data path is 'data/datus_db_{namespace}'
+    # Data path is now fixed at {agent.home}/data (e.g., ~/.datus/data/datus_db_{namespace})
     workspace_root: ~/.datus/workspace
     embedding_device_type: cpu
 

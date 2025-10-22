@@ -38,7 +38,9 @@ agent:
 
 ## Output Format
 
-Trace files are saved in the `trajectory_dir/{task_id}/` directory, with each node generating a `{node_id}.yml` file.
+Trace files are saved in the `{agent.home}/trajectory/{task_id}/` directory (default: `~/.datus/trajectory/`), with each node generating a `{node_id}.yml` file.
+
+The trajectory directory path is fixed and cannot be configured. To change the location, update `agent.home` in your `agent.yml` configuration file.
 
 ### YAML File Structure
 
@@ -67,7 +69,7 @@ Currently, LLM trace functionality is primarily implemented in DeepSeek models:
 ## File Organization
 
 ```
-trajectory_dir/
+{agent.home}/trajectory/    # Default: ~/.datus/trajectory/
 └── task_123_20240101/
     ├── node_1.yml          # Schema Linking node
     ├── node_2.yml          # Generate SQL node
@@ -110,7 +112,7 @@ python datus/main.py run --namespace bird_sqlite --task "Complex query" --save_l
 1. **Storage Space**: Enabling tracing will increase storage usage, especially for long conversations
 2. **Sensitive Information**: Trace files may contain sensitive data, please handle with care
 3. **Performance Impact**: File writing operations may slightly affect performance
-4. **Directory Permissions**: Ensure the `trajectory_dir` directory has write permissions
+4. **Directory Permissions**: The trajectory directory is automatically created at `{agent.home}/trajectory/` with appropriate permissions
 
 ## Example Outputs
 

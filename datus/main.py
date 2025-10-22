@@ -210,9 +210,8 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    generate_dataset_parser.add_argument(
-        "--trajectory_dir", type=str, required=True, help="Directory containing trajectory files"
-    )
+    # trajectory_dir parameter has been deprecated - trajectory path is now fixed at {agent.home}/trajectory
+    # Keeping parameter for backward compatibility but it will be ignored
     generate_dataset_parser.add_argument(
         "--dataset_name", type=str, required=True, help="Name for the output dataset file"
     )
@@ -273,9 +272,7 @@ def create_parser() -> argparse.ArgumentParser:
     for p in [run_parser, benchmark_parser]:
         node_group = p.add_argument_group("Node Configuration")
         node_group.add_argument("--output_dir", type=str, default="output", help="Directory for output files")
-        node_group.add_argument(
-            "--trajectory_dir", type=str, default="save", help="Directory for trajectory files (default: save)"
-        )
+        # trajectory_dir parameter deprecated - trajectory path is now fixed at {agent.home}/trajectory
         node_group.add_argument(
             "--schema_linking_rate",
             type=str,

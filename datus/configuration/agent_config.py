@@ -144,6 +144,10 @@ class AgentConfig:
         """
         Initialize the global config from yaml file
         """
+        # Initialize home directory and update path_manager
+        self.home = kwargs.get("home", "~/.datus")
+        self._init_path_manager()
+
         models_raw = kwargs["models"]
         self.target = kwargs["target"]
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
@@ -154,7 +158,10 @@ class AgentConfig:
         # use default embedding model if not provided
 
         self._output_dir = kwargs.get("output_dir", "output")
-        self._trajectory_dir = kwargs.get("trajectory_dir", "save")
+        # Trajectory directory is now fixed at {agent.home}/trajectory
+        from datus.utils.path_manager import get_path_manager
+
+        self._trajectory_dir = str(get_path_manager().trajectory_dir)
 
         self._init_storage_config(kwargs.get("storage", {}))
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
@@ -326,16 +333,34 @@ class AgentConfig:
             raise KeyError(f"Model '{key}' not found.")
         return self.models[key]
 
+    def _init_path_manager(self):
+        """Initialize or update path manager with configured home directory."""
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+        path_manager.update_home(self.home)
+        logger.info(f"Using datus home directory: {path_manager.datus_home}")
+
     def _init_storage_config(self, storage_config: dict):
-        self.rag_base_path = os.path.expanduser(storage_config.get("base_path", "data"))
+        # Use fixed path from path_manager: {home}/data
+        from datus.utils.path_manager import get_path_manager
+
+        self.rag_base_path = str(get_path_manager().data_dir)
+
         self.storage_configs = init_embedding_models(
             storage_config, openai_configs=self.models, default_openai_config=self.active_model()
         )
         self.workspace_root = storage_config.get("workspace_root")
 
     def override_by_args(self, **kwargs):
+        # storage_path parameter has been deprecated - data path is now fixed at {home}/data
         if kwargs.get("storage_path", ""):
-            self.rag_base_path = os.path.expanduser(kwargs["storage_path"])
+            logger.warning(
+                "The --storage_path parameter is deprecated and will be ignored. "
+                "Data path is now fixed at {agent.home}/data. "
+                "Configure agent.home in agent.yml to change the root directory."
+            )
+
         if kwargs.get("schema_linking_rate", ""):
             self.schema_linking_rate = kwargs["schema_linking_rate"]
         if kwargs.get("search_metrics_rate", ""):
@@ -363,8 +388,14 @@ class AgentConfig:
 
         if kwargs.get("output_dir", ""):
             self._output_dir = kwargs["output_dir"]
+
+        # trajectory_dir parameter has been deprecated - trajectory path is now fixed at {agent.home}/trajectory
         if kwargs.get("trajectory_dir", ""):
-            self._trajectory_dir = kwargs["trajectory_dir"]
+            logger.warning(
+                "The --trajectory_dir parameter is deprecated and will be ignored. "
+                "Trajectory path is now fixed at {agent.home}/trajectory. "
+                "Configure agent.home in agent.yml to change the root directory."
+            )
         if kwargs.get("save_llm_trace", False):
             # Update all model configs to enable tracing if command line flag is set
             for model_config in self.models.values():

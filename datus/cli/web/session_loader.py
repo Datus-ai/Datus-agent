@@ -16,7 +16,6 @@ import re
 import sqlite3
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Optional
 
 import structlog
@@ -48,7 +47,9 @@ class SessionLoader:
             return messages
 
         # Build path with pathlib and resolve to absolute path
-        sessions_dir = Path.home() / ".datus" / "sessions"
+        from datus.utils.path_manager import get_path_manager
+
+        sessions_dir = get_path_manager().sessions_dir
         db_path = (sessions_dir / f"{session_id}.db").resolve()
 
         # Ensure resolved path is within sessions directory

@@ -75,46 +75,31 @@ class MCPManager:
     - Status monitoring and health checks
     - Config file persistence
 
-    Configuration loading order:
-    1. Explicit config_path parameter
-    2. conf/.mcp.json (project directory)
-    3. ~/.datus/conf/.mcp.json (user home directory)
+    Configuration path:
+    - Fixed at {agent.home}/conf/.mcp.json (default: ~/.datus/conf/.mcp.json)
+    - Can be overridden with explicit config_path parameter (for testing)
     """
 
     def __init__(self, config_path: Optional[str] = None):
         """
         Initialize the MCP manager.
 
+        MCP configuration is fixed at {agent.home}/conf/.mcp.json.
+        Configure agent.home in agent.yml to change the root directory.
+
         Args:
-            config_path: Path to the config file (searches in order:
-                config_path > conf/.mcp.json > ~/.datus/conf/.mcp.json)
+            config_path: Optional explicit path (primarily for testing)
         """
         from datus.utils.path_manager import get_path_manager
 
         path_manager = get_path_manager()
 
-        json_path = None
+        # Use explicit path if provided, otherwise use fixed path from path_manager
         if config_path:
-            json_path = Path(config_path).expanduser()
-
-        if not json_path and Path("conf/.mcp.json").exists():
-            json_path = Path("conf/.mcp.json")
-
-        if not json_path:
-            home_config = path_manager.mcp_config_path()
-            if home_config.exists():
-                json_path = home_config
-
-        # Set config path (will create if doesn't exist)
-        if json_path:
-            self.config_path = json_path
+            self.config_path = Path(config_path).expanduser()
         else:
-            # Default fallback order: try project conf first, then home
-            if Path("conf").exists():
-                self.config_path = Path("conf/.mcp.json")
-            else:
-                path_manager.ensure_dirs("conf")
-                self.config_path = path_manager.mcp_config_path()
+            path_manager.ensure_dirs("conf")
+            self.config_path = path_manager.mcp_config_path()
 
         self.config: MCPConfig = MCPConfig()
         self._lock = threading.Lock()

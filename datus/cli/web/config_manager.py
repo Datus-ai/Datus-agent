@@ -76,15 +76,26 @@ def _load_config_cached(config_path: str) -> Dict[str, Any]:
 
 
 def get_storage_path_from_config(config_path: str) -> str:
-    """Extract storage base_path from configuration file"""
+    """
+    Get storage path from configuration.
+
+    Note: storage base_path is now fixed at {agent.home}/data.
+    This function is kept for backward compatibility but always returns the fixed path.
+    """
     try:
         config = _load_config_cached(config_path)
-        storage_config = config.get("agent", {}).get("storage", {})
-        base_path = storage_config.get("base_path", "data")
-        return os.path.expanduser(base_path)
+        # Get home from config, default to ~/.datus
+        home = config.get("agent", {}).get("home", "~/.datus")
+        from datus.utils.path_manager import get_path_manager
+
+        # Update path manager with configured home and return data_dir
+        pm = get_path_manager()
+        pm.update_home(home)
+        return str(pm.data_dir)
     except Exception as e:
         logger.warning(f"Failed to read storage path from config: {e}")
-        return "data"
+        # Fallback to default
+        return os.path.expanduser("~/.datus/data")
 
 
 class ConfigManager:

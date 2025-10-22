@@ -6,10 +6,9 @@
 Centralized path management for all .datus related directories and files.
 
 This module provides a unified interface for managing all paths related to the
-.datus directory structure, supporting customization via DATUS_HOME environment variable.
+.datus directory structure. The home directory is determined from agent.yml config.
 """
 
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -18,8 +17,8 @@ class DatusPathManager:
     """
     Centralized manager for all .datus related paths.
 
-    Supports customization via DATUS_HOME environment variable.
-    If not set, defaults to ~/.datus
+    The home directory can be customized via agent.yml config (agent.home).
+    If not configured, defaults to ~/.datus
 
     Example:
         >>> from datus.utils.path_manager import get_path_manager
@@ -28,22 +27,28 @@ class DatusPathManager:
         >>> sessions_dir = pm.sessions_dir
     """
 
-    def __init__(self, datus_home: Optional[Path] = None):
+    def __init__(self, datus_home: Optional[str] = None):
         """
         Initialize the path manager.
 
         Args:
-            datus_home: Custom .datus root directory. If None, uses DATUS_HOME
-                       environment variable or defaults to ~/.datus
+            datus_home: Custom .datus root directory. If None, defaults to ~/.datus
         """
         if datus_home:
             self._datus_home = Path(datus_home).expanduser().resolve()
         else:
-            env_home = os.getenv("DATUS_HOME")
-            if env_home:
-                self._datus_home = Path(env_home).expanduser().resolve()
-            else:
-                self._datus_home = Path.home() / ".datus"
+            self._datus_home = Path.home() / ".datus"
+
+    def update_home(self, new_home: str) -> None:
+        """
+        Update the datus home directory.
+
+        This is called after loading agent config to apply the configured home path.
+
+        Args:
+            new_home: New home directory path (can include ~)
+        """
+        self._datus_home = Path(new_home).expanduser().resolve()
 
     @property
     def datus_home(self) -> Path:
@@ -104,6 +109,11 @@ class DatusPathManager:
     def workspace_dir(self) -> Path:
         """Workspace directory: ~/.datus/workspace"""
         return self._datus_home / "workspace"
+
+    @property
+    def trajectory_dir(self) -> Path:
+        """Trajectory directory: ~/.datus/trajectory"""
+        return self._datus_home / "trajectory"
 
     # Configuration file paths
 
@@ -224,6 +234,7 @@ class DatusPathManager:
                 self.logs_dir,
                 self.sessions_dir,
                 self.template_dir,
+                self.trajectory_dir,
                 self.sample_dir,
                 self.run_dir,
                 self.benchmark_dir,

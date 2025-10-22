@@ -64,9 +64,7 @@ class ArgumentParser:
         )
         self.parser.add_argument("--debug", action="store_true", help="Enable debug logging")
         self.parser.add_argument("--no_color", dest="no_color", action="store_true", help="Disable colored output")
-        self.parser.add_argument(
-            "--storage_path", type=str, help="Base path to the storage directory for the agent", default=""
-        )
+        # storage_path parameter deprecated - data path is now fixed at {agent.home}/data
 
         self.parser.add_argument(
             "--namespace",

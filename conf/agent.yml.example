@@ -114,7 +114,8 @@ agent:
       ext_knowledge: ""
 
   storage:
-    base_path: data # rag storage base path,final data path is 'data/datus_db_spider2',  'data/datus_db_bird_dev', 'data/datus_db_local1' ...
+    # Data path is now fixed at {agent.home}/data
+    # Final storage paths: {home}/data/datus_db_{namespace}, {home}/data/sub_agents/{agent_name}, etc.
     embedding_device_type: cpu # If set to cpu, it will be specified as cpu, otherwise, it will be automatically selected based on the current machine
     # Local model suggestions:
     # 1. if you want extreme performance, choose the small multilingual model with 384 dimensions: all-MiniLM-L6-v2 (~100M) or intfloat/multilingual-e5-small (~460M).

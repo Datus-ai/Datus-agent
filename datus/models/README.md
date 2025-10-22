@@ -55,7 +55,7 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 
 **`session_manager.py`** - Multi-turn conversation management
 - `SessionManager`: Manages SQLite-backed conversation sessions
-- Persistent storage in `~/.datus/sessions/`
+- Persistent storage in `{agent.home}/sessions/` (fixed path, configure via agent.home in agent.yml)
 - Session lifecycle management (create, clear, delete, list)
 
 **`mcp_utils.py`** - Model Context Protocol utilities

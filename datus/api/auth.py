@@ -30,28 +30,24 @@ def load_auth_config(config_path: Optional[str] = None) -> Dict:
     """
     Load authentication configuration from auth_clients.yml.
 
+    Configuration is fixed at {agent.home}/conf/auth_clients.yml.
+    Configure agent.home in agent.yml to change the root directory.
+
     Args:
-        config_path: Path to the config file (searches in order:
-            config_path > conf/auth_clients.yml > ~/.datus/conf/auth_clients.yml)
+        config_path: Optional explicit path (primarily for testing)
     """
     from datus.utils.path_manager import get_path_manager
 
     path_manager = get_path_manager()
 
-    yaml_path = None
+    # Use explicit path if provided, otherwise use fixed path from path_manager
     if config_path:
         yaml_path = Path(config_path).expanduser()
+    else:
+        yaml_path = path_manager.auth_config_path()
 
-    if not yaml_path and Path("conf/auth_clients.yml").exists():
-        yaml_path = Path("conf/auth_clients.yml")
-
-    if not yaml_path:
-        home_config = path_manager.auth_config_path()
-        if home_config.exists():
-            yaml_path = home_config
-
-    # Try to load from the found path
-    if yaml_path and yaml_path.exists():
+    # Try to load from the path
+    if yaml_path.exists():
         try:
             with open(yaml_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
