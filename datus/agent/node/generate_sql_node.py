@@ -239,12 +239,12 @@ class GenerateSQLNode(Node):
 def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateSQLResult:
     """Generate SQL query using the provided model."""
     if not isinstance(input_data, GenerateSQLInput):
-        raise ValueError("Input must be a GenerateSQLInput instance")
+        raise TypeError("Input data must be a GenerateSQLInput instance")
 
     try:
         # Format the prompt with schema list
         prompt = get_sql_prompt(
-            database_type=input_data.get("database_type", DBType.SQLITE),
+            database_type=input_data.database_type or DBType.SQLITE.value,
             table_schemas=input_data.table_schemas,
             data_details=input_data.data_details,
             metrics=input_data.metrics,
@@ -298,8 +298,8 @@ def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateS
         else:
             return GenerateSQLResult(success=False, error="sql generation failed, no result", sql_query=sql_query)
     except json.JSONDecodeError as e:
-        logger.error(f"SQL json decode failed: {str(e)} SQL: {sql_query}")
-        return GenerateSQLResult(success=False, error=str(e), sql_query={sql_query})
+        logger.error(f"SQL json decode failed: {e}")
+        return GenerateSQLResult(success=False, error=str(e), sql_query=str(sql_query))
     except Exception as e:
-        logger.error(f"SQL generation failed: {str(e)}")
+        logger.error(f"SQL generation failed: {e}")
         return GenerateSQLResult(success=False, error=str(e), sql_query="")

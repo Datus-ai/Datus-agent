@@ -39,7 +39,8 @@ class CompareAgenticNode(AgenticNode):
         model: Optional[LLMBaseModel] = None,
         max_turns: Optional[int] = None,
     ):
-        self._tools_provided = tools is not None
+        # Consider None or empty list as "not provided"
+        self._tools_provided = bool(tools)
         self.max_turns = max_turns or 30
         super().__init__(
             tools=tools or [],

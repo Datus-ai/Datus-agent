@@ -214,7 +214,7 @@ def test_get_table_and_values():
         ],
     }
     schemas, values = rag_storage.search_tables(
-        tables=input_data["table_names"], database_name=input_data["database_name"]
+        tables=input_data["table_names"], database_name=input_data["database_name"], dialect=input_data["database_type"]
     )
 
     logger.debug(f"Result schemas: {schemas}")

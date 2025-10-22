@@ -372,49 +372,45 @@ class SchemaWithValueRAG:
             parts = full_table.split(".")
             table_name = parts[-1]
             if len(parts) == 4:
+                cat, db, sch = parts[0], parts[1], parts[2]
                 table_conditions.append(
                     _build_where_clause(
                         table_name=table_name,
-                        catalog_name=parts[0],
-                        database_name=parts[1],
-                        schema_name=parts[2],
+                        catalog_name=cat,
+                        database_name=db,
+                        schema_name=sch,
                         table_type="full",
                     )
                 )
             elif len(parts) == 3:
                 # Format: database_name.schema_name.table_name
                 if dialect == DBType.STARROCKS:
-                    catalog_name = parts[0]
-                    database_name = parts[1]
-                    schema_name = ""
+                    cat, db, sch = parts[0], parts[1], ""
                 else:
-                    database_name = parts[0]
-                    schema_name = parts[1]
+                    cat, db, sch = catalog_name, parts[0], parts[1]
 
                 table_conditions.append(
                     _build_where_clause(
                         table_name=table_name,
-                        catalog_name=catalog_name,
-                        database_name=database_name,
-                        schema_name=schema_name,
+                        catalog_name=cat,
+                        database_name=db,
+                        schema_name=sch,
                         table_type="full",
                     )
                 )
             elif len(parts) == 2:
                 # Format: database_name.table_name(Maybe need fix for other dialects)
                 if dialect in (DBType.SQLITE, DBType.MYSQL, DBType.STARROCKS):
-                    database_name = parts[0]
-                    schema_name = ""
+                    cat, db, sch = catalog_name, parts[0], ""
                 else:
-                    database_name = ""
-                    schema_name = parts[0]
+                    cat, db, sch = catalog_name, database_name, parts[0]
 
                 table_conditions.append(
                     _build_where_clause(
                         table_name=table_name,
-                        catalog_name=catalog_name,
-                        database_name=database_name,
-                        schema_name=schema_name,
+                        catalog_name=cat,
+                        database_name=db,
+                        schema_name=sch,
                         table_type="full",
                     )
                 )
@@ -439,10 +435,30 @@ class SchemaWithValueRAG:
             value_query = self.value_store.table.search()
 
         # Search schemas
-        schema_results = schema_query.limit(len(tables)).to_arrow()
+        schema_results = (
+            schema_query.select(
+                ["identifier", "catalog_name", "database_name", "schema_name", "table_name", "table_type", "definition"]
+            )
+            .limit(len(tables))
+            .to_arrow()
+        )
         schemas_result = TableSchema.from_arrow(schema_results)
 
-        value_results = value_query.limit(len(tables)).to_arrow()
+        value_results = (
+            value_query.select(
+                [
+                    "identifier",
+                    "catalog_name",
+                    "database_name",
+                    "schema_name",
+                    "table_name",
+                    "table_type",
+                    "sample_rows",
+                ]
+            )
+            .limit(len(tables))
+            .to_arrow()
+        )
         values_result = TableValue.from_arrow(value_results)
 
         return schemas_result, values_result

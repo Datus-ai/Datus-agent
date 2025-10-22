@@ -91,9 +91,9 @@ class SearchMetricsNode(Node):
             try:
                 result = self._search_hybrid_metrics()
 
-                logger.info(f"Search metrics result: found {result}")
-                if not result:
-                    logger.info("No search result , please check your config or table data")
+                logger.info(f"Search metrics result: found {result.metrics_count} items")
+                if not result.success:
+                    logger.info(f"No search result , please check your config or table data: {result.error}")
                     return self.get_bad_result("No search result , please check your config or table data")
                 else:
                     return result

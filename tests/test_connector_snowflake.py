@@ -138,14 +138,14 @@ def test_get_tables_with_ddl(connector: SnowflakeConnector):
     assert filtered[0]["table_name"] == sample_table
 
 
-def test_execute_multiple_queries_arrow(snowflake_connector: SnowflakeConnector):
+def test_execute_multiple_queries_arrow(connector: SnowflakeConnector):
     """Test execution of multiple SQL queries with Arrow format"""
     queries = [
         "SELECT 1",
         "SELECT CURRENT_TIMESTAMP()",
         "SELECT * from CRYPTO.CRYPTO_BITCOIN_CASH.TRANSACTIONS limit 5",
     ]
-    results = snowflake_connector.execute_queries_arrow(queries)
+    results = connector.execute_queries_arrow(queries)
     assert len(results) == 3
 
     for result in results:
@@ -165,9 +165,9 @@ def test_execute_multiple_queries_arrow(snowflake_connector: SnowflakeConnector)
 
     # Test data manipulation with pandas
     df = results[2].sql_return
-    assert len(df.columns) > 0, "DataFrame should have columns"
     if isinstance(df, pyarrow.lib.Table):
         df = df.to_pandas()
+    assert len(df.columns) > 0, "DataFrame should have columns"
     # Log sample data for debugging
     print("Sample data from Arrow result:", df.head(2))
 
