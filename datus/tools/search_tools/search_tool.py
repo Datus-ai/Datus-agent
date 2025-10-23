@@ -98,32 +98,35 @@ def search_by_tavily(keywords: List[str], top_n: int) -> DocSearchResult:
             docs={},
             doc_count=0,
         )
+    if not keywords:
+        return DocSearchResult(success=True, docs=[], doc_count=0)
+    import requests
 
     try:
-        import requests
-
         url = "https://api.tavily.com/search"
-
-        params = {
-            "api_key": api_key,
-            "query": " ".join(keywords),
-            "search_depth": "advanced",
-            "max_results": top_n,
-            "include_raw_content": True,
-        }
-
         docs = {}
         total_docs = 0
         for keyword in keywords:
-            response = requests.post(url, json=params)
+            payload = {
+                "api_key": api_key,
+                "query": keyword,
+                "search_depth": "advanced",
+                "max_results": top_n,
+                "include_raw_content": True,
+            }
+            response = requests.post(url, json=payload, timeout=30)
             response.raise_for_status()
 
             result = response.json()
-            raw_contents = [result["content"] for result in result.get("results", [])]
-            docs[keyword] = raw_contents
-            total_docs += len(raw_contents)
+            texts = [(item.get("raw_content") or item.get("content") or "") for item in result.get("results", [])]
+            docs[keyword] = texts
+            total_docs += len(texts)
 
         return DocSearchResult(success=True, docs=docs, doc_count=total_docs)
+    except requests.HTTPError as e:
+        return DocSearchResult(
+            success=False, error=f"Tavily HTTP {e.response.status_code}: {e.response.text[:300]}", docs={}, doc_count=0
+        )
     except Exception as e:
-        logger.error(f"External search failed: {str(e)}")
+        logger.error(f"External search failed: {e}")
         return DocSearchResult(success=False, error=f"External search failed: {str(e)}", docs={}, doc_count=0)

@@ -241,6 +241,7 @@ def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateS
     if not isinstance(input_data, GenerateSQLInput):
         raise TypeError("Input data must be a GenerateSQLInput instance")
 
+    sql_query = ""
     try:
         # Format the prompt with schema list
         prompt = get_sql_prompt(
