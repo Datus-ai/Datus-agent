@@ -118,7 +118,6 @@ def create_parser() -> argparse.ArgumentParser:
         help="Database name to be initialized: It represents duckdb, schema_name in Snowflake; "
         "database names in MySQL, StarRocks, PostgreSQL, etc.; SQLite is not supported.",
     )
-    bootstrap_parser.add_argument("--benchmark_path", type=str, help="Path to benchmark files")
     bootstrap_parser.add_argument(
         "--pool_size",
         type=int,
@@ -172,7 +171,6 @@ def create_parser() -> argparse.ArgumentParser:
         choices=["spider2", "bird_dev", "semantic_layer"],
         help="Benchmark type to run",
     )
-    benchmark_parser.add_argument("--benchmark_path", type=str, help="Path to benchmark configuration")
     benchmark_parser.add_argument(
         "--benchmark_task_ids", type=str, nargs="+", help="Specific benchmark task IDs to run"
     )

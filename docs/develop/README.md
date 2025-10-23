@@ -71,11 +71,8 @@ agent:
 
   storage_path: data
 
-  benchmark:
-    bird_dev:
-      benchmark_path: benchmark/bird/dev_20240627
-    spider2:
-      benchmark_path: benchmark/spider2/spider2-snow
+  # Benchmark data is stored at {agent.home}/benchmark/{name}
+  # Supported benchmarks: bird_dev, spider2, semantic_layer
 
   namespace: # namespace is a set of database connections
     local_duckdb:
@@ -189,9 +186,7 @@ Datus> .help
 Update `agent.yml` if needed:
 
 ```yaml
-benchmark:
-  spider2:
-    benchmark_path: benchmark/spider2/spider2-snow
+# Benchmark data is stored at {agent.home}/benchmark/spider2/
 
 namespace:
   spidersnow:
@@ -239,14 +234,12 @@ Database: snowflake - GOOGLE_TRENDS
 Update Configuration:
 
 ```yaml
-benchmark:
-  bird_dev:
-    benchmark_path: benchmark/bird/dev_20240627
+# Benchmark data is stored at {agent.home}/benchmark/bird/
 
 namespace:
   bird_sqlite:
     type: sqlite
-    path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
+    path_pattern: {agent.home}/benchmark/bird/dev_databases/**/*.sqlite
 ```
 
 ### Download and Extract Bird Dev
@@ -254,7 +247,7 @@ namespace:
 ```bash
 wget https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
 unzip dev.zip
-mkdir -p benchmark/bird
+mkdir -p ~/.datus/benchmark/bird
 mv dev_20240627 benchmark/bird
 cd benchmark/bird/dev_20240627
 unzip dev_databases
@@ -323,9 +316,7 @@ namespace:
     name: duck
     uri: ~/.metricflow/duck.db
 
-benchmark:
-  semantic_layer:
-    benchmark_path: benchmark/semantic_layer
+# Benchmark data is stored at {agent.home}/benchmark/semantic_layer/
 
 metrics:
   tutorial:

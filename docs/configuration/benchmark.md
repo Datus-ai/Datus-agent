@@ -1,69 +1,72 @@
-# Benchmark 
+# Benchmark
 
 > Configure benchmark datasets and evaluation settings for Datus Agent
 
 ## Overview
 
-Configure benchmark datasets to evaluate and test Datus Agent's performance on standardized SQL generation tasks. Benchmarks help measure accuracy, compare different configurations, and validate improvements.
+Benchmark datasets are used to evaluate and test Datus Agent's performance on standardized SQL generation tasks. Benchmarks help measure accuracy, compare different configurations, and validate improvements.
 
 ## Supported Benchmarks
 
 Datus Agent currently supports the following benchmark datasets:
 
-* **BIRD-DEV**: A comprehensive benchmark for complex SQL generation
-* **Spider2**: Advanced multi-database SQL benchmark
-* **Semantic Layer**: Business metric and semantic understanding benchmark
+* **bird_dev**: A comprehensive benchmark for complex SQL generation (BIRD-DEV)
+* **spider2**: Advanced multi-database SQL benchmark
+* **semantic_layer**: Business metric and semantic understanding benchmark
 
-## Benchmark Configuration Structure
+## Benchmark Directory Structure
 
-Configure benchmarks in the `benchmark` section of your configuration file:
+Benchmark data is automatically stored at `{agent.home}/benchmark/{name}`:
 
-```yaml
-benchmark:
-  bird_dev:                          # Benchmark namespace
-    benchmark_path: benchmark/bird/dev_20240627
-    
-  spider2:
-    benchmark_path: benchmark/spider2/spider2-snow
-    
-  semantic_layer:
-    benchmark_path: benchmark/semantic_layer
 ```
+{agent.home}/benchmark/
+├── bird/              # BIRD-DEV benchmark data
+├── spider2/           # Spider2 benchmark data
+└── semantic_layer/    # Semantic layer benchmark data
+```
+
+**Note**: No configuration is required in `agent.yml`. The paths are automatically managed based on your `agent.home` setting.
 
 ## BIRD-DEV Benchmark
 
 The BIRD (Big Bench for Large-scale Database Grounded Text-to-SQL Evaluation) benchmark tests complex SQL generation capabilities.
 
-### Configuration
+### Directory Location
 
-```yaml
-benchmark:
-  bird_dev:
-    benchmark_path: benchmark/bird/dev_20240627
+Data should be placed at: `{agent.home}/benchmark/bird/`
+
+### Usage
+
+```bash
+datus-agent benchmark --benchmark bird_dev --namespace bird_sqlite
 ```
 
 ## Spider2 Benchmark
 
 Spider2 is an advanced benchmark that tests SQL generation across multiple databases and complex scenarios.
 
-### Configuration
+### Directory Location
 
-```yaml
-benchmark:
-  spider2:
-    benchmark_path: benchmark/spider2/spider2-snow
+Data should be placed at: `{agent.home}/benchmark/spider2/`
+
+### Usage
+
+```bash
+datus-agent benchmark --benchmark spider2 --namespace snowflake
 ```
 
 ## Semantic Layer Benchmark
 
 Tests the agent's ability to understand business metrics and semantic relationships.
 
-### Configuration
+### Directory Location
 
-```yaml
-benchmark:
-  semantic_layer:
-    benchmark_path: benchmark/semantic_layer
+Data should be placed at: `{agent.home}/benchmark/semantic_layer/`
+
+### Usage
+
+```bash
+datus-agent benchmark --benchmark semantic_layer --namespace your_namespace
 ```
 
 For detailed usage instructions and advanced configuration options, see the [Benchmarks](/benchmarks) chapter.

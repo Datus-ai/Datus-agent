@@ -71,11 +71,8 @@ RUN mkdir -p ~/.datus/conf && echo 'agent:\n\
       prompt_version: "1.0"\n\
       check_result: true\n\
   schema_linking_rate: medium\n\
-  benchmark:\n\
-    bird_dev: # this is namespace of benchmark\n\
-      benchmark_path: /app/benchmark/dev_20240627\n\
-    spider2:\n\
-      benchmark_path: /app/benchmark/spider2/spider2-snow\n\
+  # Benchmark data is stored at {agent.home}/benchmark/{name}\n\
+  # Supported benchmarks: bird_dev, spider2, semantic_layer\n\
   # local databases configuration\n\
   namespace:\n\
     snowflake:\n\

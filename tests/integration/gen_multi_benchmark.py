@@ -16,21 +16,28 @@ def load_config(config_path):
 
 
 def get_benchmark_file_path(config, benchmark, workdir):
-    benchmark_config = config.get("agent", {}).get("benchmark", {})
+    # Benchmark paths are now fixed at {agent.home}/benchmark/{name}
+    # Map benchmark names to subdirectories
+    benchmark_subdirs = {
+        "bird_dev": "bird",
+        "spider2": "spider2",
+        "semantic_layer": "semantic_layer",
+    }
 
-    if benchmark not in benchmark_config:
-        raise Exception(f"benchmark '{benchmark}' not found in agent config")
+    if benchmark not in benchmark_subdirs:
+        raise Exception(f"Unsupported benchmark '{benchmark}'. Supported: {list(benchmark_subdirs.keys())}")
 
-    benchmark_path = benchmark_config[benchmark].get("benchmark_path")
-    if not benchmark_path:
-        raise Exception(f"benchmark_path not found in '{benchmark}'")
+    # Get agent home from config
+    agent_home = config.get("agent", {}).get("home", "~/.datus")
+    agent_home = os.path.expanduser(agent_home)
+    benchmark_path = os.path.join(agent_home, "benchmark", benchmark_subdirs[benchmark])
 
     if benchmark == "spider2":
-        benchmark_file = os.path.join(workdir, benchmark_path, "spider2-snow.jsonl")
+        benchmark_file = os.path.join(benchmark_path, "spider2-snow.jsonl")
     elif benchmark == "bird_dev":
-        benchmark_file = os.path.join(workdir, benchmark_path, "dev.json")
+        benchmark_file = os.path.join(benchmark_path, "dev.json")
     else:
-        benchmark_file = os.path.join(workdir, benchmark_path, f"{benchmark}.jsonl")
+        benchmark_file = os.path.join(benchmark_path, f"{benchmark}.jsonl")
 
     return benchmark_file
 

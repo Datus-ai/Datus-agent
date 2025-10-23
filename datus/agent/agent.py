@@ -656,9 +656,7 @@ class Agent:
                         pool_size=pool_size,
                     )
                 elif benchmark_platform == "spider2":
-                    benchmark_path = os.path.expanduser(
-                        self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
-                    )
+                    benchmark_path = self.global_config.benchmark_path(benchmark_platform)
 
                     init_snowflake_schema(
                         self.metadata_store,
@@ -668,9 +666,7 @@ class Agent:
                     )
                 elif benchmark_platform == "bird_dev":
                     self.check_db()
-                    benchmark_path = os.path.expanduser(
-                        self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
-                    )
+                    benchmark_path = self.global_config.benchmark_path(benchmark_platform)
                     init_dev_schema(
                         self.metadata_store,
                         self.db_manager,
@@ -796,9 +792,7 @@ class Agent:
         logger.info("Benchmarking begins")
         benchmark_platform = self.args.benchmark
 
-        benchmark_path = self.args.benchmark_path or self.global_config.benchmark_path(benchmark_platform)
-        if not benchmark_path:
-            raise ValueError("benchmark_path is not set, please setup in config file or set --benchmark_path")
+        benchmark_path = self.global_config.benchmark_path(benchmark_platform)
 
         if not os.path.exists(benchmark_path):
             raise FileNotFoundError(f"Benchmark_path not found: {benchmark_path}")

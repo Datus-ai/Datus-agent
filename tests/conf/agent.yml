@@ -93,12 +93,9 @@ agent:
         - If context is provided, use the tables/metrics/sqls in user prompt
         - Try to use database specific dialect
   schema_linking_rate: medium
-  # benchmark configuration
-  benchmark:
-    bird_dev: # this is namespace of benchmark
-      benchmark_path: ~/benchmark/bird/dev_20240627
-    spider2:
-      benchmark_path: benchmark/spider2/spider2-snow
+
+  # Benchmark data is stored at {agent.home}/benchmark/{name}
+  # Supported benchmarks: bird_dev, spider2, semantic_layer
 
   # local databases configuration
   namespace:

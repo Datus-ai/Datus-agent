@@ -1,5 +1,3 @@
-import os
-
 import pytest
 
 from datus.configuration.agent_config import AgentConfig
@@ -83,17 +81,17 @@ def test_benchmark_db_check(agent_config: AgentConfig, namespace: str = "snowfla
     argvalues=[("bird_sqlite", "bird_dev"), ("snowflake", "spider2")],
 )
 def test_benchmark_config(namespace: str, benchmark: str, agent_config: AgentConfig):
-    assert agent_config.benchmark_path
+    # Benchmark paths are now fixed at {agent.home}/benchmark/{name}
     agent_config.override_by_args(
         **{
             "namespace": namespace,
             "benchmark": benchmark,
-            "benchmark_path": "abc",
         }
     )
-    assert agent_config.benchmark_path(benchmark) == "abc"
-
-    assert not os.path.exists(agent_config.benchmark_path(benchmark))
+    # Verify the benchmark path is constructed correctly
+    benchmark_path = agent_config.benchmark_path(benchmark)
+    assert benchmark_path is not None
+    assert "benchmark" in benchmark_path
 
 
 def test_storage_config(agent_config: AgentConfig):

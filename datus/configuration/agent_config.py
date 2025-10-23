@@ -169,9 +169,8 @@ class AgentConfig:
         self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
         self.db_type = ""
 
-        self.benchmark_paths = {
-            k: os.path.expanduser(v["benchmark_path"]) for k, v in kwargs.get("benchmark", {}).items()
-        }
+        # Benchmark paths are now fixed at {agent.home}/benchmark/{name}
+        # Supported benchmarks: bird_dev, spider2, semantic_layer
         self._reflection_nodes = DEFAULT_REFLECTION_NODES
         self._reflection_nodes.update(kwargs.get("reflection_nodes", {}))
 
@@ -373,18 +372,13 @@ class AgentConfig:
             self.current_database = database_name
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]
-            if benchmark_platform not in self.benchmark_paths:
-                raise DatusException(
-                    code=ErrorCode.COMMON_UNSUPPORTED,
-                    message_args={"field_name": "benchmark", "your_value": benchmark_platform},
-                )
+            # Validate benchmark is supported (will raise exception if not)
+            self.benchmark_path(benchmark_platform)
+
             if benchmark_platform == "spider2" and self.db_type != DBType.SNOWFLAKE:
                 raise DatusException(code=ErrorCode.COMMON_UNSUPPORTED, message="spider2 only support snowflake")
             if benchmark_platform == "bird_dev" and self.db_type != DBType.SQLITE:
                 raise DatusException(code=ErrorCode.COMMON_UNSUPPORTED, message="bird_dev only support sqlite")
-            benchmark_path = kwargs.get("benchmark_path", "")
-            if benchmark_path:
-                self.benchmark_paths[benchmark_platform] = benchmark_path
 
         # output_dir parameter has been deprecated - save path is now fixed at {agent.home}/save
         if kwargs.get("output_dir", ""):
@@ -425,12 +419,27 @@ class AgentConfig:
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
                 message="Benchmark name is required, please run with --benchmark <benchmark>",
             )
-        if name not in self.benchmark_paths:
+
+        # Supported benchmark names
+        supported_benchmarks = ["bird_dev", "spider2", "semantic_layer"]
+        if name not in supported_benchmarks:
             raise DatusException(
                 code=ErrorCode.COMMON_UNSUPPORTED,
                 message_args={"field_name": "benchmark", "your_value": name},
             )
-        return self.benchmark_paths[name]
+
+        # Return fixed path: {agent.home}/benchmark/{name}
+        from datus.utils.path_manager import get_path_manager
+
+        # Map benchmark names to subdirectories
+        benchmark_subdirs = {
+            "bird_dev": "bird",
+            "spider2": "spider2",
+            "semantic_layer": "semantic_layer",
+        }
+
+        subdir = benchmark_subdirs[name]
+        return str(get_path_manager().benchmark_dir / subdir)
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
         if not self._current_namespace:

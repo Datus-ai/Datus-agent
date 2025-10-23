@@ -58,14 +58,12 @@ agent:
       model: anthropic
       max_turns: 25
 
-  # benchmark configuration
-  benchmark:
-    bird_dev: # this is namespace of benchmark
-      benchmark_path: benchmark/bird/dev_20240627
-    spider2:
-      benchmark_path: benchmark/spider2/spider2-snow
-    semantic_layer:
-      benchmark_path: benchmark/semantic_layer
+  # Benchmark data is stored at {agent.home}/benchmark/{name}
+  # Supported benchmarks: bird_dev, spider2, semantic_layer
+  # Directory structure:
+  #   {agent.home}/benchmark/bird/
+  #   {agent.home}/benchmark/spider2/
+  #   {agent.home}/benchmark/semantic_layer/
 
   # local databases configuration
   namespace:
