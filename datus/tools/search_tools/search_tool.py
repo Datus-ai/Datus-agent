@@ -99,7 +99,7 @@ def search_by_tavily(keywords: List[str], top_n: int) -> DocSearchResult:
             doc_count=0,
         )
     if not keywords:
-        return DocSearchResult(success=True, docs=[], doc_count=0)
+        return DocSearchResult(success=True, docs={}, doc_count=0)
     import requests
 
     try:
