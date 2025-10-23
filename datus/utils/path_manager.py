@@ -171,7 +171,10 @@ class DatusPathManager:
         Returns:
             Path: ~/.datus/data/datus_db_{namespace}
         """
-        return self.data_dir / f"datus_db_{namespace}"
+        path = self.data_dir / f"datus_db_{namespace}"
+        # Ensure the directory exists
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def sub_agent_path(self, agent_name: str) -> Path:
         """
@@ -183,7 +186,10 @@ class DatusPathManager:
         Returns:
             Path: ~/.datus/data/sub_agents/{agent_name}
         """
-        return self.data_dir / "sub_agents" / agent_name
+        path = self.data_dir / "sub_agents" / agent_name
+        # Ensure the directory exists
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def session_db_path(self, session_id: str) -> Path:
         """
@@ -195,6 +201,8 @@ class DatusPathManager:
         Returns:
             Path: ~/.datus/sessions/{session_id}.db
         """
+        # Ensure the parent directory exists
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
         return self.sessions_dir / f"{session_id}.db"
 
     def semantic_model_path(self, namespace: str) -> Path:
@@ -207,7 +215,10 @@ class DatusPathManager:
         Returns:
             Path: ~/.datus/semantic_models/{namespace}
         """
-        return self.semantic_models_dir / namespace
+        path = self.semantic_models_dir / namespace
+        # Ensure the directory exists
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def sql_summary_path(self, namespace: str) -> Path:
         """
@@ -219,7 +230,10 @@ class DatusPathManager:
         Returns:
             Path: ~/.datus/sql_summaries/{namespace}
         """
-        return self.sql_summaries_dir / namespace
+        path = self.sql_summaries_dir / namespace
+        # Ensure the directory exists
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     # Utility methods
 

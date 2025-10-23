@@ -131,12 +131,12 @@ class GenerationTools:
                 - 'result' (dict): Contains:
                     - 'exists' (bool): Whether metric exists
                     - 'metric_name' (str): Metric name if exists
-                    - 'description' (str): Metric description if found
+                    - 'llm_text' (str): Metric definition text if found
         """
         try:
             # Search for existing metrics by name
             all_metrics_table = self.metrics_rag.metric_storage.search(
-                query_txt=metric_name, select_fields=["name", "description"], top_n=10
+                query_txt=metric_name, select_fields=["name", "llm_text"], top_n=3
             )
 
             # Convert PyArrow Table to list of dicts
@@ -153,7 +153,7 @@ class GenerationTools:
                         result={
                             "exists": True,
                             "metric_name": metric.get("name", ""),
-                            "description": metric.get("description", ""),
+                            "llm_text": metric.get("llm_text", ""),
                             "message": f"Metric already exists: '{metric_name}'",
                         }
                     )

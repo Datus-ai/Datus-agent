@@ -76,7 +76,10 @@ class DatusCLI:
         # Plan mode support
         self.plan_mode_active = False
 
-        # Setup history
+        # Load agent config first to initialize path_manager with correct home directory
+        self.agent_config = load_agent_config(**vars(self.args))
+        self.configuration_manager = configuration_manager()
+
         if args.history_file:
             history_file = Path(args.history_file)
         else:
@@ -85,8 +88,6 @@ class DatusCLI:
             history_file = get_path_manager().history_file_path()
         history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history = FileHistory(str(history_file))
-        self.agent_config = load_agent_config(**vars(self.args))
-        self.configuration_manager = configuration_manager()
         self.at_completer: AtReferenceCompleter
         self._init_prompt_session()
 

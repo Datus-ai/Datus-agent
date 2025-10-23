@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from .types import MetricFlowCommandResult
 
+
 class MetricFlowServer:
     """Server for executing MetricFlow CLI commands."""
 
@@ -40,12 +41,15 @@ class MetricFlowServer:
 
         try:
             # Execute the command
+            # Use DATUS_PROJECT_ROOT as cwd so mf can find ./conf/agent.yml
+            cwd = os.environ.get("DATUS_PROJECT_ROOT")
             process = subprocess.Popen(
                 args=full_command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 env=os.environ.copy(),
+                cwd=cwd,
             )
             output, _ = process.communicate()
 

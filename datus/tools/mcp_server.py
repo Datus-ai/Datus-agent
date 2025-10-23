@@ -126,6 +126,10 @@ class MCPServer:
 
                     # MetricFlow can now read Datus config directly via DatusConfigHandler
                     # Pass the namespace via --namespace command line argument
+                    # Pass current working directory so mf can find ./conf/agent.yml
+                    env_dict = os.environ.copy()
+                    env_dict["DATUS_PROJECT_ROOT"] = os.getcwd()
+
                     mcp_server_params = MCPServerStdioParams(
                         command="uv",
                         args=[
@@ -136,7 +140,7 @@ class MCPServer:
                             "--namespace",
                             namespace,
                         ],
-                        env=os.environ.copy(),
+                        env=env_dict,
                     )
                     cls._metricflow_mcp_server = SilentMCPServerStdio(
                         params=mcp_server_params, client_session_timeout_seconds=20

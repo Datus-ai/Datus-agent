@@ -119,7 +119,10 @@ def parse_config_path(config_file: str = "") -> Path:
     Priority:
     1. Explicit config_file parameter if provided
     2. ./conf/agent.yml in current directory
-    3. ~/.datus/conf/agent.yml in user home
+    3. ~/.datus/conf/agent.yml (fixed path, not from agent.home config)
+
+    Note: The third option uses a fixed ~/.datus path because we need to
+    read the config file first to determine the agent.home location.
 
     Args:
         config_file: Optional explicit config file path
@@ -145,7 +148,9 @@ def parse_config_path(config_file: str = "") -> Path:
     if local_config.exists():
         return local_config
 
-    # 3. Check user home directory
+    # 3. Check default home directory (~/.datus/conf/agent.yml)
+    # Note: This path is fixed because we need to read the config file
+    # to determine agent.home location for other directories
     home_config = Path.home() / ".datus" / "conf" / "agent.yml"
     if home_config.exists():
         return home_config

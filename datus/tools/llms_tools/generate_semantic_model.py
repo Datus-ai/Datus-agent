@@ -47,9 +47,10 @@ async def generate_semantic_model_with_mcp_stream(
     )
 
     # Setup MCP servers
-    import os
+    from datus.utils.path_manager import get_path_manager
 
-    semantic_models_path = os.path.join(base_path, "semantic_models")
+    path_manager = get_path_manager()
+    semantic_models_path = str(path_manager.semantic_model_path(namespace))
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=semantic_models_path)
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(namespace=namespace)
     mcp_servers = {
@@ -89,9 +90,10 @@ def generate_semantic_model_with_mcp(
     if not isinstance(input_data, GenerateSemanticModelInput):
         raise ValueError("Input must be a GenerateSemanticModelInput instance")
 
-    import os
+    from datus.utils.path_manager import get_path_manager
 
-    semantic_models_path = os.path.join(base_path, "semantic_models")
+    path_manager = get_path_manager()
+    semantic_models_path = str(path_manager.semantic_model_path(namespace))
     filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=semantic_models_path)
     metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(namespace=namespace)
 

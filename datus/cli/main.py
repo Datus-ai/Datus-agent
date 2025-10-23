@@ -54,13 +54,13 @@ class ArgumentParser:
             dest="history_file",
             type=str,
             default=None,
-            help="Path to history file (default: ~/.datus/history)",
+            help="Path to history file (default: {agent.home}/history)",
         )
         self.parser.add_argument(
             "--config",
             dest="config",
             type=str,
-            help="Path to configuration file (default: conf/agent.yml > ~/.datus/conf/agent.yml)",
+            help="Path to configuration file (default: ./conf/agent.yml > {agent.home}/conf/agent.yml)",
         )
         self.parser.add_argument("--debug", action="store_true", help="Enable debug logging")
         self.parser.add_argument("--no_color", dest="no_color", action="store_true", help="Disable colored output")

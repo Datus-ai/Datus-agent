@@ -81,10 +81,11 @@ class GenerateMetricsNode(Node):
         Returns:
             List of table names that don't have semantic model files
         """
-        model_path = os.getenv("MF_MODEL_PATH")
-        if not model_path:
-            logger.warning("MF_MODEL_PATH environment variable is not set")
-            return table_names
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+        namespace = self.agent_config.current_namespace if self.agent_config else "default"
+        model_path = str(path_manager.semantic_model_path(namespace))
 
         if not os.path.exists(model_path):
             logger.warning(f"Model path does not exist: {model_path}")
@@ -123,6 +124,7 @@ class GenerateMetricsNode(Node):
             try:
                 # Parse table name parts
                 table_parts = parse_table_name_parts(table_name, self.input.sql_task.database_type)
+                logger.info(f"Parsed table name '{table_name}' -> {table_parts}")
 
                 # Use parsed parts or fallback to sql_task values
                 catalog_name = table_parts["catalog_name"] or self.input.sql_task.catalog_name
@@ -131,6 +133,11 @@ class GenerateMetricsNode(Node):
                 actual_table_name = table_parts["table_name"]
 
                 logger.debug(f"Generating semantic model for table: {actual_table_name}")
+                logger.info(
+                    f"get_tables_with_ddl params - table: {actual_table_name}, "
+                    f"catalog: {catalog_name}, database: {database_name}, schema: {schema_name}, "
+                    f"namespace: {current_namespace}"
+                )
 
                 # Get database connector
                 connector = None
@@ -144,6 +151,7 @@ class GenerateMetricsNode(Node):
                         database_name=database_name,
                         schema_name=schema_name,
                     )
+                    logger.info(f"get_tables_with_ddl returned {len(tables_with_ddl)} tables")
 
                     if not tables_with_ddl:
                         return f"No DDL found for table: {table_name}"
@@ -174,7 +182,13 @@ class GenerateMetricsNode(Node):
                             "generate_semantic_model_system", semantic_input.prompt_version
                         )
 
-                        filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=os.getenv("MF_MODEL_PATH"))
+                        from datus.utils.path_manager import get_path_manager
+
+                        path_manager = get_path_manager()
+                        semantic_models_path = str(
+                            path_manager.semantic_model_path(self.agent_config.current_namespace)
+                        )
+                        filesystem_mcp_server = MCPServer.get_filesystem_mcp_server(path=semantic_models_path)
                         metricflow_mcp_server = MCPServer.get_metricflow_mcp_server(
                             namespace=self.agent_config.current_namespace
                         )
