@@ -8,10 +8,10 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE*", "NOTICE*"]
 authors = [
-    {name = "Datus Team", email = "harrison.zhao@datus.ai"}
+    { name = "Datus Team", email = "harrison.zhao@datus.ai" }
 ]
 maintainers = [
-    {name = "Datus Team", email = "harrison.zhao@datus.ai"}
+    { name = "Datus Team", email = "harrison.zhao@datus.ai" }
 ]
 keywords = ["sql", "ai", "agent", "database", "nlp", "natural-language"]
 classifiers = [
@@ -45,7 +45,6 @@ dependencies = [
     "pylance==0.22.0",
     "datasets>=3.5.1",
     "transformers>=4.51.3",
-    "sentence-transformers==4.1.0",
     # this verison is required by pandas 2.1.4
     "pyarrow<19.0.0",
     "rich==14.0.0",
@@ -61,11 +60,6 @@ dependencies = [
     # MCP (Model Context Protocol) support
     "mcp>=1.11.0",
     "anyio>=4.9.0",
-    # sentence-transformers and lancedb depends on the torch.
-    # For Apple Silicon (arm64) Macs, use latest torch version
-    # For Intel Macs or other platforms, use torch 2.2.2 for Python 3.12 compatibility
-    "torch==2.2.2; sys_platform != 'darwin' or platform_machine != 'arm64'",
-    "torch>=2.3.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "pymysql>=1.1.1",
     "json-repair>=0.47.6",
     "fastapi>=0.104.0",
@@ -74,6 +68,8 @@ dependencies = [
     "pyperclip==1.9.0",
     "streamlit>=1.38.0",
     "wcmatch>=10.0",
+    "fastembed>=0.4.2",
+    # Optional: install torch manually to enable reranker models.
 ]
 
 

@@ -26,6 +26,13 @@ class BGEReranker(Reranker):
         return_score: str = "relevance",
     ):
         """Initialize the BGE reranker."""
+        try:
+            import torch  # noqa: F401
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise ImportError(
+                "torch is required to use BGEReranker. Install torch separately to enable reranking."
+            ) from exc
+
         self.model_name = model_name
         self.column = column
         self.return_score = return_score

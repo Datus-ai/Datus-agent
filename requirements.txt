@@ -5,13 +5,13 @@ sqlglot>=26.12.0
 snowflake-connector-python>=3.6.0
 pyyaml==6.0.1
 transformers>=4.50.3
-sentence-transformers>=4.0.1
 pytest==8.0.2
 black==23.12.1
 mypy==1.8.0
 langsmith>=0.0.77
 lancedb==0.18.0
 pylance==0.22.0
+fastembed>=0.4.2
 structlog>=23.1.0
 openai>=1.95.0
 httpx[socks]==0.27.2

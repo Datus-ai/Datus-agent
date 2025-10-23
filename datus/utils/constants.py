@@ -78,6 +78,7 @@ class EmbeddingProvider(str, Enum):
 
     OPENAI = "openai"
     SENTENCE_TRANSFORMERS = "sentence-transformers"
+    FASTEMBED = "FASTEMBED"
     HUGGINGFACE = "huggingface"
 
 

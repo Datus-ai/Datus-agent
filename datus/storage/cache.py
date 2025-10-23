@@ -107,3 +107,9 @@ def get_storage_cache_instance(agent_config: AgentConfig) -> StorageCache:
     if _CACHE_INSTANCE is None:
         _CACHE_INSTANCE = StorageCache(agent_config)
     return _CACHE_INSTANCE
+
+
+def clear_cache():
+    _cached_storage.cache_clear()
+    global _CACHE_INSTANCE
+    _CACHE_INSTANCE = None

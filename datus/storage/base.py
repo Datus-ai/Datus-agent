@@ -2,7 +2,9 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import time
 from datetime import datetime
+from threading import Lock
 from typing import Any, Dict, List, Optional, Union
 
 import lancedb
@@ -102,18 +104,24 @@ class BaseEmbeddingStore(StorageBase):
         # Delay table initialization until first use
         self.table: Optional[Table] = None
         self._table_initialized = False
+        self._table_lock = Lock()
+        self._write_lock = Lock()
 
     def _ensure_table_ready(self):
         """Ensure table is ready for operations, with proper error handling."""
         if self._table_initialized:
             return
 
-        # First check if embedding model is available
-        self._check_embedding_model_ready()
-        # Initialize table with embedding function
-        self._ensure_table(self._schema)
-        self._table_initialized = True
-        logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
+        with self._table_lock:
+            if self._table_initialized:
+                return
+
+            # First check if embedding model is available
+            self._check_embedding_model_ready()
+            # Initialize table with embedding function
+            self._ensure_table(self._schema)
+            self._table_initialized = True
+            logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
 
     def _search_all(self, where: WhereExpr = None, select_fields: Optional[List[str]] = None) -> pa.Table:
         self._ensure_table_ready()
@@ -267,20 +275,56 @@ class BaseEmbeddingStore(StorageBase):
         self._ensure_table_ready()
 
         try:
-            if len(data) <= self.batch_size:
-                self.table.add(pd.DataFrame(data))
-                return
-            # split the data into batches and store them
-            for i in range(0, len(data), self.batch_size):
-                batch = data[i : i + self.batch_size]
-                self.table.add(pd.DataFrame(batch))
+            with self._write_lock:
+                if len(data) <= self.batch_size:
+                    self._add_with_retry(pd.DataFrame(data))
+                    return
+                # split the data into batches and store them
+                for i in range(0, len(data), self.batch_size):
+                    batch = data[i : i + self.batch_size]
+                    self._add_with_retry(pd.DataFrame(batch))
         except Exception as e:
             raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
 
     def store(self, data: List[Dict[str, Any]]):
         # Ensure table is ready before storing data
         self._ensure_table_ready()
-        self.table.add(pd.DataFrame(data))
+        try:
+            with self._write_lock:
+                self._add_with_retry(pd.DataFrame(data))
+        except Exception as e:
+            raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
+
+    def _add_with_retry(self, frame: pd.DataFrame, max_attempts: int = 3, initial_delay: float = 0.05) -> None:
+        """Insert a DataFrame into LanceDB with simple retry/backoff on commit conflicts."""
+        if self.table is None:
+            raise DatusException(
+                ErrorCode.STORAGE_SAVE_FAILED,
+                message_args={"error_message": "Lance table is not initialized"},
+            )
+
+        last_error: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                self.table.add(frame)
+                return
+            except Exception as err:
+                error_message = str(err)
+                if "Commit conflict" not in error_message:
+                    raise err
+
+                last_error = err
+                delay = initial_delay * (attempt + 1)
+                logger.warning(
+                    f"Commit conflict detected when writing to LanceDB table '{self.table_name}' "
+                    f"(attempt {attempt + 1}/{max_attempts}). Retrying after {delay:.2f}s."
+                )
+                # Refresh table handle so subsequent attempts see the latest version
+                self.table = self.db.open_table(self.table_name)
+                time.sleep(delay)
+
+        assert last_error is not None  # for type checkers
+        raise last_error
 
     def search(
         self,

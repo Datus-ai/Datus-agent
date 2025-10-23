@@ -50,7 +50,7 @@ class EmbeddingModel:
         dim_size: int,
         registry_name: str = EmbeddingProvider.SENTENCE_TRANSFORMERS,
         openai_config: Optional["ModelConfig"] = None,
-        batch_size: int = 32,
+        batch_size: int = 64,
     ):
         self.registry_name = registry_name
         self.model_name = model_name
@@ -157,20 +157,18 @@ class EmbeddingModel:
     def init_model(self):
         """Pre-download the model to local cache. Now we only support sentence-transformers and openai."""
         # Additional PyTorch-specific threading controls
-        try:
-            import torch
 
-            torch.set_num_threads(1)
-        except ImportError:
-            pass
-
-        if self.registry_name == EmbeddingProvider.SENTENCE_TRANSFORMERS:
+        if self.registry_name in (EmbeddingProvider.SENTENCE_TRANSFORMERS, EmbeddingProvider.FASTEMBED):
             logger.info(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")
-            from datus.storage.sentence_transformers import SentenceTransformerEmbeddings
+            from datus.storage.fastembed_embeddings import FastEmbedEmbeddings
 
             try:
                 # Method `get_registry` has a multi-threading problem
-                self._model = SentenceTransformerEmbeddings.create(name=self.model_name)
+                self._model = FastEmbedEmbeddings.create(
+                    name=self.model_name,
+                    batch_size=self.batch_size,
+                    cache_dir="~/.cache/huggingface/fastembed",
+                )
                 # first download
                 # self._model.generate_embeddings(["foo"])
                 logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
