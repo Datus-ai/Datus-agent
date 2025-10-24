@@ -47,8 +47,6 @@ class TestBirdDevOutput:
         task_group = {}
         # Use db_path from test data if provided, otherwise use benchmark_path
         if "db_path" in test_data:
-            from pathlib import Path
-
             # db_path in test data is relative, resolve it based on home directory
             benchmark_path = str(Path(test_data["db_path"]).expanduser().resolve())
         else:
