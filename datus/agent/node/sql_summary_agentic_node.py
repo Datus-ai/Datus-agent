@@ -40,18 +40,22 @@ class SqlSummaryAgenticNode(AgenticNode):
         self,
         node_name: str,
         agent_config: Optional[AgentConfig] = None,
-        max_turns: int = 30,
     ):
         """
         Initialize the SqlSummaryAgenticNode.
 
         Args:
-            node_name: Name of the node configuration in agent.yml
+            node_name: Name of the node configuration in agent.yml (should be "gen_sql_summary")
             agent_config: Agent configuration
-            max_turns: Maximum conversation turns per interaction
         """
         self.configured_node_name = node_name
-        self.max_turns = max_turns
+
+        # Get max_turns from agentic_nodes configuration, default to 30
+        self.max_turns = 30
+        if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
+            agentic_node_config = agent_config.agentic_nodes[node_name]
+            if isinstance(agentic_node_config, dict):
+                self.max_turns = agentic_node_config.get("max_turns", 30)
 
         # Call parent constructor first to set up node_config
         super().__init__(
@@ -60,7 +64,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             agent_config=agent_config,
         )
 
-        # Setup tools based on configuration
+        # Setup tools based on hardcoded configuration
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
         self.hooks = None
@@ -79,27 +83,46 @@ class SqlSummaryAgenticNode(AgenticNode):
         return self.configured_node_name
 
     def setup_tools(self):
-        """Setup tools based on configuration."""
+        """Setup tools based on hardcoded configuration."""
         if not self.agent_config:
             return
 
         self.tools = []
-        config_value = self.node_config.get("tools", "")
-        if not config_value:
-            return
 
-        tool_patterns = [p.strip() for p in config_value.split(",") if p.strip()]
-        for pattern in tool_patterns:
-            self._setup_tool_pattern(pattern)
+        # Hardcoded tool configuration: specific methods from generation_tools and filesystem_tools
+        # tools: generation_tools.prepare_sql_summary_context, generation_tools.generate_sql_summary_id,
+        # filesystem_tools.read_file, filesystem_tools.read_multiple_files, filesystem_tools.write_file,
+        # filesystem_tools.edit_file, filesystem_tools.list_directory
+        self._setup_specific_generation_tools()
+        self._setup_specific_filesystem_tool()
 
-        logger.info(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
+        logger.info(
+            f"Setup {len(self.tools)} tools for {self.configured_node_name}: {[tool.name for tool in self.tools]}"
+        )
 
-        # Setup hooks after tools are configured
+        # Setup hooks (hardcoded to generation_hooks)
         self._setup_hooks()
 
-    def _setup_filesystem_tools(self):
-        """Setup filesystem tools."""
+    def _setup_specific_generation_tools(self):
+        """Setup specific generation tools: prepare_sql_summary_context and generate_sql_summary_id."""
         try:
+            from datus.tools.tools import trans_to_function_tool
+
+            self.generation_tools = GenerationTools(self.agent_config)
+
+            self.tools.append(trans_to_function_tool(self.generation_tools.prepare_sql_summary_context))
+            logger.debug("Added tool: prepare_sql_summary_context")
+
+            self.tools.append(trans_to_function_tool(self.generation_tools.generate_sql_summary_id))
+            logger.debug("Added tool: generate_sql_summary_id")
+        except Exception as e:
+            logger.error(f"Failed to setup specific generation tools: {e}")
+
+    def _setup_specific_filesystem_tool(self):
+        """Setup specific filesystem tools"""
+        try:
+            from datus.tools.tools import trans_to_function_tool
+
             # Use sql_summary_dir with namespace subdirectory
             from datus.utils.path_manager import get_path_manager
 
@@ -108,105 +131,31 @@ class SqlSummaryAgenticNode(AgenticNode):
             sql_summary_dir = str(path_manager.sql_summary_path(namespace))
 
             self.filesystem_func_tool = FilesystemFuncTool(root_path=sql_summary_dir)
-            self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.info(f"Setup filesystem tools with sql_summary_dir: {sql_summary_dir}")
-        except Exception as e:
-            logger.error(f"Failed to setup filesystem tools: {e}")
 
-    def _setup_generation_tools(self):
-        """Setup generation tools."""
-        try:
-            self.generation_tools = GenerationTools(self.agent_config)
-            self.tools.extend(self.generation_tools.available_tools())
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_multiple_files))
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.list_directory))
+            logger.debug(
+                "Added filesystem tools: read_file, read_multiple_files, write_file, edit_file, list_directory"
+            )
         except Exception as e:
-            logger.error(f"Failed to setup generation tools: {e}")
+            logger.error(f"Failed to setup specific filesystem tool: {e}")
 
     def _setup_hooks(self):
-        """Setup hooks if configured."""
-        hooks_config = self.node_config.get("hooks", "")
-        logger.info(f"Hooks config: {hooks_config}, node_config: {self.node_config}")
-        if not hooks_config:
-            return
-
+        """Setup hooks (hardcoded to generation_hooks)."""
         try:
-            # Import hooks module
-            if hooks_config == "generation_hooks":
-                from rich.console import Console
+            from rich.console import Console
 
-                from datus.cli.generation_hooks import GenerationHooks
+            from datus.cli.generation_hooks import GenerationHooks
 
-                console = Console()
-                self.hooks = GenerationHooks(console=console, agent_config=self.agent_config)
-                logger.info(f"Setup hooks: {hooks_config}")
-            else:
-                logger.warning(f"Unknown hooks configuration: {hooks_config}")
-
+            console = Console()
+            self.hooks = GenerationHooks(console=console, agent_config=self.agent_config)
+            logger.info("Setup hooks: generation_hooks")
         except Exception as e:
-            logger.error(f"Failed to setup hooks '{hooks_config}': {e}")
+            logger.error(f"Failed to setup generation_hooks: {e}")
 
-    def _setup_tool_pattern(self, pattern: str):
-        """Setup tools based on pattern."""
-        try:
-            # Handle wildcard patterns (e.g., "generation_tools.*")
-            if pattern.endswith(".*"):
-                base_type = pattern[:-2]  # Remove ".*"
-                if base_type == "filesystem_tools":
-                    self._setup_filesystem_tools()
-                elif base_type == "generation_tools":
-                    self._setup_generation_tools()
-                else:
-                    logger.warning(f"Unknown tool type: {base_type}")
-
-            # Handle exact type patterns
-            elif pattern == "filesystem_tools":
-                self._setup_filesystem_tools()
-            elif pattern == "generation_tools":
-                self._setup_generation_tools()
-
-            # Handle specific method patterns (e.g., "generation_tools.prepare_sql_summary_context")
-            elif "." in pattern:
-                tool_type, method_name = pattern.split(".", 1)
-                self._setup_specific_tool_method(tool_type, method_name)
-
-            else:
-                logger.warning(f"Unknown tool pattern: {pattern}")
-
-        except Exception as e:
-            logger.error(f"Failed to setup tool pattern '{pattern}': {e}")
-
-    def _setup_specific_tool_method(self, tool_type: str, method_name: str):
-        """Setup a specific tool method."""
-        try:
-            if tool_type == "generation_tools":
-                if not hasattr(self, "generation_tools") or not self.generation_tools:
-                    self.generation_tools = GenerationTools(self.agent_config)
-                tool_instance = self.generation_tools
-            elif tool_type == "filesystem_tools":
-                if not hasattr(self, "filesystem_func_tool") or not self.filesystem_func_tool:
-                    # Use sql_summary_dir with namespace subdirectory
-                    from datus.utils.path_manager import get_path_manager
-
-                    path_manager = get_path_manager()
-                    namespace = (
-                        getattr(self.agent_config, "current_namespace", "default") if self.agent_config else "default"
-                    )
-                    sql_summary_dir = str(path_manager.sql_summary_path(namespace))
-                    self.filesystem_func_tool = FilesystemFuncTool(root_path=sql_summary_dir)
-                tool_instance = self.filesystem_func_tool
-            else:
-                logger.warning(f"Unknown tool type: {tool_type}")
-                return
-
-            if hasattr(tool_instance, method_name):
-                method = getattr(tool_instance, method_name)
-                from datus.tools.tools import trans_to_function_tool
-
-                self.tools.append(trans_to_function_tool(method))
-                logger.debug(f"Added specific tool method: {tool_type}.{method_name}")
-            else:
-                logger.warning(f"Method '{method_name}' not found in {tool_type}")
-        except Exception as e:
-            logger.error(f"Failed to setup {tool_type}.{method_name}: {e}")
 
     def _prepare_template_context(self, user_input: SqlSummaryNodeInput) -> dict:
         """
@@ -256,18 +205,14 @@ class SqlSummaryAgenticNode(AgenticNode):
 
         Args:
             conversation_summary: Optional summary from previous conversation compact
-            prompt_version: Optional prompt version to use, overrides agent config version
+            prompt_version: Optional prompt version to use (ignored, hardcoded to "1.0")
             template_context: Optional template context variables
 
         Returns:
             System prompt string loaded from the template
         """
-        # Get prompt version from parameter, fallback to node config, then agent config
-        version = prompt_version
-        if version is None:
-            version = self.node_config.get("prompt_version")
-        if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
-            version = self.agent_config.prompt_version
+        # Hardcoded prompt version
+        version = "1.0"
 
         # Get sql_summary_dir with namespace subdirectory
         from datus.utils.path_manager import get_path_manager
@@ -276,12 +221,8 @@ class SqlSummaryAgenticNode(AgenticNode):
         namespace = getattr(self.agent_config, "current_namespace", "default") if self.agent_config else "default"
         sql_summary_dir = str(path_manager.sql_summary_path(namespace))
 
-        # Construct template name: {system_prompt}_system or fallback to {node_name}_system
-        system_prompt_name = self.node_config.get("system_prompt")
-        if system_prompt_name:
-            template_name = f"{system_prompt_name}_system"
-        else:
-            template_name = f"{self.get_node_name()}_system"
+        # Hardcoded system_prompt based on node name
+        template_name = f"{self.configured_node_name}_system"
 
         try:
             # Prepare template variables
@@ -356,8 +297,8 @@ class SqlSummaryAgenticNode(AgenticNode):
             template_context = self._prepare_template_context(user_input)
 
             # Get system instruction from template with enhanced context
-            prompt_version = user_input.prompt_version or self.node_config.get("prompt_version")
-            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
+            # prompt_version is now hardcoded to "1.0" in _get_system_prompt
+            system_instruction = self._get_system_prompt(conversation_summary, None, template_context)
 
             # Add context to user message if provided
             enhanced_message = user_input.user_message
