@@ -1,4 +1,7 @@
 agent:
+  # Set home to tests directory so data paths resolve to tests/data instead of ~/.datus/data
+  # Using relative path for portability across different environments
+  home: tests
   target: deepseek
   models:
     deepseek:
