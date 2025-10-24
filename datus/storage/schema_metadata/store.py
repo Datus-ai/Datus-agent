@@ -357,7 +357,7 @@ class SchemaWithValueRAG:
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
-        dialect: DBType | str = DBType.SQLITE,
+        dialect: str = DBType.SQLITE,
     ) -> Tuple[List[TableSchema], List[TableValue]]:
         """
         Search schemas and values for given table names.

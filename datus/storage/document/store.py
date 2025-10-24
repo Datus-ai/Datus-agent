@@ -46,7 +46,7 @@ class DocumentStore(BaseEmbeddingStore):
     def create_indices(self):
         # Ensure table is ready before creating indices
         self._ensure_table_ready()
-        self.create_fts_index("chunk_text")
+        self.create_fts_index(["chunk_text"])
 
     def store_document(
         self,
@@ -55,7 +55,6 @@ class DocumentStore(BaseEmbeddingStore):
         keywords: List[str],
         language: str,
         chunk_text: str,
-        embedding: List[float],
     ):
         """Store a document chunk in the database.
 
