@@ -12,8 +12,6 @@ hooks, and flexible configuration through agent.yml.
 
 from typing import Any, AsyncGenerator, Dict, Optional
 
-from agents.mcp import MCPServerStdio
-
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -62,6 +60,13 @@ class SemanticAgenticNode(AgenticNode):
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
+
+        # Initialize semantic_model_dir with namespace subdirectory
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+        namespace = getattr(agent_config, "current_namespace", "default") if agent_config else "default"
+        self.semantic_model_dir = str(path_manager.semantic_model_path(namespace))
 
         # Call parent constructor first to set up node_config
         super().__init__(
@@ -129,10 +134,10 @@ class SemanticAgenticNode(AgenticNode):
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
             conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            # Don't pass sub_agent_name to use default storage path
             self.db_func_tool = DBFuncTool(
                 conn,
                 agent_config=self.agent_config,
-                sub_agent_name=self.configured_node_name,
             )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
@@ -141,16 +146,18 @@ class SemanticAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools (specific methods only)."""
         try:
-            # Use semantic_model_dir with namespace subdirectory
-            from datus.utils.path_manager import get_path_manager
+            from datus.tools.tools import trans_to_function_tool
 
-            path_manager = get_path_manager()
-            namespace = getattr(self.agent_config, "current_namespace", "default") if self.agent_config else "default"
-            semantic_model_dir = str(path_manager.semantic_model_path(namespace))
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=self.semantic_model_dir)
 
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=semantic_model_dir)
-            self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.info(f"Setup filesystem tools with semantic_model_dir: {semantic_model_dir}")
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_multiple_files))
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.list_directory))
+            logger.debug(
+                "Added filesystem tools: read_file, read_multiple_files, write_file, edit_file, list_directory"
+            )
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
@@ -163,13 +170,11 @@ class SemanticAgenticNode(AgenticNode):
 
             # Different nodes use different generation tools
             if self.configured_node_name == "gen_semantic_model":
-                # gen_semantic_model: check_semantic_model_exists, end_generation
                 self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_model_exists))
                 self.tools.append(trans_to_function_tool(self.generation_tools.end_generation))
                 logger.debug("Added tools: check_semantic_model_exists, end_generation")
 
             elif self.configured_node_name == "gen_metrics":
-                # gen_metrics: check_metric_exists, end_generation
                 self.tools.append(trans_to_function_tool(self.generation_tools.check_metric_exists))
                 self.tools.append(trans_to_function_tool(self.generation_tools.end_generation))
                 logger.debug("Added tools: check_metric_exists, end_generation")
@@ -190,94 +195,32 @@ class SemanticAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
 
+    def _setup_mcp_servers(self) -> Dict[str, Any]:
+        """Set up MCP servers (hardcoded to metricflow_mcp)."""
+        mcp_servers = {}
 
-    def _setup_metricflow_mcp(self) -> Optional[MCPServerStdio]:
-        """Setup metricflow MCP server.
-
-        Returns:
-            MCPServerStdio instance or None if setup fails
-        """
+        # Hardcoded: always setup metricflow_mcp
         try:
             if not self.agent_config:
                 logger.warning("Agent config not available for metricflow MCP setup")
-                return None
+                return mcp_servers
 
             # Get current database config
             db_config = self.agent_config.current_db_config()
             if not db_config:
                 logger.warning("Database config not found")
-                return None
+                return mcp_servers
 
             metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_namespace)
             if metricflow_server:
-                logger.info(f"Added metricflow MCP server for database: {db_config.database}")
-                return metricflow_server
+                mcp_servers["metricflow_mcp"] = metricflow_server
+                logger.info(f"Setup metricflow_mcp MCP server for database: {db_config.database}")
             else:
                 logger.warning(f"Failed to create metricflow MCP server for db_config: {db_config}")
         except Exception as e:
-            logger.error(f"Failed to setup metricflow MCP server: {e}")
-        return None
-
-    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
-        """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
-        try:
-            from datus.tools.mcp_tools.mcp_manager import MCPManager
-
-            # Use MCPManager to get server config
-            mcp_manager = MCPManager()
-            server_config = mcp_manager.get_server_config(server_name)
-
-            if not server_config:
-                logger.warning(f"MCP server '{server_name}' not found in configuration")
-                return None
-
-            # Create server instance using the manager
-            server_instance, details = mcp_manager._create_server_instance(server_config)
-
-            if server_instance:
-                logger.info(f"Added MCP server '{server_name}' from configuration: {details}")
-                return server_instance
-            else:
-                error_msg = details.get("error", "Unknown error")
-                logger.warning(f"Failed to create MCP server '{server_name}': {error_msg}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Failed to setup MCP server '{server_name}' from config: {e}")
-            return None
-
-    def _setup_mcp_servers(self) -> Dict[str, Any]:
-        """Set up MCP servers (hardcoded to metricflow_mcp)."""
-        mcp_servers = {}
-
-        config_value = self.node_config.get("mcp", "")
-        if not config_value:
-            return mcp_servers
-
-        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
-
-        for server_name in mcp_server_names:
-            try:
-                # Handle metricflow_mcp
-                if server_name == "metricflow_mcp":
-                    server = self._setup_metricflow_mcp()
-                    if server:
-                        mcp_servers["metricflow_mcp"] = server
-
-                # Handle MCP servers from {agent.home}/conf/.mcp.json using mcp_manager
-                else:
-                    server = self._setup_mcp_server_from_config(server_name)
-                    if server:
-                        mcp_servers[server_name] = server
-
-            except Exception as e:
-                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
+            logger.error(f"Failed to setup metricflow_mcp: {e}")
 
         logger.info(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
-
-        # Debug: Log detailed info about each server
-        for name, server in mcp_servers.items():
-            logger.debug(f"MCP server '{name}': type={type(server)}, instance={server}")
 
         return mcp_servers
 
@@ -302,20 +245,11 @@ class SemanticAgenticNode(AgenticNode):
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
 
-        # Add rules from configuration
-        context["rules"] = self.node_config.get("rules", [])
-
-        # Add agent description from configuration or input
-        context["agent_description"] = user_input.agent_description or self.node_config.get("agent_description", "")
-
         # Add namespace and semantic_model_dir
         if self.agent_config:
-            from datus.utils.path_manager import get_path_manager
-
-            path_manager = get_path_manager()
             namespace = getattr(self.agent_config, "current_namespace", "default")
             context["namespace"] = namespace
-            context["semantic_model_dir"] = str(path_manager.semantic_model_path(namespace))
+        context["semantic_model_dir"] = self.semantic_model_dir
 
         logger.debug(f"Prepared template context: {context}")
         return context
@@ -340,13 +274,6 @@ class SemanticAgenticNode(AgenticNode):
         # Hardcoded prompt version
         version = "1.0"
 
-        # Get semantic_model_dir with namespace subdirectory
-        from datus.utils.path_manager import get_path_manager
-
-        path_manager = get_path_manager()
-        namespace = getattr(self.agent_config, "current_namespace", "default") if self.agent_config else "default"
-        semantic_model_dir = str(path_manager.semantic_model_path(namespace))
-
         # Hardcoded system_prompt based on node name
         template_name = f"{self.configured_node_name}_system"
 
@@ -354,7 +281,6 @@ class SemanticAgenticNode(AgenticNode):
             # Prepare template variables
             template_vars = {
                 "agent_config": self.agent_config,
-                "semantic_model_dir": semantic_model_dir,
                 "conversation_summary": conversation_summary,
             }
 

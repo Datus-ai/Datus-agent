@@ -57,6 +57,13 @@ class SqlSummaryAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
+        # Initialize sql_summary_dir with namespace subdirectory
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+        namespace = getattr(agent_config, "current_namespace", "default") if agent_config else "default"
+        self.sql_summary_dir = str(path_manager.sql_summary_path(namespace))
+
         # Call parent constructor first to set up node_config
         super().__init__(
             tools=[],
@@ -109,12 +116,8 @@ class SqlSummaryAgenticNode(AgenticNode):
             from datus.tools.tools import trans_to_function_tool
 
             self.generation_tools = GenerationTools(self.agent_config)
-
             self.tools.append(trans_to_function_tool(self.generation_tools.prepare_sql_summary_context))
-            logger.debug("Added tool: prepare_sql_summary_context")
-
             self.tools.append(trans_to_function_tool(self.generation_tools.generate_sql_summary_id))
-            logger.debug("Added tool: generate_sql_summary_id")
         except Exception as e:
             logger.error(f"Failed to setup specific generation tools: {e}")
 
@@ -123,23 +126,13 @@ class SqlSummaryAgenticNode(AgenticNode):
         try:
             from datus.tools.tools import trans_to_function_tool
 
-            # Use sql_summary_dir with namespace subdirectory
-            from datus.utils.path_manager import get_path_manager
-
-            path_manager = get_path_manager()
-            namespace = getattr(self.agent_config, "current_namespace", "default") if self.agent_config else "default"
-            sql_summary_dir = str(path_manager.sql_summary_path(namespace))
-
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=sql_summary_dir)
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=self.sql_summary_dir)
 
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_multiple_files))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.list_directory))
-            logger.debug(
-                "Added filesystem tools: read_file, read_multiple_files, write_file, edit_file, list_directory"
-            )
         except Exception as e:
             logger.error(f"Failed to setup specific filesystem tool: {e}")
 
@@ -155,7 +148,6 @@ class SqlSummaryAgenticNode(AgenticNode):
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
-
 
     def _prepare_template_context(self, user_input: SqlSummaryNodeInput) -> dict:
         """
@@ -176,20 +168,11 @@ class SqlSummaryAgenticNode(AgenticNode):
         # Tool name lists for template display
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
 
-        # Add rules from configuration
-        context["rules"] = self.node_config.get("rules", [])
-
-        # Add agent description from configuration or input
-        context["agent_description"] = user_input.agent_description or self.node_config.get("agent_description", "")
-
         # Add namespace and sql_summary_dir
         if self.agent_config:
-            from datus.utils.path_manager import get_path_manager
-
-            path_manager = get_path_manager()
             namespace = getattr(self.agent_config, "current_namespace", "default")
             context["namespace"] = namespace
-            context["sql_summary_dir"] = str(path_manager.sql_summary_path(namespace))
+        context["sql_summary_dir"] = self.sql_summary_dir
 
         logger.debug(f"Prepared template context: {context}")
         return context
@@ -214,13 +197,6 @@ class SqlSummaryAgenticNode(AgenticNode):
         # Hardcoded prompt version
         version = "1.0"
 
-        # Get sql_summary_dir with namespace subdirectory
-        from datus.utils.path_manager import get_path_manager
-
-        path_manager = get_path_manager()
-        namespace = getattr(self.agent_config, "current_namespace", "default") if self.agent_config else "default"
-        sql_summary_dir = str(path_manager.sql_summary_path(namespace))
-
         # Hardcoded system_prompt based on node name
         template_name = f"{self.configured_node_name}_system"
 
@@ -228,7 +204,6 @@ class SqlSummaryAgenticNode(AgenticNode):
             # Prepare template variables
             template_vars = {
                 "agent_config": self.agent_config,
-                "sql_summary_dir": sql_summary_dir,
                 "conversation_summary": conversation_summary,
             }
 

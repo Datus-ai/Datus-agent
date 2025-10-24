@@ -19,8 +19,9 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.schemas.node_models import TableSchema
 from datus.tools.context_search import ContextSearchTools
+from datus.tools.date_parsing_tools import DateParsingTools
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.mcp_server import MCPServer
+from datus.tools.filesystem_tools.filesystem_tool import FilesystemFuncTool
 from datus.tools.tools import DBFuncTool
 from datus.utils.loggings import get_logger
 
@@ -42,7 +43,6 @@ class ChatAgenticNode(AgenticNode):
         self,
         namespace: Optional[str] = None,
         agent_config: Optional[AgentConfig] = None,
-        max_turns: int = 30,
     ):
         """
         Initialize the ChatAgenticNode.
@@ -50,18 +50,15 @@ class ChatAgenticNode(AgenticNode):
         Args:
             namespace: Database namespace for MCP server selection
             agent_config: Agent configuration
-            max_turns: Maximum conversation turns per interaction
         """
         self.namespace = namespace
-        # Get max_turns from node configuration if available
-        node_max_turns = None
+
+        # Get max_turns from nodes configuration, default to 30
+        self.max_turns = 30
         if agent_config and hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
             chat_node_config = agent_config.nodes["chat"]
             if chat_node_config.input and hasattr(chat_node_config.input, "max_turns"):
-                node_max_turns = chat_node_config.input.max_turns
-
-        # Priority: provided value > node config > default 30
-        self.max_turns = max_turns if max_turns != 30 else (node_max_turns or 30)
+                self.max_turns = chat_node_config.input.max_turns
 
         # Initialize MCP servers based on namespace
         self.mcp_servers = self._setup_mcp_servers(agent_config)
@@ -73,6 +70,8 @@ class ChatAgenticNode(AgenticNode):
         )
         self.db_func_tool: DBFuncTool
         self.context_search_tools: ContextSearchTools
+        self.date_parsing_tools: Optional[DateParsingTools] = None
+        self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.plan_mode_active = False
         self.setup_tools()
 
@@ -82,44 +81,76 @@ class ChatAgenticNode(AgenticNode):
         conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
-        self.tools = self.db_func_tool.available_tools() + self.context_search_tools.available_tools()
+        self._setup_date_parsing_tools()
+        self._setup_filesystem_tools()
+        self.tools = (
+            self.db_func_tool.available_tools()
+            + self.context_search_tools.available_tools()
+            + (self.date_parsing_tools.available_tools() if self.date_parsing_tools else [])
+            + (self.filesystem_func_tool.available_tools() if self.filesystem_func_tool else [])
+        )
+
+    def _setup_date_parsing_tools(self):
+        """Setup date parsing tools."""
+        try:
+            self.date_parsing_tools = DateParsingTools(self.agent_config, self.model)
+            logger.info("Setup date parsing tools")
+        except Exception as e:
+            logger.error(f"Failed to setup date parsing tools: {e}")
+
+    def _setup_filesystem_tools(self):
+        """Setup filesystem tools (all available tools)."""
+        try:
+            root_path = self._resolve_workspace_root()
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            logger.info(f"Setup filesystem tools with root path: {root_path}")
+        except Exception as e:
+            logger.error(f"Failed to setup filesystem tools: {e}")
+
+    def _resolve_workspace_root(self) -> str:
+        """
+        Resolve workspace_root from chat node configuration.
+        Expands ~ to user home directory.
+
+        Returns:
+            Resolved workspace_root path with ~ expanded
+        """
+        import os
+
+        # Default workspace_root
+        workspace_root = "."
+
+        # Read from chat node configuration if available
+        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
+            configured_root = self.agent_config.workspace_root
+            if configured_root is not None:
+                workspace_root = configured_root
+
+        # Expand ~ to user home directory
+        if workspace_root.startswith("~"):
+            workspace_root = os.path.expanduser(workspace_root)
+            logger.debug(f"Expanded workspace_root: {workspace_root}")
+
+        # Handle relative vs absolute paths
+        if os.path.isabs(workspace_root):
+            return workspace_root
+        else:
+            return os.path.join(os.getcwd(), workspace_root)
 
     def _setup_mcp_servers(self, agent_config: Optional[AgentConfig] = None) -> Dict[str, MCPServerStdio]:
         """
         Set up MCP servers based on namespace and configuration.
 
+        Args:
+            agent_config: Agent configuration (unused currently, kept for compatibility)
 
         Returns:
             Dictionary of MCP servers
         """
         mcp_servers = {}
 
-        try:
-            # Add filesystem MCP server with configurable root path
-            import os
-
-            root_path = "."
-            if agent_config and hasattr(agent_config, "workspace_root"):
-                workspace_root = agent_config.workspace_root
-                if workspace_root is not None:
-                    root_path = workspace_root
-
-            # Handle relative vs absolute paths
-            if root_path and os.path.isabs(root_path):
-                filesystem_path = root_path
-            else:
-                filesystem_path = os.path.join(os.getcwd(), root_path)
-
-            filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
-            if filesystem_server:
-                # Add filesystem server first
-                mcp_servers["filesystem"] = filesystem_server
-                logger.info(f"Added filesystem MCP server at path: {filesystem_path}")
-            else:
-                logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
-
-        except Exception as e:
-            logger.error(f"Error setting up MCP servers: {e}")
+        # No MCP servers for chat node currently
+        # (Previously had filesystem MCP server, now using native filesystem tools)
 
         return mcp_servers
 
