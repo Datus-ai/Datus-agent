@@ -311,10 +311,10 @@ class Node(ABC):
         if node_id not in self.dependencies:
             self.dependencies.append(node_id)
 
-    def _sql_connector(self) -> BaseSqlConnector:
+    def _sql_connector(self, database_name: str = "") -> BaseSqlConnector:
         return db_manager_instance(self.agent_config.namespaces).get_conn(
             self.agent_config.current_namespace,
-            self.input.database_name,
+            database_name,
         )
 
     def to_dict(self) -> Dict:

@@ -51,7 +51,7 @@ class OutputNode(Node):
     def _execute_output(self) -> Any:
         """Execute output action to present the results."""
         tool = OutputTool()
-        return tool.execute(self.input, sql_connector=self._sql_connector(), model=self.model)
+        return tool.execute(self.input, sql_connector=self._sql_connector(self.input.database_name), model=self.model)
         # return BaseResult(success=True, error="")
 
     async def _output_stream(

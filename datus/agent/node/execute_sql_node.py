@@ -84,7 +84,7 @@ class ExecuteSQLNode(Node):
     def _execute_sql(self) -> ExecuteSQLResult:
         """Execute SQL query action to run the generated query."""
         try:
-            db_connector = self._sql_connector()
+            db_connector = self._sql_connector(self.input.database_name)
             if not db_connector:
                 logger.error("Database connection not initialized in workflow")
                 return ExecuteSQLResult(
@@ -133,7 +133,7 @@ class ExecuteSQLNode(Node):
 
             # Initialize database connection
             try:
-                sql_connector = self._sql_connector()
+                sql_connector = self._sql_connector(self.input.database_name)
 
                 if not sql_connector:
                     connection_action.status = ActionStatus.FAILED

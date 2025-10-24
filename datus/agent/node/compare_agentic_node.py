@@ -143,9 +143,12 @@ class CompareAgenticNode(AgenticNode):
         if isinstance(raw_output, str):
             result = llm_result2json(raw_output, expected_type=dict)
             if result is None:
-                logger.warning(f"Failed to parse comparison output as JSON: {result}")
+                snippet = (
+                    (raw_output[:300] + "...") if isinstance(raw_output, str) and len(raw_output) > 300 else raw_output
+                )
+                logger.warning(f"Failed to parse comparison output as JSON. Raw: {snippet}")
                 return {
-                    "explanation": result or "Failed to parse model response.",
+                    "explanation": f"Failed to parse comparison output as JSON. Raw: {snippet}",
                     "suggest": "Please verify the response format manually.",
                 }
             return result
@@ -234,7 +237,7 @@ class CompareAgenticNode(AgenticNode):
             tokens_used = 0
 
             for action in reversed(action_history_manager.get_actions()):
-                if action.role == "assistant" and isinstance(action.output, dict):
+                if action.role == ActionRole.ASSISTANT and isinstance(action.output, dict):
                     usage = action.output.get("usage", {})
                     if isinstance(usage, dict):
                         conversation_tokens = usage.get("total_tokens") or usage.get("output_tokens")

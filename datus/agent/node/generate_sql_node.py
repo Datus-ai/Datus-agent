@@ -131,7 +131,7 @@ class GenerateSQLNode(Node):
         """Get table schemas and values using the schema lineage tool."""
         try:
             # Get the schema lineage tool instance
-            sql_connector = self._sql_connector()
+            sql_connector = self._sql_connector(self.input.sql_task.database_name)
             catalog_name = sql_task.catalog_name or sql_connector.catalog_name
             database_name = sql_task.database_name or sql_connector.database_name
             schema_name = sql_task.schema_name or sql_connector.schema_name

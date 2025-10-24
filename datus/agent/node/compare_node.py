@@ -11,6 +11,7 @@ from datus.agent.workflow import Workflow
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput, CompareResult
 from datus.schemas.node_models import SQLContext
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -61,10 +62,10 @@ class CompareNode(Node):
         Execute SQL comparison in a synchronous (non-streaming) mode.
         """
         if not isinstance(self.input, CompareInput):
-            raise ValueError("Input must be a CompareInput instance")
+            raise DatusException(ErrorCode.COMMON_VALIDATION_FAILED, "Input must be a CompareInput instance")
 
         if not self.model:
-            raise ValueError("Model is not initialized for CompareAgenticNode")
+            raise DatusException(ErrorCode.COMMON_VALIDATION_FAILED, "Model is not initialized for CompareAgenticNode")
 
         try:
             _, _, messages = CompareAgenticNode._prepare_prompt_components(self.input)
