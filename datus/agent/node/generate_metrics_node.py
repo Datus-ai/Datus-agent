@@ -311,7 +311,6 @@ class GenerateMetricsNode(Node):
             return generate_metrics_with_mcp(
                 self.model,
                 self.input,
-                self.agent_config.current_db_config(self.input.sql_task.database_name),
                 self.tools,
                 namespace=self.agent_config.current_namespace,
                 base_path=self.agent_config.rag_base_path,
@@ -398,7 +397,6 @@ class GenerateMetricsNode(Node):
                 model=self.model,
                 input_data=self.input,
                 tools=self.tools,
-                db_config=self.agent_config.current_db_config(self.input.sql_task.database_name),
                 tool_config={},
                 namespace=self.agent_config.current_namespace,
                 base_path=self.agent_config.rag_base_path,

@@ -8,7 +8,6 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from agents import Tool
 
-from datus.configuration.agent_config import DbConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.generate_metrics_with_mcp import get_generate_metrics_prompt
 from datus.prompts.prompt_manager import prompt_manager
@@ -17,7 +16,6 @@ from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, Gen
 from datus.storage.metric.llm_text_generator import generate_metric_llm_text
 from datus.tools.llms_tools.mcp_stream_utils import base_mcp_stream
 from datus.tools.mcp_tools import MCPServer
-from datus.utils.env import get_metricflow_env
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -29,7 +27,6 @@ async def generate_metrics_with_mcp_stream(
     model: LLMBaseModel,
     input_data: GenerateMetricsInput,
     tool_config: Dict[str, Any],
-    db_config: DbConfig,
     tools: List[Tool],
     namespace: str,
     base_path: str,
@@ -81,7 +78,6 @@ async def generate_metrics_with_mcp_stream(
 def generate_metrics_with_mcp(
     model: LLMBaseModel,
     input_data: GenerateMetricsInput,
-    db_config: DbConfig,
     tools: List[Tool],
     tool_config: Dict[str, Any],
     namespace: str,
