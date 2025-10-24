@@ -68,8 +68,7 @@ class FastEmbedEmbeddings(TextEmbeddingFunction):
     normalize: bool = True
     trust_remote_code: bool = True
     batch_size: int = 256
-    cache_dir: str | None = None
-    local_files_only: bool = True
+    cache_dir: str = "~/.cache/huggingface/fastembed"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -79,12 +78,9 @@ class FastEmbedEmbeddings(TextEmbeddingFunction):
         normalized_name = self._normalize_model_name(self.name)
         object.__setattr__(self, "name", normalized_name)
 
-        # Allow batch size, cache_dir, and local_files_only overrides
+        # Allow batch size and cache_dir overrides
         batch_size = kwargs.get("batch_size", self.batch_size)
         object.__setattr__(self, "batch_size", int(batch_size))
-
-        local_only = kwargs.get("local_files_only", self.local_files_only)
-        object.__setattr__(self, "local_files_only", bool(local_only))
 
         cache_dir_override = kwargs.get("cache_dir", self.cache_dir)
         object.__setattr__(self, "cache_dir", cache_dir_override)
@@ -153,7 +149,7 @@ class FastEmbedEmbeddings(TextEmbeddingFunction):
             "model_name": self.name,
             "cache_dir": self.cache_dir,
             "threads": 1,
-            "local_files_only": self.local_files_only,
+            "local_files_only": True,
         }
         if self.device == "cuda":
             model_kwargs["cuda"] = True

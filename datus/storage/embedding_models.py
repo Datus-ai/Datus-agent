@@ -167,7 +167,6 @@ class EmbeddingModel:
                 self._model = FastEmbedEmbeddings.create(
                     name=self.model_name,
                     batch_size=self.batch_size,
-                    cache_dir="~/.cache/huggingface/fastembed",
                 )
                 # first download
                 # self._model.generate_embeddings(["foo"])
