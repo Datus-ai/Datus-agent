@@ -1,7 +1,7 @@
 bird_dev:
-  db_path: benchmark/bird/dev_20240627 #databases path
+  db_path: ~/benchmark/bird/dev_20240627 #databases path - using ~ for portability
   output_dir: "tests/output/bird_dev"
-  namespace: bird_sqlite
+  namespace: bird_school
   tasks:
     - question_id: 1464
       question: "Write the full names of students who received funds on the date of 9/9/2019 and include the amount received."

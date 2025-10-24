@@ -45,10 +45,15 @@ class TestBirdDevOutput:
         llm_model: LLMBaseModel,
     ):
         task_group = {}
-        benchmark_path = global_config.benchmark_path(benchmark_platform)
+        # Use db_path from test data if provided, otherwise use benchmark_path
+        if "db_path" in test_data:
+            from pathlib import Path
 
-        # if 'db_path' in test_data:
-        #     benchmark_config.test_path = test_data["db_path"]
+            # db_path in test data is relative, resolve it based on home directory
+            benchmark_path = str(Path(test_data["db_path"]).expanduser().resolve())
+        else:
+            benchmark_path = global_config.benchmark_path(benchmark_platform)
+
         rag_storage = SchemaWithValueRAG(global_config)
         output_dir = test_data["output_dir"]
         for task in test_data["tasks"]:
