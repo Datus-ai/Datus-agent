@@ -353,7 +353,7 @@ class AgentConfig:
 
     def override_by_args(self, **kwargs):
         # storage_path parameter has been deprecated - data path is now fixed at {home}/data
-        if kwargs.get("storage_path", ""):
+        if "storage_path" in kwargs and kwargs["storage_path"] is not None:
             logger.warning(
                 "The --storage_path parameter is deprecated and will be ignored. "
                 "Data path is now fixed at {agent.home}/data. "
@@ -381,7 +381,7 @@ class AgentConfig:
                 raise DatusException(code=ErrorCode.COMMON_UNSUPPORTED, message="bird_dev only support sqlite")
 
         # output_dir parameter has been deprecated - save path is now fixed at {agent.home}/save
-        if kwargs.get("output_dir", ""):
+        if "output_dir" in kwargs and kwargs["output_dir"] is not None:
             logger.warning(
                 "The --output_dir parameter is deprecated and will be ignored. "
                 "Save path is now fixed at {agent.home}/save. "
@@ -389,7 +389,7 @@ class AgentConfig:
             )
 
         # trajectory_dir parameter has been deprecated - trajectory path is now fixed at {agent.home}/trajectory
-        if kwargs.get("trajectory_dir", ""):
+        if "trajectory_dir" in kwargs and kwargs["trajectory_dir"] is not None:
             logger.warning(
                 "The --trajectory_dir parameter is deprecated and will be ignored. "
                 "Trajectory path is now fixed at {agent.home}/trajectory. "

@@ -30,16 +30,18 @@ class MCPTool(BaseTool):
     tool_name = "mcp_tool"
     tool_description = "Management tool for MCP (Model Context Protocol) servers"
 
-    def __init__(self, config_path: Optional[str] = None, **kwargs):
+    def __init__(self, **kwargs):
         """
         Initialize the MCP tool.
 
+        The MCP configuration is fixed at {agent.home}/conf/.mcp.json.
+        Configure agent.home in agent.yml to change the root directory.
+
         Args:
-            config_path: Path to MCP config file
             **kwargs: Additional parameters
         """
         super().__init__(**kwargs)
-        self.manager = MCPManager(config_path=config_path)
+        self.manager = MCPManager()
         logger.info(f"Initialized MCP Tool with config path: {self.manager.config_path}")
 
     @ToolAction(description="Add a new MCP server config")

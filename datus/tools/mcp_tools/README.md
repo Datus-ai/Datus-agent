@@ -117,10 +117,9 @@ mcp_tool.add_server(
 
 ## Config File
 
-The MCP tools use a JSON config file to persist server configs. The configuration is loaded in the following order (first found wins):
-1. Explicit config path (if provided)
-2. `conf/.mcp.json` (current directory)
-3. `~/.datus/conf/.mcp.json` (user home directory)
+The MCP tools use a JSON config file to persist server configs. The configuration path is fixed at `{agent.home}/conf/.mcp.json` (default: `~/.datus/conf/.mcp.json`).
+
+You can customize the root directory by configuring `agent.home` in `agent.yml`.
 
 ```json
 {

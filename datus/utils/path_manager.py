@@ -9,6 +9,7 @@ This module provides a unified interface for managing all paths related to the
 .datus directory structure. The home directory is determined from agent.yml config.
 """
 
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -124,6 +125,24 @@ class DatusPathManager:
     def sql_summaries_dir(self) -> Path:
         """SQL summaries directory: ~/.datus/sql_summaries"""
         return self._datus_home / "sql_summaries"
+
+    # Valid directory names mapping
+    _VALID_DIR_NAMES = {
+        "conf": "conf_dir",
+        "data": "data_dir",
+        "logs": "logs_dir",
+        "sessions": "sessions_dir",
+        "template": "template_dir",
+        "sample": "sample_dir",
+        "run": "run_dir",
+        "benchmark": "benchmark_dir",
+        "save": "save_dir",
+        "metricflow": "metricflow_dir",
+        "workspace": "workspace_dir",
+        "trajectory": "trajectory_dir",
+        "semantic_models": "semantic_models_dir",
+        "sql_summaries": "sql_summaries_dir",
+    }
 
     # Configuration file paths
 
@@ -273,42 +292,40 @@ class DatusPathManager:
 
         Args:
             *dirs: Directory names to ensure. If empty, ensures all standard directories.
+                   Valid names: conf, data, logs, sessions, template, sample, run,
+                   benchmark, save, metricflow, workspace, trajectory, semantic_models,
+                   sql_summaries
+
+        Raises:
+            ValueError: If an invalid directory name is provided
         """
         if not dirs:
             # Ensure all standard directories
-            standard_dirs = [
-                self.conf_dir,
-                self.data_dir,
-                self.logs_dir,
-                self.sessions_dir,
-                self.template_dir,
-                self.trajectory_dir,
-                self.sample_dir,
-                self.run_dir,
-                self.benchmark_dir,
-                self.save_dir,
-                self.metricflow_dir,
-                self.workspace_dir,
-                self.semantic_models_dir,
-                self.sql_summaries_dir,
-            ]
-            for directory in standard_dirs:
+            for attr_name in self._VALID_DIR_NAMES.values():
+                directory = getattr(self, attr_name)
                 directory.mkdir(parents=True, exist_ok=True)
         else:
-            # Ensure specified directories
+            # Ensure specified directories with validation
             for dir_name in dirs:
-                directory = getattr(self, f"{dir_name}_dir", None)
-                if directory:
-                    directory.mkdir(parents=True, exist_ok=True)
+                if dir_name not in self._VALID_DIR_NAMES:
+                    valid_names = ", ".join(sorted(self._VALID_DIR_NAMES.keys()))
+                    raise ValueError(f"Invalid directory name '{dir_name}'. " f"Valid names are: {valid_names}")
+                attr_name = self._VALID_DIR_NAMES[dir_name]
+                directory = getattr(self, attr_name)
+                directory.mkdir(parents=True, exist_ok=True)
 
 
-# Global singleton instance
+# Global singleton instance and lock for thread-safe initialization
 _path_manager: Optional[DatusPathManager] = None
+_path_manager_lock = threading.Lock()
 
 
 def get_path_manager(datus_home: Optional[Path] = None) -> DatusPathManager:
     """
-    Get the global path manager instance.
+    Get the global path manager instance (thread-safe singleton).
+
+    Uses double-checked locking to ensure thread-safe initialization
+    without holding the lock on every access.
 
     Args:
         datus_home: Optional custom .datus root directory. Only used on first call.
@@ -317,12 +334,24 @@ def get_path_manager(datus_home: Optional[Path] = None) -> DatusPathManager:
         DatusPathManager instance
     """
     global _path_manager
+
+    # First check (without lock) - fast path for already initialized instance
     if _path_manager is None:
-        _path_manager = DatusPathManager(datus_home)
+        # Acquire lock for initialization
+        with _path_manager_lock:
+            # Second check (with lock) - ensure another thread didn't initialize
+            if _path_manager is None:
+                _path_manager = DatusPathManager(datus_home)
+
     return _path_manager
 
 
 def reset_path_manager() -> None:
-    """Reset the global path manager instance. Primarily for testing."""
+    """
+    Reset the global path manager instance. Primarily for testing.
+
+    Thread-safe: Acquires lock before resetting to prevent race conditions.
+    """
     global _path_manager
-    _path_manager = None
+    with _path_manager_lock:
+        _path_manager = None

@@ -13,7 +13,6 @@ and status monitoring.
 import asyncio
 import json
 import threading
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agents import Agent, RunContextWrapper, Usage
@@ -77,29 +76,21 @@ class MCPManager:
 
     Configuration path:
     - Fixed at {agent.home}/conf/.mcp.json (default: ~/.datus/conf/.mcp.json)
-    - Can be overridden with explicit config_path parameter (for testing)
     """
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self):
         """
         Initialize the MCP manager.
 
         MCP configuration is fixed at {agent.home}/conf/.mcp.json.
         Configure agent.home in agent.yml to change the root directory.
-
-        Args:
-            config_path: Optional explicit path (primarily for testing)
+        The path cannot be overridden to ensure consistent configuration management.
         """
         from datus.utils.path_manager import get_path_manager
 
         path_manager = get_path_manager()
-
-        # Use explicit path if provided, otherwise use fixed path from path_manager
-        if config_path:
-            self.config_path = Path(config_path).expanduser()
-        else:
-            path_manager.ensure_dirs("conf")
-            self.config_path = path_manager.mcp_config_path()
+        path_manager.ensure_dirs("conf")
+        self.config_path = path_manager.mcp_config_path()
 
         self.config: MCPConfig = MCPConfig()
         self._lock = threading.Lock()

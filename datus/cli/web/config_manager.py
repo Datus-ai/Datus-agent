@@ -78,9 +78,6 @@ def _load_config_cached(config_path: str) -> Dict[str, Any]:
 def get_storage_path_from_config(config_path: str) -> str:
     """
     Get storage path from configuration.
-
-    Note: storage base_path is now fixed at {agent.home}/data.
-    This function is kept for backward compatibility but always returns the fixed path.
     """
     try:
         config = _load_config_cached(config_path)

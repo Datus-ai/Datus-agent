@@ -272,8 +272,8 @@ def create_parser() -> argparse.ArgumentParser:
         node_group.add_argument(
             "--output_dir",
             type=str,
-            default="save",
-            help="(Deprecated) Directory for output files - now fixed at {agent.home}/save",
+            default=None,
+            help=argparse.SUPPRESS,  # Hide from help to discourage use
         )
         # trajectory_dir parameter deprecated - trajectory path is now fixed at {agent.home}/trajectory
         node_group.add_argument(
