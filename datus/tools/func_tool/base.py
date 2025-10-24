@@ -36,18 +36,30 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
     # The invoker MUST be an 'async' function.
     # We define a closure to correctly capture the 'bound_method' for each iteration.
     def create_async_invoker(method_to_call: Callable) -> Callable:
-        async def final_invoker(tool_ctx, args_str: str) -> dict:
+        async def final_invoker(tool_ctx, args_str) -> dict:
             """
             This is an async wrapper for tool methods.
             The agent framework will 'await' this coroutine.
             """
             # The actual work (JSON parsing, method call)
-            args_dict = json.loads(args_str)
-            result_dict = method_to_call(**args_dict)
+            try:
+                if args_str:
+                    args_dict = json.loads(args_str) if isinstance(args_str, str) else dict(args_str or {})
+                else:
+                    args_dict = {}
+            except (TypeError, json.JSONDecodeError):
+                return {"success": 0, "error": "Invalid JSON arguments", "result": None}
 
-            if isinstance(result_dict, FuncToolResult):
-                result_dict = result_dict.model_dump()
-            return result_dict
+            # Call sync or async bound methods transparently
+            import inspect
+
+            if inspect.iscoroutinefunction(method_to_call):
+                result = await method_to_call(**args_dict)
+            else:
+                result = method_to_call(**args_dict)
+            if isinstance(result, FuncToolResult):
+                return result.model_dump()
+            return result
 
         return final_invoker
 
