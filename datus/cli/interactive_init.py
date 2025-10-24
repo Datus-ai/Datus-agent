@@ -634,7 +634,7 @@ class InteractiveInit:
             target_dir=self.sample_dir,
         )
 
-        copy_data_file(resource_path="prompts/prompt_template", target_dir=self.template_dir)
+        copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir)
 
 
 def main():
