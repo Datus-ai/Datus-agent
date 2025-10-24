@@ -4,10 +4,27 @@
 
 import io
 import json
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from uuid import UUID
 
 import json_repair
 import pandas as pd
+
+try:  # Optional dependency; available in runtime environments that use Pydantic models.
+    from pydantic import BaseModel
+except ImportError:  # pragma: no cover - Pydantic is an optional dependency.
+    BaseModel = None  # type: ignore[assignment]
+
+try:  # NumPy may not always be installed, but handle it when present.
+    import numpy as np
+except ImportError:  # pragma: no cover - NumPy is optional.
+    np = None  # type: ignore[assignment]
 
 
 def json2csv(result: Any, columns: Optional[List[str]] = None) -> str:
@@ -411,22 +428,123 @@ def load_jsonl_dict(file_path, key_field: str = "instance_id") -> Dict[str, Dict
     return data
 
 
-def to_pretty_str(json_data: Dict | List | None) -> Optional[str]:
+JSON_PRIMITIVE_TYPES = (str, int, float, bool, type(None))
+
+
+def _normalize_for_json(data: Any) -> Any:
     """
-    Serialize a Python dict or list to a human-readable JSON string.
+    Convert many common Python/Pydantic/pandas/Numpy objects into JSON-serializable
+    structures. This is a best-effort normalization intended for logging,
+    transport, and display—not lossless persistence.
+    """
+    if isinstance(data, JSON_PRIMITIVE_TYPES):
+        return data
+
+    if isinstance(data, (datetime, date, time)):
+        return data.isoformat()
+
+    if isinstance(data, Decimal):
+        return str(data)
+
+    if isinstance(data, UUID):
+        return str(data)
+
+    if isinstance(data, Path):
+        return str(data)
+
+    if isinstance(data, bytes):
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            return data.decode("utf-8", errors="replace")
+
+    if isinstance(data, Enum):
+        enum_value = data.value
+        return _normalize_for_json(enum_value) if enum_value is not data else data.name
+
+    if BaseModel is not None and isinstance(data, BaseModel):
+        try:
+            model_data = data.model_dump(mode="json")  # type: ignore[arg-type]
+        except TypeError:
+            model_data = data.model_dump()  # type: ignore[arg-type]
+        except AttributeError:  # Pydantic v1 fallback
+            model_data = data.dict()
+        return _normalize_for_json(model_data)
+
+    if is_dataclass(data):
+        return _normalize_for_json(asdict(data))
+
+    if np is not None:
+        if isinstance(data, np.generic):
+            return _normalize_for_json(data.item())
+        if isinstance(data, np.ndarray):
+            return [_normalize_for_json(item) for item in data.tolist()]
+
+    if isinstance(data, pd.DataFrame):
+        return [_normalize_for_json(record) for record in data.to_dict(orient="records")]
+
+    if isinstance(data, pd.Series):
+        return [_normalize_for_json(item) for item in data.tolist()]
+
+    if isinstance(data, Mapping):
+        return {str(key): _normalize_for_json(value) for key, value in data.items()}
+
+    if isinstance(data, (list, tuple, set, frozenset)):
+        return [_normalize_for_json(item) for item in data]
+
+    if hasattr(data, "to_dict"):
+        try:
+            return _normalize_for_json(data.to_dict())
+        except TypeError:
+            pass
+
+    if isinstance(data, Iterable) and not isinstance(data, (str, bytes, bytearray)):
+        return [_normalize_for_json(item) for item in data]
+
+    if hasattr(data, "__dict__"):
+        return _normalize_for_json(vars(data))
+
+    return str(data)
+
+
+def _dump_json(data: Any, *, indent: Optional[int] = None) -> str:
+    """
+    Shared implementation for serializing data to JSON, with best-effort support
+    for a wide range of input types.
+    """
+    if isinstance(data, (str, bytes, bytearray)):
+        text = data.decode("utf-8") if not isinstance(data, str) else data
+        stripped = text.strip()
+        if not stripped:
+            return text
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            return text
+
+    normalized = _normalize_for_json(data)
+    return json.dumps(normalized, ensure_ascii=False, indent=indent)
+
+
+def to_pretty_str(json_data: Any) -> Optional[str]:
+    """
+    Serialize Python data to a human-readable JSON string.
 
     Args:
-        json_data: A dict or list to serialize. If None, returns None.
+        json_data: Data to serialize. If None, returns None.
 
     Returns:
         A pretty-printed JSON string (2-space indentation) when input is not None,
         otherwise None.
 
     Notes:
-        - This is a thin wrapper around `json.dumps(..., indent=2, ensure_ascii=False)`.
-        - Non-serializable objects (e.g., datetime, Decimal, set, NumPy/pandas types)
-          will raise `TypeError` from `json.dumps`. Callers should pre-convert such
-          values or provide a custom encoder upstream if needed.
+        - Supports built-ins (dict/list/tuple/set), dataclasses, Enums, Decimal,
+          datetime, pathlib.Path, UUID, pandas objects, NumPy arrays, iterables, and
+          Pydantic BaseModel instances.
+        - Custom objects fall back to `vars(obj)` when available or `str(obj)` as a
+          last resort, so this helper is best-effort rather than lossless.
+        - If a string/bytes payload already contains JSON, it is parsed and re-dumped.
+          Otherwise it is returned verbatim, preserving non-JSON content.
         - `ensure_ascii=False` preserves Unicode characters as-is (e.g., Chinese),
           which is ideal for logs/UI, but may not be suitable for ASCII-only sinks.
         - Returning `None` (instead of an empty string) makes it easy to check for
@@ -434,29 +552,27 @@ def to_pretty_str(json_data: Dict | List | None) -> Optional[str]:
     """
     if json_data is None:
         return None
-    return json.dumps(json_data, indent=2, ensure_ascii=False)
+    return _dump_json(json_data, indent=2)
 
 
-def to_str(json_data: Dict | List | None) -> Optional[str]:
+def to_str(json_data: Any) -> Optional[str]:
     """
-    Serialize a Python dict or list to a compact JSON string.
+    Serialize Python data to a compact JSON string.
 
     Args:
-        json_data: A dict or list to serialize. If None, returns None.
+        json_data: Data to serialize. If None, returns None.
 
     Returns:
         A compact JSON string when input is not None, otherwise None.
 
     Notes:
-        - Thin wrapper around `json.dumps(..., ensure_ascii=False)`.
+        - Delegates to `_dump_json`, which normalizes many common non-JSON-native
+          types (see `to_pretty_str` notes for details).
         - This does not sort keys or strip spaces; if you need the smallest payload,
-          pass `separators=(",", ":")` at the call site.
-        - Like `to_pretty_str`, non-serializable objects will raise `TypeError`.
-          Convert such values (e.g., `datetime.isoformat()`) before calling.
+          pass `separators=(",", ":")` at the call site after receiving this string.
         - `ensure_ascii=False` keeps Unicode characters intact; use `True` if the
           consumer expects ASCII-escaped output.
     """
     if json_data is None:
         return None
-    if isinstance(json_data, (Dict, List)):
-        return json.dumps(json_data, ensure_ascii=False)
+    return _dump_json(json_data)
