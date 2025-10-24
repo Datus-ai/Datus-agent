@@ -2,9 +2,9 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import json
 from typing import Any, Dict, List
 
+from datus.utils.json_utils import to_str
 from datus.utils.sql_utils import parse_metadata
 
 
@@ -43,7 +43,7 @@ def table_metadata_struct(table_metadata: List[Dict[str, Any]]) -> str:
             struct_table["comment"] = parsed_table_data["table"]["comment"]
 
         result[table_name] = struct_table
-    return json.dumps(result, ensure_ascii=False)
+    return to_str(result)
 
 
 def table_metadata2markdown(table_metadata: List[Dict[str, Any]]) -> str:

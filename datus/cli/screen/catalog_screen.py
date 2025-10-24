@@ -28,6 +28,7 @@ from datus.storage.metric.store import SemanticMetricsRAG
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.json_utils import to_pretty_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -84,7 +85,7 @@ class SemanticModelPanel(Vertical):
             return ""
         if isinstance(value, (dict, list)):
             try:
-                return json.dumps(value, ensure_ascii=False, indent=2)
+                return to_pretty_str(value)
             except TypeError:
                 return str(value)
 
@@ -815,7 +816,7 @@ class CatalogScreen(ContextScreen):
 
             for key, value in parsed_data.items():
                 if isinstance(value, (dict, list)):
-                    value_str = json.dumps(value, indent=1, ensure_ascii=False)
+                    value_str = to_pretty_str(value)
                 else:
                     value_str = str(value)
                 nested_table.add_row(str(key), value_str)

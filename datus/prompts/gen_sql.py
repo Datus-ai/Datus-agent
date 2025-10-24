@@ -2,14 +2,13 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-# flake8：noqa
-import json
 from typing import Dict, List, Union
 
 from datus.schemas.node_models import Metric, TableSchema, TableValue
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
+from ..utils.json_utils import to_pretty_str
 from .prompt_manager import prompt_manager
 
 logger = get_logger(__name__)
@@ -77,7 +76,7 @@ def get_sql_prompt(
 
     processed_metrics = ""
     if metrics:
-        processed_metrics = json.dumps([m.__dict__ for m in metrics], indent=2, ensure_ascii=False)
+        processed_metrics = to_pretty_str([m.__dict__ for m in metrics])
 
     system_content = prompt_manager.get_raw_template("gen_sql_system", version=prompt_version)
     user_content = prompt_manager.render_template(

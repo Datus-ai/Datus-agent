@@ -17,6 +17,7 @@ from datus.cli.execution_state import execution_controller
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.llm_text_generator import generate_metric_llm_text
 from datus.storage.sql_history import SqlHistoryRAG
+from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -417,7 +418,6 @@ class GenerationHooks(AgentHooks):
             dict: Sync result with success, error, and message fields
         """
         try:
-            import json
             from datetime import datetime
 
             import yaml
@@ -496,9 +496,9 @@ class GenerationHooks(AgentHooks):
                         "semantic_file_path": file_path,
                         "semantic_model_name": data_source.get("name", ""),
                         "semantic_model_desc": data_source.get("description", ""),
-                        "identifiers": json.dumps(data_source.get("identifiers", []), ensure_ascii=False),
-                        "dimensions": json.dumps(data_source.get("dimensions", []), ensure_ascii=False),
-                        "measures": json.dumps(data_source.get("measures", []), ensure_ascii=False),
+                        "identifiers": to_str(data_source.get("identifiers", [])),
+                        "dimensions": to_str(data_source.get("dimensions", [])),
+                        "measures": to_str(data_source.get("measures", [])),
                         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
 

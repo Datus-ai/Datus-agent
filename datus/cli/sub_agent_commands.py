@@ -3,7 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import argparse
-import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from rich.syntax import Syntax
@@ -12,6 +11,7 @@ from rich.table import Table
 from datus.cli.sub_agent_wizard import run_wizard
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS
+from datus.utils.json_utils import to_pretty_str
 from datus.utils.loggings import get_logger
 from datus.utils.sub_agent_manager import SYS_SUB_AGENTS, SubAgentManager
 
@@ -247,7 +247,7 @@ class SubAgentCommands:
                 invalid = component_result.details.get("invalid")
                 if not missing and not invalid:
                     continue
-            pretty = json.dumps(component_result.details, indent=2, ensure_ascii=False)
+            pretty = to_pretty_str(component_result.details)
             self.cli_instance.console.print(Syntax(pretty, "json"))
 
     @staticmethod

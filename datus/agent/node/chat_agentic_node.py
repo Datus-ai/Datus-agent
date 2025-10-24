@@ -8,7 +8,6 @@ ChatAgenticNode implementation for flexible CLI chat interactions.
 This module provides a concrete implementation of AgenticNode specifically
 designed for chat interactions with database and filesystem tool support.
 """
-import json
 from typing import AsyncGenerator, Dict, Optional
 
 from agents.mcp import MCPServerStdio
@@ -22,6 +21,7 @@ from datus.tools.context_search import ContextSearchTools
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.mcp_server import MCPServer
 from datus.tools.tools import DBFuncTool
+from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -191,11 +191,11 @@ class ChatAgenticNode(AgenticNode):
                 table_schemas_str = TableSchema.list_to_prompt(user_input.schemas, dialect=self.agent_config.db_type)
                 enhanced_parts.append(f"Table Schemas: \n{table_schemas_str}")
             if user_input.metrics:
-                enhanced_parts.append(f"Metrics: \n{json.dumps([item.model_dump() for item in user_input.metrics])}")
+                enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in user_input.metrics])}")
 
             if user_input.reference_sql:
                 enhanced_parts.append(
-                    f"Reference SQL: \n{json.dumps([item.model_dump() for item in user_input.reference_sql])}"
+                    f"Reference SQL: \n{to_str([item.model_dump() for item in user_input.reference_sql])}"
                 )
 
             if enhanced_parts:

@@ -21,7 +21,7 @@ from textual.widgets import Button, Collapsible, DataTable, Footer, Header, Labe
 from datus.cli.action_history_display import BaseActionContentGenerator
 from datus.cli.screen.base_app import BaseApp
 from datus.schemas.action_history import ActionHistory, ActionRole
-from datus.utils.json_utils import llm_result2json
+from datus.utils.json_utils import llm_result2json, to_pretty_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -215,7 +215,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 return result
         if not isinstance(output_data, dict):
             if isinstance(output_data, list):
-                result.append(TextArea(json.dumps(output_data, indent=2), language="json", theme="monokai"))
+                result.append(TextArea(to_pretty_str(output_data), language="json", theme="monokai"))
             else:
                 result.append(TextArea(str(output_data), language="markdown", theme="monokai"))
             return result
@@ -247,9 +247,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                         result.append(Label(f"[bold red]Execute Failed: {data['error']}[/]"))
                     else:
                         serializable_data = self._make_serializable(data)
-                        result.append(
-                            TextArea(json.dumps(serializable_data, indent=2), language="json", theme="monokai")
-                        )
+                        result.append(TextArea(to_pretty_str(serializable_data), language="json", theme="monokai"))
                     return result
             if function_name == "read_query":
                 #  original_rows, original_columns, is_compressed, and compressed_data
@@ -259,13 +257,14 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 if not isinstance(data, dict) or "result" not in data:
                     # Handle case where "result" key is missing
                     available_keys = list(data.keys()) if isinstance(data, dict) else "N/A"
-                    data_structure = json.dumps(self._make_serializable(data), indent=2)[:1000]
+                    serializable_data = self._make_serializable(data)
+                    pretty_data_str = to_pretty_str(serializable_data)
                     logger.warning(
                         f"read_query output missing 'result' key. Available keys: {available_keys}. "
-                        f"Full data structure: {data_structure}"
+                        f"Full data structure: {pretty_data_str[:1000]}"
                     )
-                    serializable_data = self._make_serializable(data)
-                    result.append(TextArea(json.dumps(serializable_data, indent=2), language="json", theme="monokai"))
+
+                    result.append(TextArea(pretty_data_str, language="json", theme="monokai"))
                     return result
                 logger.debug("Found 'result' key in read_query output")
                 data = data["result"]
@@ -308,7 +307,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         else:
             # Convert FuncToolResult objects to dict for JSON serialization
             serializable_data = self._make_serializable(data)
-            result.append(TextArea(json.dumps(serializable_data, indent=2), language="json", theme="monokai"))
+            result.append(TextArea(to_pretty_str(serializable_data), language="json", theme="monokai"))
             return result
 
         if not items:
@@ -327,7 +326,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 else:
                     result.append(self._build_rich_table_by_list("Sample Data", sample_data))
                 return result
-            result.append(TextArea(json.dumps(items, indent=2), language="json", theme="monokai"))
+            result.append(TextArea(to_pretty_str(items), language="json", theme="monokai"))
             return result
         if len(items) == 0:
             result.append(Static("[bold yellow]No Result[/]"))
@@ -335,7 +334,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         # Create table
         first_item = items[0]
         if not isinstance(first_item, dict):
-            return [TextArea(json.dumps(items, indent=2), language="json", theme="monokai")]
+            return [TextArea(to_pretty_str(items), language="json", theme="monokai")]
 
         table = (
             self._build_table_by_list(table_name="", data=items)

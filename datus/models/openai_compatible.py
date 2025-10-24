@@ -24,6 +24,7 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import create_openai_client, optional_traceable
 
@@ -675,7 +676,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     # Try to format arguments
                                     try:
                                         args_dict = json.loads(arguments) if arguments else {}
-                                        args_str = json.dumps(args_dict, ensure_ascii=False)[:80]
+                                        args_str = to_str(args_dict)[:80]
                                     except Exception:
                                         args_str = str(arguments)[:80]
 

@@ -22,6 +22,7 @@ from datus.schemas.node_models import SqlTask
 from datus.storage.task import TaskStore
 from datus.utils.loggings import get_logger
 
+from ..utils.json_utils import to_str
 from .auth import auth_service, get_current_client
 from .models import (
     FeedbackRequest,
@@ -344,7 +345,7 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
             service.task_store.create_task(task_id, req.task)
 
         # Send started event
-        yield f"event: started\ndata: {json.dumps({'task_id': task_id, 'client': current_client})}\n\n"
+        yield f"event: started\ndata: {to_str({'task_id': task_id, 'client': current_client})}\n\n"
 
         # Execute workflow with streaming
         sql_query = None
@@ -357,7 +358,7 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
                     # Update task in database
                     if service.task_store:
                         service.task_store.update_task(task_id, sql_query=sql_query)
-                    yield f"event: sql_generated\ndata: {json.dumps({'sql': sql_query})}\n\n"
+                    yield f"event: sql_generated\ndata: {to_str({'sql': sql_query})}\n\n"
 
             elif action.action_type == "sql_execution" and action.status == "success":
                 output = action.output or {}
@@ -367,7 +368,7 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
                     if service.task_store:
                         service.task_store.update_task(task_id, sql_result=str(sql_result))
                     result_data = {"row_count": output.get("row_count", 0), "sql_result": sql_result}
-                    yield f"event: execution_complete\ndata: {json.dumps(result_data)}\n\n"
+                    yield f"event: execution_complete\ndata: {to_str(result_data)}\n\n"
 
             elif action.action_type == "output_generation" and action.status == "success":
                 output = action.output or {}
@@ -376,7 +377,7 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
                     "sql_query": output.get("sql_query", ""),
                     "sql_result": output.get("sql_result", ""),
                 }
-                yield f"event: output_ready\ndata: {json.dumps(output_data)}\n\n"
+                yield f"event: output_ready\ndata: {to_str(output_data)}\n\n"
 
             elif action.action_type == "workflow_completion":
                 logger.info(
@@ -393,17 +394,17 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
                     if service.task_store:
                         service.task_store.update_task(task_id, status="failed")
                     error_msg = (action.output or {}).get("error", "Unknown error")
-                    yield f"event: error\ndata: {json.dumps({'error': error_msg})}\n\n"
+                    yield f"event: error\ndata: {to_str({'error': error_msg})}\n\n"
                 # For status="processing", do nothing and wait for final status
 
             elif action.status == "failed":
                 error_msg = (action.output or {}).get("error", "Action failed")
-                yield f"event: error\ndata: {json.dumps({'error': error_msg, 'action_id': action.action_id})}\n\n"
+                yield f"event: error\ndata: {to_str({'error': error_msg, 'action_id': action.action_id})}\n\n"
 
             # Send progress updates for workflow steps and node execution
             elif action.action_id == "workflow_initialization":
                 progress_data = {"action": "initialization", "status": action.status, "message": action.messages}
-                yield f"event: progress\ndata: {json.dumps(progress_data)}\n\n"
+                yield f"event: progress\ndata: {to_str(progress_data)}\n\n"
 
             elif action.action_id.startswith("node_execution_"):
                 node_info = action.input or {}
@@ -414,7 +415,7 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
                     "description": node_info.get("description", ""),
                     "message": action.messages,
                 }
-                yield f"event: node_progress\ndata: {json.dumps(node_data)}\n\n"
+                yield f"event: node_progress\ndata: {to_str(node_data)}\n\n"
 
             # Send node-specific progress for streaming operations
             elif action.action_type in [
@@ -426,7 +427,7 @@ async def generate_sse_stream(req: RunWorkflowRequest, current_client: str):
                 "output_generation",
             ]:
                 detail_data = {"action_type": action.action_type, "status": action.status, "message": action.messages}
-                yield f"event: node_detail\ndata: {json.dumps(detail_data)}\n\n"
+                yield f"event: node_detail\ndata: {to_str(detail_data)}\n\n"
 
     except Exception as e:
         logger.error(f"SSE stream error for task {task_id}: {e}")

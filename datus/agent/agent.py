@@ -43,6 +43,7 @@ from datus.utils.benchmark_utils import (
 )
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -1195,8 +1196,8 @@ class Agent:
                     df_entry = {
                         "user_prompt": entry["user_prompt"],
                         "system_prompt": entry["system_prompt"],
-                        "reason_content": json.dumps(entry["reason_content"], ensure_ascii=False),
-                        "sql_contexts": json.dumps(entry["sql_contexts"], ensure_ascii=False),
+                        "reason_content": to_str(entry["reason_content"]),
+                        "sql_contexts": to_str(entry["sql_contexts"]),
                         "output_content": entry["output_content"],
                     }
                     df_data.append(df_entry)

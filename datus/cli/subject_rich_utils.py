@@ -2,12 +2,13 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import json
 from typing import Any
 
 from rich.console import RenderableType
 from rich.syntax import Syntax
 from rich.text import Text
+
+from datus.utils.json_utils import to_pretty_str
 
 SQL_TAG_COLORS = [
     "#4E79A7",
@@ -27,7 +28,7 @@ def build_historical_sql_tags(tags: Any, tag_splitter: str = " ") -> RenderableT
     if not tags:
         return Text()
     if isinstance(tags, list) or isinstance(tags, dict):
-        return Syntax(json.dumps(tags, indent=2, ensure_ascii=False), lexer="json")
+        return Syntax(to_pretty_str(tags), lexer="json")
 
     tags = [t.strip() for t in str(tags).split(",")]
     tags_text = Text()

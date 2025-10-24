@@ -409,3 +409,54 @@ def load_jsonl_dict(file_path, key_field: str = "instance_id") -> Dict[str, Dict
             item = json.loads(line)
             data[item[key_field]] = item
     return data
+
+
+def to_pretty_str(json_data: Dict | List | None) -> Optional[str]:
+    """
+    Serialize a Python dict or list to a human-readable JSON string.
+
+    Args:
+        json_data: A dict or list to serialize. If None, returns None.
+
+    Returns:
+        A pretty-printed JSON string (2-space indentation) when input is not None,
+        otherwise None.
+
+    Notes:
+        - This is a thin wrapper around `json.dumps(..., indent=2, ensure_ascii=False)`.
+        - Non-serializable objects (e.g., datetime, Decimal, set, NumPy/pandas types)
+          will raise `TypeError` from `json.dumps`. Callers should pre-convert such
+          values or provide a custom encoder upstream if needed.
+        - `ensure_ascii=False` preserves Unicode characters as-is (e.g., Chinese),
+          which is ideal for logs/UI, but may not be suitable for ASCII-only sinks.
+        - Returning `None` (instead of an empty string) makes it easy to check for
+          "no data", but callers must handle the Optional return type.
+    """
+    if json_data is None:
+        return None
+    return json.dumps(json_data, indent=2, ensure_ascii=False)
+
+
+def to_str(json_data: Dict | List | None) -> Optional[str]:
+    """
+    Serialize a Python dict or list to a compact JSON string.
+
+    Args:
+        json_data: A dict or list to serialize. If None, returns None.
+
+    Returns:
+        A compact JSON string when input is not None, otherwise None.
+
+    Notes:
+        - Thin wrapper around `json.dumps(..., ensure_ascii=False)`.
+        - This does not sort keys or strip spaces; if you need the smallest payload,
+          pass `separators=(",", ":")` at the call site.
+        - Like `to_pretty_str`, non-serializable objects will raise `TypeError`.
+          Convert such values (e.g., `datetime.isoformat()`) before calling.
+        - `ensure_ascii=False` keeps Unicode characters intact; use `True` if the
+          consumer expects ASCII-escaped output.
+    """
+    if json_data is None:
+        return None
+    if isinstance(json_data, (Dict, List)):
+        return json.dumps(json_data, ensure_ascii=False)

@@ -11,10 +11,10 @@ from typing import Set
 import pandas as pd
 
 from datus.storage.schema_metadata.init_utils import exists_table_value
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.utils.json_utils import json2csv
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import metadata_identifier
-
-from .store import SchemaWithValueRAG
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -148,7 +148,7 @@ def do_process_by_database(
                             "table_type": "table",
                         }
                     )
-                if full_tb_name not in all_value_tables and "sample_rows" in json_data:
+                if full_tb_name not in all_value_tables and (sample_rows := json_data.get("sample_rows")):
                     batch_value_records.append(
                         {
                             "identifier": metadata_identifier(
@@ -162,7 +162,7 @@ def do_process_by_database(
                             "database_name": db_id,
                             "schema_name": schema_name,
                             "table_name": table_name,
-                            "sample_rows": json.dumps(json_data["sample_rows"]),
+                            "sample_rows": json2csv(sample_rows),
                             "table_type": "table",
                         }
                     )
@@ -174,6 +174,6 @@ def do_process_by_database(
         if len(batch_records) > 0 or len(batch_value_records) > 0:
             storage.store_batch(batch_records, batch_value_records)
             process_data_size += len(batch_records)
-            batch_records = []
-            batch_value_records = []
+            batch_records.clear()
+            batch_value_records.clear()
         logger.info(f"Processe {db_id}.{schema_name} end")

@@ -24,7 +24,7 @@ from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.json_utils import extract_json_str
+from datus.utils.json_utils import extract_json_str, to_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import create_openai_client
 
@@ -929,8 +929,7 @@ class ClaudeModel(LLMBaseModel):
         if arguments:
             try:
                 args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
-                args_str = json.dumps(args_dict, ensure_ascii=False)[:80]
-                args_display = args_str
+                args_display = to_str(args_dict)[:80]
             except Exception:
                 args_display = str(arguments)[:80]
 
@@ -1017,8 +1016,7 @@ class ClaudeModel(LLMBaseModel):
         if arguments:
             try:
                 args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
-                args_str = json.dumps(args_dict, ensure_ascii=False)[:80]
-                args_display = args_str
+                args_display = to_str(args_dict)[:80]
             except Exception:
                 args_display = str(arguments)[:80]
 

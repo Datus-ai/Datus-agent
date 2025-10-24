@@ -3,7 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import argparse
-import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -23,6 +22,7 @@ from datus.storage.metric.init_utils import exists_semantic_metrics, gen_metric_
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names
 
+from ...utils.json_utils import to_str
 from .store import SemanticMetricsRAG
 
 logger = get_logger(__name__)
@@ -330,9 +330,9 @@ def _build_semantic_model_dict(
         "semantic_file_path": semantic_file_path,
         "semantic_model_name": content.get("name", ""),
         "semantic_model_desc": content.get("description", ""),
-        "identifiers": json.dumps(content.get("identifiers", []), ensure_ascii=False),
-        "dimensions": json.dumps(content.get("dimensions", []), ensure_ascii=False),
-        "measures": json.dumps(content.get("measures", []), ensure_ascii=False),
+        "identifiers": to_str(content.get("identifiers", [])),
+        "dimensions": to_str(content.get("dimensions", [])),
+        "measures": to_str(content.get("measures", [])),
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
