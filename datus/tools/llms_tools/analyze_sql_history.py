@@ -20,7 +20,7 @@ def extract_summaries_batch(
     Extract summaries for SQL items using parallel processing.
 
     Args:
-        llm_tool: Initialized LLM tool
+        model: Initialized LLM model
         items: List of dict objects containing sql, comment, filepath fields
         pool_size: Number of threads for parallel processing
 
@@ -54,7 +54,7 @@ def extract_single_summary(model: LLMBaseModel, item: Dict[str, Any], index: int
     Extract summary for a single SQL history item.
 
     Args:
-        llm_tool: Initialized LLM tool
+        model: Initialized LLM model
         item: Dict object containing sql, comment, filepath fields
         index: Item index for logging
 
@@ -96,7 +96,7 @@ def generate_classification_taxonomy(
     Generate classification taxonomy based on all SQL summaries and comments.
 
     Args:
-        llm_tool: Initialized LLM tool
+        model: Initialized LLM model
         items: List of dict objects with summary and comment fields
         existing_taxonomy: Optional existing taxonomy for incremental updates
 
@@ -195,7 +195,7 @@ def classify_items_batch(
     Classify SQL items based on generated taxonomy using parallel processing.
 
     Args:
-        llm_tool: Initialized LLM tool
+        model: Initialized LLM model
         items: List of dict objects with summary and comment fields
         taxonomy: Generated classification taxonomy
         pool_size: Number of threads for parallel processing
@@ -234,7 +234,7 @@ def classify_single_item(
     Classify a single SQL item based on taxonomy.
 
     Args:
-        llm_tool: Initialized LLM tool
+        model: Initialized LLM model
         item: Dict object with summary and comment fields
         taxonomy: Generated classification taxonomy
         index: Item index for logging

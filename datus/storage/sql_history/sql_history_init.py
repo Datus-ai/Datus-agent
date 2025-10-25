@@ -10,7 +10,6 @@ from datus.prompts.prompt_manager import prompt_manager
 from datus.storage.sql_history.init_utils import exists_sql_history, gen_sql_history_id
 from datus.storage.sql_history.sql_file_processor import process_sql_files
 from datus.storage.sql_history.store import SqlHistoryRAG
-from datus.tools.llms_tools import LLMTool
 from datus.tools.llms_tools.analyze_sql_history import (
     classify_items_batch,
     extract_summaries_batch,
@@ -32,7 +31,7 @@ def parse_subject_tree(subject_tree_str: str) -> Dict[str, Any]:
         Dict containing taxonomy with domains, layer1_categories, layer2_categories
     """
     if not subject_tree_str:
-        return None
+        return {}
 
     domains_set = set()
     layer1_set = set()
@@ -74,7 +73,7 @@ def parse_subject_tree(subject_tree_str: str) -> Dict[str, Any]:
     return taxonomy
 
 
-def ensure_unique_names(items: List[Dict[str, Any]], llm_tool: LLMTool = None) -> List[Dict[str, Any]]:
+def ensure_unique_names(items: List[Dict[str, Any]], model: LLMBaseModel = None) -> List[Dict[str, Any]]:
     """
     Ensure all SQL items have unique names using a hybrid approach:
     1. First detect duplicates
@@ -83,7 +82,7 @@ def ensure_unique_names(items: List[Dict[str, Any]], llm_tool: LLMTool = None) -
 
     Args:
         items: List of dict objects with name field
-        llm_tool: Optional LLM tool for intelligent name regeneration
+        model: Optional LLM tool for intelligent name regeneration
 
     Returns:
         List of dict objects with unique names
@@ -112,7 +111,7 @@ def ensure_unique_names(items: List[Dict[str, Any]], llm_tool: LLMTool = None) -
                 new_name = None
 
                 # Try LLM regeneration first
-                if llm_tool:
+                if model:
                     try:
                         # Collect all existing names to avoid
                         existing_names = [other_name for other_name in name_to_items.keys()]
@@ -126,7 +125,7 @@ def ensure_unique_names(items: List[Dict[str, Any]], llm_tool: LLMTool = None) -
                         )
                         conflicting_names = list(set(existing_names))
 
-                        new_name = regenerate_unique_name(llm_tool, item, conflicting_names)
+                        new_name = regenerate_unique_name(model, item, conflicting_names)
                         if new_name and new_name not in conflicting_names:
                             item["name"] = new_name
                             regeneration_success += 1
@@ -146,12 +145,12 @@ def ensure_unique_names(items: List[Dict[str, Any]], llm_tool: LLMTool = None) -
     return items
 
 
-def regenerate_unique_name(llm_tool: LLMTool, item: Dict[str, Any], conflicting_names: List[str]) -> str:
+def regenerate_unique_name(model: LLMBaseModel, item: Dict[str, Any], conflicting_names: List[str]) -> str:
     """
     Use LLM to regenerate a unique name for an SQL item.
 
     Args:
-        llm_tool: Initialized LLM tool
+        model: Initialized LLM model
         item: Dict object with sql, comment fields
         conflicting_names: List of names to avoid
 
@@ -169,7 +168,7 @@ def regenerate_unique_name(llm_tool: LLMTool, item: Dict[str, Any], conflicting_
         )
         logger.debug(f"Regeneration prompt: {prompt}")
 
-        parsed_data = llm_tool.model.generate_with_json_output(prompt)
+        parsed_data = model.generate_with_json_output(prompt)
         new_name = parsed_data.get("name", "")
 
         # Validate the new name
@@ -185,7 +184,7 @@ def regenerate_unique_name(llm_tool: LLMTool, item: Dict[str, Any], conflicting_
 
 
 def analyze_sql_history(
-    llm_tool: LLMTool,
+    model: LLMBaseModel,
     items: List[Dict[str, Any]],
     pool_size: int = 4,
     existing_taxonomy: Dict[str, Any] = None,
@@ -195,7 +194,7 @@ def analyze_sql_history(
     Analyze SQL history items using LLM interaction process.
 
     Args:
-        llm_tool: Initialized LLM tool
+        model: Initialized LLM model
         items: List of dict objects containing sql, comment, filepath fields
         pool_size: Number of threads for parallel processing
         existing_taxonomy: Optional existing taxonomy for incremental updates
@@ -208,7 +207,7 @@ def analyze_sql_history(
 
     # Step 1: Extract summaries in parallel
     logger.info("Step 1: Extracting summaries...")
-    items_with_summaries = extract_summaries_batch(llm_tool, items, pool_size)
+    items_with_summaries = extract_summaries_batch(model, items, pool_size)
     for item in items_with_summaries:
         logger.debug(f"Item with id: {item['id']}")
         logger.debug(f"Item with comment: {item['comment']}")
@@ -216,7 +215,7 @@ def analyze_sql_history(
 
     # Step 1.5: Ensure unique names
     logger.info("Step 1.5: Ensuring unique SQL names...")
-    items_with_summaries = ensure_unique_names(items_with_summaries, llm_tool)
+    items_with_summaries = ensure_unique_names(items_with_summaries, model)
 
     # Step 2: Generate or use classification taxonomy
     if predefined_taxonomy:
@@ -224,7 +223,7 @@ def analyze_sql_history(
         taxonomy = predefined_taxonomy
     else:
         logger.info("Step 2: Generating classification taxonomy...")
-        taxonomy = generate_classification_taxonomy(llm_tool, items_with_summaries, existing_taxonomy)
+        taxonomy = generate_classification_taxonomy(model, items_with_summaries, existing_taxonomy)
 
     for domain in taxonomy.get("domains", []):
         logger.debug(f"Domain: {domain}")
@@ -237,7 +236,7 @@ def analyze_sql_history(
 
     # Step 3: Classify each item based on taxonomy
     logger.info("Step 3: Classifying SQL items...")
-    classified_items = classify_items_batch(llm_tool, items_with_summaries, taxonomy, pool_size)
+    classified_items = classify_items_batch(model, items_with_summaries, taxonomy, pool_size)
 
     logger.info(f"Analysis completed for {len(classified_items)} items")
     return classified_items
@@ -324,7 +323,6 @@ def init_sql_history(
     if items_to_process:
         # Analyze with LLM using parallel processing
         model = LLMBaseModel.create_model(global_config)
-        llm_tool = LLMTool(model=model)
 
         # Check if subject_tree is provided
         predefined_taxonomy = None
@@ -337,9 +335,7 @@ def init_sql_history(
         if build_mode == "incremental" and not predefined_taxonomy:
             existing_taxonomy = storage.sql_history_storage.get_existing_taxonomy()
 
-        enriched_items = analyze_sql_history(
-            llm_tool, items_to_process, pool_size, existing_taxonomy, predefined_taxonomy
-        )
+        enriched_items = analyze_sql_history(model, items_to_process, pool_size, existing_taxonomy, predefined_taxonomy)
 
         # enriched_items are already dict format, can store directly
         storage.store_batch(enriched_items)

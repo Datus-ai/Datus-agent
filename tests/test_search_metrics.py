@@ -47,9 +47,9 @@ class TestNode:
             ),
             agent_config=agent_config,
         )
-        node.execute()
+        node.run()
         print(f"result {node.result}")
-        assert node.result is not None, node.result is None
+        assert node.result is not None, "Expected node.result to be populated, but got None"
 
     def test_empty_vector_and_scalar_query(self, agent_config: AgentConfig):
         sql_task = SqlTask(

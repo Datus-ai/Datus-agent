@@ -5,7 +5,7 @@
     method: internal
 - doc_search:
     keywords:
-      - sqllite sql reference
+      - sqlite sql reference
     top_n: 3
     method: internal
 - doc_search:
