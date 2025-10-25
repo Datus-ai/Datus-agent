@@ -19,6 +19,7 @@ from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, S
 from datus.tools.filesystem_tools.filesystem_tool import FilesystemFuncTool
 from datus.tools.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
+from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 
@@ -57,12 +58,8 @@ class SqlSummaryAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
-        # Initialize sql_summary_dir with namespace subdirectory
-        from datus.utils.path_manager import get_path_manager
-
         path_manager = get_path_manager()
-        namespace = getattr(agent_config, "current_namespace", "default") if agent_config else "default"
-        self.sql_summary_dir = str(path_manager.sql_summary_path(namespace))
+        self.sql_summary_dir = str(path_manager.sql_summary_path(agent_config.current_namespace))
 
         # Call parent constructor first to set up node_config
         super().__init__(
@@ -77,7 +74,6 @@ class SqlSummaryAgenticNode(AgenticNode):
         self.hooks = None
         self.setup_tools()
 
-        # Debug: log hooks status after setup
         logger.info(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
 
     def get_node_name(self) -> str:
@@ -161,17 +157,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         """
         context = {}
 
-        # Tool detection flags
-        context["has_filesystem_tools"] = bool(self.filesystem_func_tool)
-        context["has_generation_tools"] = bool(self.generation_tools)
-
-        # Tool name lists for template display
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
-
-        # Add namespace and sql_summary_dir
-        if self.agent_config:
-            namespace = getattr(self.agent_config, "current_namespace", "default")
-            context["namespace"] = namespace
         context["sql_summary_dir"] = self.sql_summary_dir
 
         logger.debug(f"Prepared template context: {context}")

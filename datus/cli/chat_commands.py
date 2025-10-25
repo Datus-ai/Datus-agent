@@ -83,9 +83,9 @@ class ChatCommands:
                     if result.get("success"):
                         self.console.print("[green]✓ Session compacted successfully![/]")
                         logger.info(
-                            f"Session compact details - New Token Count: {result.get('new_token_count', 'N/A')}",
-                            f"Tokens Saved: {result.get('tokens_saved', 'N/A')}",
-                            f"Compression Ratio: {result.get('compression_ratio', 'N/A')}",
+                            f"Session compact details - New Token Count: {result.get('new_token_count', 'N/A')}"
+                            f"Tokens Saved: {result.get('tokens_saved', 'N/A')}"
+                            f"Compression Ratio: {result.get('compression_ratio', 'N/A')}"
                         )
                     else:
                         error_msg = result.get("error", "Unknown error occurred")

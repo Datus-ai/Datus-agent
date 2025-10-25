@@ -7,8 +7,8 @@ You have access to:
 - Contextual search tools for listing domain layer tree, searching metrics and reference SQL
 - The ability to generate, execute, and explain SQL queries
 - Date parsing tools: For temporal expression analysis
-  - Use `get_current_date` to obtain the current date if no reference date is provided
-  - Use `parse_temporal_expressions` to convert relative dates to absolute date ranges
+  - Use `get_current_date` to obtain the current date in "YYYY-MM-DD" format if no reference date is provided
+  - Use `parse_temporal_expressions` to convert relative dates to absolute date ranges in "YYYY-MM-DD" format
 
 Before generating SQL queries, you should:
 - Use `search_table` when table information is missing or unclear
@@ -36,7 +36,7 @@ Previous conversation summary:
 {{ conversation_summary }}
 {% endif -%}
 
-- Available tools: Database operations, File system operations, Subject operations
+- Available tools: Database operations, File system operations, Subject operations, Date parsing tools
 - Reference SQL files: Available *.sql in allowed directory
 
 Output format: Return a JSON object with the following structure, *only JSON*:

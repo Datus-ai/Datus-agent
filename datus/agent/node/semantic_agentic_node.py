@@ -22,6 +22,7 @@ from datus.tools.generation_tools import GenerationTools
 from datus.tools.mcp_server import MCPServer
 from datus.tools.tools import DBFuncTool
 from datus.utils.loggings import get_logger
+from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 
@@ -61,12 +62,8 @@ class SemanticAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
-        # Initialize semantic_model_dir with namespace subdirectory
-        from datus.utils.path_manager import get_path_manager
-
         path_manager = get_path_manager()
-        namespace = getattr(agent_config, "current_namespace", "default") if agent_config else "default"
-        self.semantic_model_dir = str(path_manager.semantic_model_path(namespace))
+        self.semantic_model_dir = str(path_manager.semantic_model_path(agent_config.current_namespace))
 
         # Call parent constructor first to set up node_config
         super().__init__(
@@ -78,7 +75,6 @@ class SemanticAgenticNode(AgenticNode):
         # Initialize MCP servers based on hardcoded configuration
         self.mcp_servers = self._setup_mcp_servers()
 
-        # Debug: Log final MCP servers assignment
         logger.debug(
             f"SemanticAgenticNode final mcp_servers: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
         )
@@ -236,19 +232,9 @@ class SemanticAgenticNode(AgenticNode):
         """
         context = {}
 
-        # Tool detection flags
-        context["has_db_tools"] = bool(self.db_func_tool)
-        context["has_mcp_filesystem"] = "filesystem" in self.mcp_servers
-        context["has_mf_tools"] = any("metricflow" in k for k in self.mcp_servers.keys())
-
         # Tool name lists for template display
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
-
-        # Add namespace and semantic_model_dir
-        if self.agent_config:
-            namespace = getattr(self.agent_config, "current_namespace", "default")
-            context["namespace"] = namespace
         context["semantic_model_dir"] = self.semantic_model_dir
 
         logger.debug(f"Prepared template context: {context}")
