@@ -109,7 +109,7 @@ class SqlSummaryAgenticNode(AgenticNode):
     def _setup_specific_generation_tools(self):
         """Setup specific generation tools: prepare_sql_summary_context and generate_sql_summary_id."""
         try:
-            from datus.tools.tools import trans_to_function_tool
+            from datus.tools.func_tool import trans_to_function_tool
 
             self.generation_tools = GenerationTools(self.agent_config)
             self.tools.append(trans_to_function_tool(self.generation_tools.prepare_sql_summary_context))
@@ -120,7 +120,7 @@ class SqlSummaryAgenticNode(AgenticNode):
     def _setup_specific_filesystem_tool(self):
         """Setup specific filesystem tools"""
         try:
-            from datus.tools.tools import trans_to_function_tool
+            from datus.tools.func_tool import trans_to_function_tool
 
             self.filesystem_func_tool = FilesystemFuncTool(root_path=self.sql_summary_dir)
 

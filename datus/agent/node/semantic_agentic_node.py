@@ -142,7 +142,7 @@ class SemanticAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools (specific methods only)."""
         try:
-            from datus.tools.tools import trans_to_function_tool
+            from datus.tools.func_tool import trans_to_function_tool
 
             self.filesystem_func_tool = FilesystemFuncTool(root_path=self.semantic_model_dir)
 
@@ -160,7 +160,7 @@ class SemanticAgenticNode(AgenticNode):
     def _setup_generation_tools(self):
         """Setup generation tools based on node type."""
         try:
-            from datus.tools.tools import trans_to_function_tool
+            from datus.tools.func_tool import trans_to_function_tool
 
             self.generation_tools = GenerationTools(self.agent_config)
 

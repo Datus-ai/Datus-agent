@@ -2,12 +2,8 @@
 
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from agents import Tool
-from agents.mcp import MCPServerStdio
-
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
-from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput, CompareResult
@@ -32,38 +28,38 @@ class CompareAgenticNode(AgenticNode):
 
     def __init__(
         self,
+        node_name: str,
         agent_config: Optional[AgentConfig] = None,
-        tools: Optional[List[Tool]] = None,
-        mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
-        model: Optional[LLMBaseModel] = None,
-        max_turns: Optional[int] = None,
     ):
         # Consider None or empty list as "not provided"
-        self._tools_provided = bool(tools)
+        self.configured_node_name = node_name
         super().__init__(
-            tools=tools or [],
-            mcp_servers=mcp_servers or {},
+            tools=[],
+            mcp_servers={},
             agent_config=agent_config,
         )
-
-        if model is not None:
-            self.model = model
 
         config_max_turns = self.node_config.get("max_turns")
         if config_max_turns:
             self.max_turns = config_max_turns
         else:
-            self.max_turns = max_turns or 30
+            self.max_turns = 30
 
-        if not self._tools_provided:
-            self.setup_tools()
+        self.setup_tools()
+
+    def get_node_name(self) -> str:
+        """
+        Get the configured node name for this SQL summary agentic node.
+
+        Returns:
+            The configured node name from agent.yml
+        """
+        return self.configured_node_name
 
     def setup_tools(self) -> None:
         """
         Prepare default database and context tools when they are not explicitly provided.
         """
-        if self.tools:
-            return
 
         if not self.agent_config:
             logger.debug("No agent configuration available; skipping tool setup.")
