@@ -94,7 +94,7 @@ def search_by_tavily(keywords: List[str], top_n: int) -> DocSearchResult:
     if not api_key:
         return DocSearchResult(
             success=False,
-            error="TAVILY_API key not configured. Please set the TAVILY_API_KEY environment variable.",
+            error="TAVILY_API_KEY not configured. Please set the TAVILY_API_KEY environment variable.",
             docs={},
             doc_count=0,
         )
