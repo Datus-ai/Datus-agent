@@ -33,7 +33,6 @@ class CompareAgenticNode(AgenticNode):
     def __init__(
         self,
         agent_config: Optional[AgentConfig] = None,
-        *,
         tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         model: Optional[LLMBaseModel] = None,
@@ -41,7 +40,6 @@ class CompareAgenticNode(AgenticNode):
     ):
         # Consider None or empty list as "not provided"
         self._tools_provided = bool(tools)
-        self.max_turns = max_turns or 30
         super().__init__(
             tools=tools or [],
             mcp_servers=mcp_servers or {},
@@ -54,8 +52,8 @@ class CompareAgenticNode(AgenticNode):
         config_max_turns = self.node_config.get("max_turns")
         if config_max_turns:
             self.max_turns = config_max_turns
-        elif max_turns:
-            self.max_turns = max_turns
+        else:
+            self.max_turns = max_turns or 30
 
         if not self._tools_provided:
             self.setup_tools()

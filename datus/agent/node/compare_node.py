@@ -122,7 +122,6 @@ class CompareNode(Node):
                 "has_expectation": bool(self.input.expectation),
             }
             setup_action.end_time = datetime.now()
-
             # Stream the comparison process
             compare_agentic_node = CompareAgenticNode(
                 agent_config=self.agent_config,
