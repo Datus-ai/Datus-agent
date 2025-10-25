@@ -124,10 +124,8 @@ class CompareNode(Node):
             setup_action.end_time = datetime.now()
             # Stream the comparison process
             compare_agentic_node = CompareAgenticNode(
+                node_name="compare",
                 agent_config=self.agent_config,
-                model=self.model,
-                tools=self.tools,
-                max_turns=10,
             )
 
             async for action in compare_agentic_node.execute_stream(self.input, action_history_manager):
