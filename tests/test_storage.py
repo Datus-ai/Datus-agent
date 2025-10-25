@@ -7,14 +7,12 @@ import pytest
 from conftest import PROJECT_ROOT
 
 from datus.configuration.agent_config import AgentConfig
-from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.utils.benchmark_utils import load_bird_dev_tasks
-from datus.utils.constants import DBType
-from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import configure_logging, get_logger
+from tests.conftest import load_acceptance_config
 
 configure_logging(debug=True)
 logger = get_logger(__name__)
@@ -28,7 +26,8 @@ BIRD_DATABASE_NAMES = ["california_schools", "card_games"]
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    return load_agent_config(config="tests/conf/agent.yml", namespace="snowflake", reload=True)
+    config = load_acceptance_config(namespace="snowflake")
+    return config
 
 
 class TestSnowflake:
