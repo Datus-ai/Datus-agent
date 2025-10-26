@@ -29,7 +29,6 @@ dependencies = [
     "sqlglot>=26.12.0",
     "snowflake-connector-python>=3.6.0",
     "pyyaml==6.0.1",
-    "langsmith>=0.0.77",
     "structlog>=23.1.0",
     "openai>=1.95.0",
     "httpx[socks]==0.27.2",
@@ -39,11 +38,8 @@ dependencies = [
     "tiktoken>=0.9.0",
     "openai-agents==0.3.2",
     "pydantic>=2.11.7,<3.0",
-    "Markdown==3.8",
     "lancedb==0.18.0",
     # This library is required by lancedb
-    "pylance==0.22.0",
-    "datasets>=3.5.1",
     # this verison is required by pandas 2.1.4
     "pyarrow<19.0.0",
     "rich==14.0.0",
@@ -146,4 +142,5 @@ dev = [
     "twine>=6.1.0",
     "flake8>=7.3.0",
     "isort>=6.0.1",
+    "langsmith>=0.0.77",
 ]
