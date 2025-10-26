@@ -10,7 +10,7 @@ semantic model generation with support for filesystem tools, generation tools,
 hooks, and flexible configuration through agent.yml.
 """
 
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
@@ -45,6 +45,8 @@ class SemanticAgenticNode(AgenticNode):
         self,
         node_name: str,
         agent_config: Optional[AgentConfig] = None,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
+        build_mode: str = "incremental",
     ):
         """
         Initialize the SemanticAgenticNode.
@@ -52,8 +54,12 @@ class SemanticAgenticNode(AgenticNode):
         Args:
             node_name: Name of the node configuration in agent.yml (gen_semantic_model or gen_metrics)
             agent_config: Agent configuration
+            execution_mode: Execution mode - "interactive" (default) or "workflow"
+            build_mode: "overwrite" or "incremental" (default: "incremental")
         """
         self.configured_node_name = node_name
+        self.execution_mode = execution_mode
+        self.build_mode = build_mode
 
         # Get max_turns from agentic_nodes configuration, default to 30
         self.max_turns = 30
@@ -122,8 +128,9 @@ class SemanticAgenticNode(AgenticNode):
             f"Setup {len(self.tools)} tools for {self.configured_node_name}: {[tool.name for tool in self.tools]}"
         )
 
-        # Setup hooks (hardcoded to generation_hooks)
-        self._setup_hooks()
+        # Setup hooks (only in interactive mode)
+        if self.execution_mode == "interactive":
+            self._setup_hooks()
 
     def _setup_db_tools(self):
         """Setup database tools."""
@@ -325,11 +332,15 @@ class SemanticAgenticNode(AgenticNode):
         yield action
 
         try:
-            # Check for auto-compact before session creation to ensure fresh context
-            await self._auto_compact()
+            # Session management (only in interactive mode)
+            session = None
+            conversation_summary = None
+            if self.execution_mode == "interactive":
+                # Check for auto-compact before session creation to ensure fresh context
+                await self._auto_compact()
 
-            # Get or create session and any available summary
-            session, conversation_summary = self._get_or_create_session()
+                # Get or create session and any available summary
+                session, conversation_summary = self._get_or_create_session()
 
             # Prepare enhanced template context
             template_context = self._prepare_template_context(user_input)
@@ -386,7 +397,7 @@ class SemanticAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=self.hooks,
+                hooks=self.hooks if self.execution_mode == "interactive" else None,
             ):
                 yield stream_action
 
@@ -423,26 +434,35 @@ class SemanticAgenticNode(AgenticNode):
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 
-            # Extract token usage from final actions using our new approach
-            # With our streaming token fix, only the final assistant action will have accurate usage
-            final_actions = action_history_manager.get_actions()
+            # Extract token usage (only in interactive mode with session)
             tokens_used = 0
+            if self.execution_mode == "interactive":
+                # With our streaming token fix, only the final assistant action will have accurate usage
+                final_actions = action_history_manager.get_actions()
 
-            # Find the final assistant action with token usage
-            for action in reversed(final_actions):
-                if action.role == "assistant":
-                    if action.output and isinstance(action.output, dict):
-                        usage_info = action.output.get("usage", {})
-                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            conversation_tokens = usage_info.get("total_tokens", 0)
-                            if conversation_tokens > 0:
-                                # Add this conversation's tokens to the session
-                                self._add_session_tokens(conversation_tokens)
-                                tokens_used = conversation_tokens
-                                logger.info(f"Added {conversation_tokens} tokens to session")
-                                break
-                            else:
-                                logger.warning(f"no usage token found in this action {action.messages}")
+                # Find the final assistant action with token usage
+                for action in reversed(final_actions):
+                    if action.role == "assistant":
+                        if action.output and isinstance(action.output, dict):
+                            usage_info = action.output.get("usage", {})
+                            if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
+                                conversation_tokens = usage_info.get("total_tokens", 0)
+                                if conversation_tokens > 0:
+                                    # Add this conversation's tokens to the session
+                                    self._add_session_tokens(conversation_tokens)
+                                    tokens_used = conversation_tokens
+                                    logger.info(f"Added {conversation_tokens} tokens to session")
+                                    break
+                                else:
+                                    logger.warning(f"no usage token found in this action {action.messages}")
+
+            # Auto-save to LanceDB in workflow mode
+            if self.execution_mode == "workflow" and semantic_model_file:
+                try:
+                    self._save_to_lancedb(semantic_model_file)
+                    logger.info(f"Auto-saved to LanceDB: {semantic_model_file}")
+                except Exception as e:
+                    logger.error(f"Failed to auto-save to LanceDB: {e}")
 
             # Create final result
             result = SemanticNodeResult(
@@ -552,3 +572,35 @@ class SemanticAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Unexpected error extracting semantic_model_file: {e}", exc_info=True)
             return None, None
+
+    def _save_to_lancedb(self, semantic_model_file: str):
+        """
+        Save generated semantic model to LanceDB (synchronous).
+
+        Args:
+            semantic_model_file: Name of the semantic model file (e.g., "orders.yaml")
+        """
+        try:
+            import os
+
+            from datus.cli.generation_hooks import GenerationHooks
+
+            # Construct full path
+            full_path = os.path.join(self.semantic_model_dir, semantic_model_file)
+
+            if not os.path.exists(full_path):
+                logger.warning(f"Semantic model file not found: {full_path}")
+                return
+
+            # Call static method to save to LanceDB with build_mode
+            result = GenerationHooks._sync_semantic_to_db(full_path, self.agent_config, self.build_mode)
+
+            if result.get("success"):
+                logger.info(f"Successfully saved to LanceDB: {result.get('message')}")
+            else:
+                error = result.get("error", "Unknown error")
+                logger.error(f"Failed to save to LanceDB: {error}")
+
+        except Exception as e:
+            logger.error(f"Error saving to LanceDB: {e}", exc_info=True)
+            raise

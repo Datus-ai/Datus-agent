@@ -315,10 +315,14 @@ class GenerationHooks(AgentHooks):
             loop = asyncio.get_event_loop()
 
             if self._is_semantic_yaml(yaml_content):
-                result = await loop.run_in_executor(None, self._sync_semantic_to_db, file_path)
+                result = await loop.run_in_executor(
+                    None, GenerationHooks._sync_semantic_to_db, file_path, self.agent_config
+                )
                 item_type = "semantic model and metrics"
             elif self._is_sql_history_yaml(yaml_content):
-                result = await loop.run_in_executor(None, self._sync_sql_history_to_db, file_path)
+                result = await loop.run_in_executor(
+                    None, GenerationHooks._sync_sql_history_to_db, file_path, self.agent_config
+                )
                 item_type = "SQL history"
             else:
                 self.console.print("[yellow]Unknown YAML type, cannot determine sync method[/]")
@@ -404,7 +408,8 @@ class GenerationHooks(AgentHooks):
         except Exception:
             return False
 
-    def _sync_semantic_to_db(self, file_path: str) -> dict:
+    @staticmethod
+    def _sync_semantic_to_db(file_path: str, agent_config: AgentConfig, build_mode: str = "incremental") -> dict:
         """
         Sync semantic model and metrics from YAML file to Knowledge Base.
 
@@ -413,6 +418,8 @@ class GenerationHooks(AgentHooks):
 
         Args:
             file_path: Path to the YAML file containing semantic model and/or metrics
+            agent_config: Agent configuration
+            build_mode: "overwrite" or "incremental" (default: "incremental")
 
         Returns:
             dict: Sync result with success, error, and message fields
@@ -443,19 +450,19 @@ class GenerationHooks(AgentHooks):
                 return {"success": False, "error": "No data_source or metrics found in YAML file"}
 
             # Get storage
-            storage = SemanticMetricsRAG(self.agent_config)
+            storage = SemanticMetricsRAG(agent_config)
 
             # Get existing semantic models and metrics
-            existing_semantic_models, existing_metrics = exists_semantic_metrics(storage, build_mode="incremental")
+            existing_semantic_models, existing_metrics = exists_semantic_metrics(storage, build_mode=build_mode)
 
             # Get database config
-            current_db_config = self.agent_config.current_db_config()
+            current_db_config = agent_config.current_db_config()
 
             # Get domain/layer info - use default MetricMeta if not configured
-            if hasattr(self.agent_config, "metric_meta") and self.agent_config.metric_meta:
+            if hasattr(agent_config, "metric_meta") and agent_config.metric_meta:
                 # Use the first available metric_meta
-                first_meta_name = next(iter(self.agent_config.metric_meta.keys()))
-                current_metric_meta = self.agent_config.metric_meta[first_meta_name]
+                first_meta_name = next(iter(agent_config.metric_meta.keys()))
+                current_metric_meta = agent_config.metric_meta[first_meta_name]
             else:
                 # Use default values
                 current_metric_meta = MetricMeta()
@@ -556,12 +563,15 @@ class GenerationHooks(AgentHooks):
             logger.error(f"Error syncing semantic model and metrics to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
-    def _sync_sql_history_to_db(self, file_path: str) -> dict:
+    @staticmethod
+    def _sync_sql_history_to_db(file_path: str, agent_config: AgentConfig, build_mode: str = "incremental") -> dict:
         """
         Sync SQL history YAML file to Knowledge Base.
 
         Args:
             file_path: Path to the SQL history YAML file
+            agent_config: Agent configuration
+            build_mode: "overwrite" or "incremental" (default: "incremental")
 
         Returns:
             dict: Sync result with success, error, and message fields
@@ -594,8 +604,8 @@ class GenerationHooks(AgentHooks):
                 sql_history_data["id"] = item_id
 
             # Get storage and check if item already exists
-            storage = SqlHistoryRAG(self.agent_config)
-            existing_ids = exists_sql_history(storage, build_mode="incremental")
+            storage = SqlHistoryRAG(agent_config)
+            existing_ids = exists_sql_history(storage, build_mode=build_mode)
 
             # Check for duplicate
             if item_id in existing_ids:
