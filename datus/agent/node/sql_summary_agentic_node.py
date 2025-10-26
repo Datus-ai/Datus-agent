@@ -41,6 +41,8 @@ class SqlSummaryAgenticNode(AgenticNode):
         self,
         node_name: str,
         agent_config: Optional[AgentConfig] = None,
+        execution_mode: str = "interactive",
+        build_mode: str = "incremental",
     ):
         """
         Initialize the SqlSummaryAgenticNode.
@@ -48,15 +50,29 @@ class SqlSummaryAgenticNode(AgenticNode):
         Args:
             node_name: Name of the node configuration in agent.yml (should be "gen_sql_summary")
             agent_config: Agent configuration
+            execution_mode: Execution mode - "interactive" (default) or "workflow"
+            build_mode: "overwrite" or "incremental" (default: "incremental")
         """
         self.configured_node_name = node_name
+        self.execution_mode = execution_mode
+        self.build_mode = build_mode
 
-        # Get max_turns from agentic_nodes configuration, default to 30
+        # Get subject_tree and max_turns from agentic_nodes configuration
         self.max_turns = 30
+        self.subject_tree = None
+        self.predefined_taxonomy = None
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
+                subject_tree_str = agentic_node_config.get("subject_tree")
+                if subject_tree_str:
+                    self.subject_tree = subject_tree_str
+                    # Parse subject_tree into taxonomy
+                    from datus.storage.reference_sql.reference_sql_init import parse_subject_tree
+
+                    self.predefined_taxonomy = parse_subject_tree(subject_tree_str)
+                    logger.info(f"Loaded predefined taxonomy from subject_tree: {subject_tree_str}")
 
         path_manager = get_path_manager()
         self.sql_summary_dir = str(path_manager.sql_summary_path(agent_config.current_namespace))
@@ -103,15 +119,17 @@ class SqlSummaryAgenticNode(AgenticNode):
             f"Setup {len(self.tools)} tools for {self.configured_node_name}: {[tool.name for tool in self.tools]}"
         )
 
-        # Setup hooks (hardcoded to generation_hooks)
-        self._setup_hooks()
+        # Setup hooks (only in interactive mode)
+        if self.execution_mode == "interactive":
+            self._setup_hooks()
 
     def _setup_specific_generation_tools(self):
         """Setup specific generation tools: prepare_sql_summary_context and generate_sql_summary_id."""
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.generation_tools = GenerationTools(self.agent_config)
+            # Pass predefined_taxonomy to GenerationTools
+            self.generation_tools = GenerationTools(self.agent_config, predefined_taxonomy=self.predefined_taxonomy)
             self.tools.append(trans_to_function_tool(self.generation_tools.prepare_sql_summary_context))
             self.tools.append(trans_to_function_tool(self.generation_tools.generate_sql_summary_id))
         except Exception as e:
@@ -159,6 +177,13 @@ class SqlSummaryAgenticNode(AgenticNode):
 
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["sql_summary_dir"] = self.sql_summary_dir
+
+        # Add predefined taxonomy if available
+        if self.predefined_taxonomy:
+            context["has_predefined_taxonomy"] = True
+            context["predefined_taxonomy"] = self.predefined_taxonomy
+        else:
+            context["has_predefined_taxonomy"] = False
 
         logger.debug(f"Prepared template context: {context}")
         return context
@@ -248,11 +273,15 @@ class SqlSummaryAgenticNode(AgenticNode):
         yield action
 
         try:
-            # Check for auto-compact before session creation to ensure fresh context
-            await self._auto_compact()
+            # Session management (only in interactive mode)
+            session = None
+            conversation_summary = None
+            if self.execution_mode == "interactive":
+                # Check for auto-compact before session creation to ensure fresh context
+                await self._auto_compact()
 
-            # Get or create session and any available summary
-            session, conversation_summary = self._get_or_create_session()
+                # Get or create session and any available summary
+                session, conversation_summary = self._get_or_create_session()
 
             # Prepare enhanced template context
             template_context = self._prepare_template_context(user_input)
@@ -315,7 +344,7 @@ class SqlSummaryAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=self.hooks,
+                hooks=self.hooks if self.execution_mode == "interactive" else None,
             ):
                 yield stream_action
 
@@ -352,24 +381,34 @@ class SqlSummaryAgenticNode(AgenticNode):
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 
-            # Extract token usage from final actions
-            final_actions = action_history_manager.get_actions()
+            # Extract token usage (only in interactive mode with session)
+            tokens_used = 0
+            if self.execution_mode == "interactive":
+                final_actions = action_history_manager.get_actions()
 
-            # Find the final assistant action with token usage
-            for action in reversed(final_actions):
-                if action.role == "assistant":
-                    if action.output and isinstance(action.output, dict):
-                        usage_info = action.output.get("usage", {})
-                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            conversation_tokens = usage_info.get("total_tokens", 0)
-                            if conversation_tokens > 0:
-                                # Add this conversation's tokens to the session
-                                self._add_session_tokens(conversation_tokens)
-                                tokens_used = conversation_tokens
-                                logger.info(f"Added {conversation_tokens} tokens to session")
-                                break
-                        else:
-                            logger.warning(f"no usage token found in this action {action.messages}")
+                # Find the final assistant action with token usage
+                for action in reversed(final_actions):
+                    if action.role == "assistant":
+                        if action.output and isinstance(action.output, dict):
+                            usage_info = action.output.get("usage", {})
+                            if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
+                                conversation_tokens = usage_info.get("total_tokens", 0)
+                                if conversation_tokens > 0:
+                                    # Add this conversation's tokens to the session
+                                    self._add_session_tokens(conversation_tokens)
+                                    tokens_used = conversation_tokens
+                                    logger.info(f"Added {conversation_tokens} tokens to session")
+                                    break
+                            else:
+                                logger.warning(f"no usage token found in this action {action.messages}")
+
+            # Auto-save to LanceDB in workflow mode
+            if self.execution_mode == "workflow" and sql_summary_file:
+                try:
+                    self._save_to_lancedb(sql_summary_file)
+                    logger.info(f"Auto-saved to LanceDB: {sql_summary_file}")
+                except Exception as e:
+                    logger.error(f"Failed to auto-save to LanceDB: {e}")
 
             # Create final result
             result = SqlSummaryNodeResult(
@@ -479,3 +518,35 @@ class SqlSummaryAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Unexpected error extracting sql_summary_file: {e}", exc_info=True)
             return None, None
+
+    def _save_to_lancedb(self, sql_summary_file: str):
+        """
+        Save generated SQL summary to LanceDB (synchronous).
+
+        Args:
+            sql_summary_file: Name of the SQL summary file (e.g., "query_001.yaml")
+        """
+        try:
+            import os
+
+            from datus.cli.generation_hooks import GenerationHooks
+
+            # Construct full path
+            full_path = os.path.join(self.sql_summary_dir, sql_summary_file)
+
+            if not os.path.exists(full_path):
+                logger.warning(f"SQL summary file not found: {full_path}")
+                return
+
+            # Call static method to save to LanceDB with build_mode
+            result = GenerationHooks._sync_sql_history_to_db(full_path, self.agent_config, self.build_mode)
+
+            if result.get("success"):
+                logger.info(f"Successfully saved to LanceDB: {result.get('message')}")
+            else:
+                error = result.get("error", "Unknown error")
+                logger.error(f"Failed to save to LanceDB: {error}")
+
+        except Exception as e:
+            logger.error(f"Error saving to LanceDB: {e}", exc_info=True)
+            raise

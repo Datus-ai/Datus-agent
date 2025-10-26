@@ -16,7 +16,7 @@ from datus.schemas.agent_models import ScopedContextLists, SubAgentConfig
 from datus.storage.lancedb_conditions import Node, and_, build_where, eq, in_, like, or_
 from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
-from datus.storage.sql_history.store import SqlHistoryRAG
+from datus.storage.sql_history.store import ReferenceSqlRAG
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -537,7 +537,7 @@ class SubAgentBootstrapper:
                 message="Global reference SQL store is not initialized.",
             )
 
-        source = SqlHistoryRAG(self.agent_config)
+        source = ReferenceSqlRAG(self.agent_config)
         condition_map, invalid_tokens = self._hierarchical_conditions(
             historical_sql,
             ("domain", "layer1", "layer2", "name"),
@@ -582,7 +582,7 @@ class SubAgentBootstrapper:
 
         self._clear_component("reference_sql")
 
-        target = SqlHistoryRAG(self.agent_config, self.sub_agent.system_prompt)
+        target = ReferenceSqlRAG(self.agent_config, self.sub_agent.system_prompt)
         target.store_batch(sql_rows)
         target.after_init()
 

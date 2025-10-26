@@ -16,7 +16,7 @@ from datus.cli.blocking_input_manager import blocking_input_manager
 from datus.cli.execution_state import execution_controller
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.llm_text_generator import generate_metric_llm_text
-from datus.storage.sql_history import SqlHistoryRAG
+from datus.storage.sql_history import ReferenceSqlRAG
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
@@ -604,7 +604,7 @@ class GenerationHooks(AgentHooks):
                 sql_history_data["id"] = item_id
 
             # Get storage and check if item already exists
-            storage = SqlHistoryRAG(agent_config)
+            storage = ReferenceSqlRAG(agent_config)
             existing_ids = exists_sql_history(storage, build_mode=build_mode)
 
             # Check for duplicate

@@ -5,21 +5,21 @@
 import hashlib
 from typing import Set
 
-from datus.storage.sql_history.store import SqlHistoryRAG
+from datus.storage.reference_sql.store import ReferenceSqlRAG
 
 
-def gen_sql_history_id(sql: str, comment: str) -> str:
+def gen_reference_sql_id(sql: str, comment: str) -> str:
     """Generate MD5 hash ID from SQL and comment fields."""
     combined_text = f"{sql}{comment}"
     return hashlib.md5(combined_text.encode("utf-8")).hexdigest()
 
 
-def exists_sql_history(storage: SqlHistoryRAG, build_mode: str = "overwrite") -> Set[str]:
-    """Get existing SQL history IDs based on build mode."""
+def exists_reference_sql(storage: ReferenceSqlRAG, build_mode: str = "overwrite") -> Set[str]:
+    """Get existing reference SQL IDs based on build mode."""
     existing_ids = set()
     if build_mode == "overwrite":
         return existing_ids
     if build_mode == "incremental":
-        for item in storage.search_all_sql_history(""):
+        for item in storage.search_all_reference_sql(""):
             existing_ids.add(str(item["id"]))
     return existing_ids

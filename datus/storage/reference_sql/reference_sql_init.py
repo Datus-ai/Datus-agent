@@ -2,15 +2,19 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, List
+import asyncio
+from typing import Any, Dict, List, Optional
 
+from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
-from datus.storage.sql_history.init_utils import exists_sql_history, gen_sql_history_id
-from datus.storage.sql_history.sql_file_processor import process_sql_files
-from datus.storage.sql_history.store import SqlHistoryRAG
-from datus.tools.llms_tools.analyze_sql_history import (
+from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
+from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_reference_sql_id
+from datus.storage.reference_sql.sql_file_processor import process_sql_files
+from datus.storage.reference_sql.store import ReferenceSqlRAG
+from datus.tools.llms_tools.analyze_reference_sql import (
     classify_items_batch,
     extract_summaries_batch,
     generate_classification_taxonomy,
@@ -183,7 +187,7 @@ def regenerate_unique_name(model: LLMBaseModel, item: Dict[str, Any], conflictin
         return ""
 
 
-def analyze_sql_history(
+def analyze_reference_sql(
     model: LLMBaseModel,
     items: List[Dict[str, Any]],
     pool_size: int = 4,
@@ -191,7 +195,7 @@ def analyze_sql_history(
     predefined_taxonomy: Dict[str, Any] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Analyze SQL history items using LLM interaction process.
+    Analyze reference SQL items using LLM interaction process.
 
     Args:
         model: Initialized LLM model
@@ -203,7 +207,7 @@ def analyze_sql_history(
     Returns:
         List of enriched dict objects with additional summary, domain, layer1, layer2, tags, id fields
     """
-    logger.info(f"Starting analysis for {len(items)} SQL items")
+    logger.info(f"Starting analysis for {len(items)} reference SQL items")
 
     # Step 1: Extract summaries in parallel
     logger.info("Step 1: Extracting summaries...")
@@ -242,17 +246,73 @@ def analyze_sql_history(
     return classified_items
 
 
-def init_sql_history(
-    storage: SqlHistoryRAG,
+async def process_sql_item(
+    item: dict,
+    agent_config: AgentConfig,
+    build_mode: str = "incremental",
+) -> Optional[str]:
+    """
+    Process a single SQL item using SqlSummaryAgenticNode in workflow mode.
+
+    Args:
+        item: Dict containing sql, comment, filepath fields
+        agent_config: Agent configuration
+        build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
+
+    Returns:
+        SQL summary file path if successful, None otherwise
+    """
+    logger.debug(f"Processing SQL item: {item.get('filepath', '')}")
+
+    try:
+        # Create input for SqlSummaryAgenticNode
+        sql_input = SqlSummaryNodeInput(
+            user_message="Analyze and summarize this SQL query",
+            sql_query=item.get("sql"),
+            comment=item.get("comment", ""),
+        )
+
+        # Create SqlSummaryAgenticNode in workflow mode (no user interaction)
+        node = SqlSummaryAgenticNode(
+            node_name="gen_sql_summary",
+            agent_config=agent_config,
+            execution_mode="workflow",
+            build_mode=build_mode,
+        )
+
+        action_history_manager = ActionHistoryManager()
+        sql_summary_file = None
+
+        # Execute and collect results
+        async for action in node.execute_stream(sql_input, action_history_manager):
+            if action.status == ActionStatus.SUCCESS and action.output:
+                output = action.output
+                if isinstance(output, dict):
+                    sql_summary_file = output.get("sql_summary_file")
+
+        if not sql_summary_file:
+            logger.error(f"Failed to generate SQL summary for {item.get('filepath', '')}")
+            return None
+
+        logger.info(f"Generated SQL summary: {sql_summary_file}")
+        return sql_summary_file
+
+    except Exception as e:
+        logger.error(f"Error processing SQL item {item.get('filepath', '')}: {e}")
+        return None
+
+
+def init_reference_sql(
+    storage: ReferenceSqlRAG,
     args: Any,
     global_config: AgentConfig,
     build_mode: str = "overwrite",
     pool_size: int = 1,
 ) -> Dict[str, Any]:
-    """Initialize SQL history from SQL files directory.
+    """Initialize reference SQL from SQL files directory.
 
     Args:
-        storage: SqlHistoryRAG instance
+        storage: ReferenceSqlRAG instance
         args: Command line arguments containing sql_dir path
         global_config: Global agent configuration for LLM model creation
         build_mode: "overwrite" to replace all data, "incremental" to add new entries
@@ -269,7 +329,7 @@ def init_sql_history(
             "valid_entries": 0,
             "processed_entries": 0,
             "invalid_entries": 0,
-            "total_stored_entries": storage.get_sql_history_size(),
+            "total_stored_entries": storage.get_reference_sql_size(),
         }
 
     logger.info(f"Processing SQL files from directory: {args.sql_dir}")
@@ -300,17 +360,17 @@ def init_sql_history(
             "valid_entries": 0,
             "processed_entries": 0,
             "invalid_entries": len(invalid_items) if invalid_items else 0,
-            "total_stored_entries": storage.get_sql_history_size(),
+            "total_stored_entries": storage.get_reference_sql_size(),
         }
 
     # Filter out existing items in incremental mode
     if build_mode == "incremental":
         # Check for existing entries
-        existing_ids = exists_sql_history(storage, build_mode)
+        existing_ids = exists_reference_sql(storage, build_mode)
 
         new_items = []
         for item_dict in valid_items:
-            item_id = gen_sql_history_id(item_dict["sql"], item_dict["comment"])
+            item_id = gen_reference_sql_id(item_dict["sql"], item_dict["comment"])
             if item_id not in existing_ids:
                 new_items.append(item_dict)
 
@@ -321,27 +381,59 @@ def init_sql_history(
 
     processed_count = 0
     if items_to_process:
-        # Analyze with LLM using parallel processing
-        model = LLMBaseModel.create_model(global_config)
+        # Check if subject_tree is provided - use different processing strategies
+        use_batch_llm = hasattr(args, "subject_tree") and args.subject_tree
 
-        # Check if subject_tree is provided
-        predefined_taxonomy = None
-        if hasattr(args, "subject_tree") and args.subject_tree:
-            logger.info(f"Using predefined subject_tree: {args.subject_tree}")
+        if use_batch_llm:
+            # Use batch LLM processing when subject_tree is provided
+            logger.info("Using batch LLM processing with predefined subject_tree")
+            model = LLMBaseModel.create_model(global_config)
+
             predefined_taxonomy = parse_subject_tree(args.subject_tree)
+            logger.info(f"Using predefined subject_tree: {args.subject_tree}")
 
-        # Get existing taxonomy for incremental updates (only if no predefined taxonomy)
-        existing_taxonomy = None
-        if build_mode == "incremental" and not predefined_taxonomy:
-            existing_taxonomy = storage.sql_history_storage.get_existing_taxonomy()
+            # Get existing taxonomy for incremental updates
+            existing_taxonomy = None
+            if build_mode == "incremental":
+                existing_taxonomy = storage.reference_sql_storage.get_existing_taxonomy()
 
-        enriched_items = analyze_sql_history(model, items_to_process, pool_size, existing_taxonomy, predefined_taxonomy)
+            enriched_items = analyze_reference_sql(
+                model, items_to_process, pool_size, existing_taxonomy, predefined_taxonomy
+            )
 
-        # enriched_items are already dict format, can store directly
-        storage.store_batch(enriched_items)
+            # Store directly to LanceDB
+            storage.store_batch(enriched_items)
+            processed_count = len(enriched_items)
+            logger.info(f"Stored {processed_count} reference SQL entries")
+        else:
+            # Use SqlSummaryAgenticNode with parallel processing (default)
+            async def process_all():
+                semaphore = asyncio.Semaphore(pool_size)
+                logger.info(f"Processing {len(items_to_process)} SQL items with concurrency={pool_size}")
 
-        processed_count = len(enriched_items)
-        logger.info(f"Stored {processed_count} reference SQL entries")
+                async def process_with_semaphore(item):
+                    async with semaphore:
+                        return await process_sql_item(item, global_config, build_mode)
+
+                # Process all items in parallel
+                results = await asyncio.gather(
+                    *[process_with_semaphore(item) for item in items_to_process], return_exceptions=True
+                )
+
+                # Count successful results
+                success_count = 0
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Item {i+1} failed with exception: {result}")
+                    elif result:
+                        success_count += 1
+
+                logger.info(f"Completed processing: {success_count}/{len(items_to_process)} successful")
+                return success_count
+
+            # Run the async function
+            processed_count = asyncio.run(process_all())
+            logger.info(f"Processed {processed_count} reference SQL entries")
     else:
         logger.info("No new items to process in incremental mode")
 
@@ -354,5 +446,5 @@ def init_sql_history(
         "valid_entries": len(valid_items) if valid_items else 0,
         "processed_entries": processed_count,
         "invalid_entries": len(invalid_items) if invalid_items else 0,
-        "total_stored_entries": storage.get_sql_history_size(),
+        "total_stored_entries": storage.get_reference_sql_size(),
     }

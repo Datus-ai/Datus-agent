@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
-from datus.storage.sql_history.init_utils import gen_sql_history_id
+from datus.storage.reference_sql.init_utils import gen_reference_sql_id
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -76,7 +76,7 @@ def extract_single_summary(model: LLMBaseModel, item: Dict[str, Any], index: int
         logger.debug(f"Parsed data of extract_single_summary: {parsed_data}")
         item["summary"] = parsed_data.get("summary", item.get("comment", ""))
         item["name"] = parsed_data.get("name", "")
-        item["id"] = gen_sql_history_id(item.get("sql", ""), item.get("comment", ""))
+        item["id"] = gen_reference_sql_id(item.get("sql", ""), item.get("comment", ""))
 
         logger.debug(f"Item {index}: Successfully extracted summary")
         return item
@@ -85,7 +85,7 @@ def extract_single_summary(model: LLMBaseModel, item: Dict[str, Any], index: int
         logger.error(f"Item {index}: Failed to extract summary: {str(e)}")
         item["summary"] = item.get("comment", "") if item.get("comment") else "Unable to analyze SQL"
         item["name"] = ""
-        item["id"] = gen_sql_history_id(item.get("sql", ""), item.get("comment", ""))
+        item["id"] = gen_reference_sql_id(item.get("sql", ""), item.get("comment", ""))
         return item
 
 

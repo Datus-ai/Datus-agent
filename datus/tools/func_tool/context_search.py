@@ -10,7 +10,7 @@ from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import SemanticMetricsRAG
-from datus.storage.sql_history.store import SqlHistoryRAG
+from datus.storage.sql_history.store import ReferenceSqlRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -22,7 +22,7 @@ class ContextSearchTools:
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.metric_rag = SemanticMetricsRAG(agent_config, sub_agent_name)
-        self.sql_history_store = SqlHistoryRAG(agent_config, sub_agent_name)
+        self.sql_history_store = ReferenceSqlRAG(agent_config, sub_agent_name)
         self.has_metrics = self.metric_rag.get_metrics_size() > 0
         self.has_historical_sql = self.sql_history_store.get_sql_history_size() > 0
 

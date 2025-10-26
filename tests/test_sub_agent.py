@@ -4,7 +4,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.schema_metadata import SchemaWithValueRAG
-from datus.storage.sql_history import SqlHistoryRAG
+from datus.storage.sql_history import ReferenceSqlRAG
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS, SubAgentBootstrapper
 from tests.conftest import load_acceptance_config
 
@@ -84,7 +84,7 @@ class TestBootstrap:
         # metrics
         assert component_results[1].details.get("stored_metrics", 0) == metrics_rag.metric_storage.table_size()
         # sql
-        sql_rag = SqlHistoryRAG(agent_config, sub_agent_name="test")
+        sql_rag = ReferenceSqlRAG(agent_config, sub_agent_name="test")
         assert component_results[2].details.get("stored_sqls", 0) == sql_rag.sql_history_storage.table_size()
 
         for component in SUPPORTED_COMPONENTS:

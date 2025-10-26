@@ -25,7 +25,7 @@ from datus.cli.screen.context_screen import ContextScreen
 from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import SemanticMetricsRAG
-from datus.storage.sql_history import SqlHistoryRAG
+from datus.storage.sql_history import ReferenceSqlRAG
 from datus.storage.subject_manager import SubjectUpdater
 from datus.utils.loggings import get_logger
 
@@ -358,7 +358,7 @@ def _fetch_metrics_with_cache(
 
 @lru_cache(maxsize=128)
 def _sql_details_cache(
-    sql_rag: SqlHistoryRAG, domain: str, layer1: str, layer2: str, name: str
+    sql_rag: ReferenceSqlRAG, domain: str, layer1: str, layer2: str, name: str
 ) -> List[Dict[str, Any]]:
     try:
         table = sql_rag.get_sql_history_detail(
@@ -491,7 +491,7 @@ class SubjectScreen(ContextScreen):
         super().__init__(title=title, context_data=context_data, inject_callback=inject_callback)
         self.agent_config: AgentConfig = context_data.get("agent_config")
         self.metrics_rag: SemanticMetricsRAG = SemanticMetricsRAG(self.agent_config)
-        self.sql_rag: SqlHistoryRAG = SqlHistoryRAG(self.agent_config)
+        self.sql_rag: ReferenceSqlRAG = ReferenceSqlRAG(self.agent_config)
         self.inject_callback = inject_callback
         self.selected_path = ""
         self.readonly = True

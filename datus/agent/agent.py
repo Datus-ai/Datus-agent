@@ -753,22 +753,22 @@ class Agent:
                     f"knowledge_size={self.ext_knowledge_store.table_size()}",
                 }
             elif component == "reference_sql":
-                sql_history_path = os.path.join(dir_path, "sql_history.lance")
+                reference_sql_path = os.path.join(dir_path, "reference_sql.lance")
                 if kb_update_strategy == "overwrite":
-                    if os.path.exists(sql_history_path):
-                        shutil.rmtree(sql_history_path)
-                        logger.info(f"Deleted existing directory {sql_history_path}")
+                    if os.path.exists(reference_sql_path):
+                        shutil.rmtree(reference_sql_path)
+                        logger.info(f"Deleted existing directory {reference_sql_path}")
                     self.global_config.save_storage_config("reference_sql")
                 else:
                     self.global_config.check_init_storage_config("reference_sql")
 
-                # Initialize SQL history storage
-                from datus.storage.sql_history import SqlHistoryRAG
-                from datus.storage.sql_history.sql_history_init import init_sql_history
+                # Initialize reference SQL storage
+                from datus.storage.reference_sql import ReferenceSqlRAG
+                from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 
-                self.sql_history_store = SqlHistoryRAG(self.global_config)
-                result = init_sql_history(
-                    self.sql_history_store,
+                self.reference_sql_store = ReferenceSqlRAG(self.global_config)
+                result = init_reference_sql(
+                    self.reference_sql_store,
                     self.args,
                     self.global_config,
                     build_mode=kb_update_strategy,

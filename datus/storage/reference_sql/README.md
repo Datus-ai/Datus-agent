@@ -79,7 +79,7 @@ python -m datus.main bootstrap-kb \
 # High performance - use 8 parallel threads for LLM analysis
 python -m datus.main bootstrap-kb \
   --namespace your_namespace \
-  --components sql_history \
+  --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --kb_update_strategy overwrite \
   --pool_size 8

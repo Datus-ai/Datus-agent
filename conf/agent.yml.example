@@ -250,3 +250,7 @@ agent:
 
     gen_sql_summary:
       model: deepseek_v3
+      max_turns: 30
+      # Optional: Predefined taxonomy for SQL classification
+      # Format: "domain/layer1/layer2, domain/layer1/layer2, ..."
+      # subject_tree: "Sales/Reporting/Daily, Sales/Analytics/Trends, Marketing/Campaign/Email"

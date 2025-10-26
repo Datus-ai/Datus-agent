@@ -14,9 +14,9 @@ from datus.storage.lancedb_conditions import And, build_where, eq, like
 logger = logging.getLogger(__file__)
 
 
-class SqlHistoryStorage(BaseEmbeddingStore):
+class ReferenceSqlStorage(BaseEmbeddingStore):
     def __init__(self, db_path: str, embedding_model: EmbeddingModel):
-        """Initialize the SQL history store.
+        """Initialize the reference SQL store.
 
         Args:
             db_path: Path to the LanceDB database directory
@@ -24,7 +24,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         """
         super().__init__(
             db_path=db_path,
-            table_name="sql_history",
+            table_name="reference_sql",
             embedding_model=embedding_model,
             schema=pa.schema(
                 [
@@ -62,7 +62,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         self.create_fts_index(["sql", "name", "comment", "summary", "tags"])
 
     def search_all(self, domain: str = "", selected_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """Search all SQL history entries for a given domain."""
+        """Search all reference SQL entries for a given domain."""
 
         if not selected_fields:
             selected_fields = [
@@ -90,7 +90,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         return result
 
     def filter_by_id(self, id: str) -> List[Dict[str, Any]]:
-        """Filter SQL history by ID."""
+        """Filter reference SQL by ID."""
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
@@ -99,7 +99,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         return search_result
 
     def filter_by_domain_layers(self, domain: str = "", layer1: str = "", layer2: str = "") -> List[Dict[str, Any]]:
-        """Filter SQL history by domain and layers."""
+        """Filter reference SQL by domain and layers."""
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
@@ -121,7 +121,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         return search_result
 
     def get_existing_taxonomy(self) -> Dict[str, Any]:
-        """Get existing taxonomy from stored SQL history items.
+        """Get existing taxonomy from stored reference SQL items.
 
         Returns:
             Dict containing existing domains, layer1_categories, layer2_categories, and common_tags
@@ -183,7 +183,7 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         return taxonomy
 
     def search_by_filepath(self, filepath_pattern: str) -> List[Dict[str, Any]]:
-        """Search SQL history by filepath pattern."""
+        """Search reference SQL by filepath pattern."""
         # Ensure table is ready before direct table access
         self._ensure_table_ready()
 
@@ -192,35 +192,35 @@ class SqlHistoryStorage(BaseEmbeddingStore):
         return search_result
 
 
-class SqlHistoryRAG:
+class ReferenceSqlRAG:
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
         from datus.storage.cache import get_storage_cache_instance
 
-        self.sql_history_storage = get_storage_cache_instance(agent_config).historical_storage(sub_agent_name)
+        self.reference_sql_storage = get_storage_cache_instance(agent_config).historical_storage(sub_agent_name)
 
-    def store_batch(self, sql_history_items: List[Dict[str, Any]]):
-        """Store batch of SQL history items."""
-        logger.info(f"store reference SQL items: {len(sql_history_items)} items")
-        self.sql_history_storage.store_batch(sql_history_items)
+    def store_batch(self, reference_sql_items: List[Dict[str, Any]]):
+        """Store batch of reference SQL items."""
+        logger.info(f"store reference SQL items: {len(reference_sql_items)} items")
+        self.reference_sql_storage.store_batch(reference_sql_items)
 
-    def search_all_sql_history(
+    def search_all_reference_sql(
         self, domain: str = "", selected_fields: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Search all SQL history items."""
-        return self.sql_history_storage.search_all(domain, selected_fields)
+        """Search all reference SQL items."""
+        return self.reference_sql_storage.search_all(domain, selected_fields)
 
     def after_init(self):
         """Initialize indices after data loading."""
-        self.sql_history_storage.create_indices()
+        self.reference_sql_storage.create_indices()
 
-    def get_sql_history_size(self):
-        """Get total number of SQL history entries."""
-        return self.sql_history_storage.table_size()
+    def get_reference_sql_size(self):
+        """Get total number of reference SQL entries."""
+        return self.reference_sql_storage.table_size()
 
-    def search_sql_history_by_summary(
+    def search_reference_sql_by_summary(
         self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
     ) -> List[Dict[str, Any]]:
-        """Search SQL history by summary using vector search."""
+        """Search reference SQL by summary using vector search."""
         conditions = []
         if domain:
             conditions.append(eq("domain", domain))
@@ -240,7 +240,7 @@ class SqlHistoryRAG:
             where_clause = build_where(where_condition)
 
         logger.info(f"Searching reference SQL by summary: {query_text}, where: {where_clause}")
-        search_results = self.sql_history_storage.search(
+        search_results = self.reference_sql_storage.search(
             query_text,
             top_n=top_n,
             where=where_condition,
@@ -256,8 +256,8 @@ class SqlHistoryRAG:
             logger.info(f"No reference SQL results found for query: {query_text}")
             return []
 
-    def get_sql_history_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
-        return self.sql_history_storage._search_all(
+    def get_reference_sql_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
+        return self.reference_sql_storage._search_all(
             And([eq("domain", domain), eq("layer1", layer1), eq("layer2", layer2), eq("name", name)]),
             ["name", "summary", "comment", "tags", "sql"],
         ).to_pylist()

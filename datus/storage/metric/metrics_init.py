@@ -32,15 +32,16 @@ def init_success_story_metrics(
         agent_config: Agent configuration
         build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
 
-    This function uses async processing with asyncio.gather for concurrent execution.
-    Auto-saves to LanceDB via workflow mode.
     """
     df = pd.read_csv(args.success_story)
 
-    # Convert to async and use asyncio.gather
     async def process_all():
-        tasks = [process_line(row.to_dict(), agent_config, build_mode) for _, row in df.iterrows()]
-        await asyncio.gather(*tasks)
+        for idx, row in df.iterrows():
+            logger.info(f"Processing row {idx + 1}/{len(df)}")
+            try:
+                await process_line(row.to_dict(), agent_config, build_mode)
+            except Exception as e:
+                logger.error(f"Error processing row {idx + 1}: {e}")
 
     # Run the async function
     asyncio.run(process_all())
@@ -58,12 +59,6 @@ async def process_line(
         row: CSV row data containing question and sql
         agent_config: Agent configuration
         build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
-
-    This function:
-    1. Extracts table name from SQL query
-    2. Generates semantic model using SemanticAgenticNode (gen_semantic_model)
-    3. Generates metrics using SemanticAgenticNode (gen_metrics)
-    4. Auto-saves to LanceDB via workflow mode
     """
     logger.info(f"processing line: {row}")
 
@@ -147,13 +142,6 @@ async def process_line(
         return
 
 
-# Obsolete functions removed:
-# - gen_semantic_model: Auto-save in workflow mode handles this
-# - gen_metrics: Auto-save in workflow mode handles this
-# - _store_if_not_exists: Auto-save in workflow mode handles this
-# - _build_metric_dict: Auto-save in workflow mode handles this
-
-
 def init_semantic_yaml_metrics(
     yaml_file_path: str,
     agent_config: AgentConfig,
@@ -186,9 +174,6 @@ def process_semantic_yaml_file(
         yaml_file_path: Path to semantic YAML file
         agent_config: Agent configuration
         build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
-
-    This function uses the static method GenerationHooks._sync_semantic_to_db to import
-    pre-existing YAML files without LLM generation.
     """
     logger.info(f"Processing semantic YAML file: {yaml_file_path}")
 
@@ -200,9 +185,3 @@ def process_semantic_yaml_file(
     else:
         error = result.get("error", "Unknown error")
         logger.error(f"Failed to sync semantic YAML to LanceDB: {error}")
-
-
-# Additional obsolete functions removed:
-# - _build_semantic_model_dict: Used by removed functions
-# - gen_semantic_model_from_data_source: Used by removed functions
-# - gen_metric_from_yaml: Replaced by GenerationHooks._sync_semantic_to_db

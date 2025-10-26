@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from agents import Tool
 
@@ -23,9 +23,11 @@ class GenerationTools:
     completing the generation process.
     """
 
-    def __init__(self, agent_config: AgentConfig):
+    def __init__(self, agent_config: AgentConfig, predefined_taxonomy: Optional[Dict[str, Any]] = None):
         self.agent_config = agent_config
+        self.predefined_taxonomy = predefined_taxonomy
         self.metrics_rag = SemanticMetricsRAG(agent_config)
+        logger.debug(f"GenerationTools initialized with predefined_taxonomy: {predefined_taxonomy is not None}")
 
     def available_tools(self) -> List[Tool]:
         """
@@ -183,10 +185,10 @@ class GenerationTools:
                     - 'common_tags' (list): Available tags
         """
         try:
-            from datus.storage.sql_history.store import SqlHistoryRAG
+            from datus.storage.sql_history.store import ReferenceSqlRAG
 
             # Get SQL history storage
-            storage = SqlHistoryRAG(self.agent_config)
+            storage = ReferenceSqlRAG(self.agent_config)
             taxonomy = storage.sql_history_storage.get_existing_taxonomy()
 
             return FuncToolResult(
@@ -222,10 +224,10 @@ class GenerationTools:
                     - 'message' (str): Description message
         """
         try:
-            from datus.storage.sql_history.store import SqlHistoryRAG
+            from datus.storage.sql_history.store import ReferenceSqlRAG
 
             # Get SQL history storage
-            storage = SqlHistoryRAG(self.agent_config)
+            storage = ReferenceSqlRAG(self.agent_config)
 
             # Search for similar names using FTS
             all_items = storage.search_all_sql_history()
@@ -294,10 +296,10 @@ class GenerationTools:
                     - 'count' (int): Number of results found
         """
         try:
-            from datus.storage.sql_history.store import SqlHistoryRAG
+            from datus.storage.sql_history.store import ReferenceSqlRAG
 
             # Get SQL history storage
-            storage = SqlHistoryRAG(self.agent_config)
+            storage = ReferenceSqlRAG(self.agent_config)
 
             # Use summary for vector search if available, otherwise use comment
             query_text = summary if summary else comment
@@ -351,7 +353,7 @@ class GenerationTools:
         One-shot context preparation for SQL summary generation.
 
         This tool combines multiple preparatory steps into a single call:
-        1. Get existing taxonomy (domains, layers, tags)
+        1. Get existing taxonomy (domains, layers, tags) - uses predefined if available
         2. Find similar SQL histories for reference
         3. Check name uniqueness (if suggested_name provided)
 
@@ -368,7 +370,7 @@ class GenerationTools:
                 - 'success' (int): 1 if successful, 0 if failed
                 - 'error' (str or None): Error message if failed
                 - 'result' (dict): Contains:
-                    - 'taxonomy' (dict): Existing classification taxonomy
+                    - 'taxonomy' (dict): Classification taxonomy (predefined or from storage)
                     - 'similar_items' (list): Similar SQL histories for reference
                     - 'name_check' (dict): Name uniqueness check result (if suggested_name provided)
                     - 'message' (str): Summary message
@@ -377,15 +379,26 @@ class GenerationTools:
             result = {}
             messages = []
 
-            # 1. Get taxonomy
-            taxonomy_result = self._get_sql_history_taxonomy()
-            if taxonomy_result.success:
-                result["taxonomy"] = taxonomy_result.result
-                taxonomy_info = taxonomy_result.result.get("message", "")
-                messages.append(f"Taxonomy: {taxonomy_info}")
+            # 1. Get taxonomy (use predefined if available)
+            if self.predefined_taxonomy:
+                result["taxonomy"] = {
+                    "domains": self.predefined_taxonomy.get("domains", []),
+                    "layer1_categories": self.predefined_taxonomy.get("layer1_categories", []),
+                    "layer2_categories": self.predefined_taxonomy.get("layer2_categories", []),
+                    "common_tags": self.predefined_taxonomy.get("common_tags", []),
+                    "source": "predefined",
+                }
+                messages.append("Taxonomy: Using predefined subject_tree")
             else:
-                logger.debug(f"Failed to get taxonomy: {taxonomy_result.error}")
-                result["taxonomy"] = {"error": taxonomy_result.error}
+                taxonomy_result = self._get_sql_history_taxonomy()
+                if taxonomy_result.success:
+                    result["taxonomy"] = taxonomy_result.result
+                    result["taxonomy"]["source"] = "storage"
+                    taxonomy_info = taxonomy_result.result.get("message", "")
+                    messages.append(f"Taxonomy: {taxonomy_info}")
+                else:
+                    logger.debug(f"Failed to get taxonomy: {taxonomy_result.error}")
+                    result["taxonomy"] = {"error": taxonomy_result.error, "source": "none"}
 
             # 2. Find similar histories
             similar_result = self._get_similar_sql_histories(
