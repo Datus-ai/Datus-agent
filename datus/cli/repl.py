@@ -81,7 +81,7 @@ class DatusCLI:
         self.configuration_manager = configuration_manager()
 
         if args.history_file:
-            history_file = Path(args.history_file)
+            history_file = Path(args.history_file).expanduser().resolve()
         else:
             from datus.utils.path_manager import get_path_manager
 
