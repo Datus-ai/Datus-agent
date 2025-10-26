@@ -13,6 +13,7 @@ hooks, and flexible configuration through agent.yml.
 from typing import Any, AsyncGenerator, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
@@ -46,7 +47,6 @@ class SemanticAgenticNode(AgenticNode):
         node_name: str,
         agent_config: Optional[AgentConfig] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
-        build_mode: str = "incremental",
     ):
         """
         Initialize the SemanticAgenticNode.
@@ -55,11 +55,9 @@ class SemanticAgenticNode(AgenticNode):
             node_name: Name of the node configuration in agent.yml (gen_semantic_model or gen_metrics)
             agent_config: Agent configuration
             execution_mode: Execution mode - "interactive" (default) or "workflow"
-            build_mode: "overwrite" or "incremental" (default: "incremental")
         """
         self.configured_node_name = node_name
         self.execution_mode = execution_mode
-        self.build_mode = build_mode
 
         # Get max_turns from agentic_nodes configuration, default to 30
         self.max_turns = 30
@@ -189,8 +187,6 @@ class SemanticAgenticNode(AgenticNode):
         """Setup hooks (hardcoded to generation_hooks)."""
         try:
             from rich.console import Console
-
-            from datus.cli.generation_hooks import GenerationHooks
 
             console = Console()
             self.hooks = GenerationHooks(console=console, agent_config=self.agent_config)
@@ -456,13 +452,13 @@ class SemanticAgenticNode(AgenticNode):
                                 else:
                                     logger.warning(f"no usage token found in this action {action.messages}")
 
-            # Auto-save to LanceDB in workflow mode
+            # Auto-save to database in workflow mode
             if self.execution_mode == "workflow" and semantic_model_file:
                 try:
-                    self._save_to_lancedb(semantic_model_file)
-                    logger.info(f"Auto-saved to LanceDB: {semantic_model_file}")
+                    self._save_to_db(semantic_model_file)
+                    logger.info(f"Auto-saved to database: {semantic_model_file}")
                 except Exception as e:
-                    logger.error(f"Failed to auto-save to LanceDB: {e}")
+                    logger.error(f"Failed to auto-save to database: {e}")
 
             # Create final result
             result = SemanticNodeResult(
@@ -573,17 +569,15 @@ class SemanticAgenticNode(AgenticNode):
             logger.error(f"Unexpected error extracting semantic_model_file: {e}", exc_info=True)
             return None, None
 
-    def _save_to_lancedb(self, semantic_model_file: str):
+    def _save_to_db(self, semantic_model_file: str):
         """
-        Save generated semantic model to LanceDB (synchronous).
+        Save generated semantic model to database (synchronous).
 
         Args:
             semantic_model_file: Name of the semantic model file (e.g., "orders.yaml")
         """
         try:
             import os
-
-            from datus.cli.generation_hooks import GenerationHooks
 
             # Construct full path
             full_path = os.path.join(self.semantic_model_dir, semantic_model_file)
@@ -592,15 +586,16 @@ class SemanticAgenticNode(AgenticNode):
                 logger.warning(f"Semantic model file not found: {full_path}")
                 return
 
-            # Call static method to save to LanceDB with build_mode
-            result = GenerationHooks._sync_semantic_to_db(full_path, self.agent_config, self.build_mode)
+            # Call static method to save to database
+            # Deduplication is handled inside _sync_semantic_to_db
+            result = GenerationHooks._sync_semantic_to_db(full_path, self.agent_config)
 
             if result.get("success"):
-                logger.info(f"Successfully saved to LanceDB: {result.get('message')}")
+                logger.info(f"Successfully saved to database: {result.get('message')}")
             else:
                 error = result.get("error", "Unknown error")
-                logger.error(f"Failed to save to LanceDB: {error}")
+                logger.error(f"Failed to save to database: {error}")
 
         except Exception as e:
-            logger.error(f"Error saving to LanceDB: {e}", exc_info=True)
+            logger.error(f"Error saving to database: {e}", exc_info=True)
             raise

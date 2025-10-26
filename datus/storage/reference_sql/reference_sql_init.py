@@ -3,22 +3,15 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 from datus.configuration.agent_config import AgentConfig
-from datus.models.base import LLMBaseModel
-from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_reference_sql_id
 from datus.storage.reference_sql.sql_file_processor import process_sql_files
 from datus.storage.reference_sql.store import ReferenceSqlRAG
-from datus.tools.llms_tools.analyze_reference_sql import (
-    classify_items_batch,
-    extract_summaries_batch,
-    generate_classification_taxonomy,
-)
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -75,175 +68,6 @@ def parse_subject_tree(subject_tree_str: str) -> Dict[str, Any]:
     )
 
     return taxonomy
-
-
-def ensure_unique_names(items: List[Dict[str, Any]], model: LLMBaseModel = None) -> List[Dict[str, Any]]:
-    """
-    Ensure all SQL items have unique names using a hybrid approach:
-    1. First detect duplicates
-    2. For duplicates, try LLM regeneration (if llm_tool provided)
-    3. Fallback to suffix approach for any remaining duplicates
-
-    Args:
-        items: List of dict objects with name field
-        model: Optional LLM tool for intelligent name regeneration
-
-    Returns:
-        List of dict objects with unique names
-    """
-    # Step 1: Find duplicates
-    name_to_items = {}
-    for item in items:
-        name = item.get("name", "")
-        if not name:
-            continue
-        if name not in name_to_items:
-            name_to_items[name] = []
-        name_to_items[name].append(item)
-
-    # Step 2: Handle duplicates
-    duplicates_found = 0
-    regeneration_success = 0
-
-    for name, item_list in name_to_items.items():
-        if len(item_list) > 1:
-            duplicates_found += len(item_list) - 1
-            logger.info(f"Found {len(item_list)} items with duplicate name: '{name}'")
-
-            # Keep first item with original name, regenerate others
-            for i, item in enumerate(item_list[1:], 1):
-                new_name = None
-
-                # Try LLM regeneration first
-                if model:
-                    try:
-                        # Collect all existing names to avoid
-                        existing_names = [other_name for other_name in name_to_items.keys()]
-                        existing_names.extend(
-                            [
-                                other_item.get("name", "")
-                                for other_items in name_to_items.values()
-                                for other_item in other_items
-                                if other_item.get("name")
-                            ]
-                        )
-                        conflicting_names = list(set(existing_names))
-
-                        new_name = regenerate_unique_name(model, item, conflicting_names)
-                        if new_name and new_name not in conflicting_names:
-                            item["name"] = new_name
-                            regeneration_success += 1
-                            logger.debug(f"Regenerated name: '{name}' -> '{new_name}'")
-                            continue
-                    except Exception as e:
-                        logger.warning(f"Failed to regenerate name for duplicate '{name}': {e}")
-
-                # Fallback: append suffix
-                item["name"] = f"{name}_{i+1}"
-                logger.debug(f"Used suffix approach: '{name}' -> '{item['name']}'")
-
-    logger.info(
-        f"Handled {duplicates_found} duplicate names - {regeneration_success} regenerated, "
-        f"{duplicates_found - regeneration_success} used suffixes"
-    )
-    return items
-
-
-def regenerate_unique_name(model: LLMBaseModel, item: Dict[str, Any], conflicting_names: List[str]) -> str:
-    """
-    Use LLM to regenerate a unique name for an SQL item.
-
-    Args:
-        model: Initialized LLM model
-        item: Dict object with sql, comment fields
-        conflicting_names: List of names to avoid
-
-    Returns:
-        New unique name string
-    """
-    try:
-        prompt = prompt_manager.render_template(
-            "regenerate_sql_name",
-            version="1.0",
-            comment=item.get("comment", ""),
-            sql=item.get("sql", ""),
-            current_name=item.get("name", ""),
-            conflicting_names=conflicting_names,
-        )
-        logger.debug(f"Regeneration prompt: {prompt}")
-
-        parsed_data = model.generate_with_json_output(prompt)
-        new_name = parsed_data.get("name", "")
-
-        # Validate the new name
-        if new_name and len(new_name) <= 20 and new_name not in conflicting_names:
-            return new_name
-        else:
-            logger.warning(f"Invalid regenerated name: '{new_name}' (length: {len(new_name) if new_name else 0})")
-            return ""
-
-    except Exception as e:
-        logger.error(f"Error regenerating name: {e}")
-        return ""
-
-
-def analyze_reference_sql(
-    model: LLMBaseModel,
-    items: List[Dict[str, Any]],
-    pool_size: int = 4,
-    existing_taxonomy: Dict[str, Any] = None,
-    predefined_taxonomy: Dict[str, Any] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Analyze reference SQL items using LLM interaction process.
-
-    Args:
-        model: Initialized LLM model
-        items: List of dict objects containing sql, comment, filepath fields
-        pool_size: Number of threads for parallel processing
-        existing_taxonomy: Optional existing taxonomy for incremental updates
-        predefined_taxonomy: Optional predefined taxonomy from subject_tree parameter
-
-    Returns:
-        List of enriched dict objects with additional summary, domain, layer1, layer2, tags, id fields
-    """
-    logger.info(f"Starting analysis for {len(items)} reference SQL items")
-
-    # Step 1: Extract summaries in parallel
-    logger.info("Step 1: Extracting summaries...")
-    items_with_summaries = extract_summaries_batch(model, items, pool_size)
-    for item in items_with_summaries:
-        logger.debug(f"Item with id: {item['id']}")
-        logger.debug(f"Item with comment: {item['comment']}")
-        logger.debug(f"Item with summary: {item['summary']}")
-
-    # Step 1.5: Ensure unique names
-    logger.info("Step 1.5: Ensuring unique SQL names...")
-    items_with_summaries = ensure_unique_names(items_with_summaries, model)
-
-    # Step 2: Generate or use classification taxonomy
-    if predefined_taxonomy:
-        logger.info("Step 2: Using predefined classification taxonomy from subject_tree...")
-        taxonomy = predefined_taxonomy
-    else:
-        logger.info("Step 2: Generating classification taxonomy...")
-        taxonomy = generate_classification_taxonomy(model, items_with_summaries, existing_taxonomy)
-
-    for domain in taxonomy.get("domains", []):
-        logger.debug(f"Domain: {domain}")
-    for layer1 in taxonomy.get("layer1_categories", []):
-        logger.debug(f"Layer1: {layer1}")
-    for layer2 in taxonomy.get("layer2_categories", []):
-        logger.debug(f"Layer2: {layer2}")
-    for tag in taxonomy.get("common_tags", []):
-        logger.debug(f"Tag: {tag}")
-
-    # Step 3: Classify each item based on taxonomy
-    logger.info("Step 3: Classifying SQL items...")
-    classified_items = classify_items_batch(model, items_with_summaries, taxonomy, pool_size)
-
-    logger.info(f"Analysis completed for {len(classified_items)} items")
-    return classified_items
 
 
 async def process_sql_item(
@@ -381,59 +205,34 @@ def init_reference_sql(
 
     processed_count = 0
     if items_to_process:
-        # Check if subject_tree is provided - use different processing strategies
-        use_batch_llm = hasattr(args, "subject_tree") and args.subject_tree
+        # Use SqlSummaryAgenticNode with parallel processing (unified approach)
+        async def process_all():
+            semaphore = asyncio.Semaphore(pool_size)
+            logger.info(f"Processing {len(items_to_process)} SQL items with concurrency={pool_size}")
 
-        if use_batch_llm:
-            # Use batch LLM processing when subject_tree is provided
-            logger.info("Using batch LLM processing with predefined subject_tree")
-            model = LLMBaseModel.create_model(global_config)
+            async def process_with_semaphore(item):
+                async with semaphore:
+                    return await process_sql_item(item, global_config, build_mode)
 
-            predefined_taxonomy = parse_subject_tree(args.subject_tree)
-            logger.info(f"Using predefined subject_tree: {args.subject_tree}")
-
-            # Get existing taxonomy for incremental updates
-            existing_taxonomy = None
-            if build_mode == "incremental":
-                existing_taxonomy = storage.reference_sql_storage.get_existing_taxonomy()
-
-            enriched_items = analyze_reference_sql(
-                model, items_to_process, pool_size, existing_taxonomy, predefined_taxonomy
+            # Process all items in parallel
+            results = await asyncio.gather(
+                *[process_with_semaphore(item) for item in items_to_process], return_exceptions=True
             )
 
-            # Store directly to LanceDB
-            storage.store_batch(enriched_items)
-            processed_count = len(enriched_items)
-            logger.info(f"Stored {processed_count} reference SQL entries")
-        else:
-            # Use SqlSummaryAgenticNode with parallel processing (default)
-            async def process_all():
-                semaphore = asyncio.Semaphore(pool_size)
-                logger.info(f"Processing {len(items_to_process)} SQL items with concurrency={pool_size}")
+            # Count successful results
+            success_count = 0
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Item {i+1} failed with exception: {result}")
+                elif result:
+                    success_count += 1
 
-                async def process_with_semaphore(item):
-                    async with semaphore:
-                        return await process_sql_item(item, global_config, build_mode)
+            logger.info(f"Completed processing: {success_count}/{len(items_to_process)} successful")
+            return success_count
 
-                # Process all items in parallel
-                results = await asyncio.gather(
-                    *[process_with_semaphore(item) for item in items_to_process], return_exceptions=True
-                )
-
-                # Count successful results
-                success_count = 0
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception):
-                        logger.error(f"Item {i+1} failed with exception: {result}")
-                    elif result:
-                        success_count += 1
-
-                logger.info(f"Completed processing: {success_count}/{len(items_to_process)} successful")
-                return success_count
-
-            # Run the async function
-            processed_count = asyncio.run(process_all())
-            logger.info(f"Processed {processed_count} reference SQL entries")
+        # Run the async function
+        processed_count = asyncio.run(process_all())
+        logger.info(f"Processed {processed_count} reference SQL entries")
     else:
         logger.info("No new items to process in incremental mode")
 

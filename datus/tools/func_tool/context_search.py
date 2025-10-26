@@ -10,7 +10,7 @@ from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import SemanticMetricsRAG
-from datus.storage.sql_history.store import ReferenceSqlRAG
+from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -22,9 +22,9 @@ class ContextSearchTools:
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.metric_rag = SemanticMetricsRAG(agent_config, sub_agent_name)
-        self.sql_history_store = ReferenceSqlRAG(agent_config, sub_agent_name)
+        self.reference_sql_store = ReferenceSqlRAG(agent_config, sub_agent_name)
         self.has_metrics = self.metric_rag.get_metrics_size() > 0
-        self.has_historical_sql = self.sql_history_store.get_sql_history_size() > 0
+        self.has_reference_sql = self.reference_sql_store.get_reference_sql_size() > 0
 
     def available_tools(self) -> List[Tool]:
         tools = []
@@ -32,7 +32,7 @@ class ContextSearchTools:
             for tool in (self.list_domain_layers_tree, self.search_metrics):
                 tools.append(trans_to_function_tool(tool))
 
-        if self.has_historical_sql:
+        if self.has_reference_sql:
             if not self.has_metrics:
                 tools.append(trans_to_function_tool(self.list_domain_layers_tree))
             tools.append(trans_to_function_tool(self.search_reference_sql))
@@ -105,7 +105,9 @@ class ContextSearchTools:
 
     def _collect_sql_entries(self) -> Sequence[Dict[str, Any]]:
         try:
-            return self.sql_history_store.search_all_sql_history(selected_fields=["domain", "layer1", "layer2", "name"])
+            return self.reference_sql_store.search_all_reference_sql(
+                selected_fields=["domain", "layer1", "layer2", "name"]
+            )
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("Failed to collect SQL taxonomy: %s", exc)
             return []
@@ -174,7 +176,7 @@ class ContextSearchTools:
                     - 'file_path'
         """
         try:
-            result = self.sql_history_store.search_sql_history_by_summary(
+            result = self.reference_sql_store.search_reference_sql_by_summary(
                 query_text=query_text, domain=domain, layer1=layer1, layer2=layer2, top_n=top_n
             )
             return FuncToolResult(success=1, error=None, result=result)

@@ -15,7 +15,7 @@ from datus.schemas.node_models import TableSchema
 def mock_args():
     """Provides default mock arguments for initializing DatusCLI."""
     return Namespace(
-        history_file="~/.datus/sql_history",
+        history_file="~/.datus/reference_sql",
         debug=False,
         namespace="bird_school",
         database="california_schools",

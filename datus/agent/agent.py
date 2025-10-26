@@ -713,11 +713,9 @@ class Agent:
                     self.global_config.check_init_storage_config("metric")
                 # Initialize metrics using unified SemanticAgenticNode approach
                 if hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
-                    init_semantic_yaml_metrics(
-                        self.args.semantic_yaml, self.global_config, build_mode=kb_update_strategy
-                    )
+                    init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
                 else:
-                    init_success_story_metrics(self.args, self.global_config, build_mode=kb_update_strategy)
+                    init_success_story_metrics(self.args, self.global_config)
 
                 # Create metrics_store for statistics
                 self.metrics_store = SemanticMetricsRAG(self.global_config)

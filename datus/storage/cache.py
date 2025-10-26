@@ -14,9 +14,9 @@ from datus.storage.document import DocumentStore
 from datus.storage.embedding_models import EmbeddingModel, get_embedding_model
 from datus.storage.metric import MetricStorage
 from datus.storage.metric.store import SemanticModelStorage
+from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaValueStorage
-from datus.storage.sql_history import SqlHistoryStorage
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -77,7 +77,7 @@ class StorageCache:
         self._sample_data_holder = StorageCacheHolder(SchemaValueStorage, agent_config, "database", "tables")
         self._metrics_holder = StorageCacheHolder(MetricStorage, agent_config, "metric", "metrics")
         self._semantic_holder = StorageCacheHolder(SemanticModelStorage, agent_config, "metric", "metrics")
-        self._historical_sql_holder = StorageCacheHolder(SqlHistoryStorage, agent_config, "metric", "sqls")
+        self._reference_sql_holder = StorageCacheHolder(ReferenceSqlStorage, agent_config, "metric", "sqls")
         self._document_holder = StorageCacheHolder(DocumentStore, agent_config, "document", "")
 
     def schema_storage(self, sub_agent_name: Optional[str] = None) -> SchemaStorage:
@@ -92,8 +92,8 @@ class StorageCache:
     def semantic_storage(self, sub_agent_name: Optional[str] = None) -> SemanticModelStorage:
         return self._semantic_holder.storage_instance(sub_agent_name)
 
-    def historical_storage(self, sub_agent_name: Optional[str] = None) -> SqlHistoryStorage:
-        return self._historical_sql_holder.storage_instance(sub_agent_name)
+    def reference_sql_storage(self, sub_agent_name: Optional[str] = None) -> ReferenceSqlStorage:
+        return self._reference_sql_holder.storage_instance(sub_agent_name)
 
     def document_storage(self, sub_agent_name: Optional[str] = None) -> DocumentStore:
         return self._document_holder.storage_instance(sub_agent_name)

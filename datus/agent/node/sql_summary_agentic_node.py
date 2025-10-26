@@ -13,6 +13,7 @@ generation tools, and hooks.
 from typing import AsyncGenerator, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
@@ -154,8 +155,6 @@ class SqlSummaryAgenticNode(AgenticNode):
         """Setup hooks (hardcoded to generation_hooks)."""
         try:
             from rich.console import Console
-
-            from datus.cli.generation_hooks import GenerationHooks
 
             console = Console()
             self.hooks = GenerationHooks(console=console, agent_config=self.agent_config)
@@ -402,13 +401,13 @@ class SqlSummaryAgenticNode(AgenticNode):
                             else:
                                 logger.warning(f"no usage token found in this action {action.messages}")
 
-            # Auto-save to LanceDB in workflow mode
+            # Auto-save to database in workflow mode
             if self.execution_mode == "workflow" and sql_summary_file:
                 try:
-                    self._save_to_lancedb(sql_summary_file)
-                    logger.info(f"Auto-saved to LanceDB: {sql_summary_file}")
+                    self._save_to_db(sql_summary_file)
+                    logger.info(f"Auto-saved to database: {sql_summary_file}")
                 except Exception as e:
-                    logger.error(f"Failed to auto-save to LanceDB: {e}")
+                    logger.error(f"Failed to auto-save to database: {e}")
 
             # Create final result
             result = SqlSummaryNodeResult(
@@ -519,17 +518,15 @@ class SqlSummaryAgenticNode(AgenticNode):
             logger.error(f"Unexpected error extracting sql_summary_file: {e}", exc_info=True)
             return None, None
 
-    def _save_to_lancedb(self, sql_summary_file: str):
+    def _save_to_db(self, sql_summary_file: str):
         """
-        Save generated SQL summary to LanceDB (synchronous).
+        Save generated SQL summary to database (synchronous).
 
         Args:
             sql_summary_file: Name of the SQL summary file (e.g., "query_001.yaml")
         """
         try:
             import os
-
-            from datus.cli.generation_hooks import GenerationHooks
 
             # Construct full path
             full_path = os.path.join(self.sql_summary_dir, sql_summary_file)
@@ -538,15 +535,15 @@ class SqlSummaryAgenticNode(AgenticNode):
                 logger.warning(f"SQL summary file not found: {full_path}")
                 return
 
-            # Call static method to save to LanceDB with build_mode
-            result = GenerationHooks._sync_sql_history_to_db(full_path, self.agent_config, self.build_mode)
+            # Call static method to save to database with build_mode
+            result = GenerationHooks._sync_reference_sql_to_db(full_path, self.agent_config, self.build_mode)
 
             if result.get("success"):
-                logger.info(f"Successfully saved to LanceDB: {result.get('message')}")
+                logger.info(f"Successfully saved to database: {result.get('message')}")
             else:
                 error = result.get("error", "Unknown error")
-                logger.error(f"Failed to save to LanceDB: {error}")
+                logger.error(f"Failed to save to database: {error}")
 
         except Exception as e:
-            logger.error(f"Error saving to LanceDB: {e}", exc_info=True)
+            logger.error(f"Error saving to database: {e}", exc_info=True)
             raise

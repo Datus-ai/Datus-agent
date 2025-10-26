@@ -15,8 +15,8 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import ScopedContextLists, SubAgentConfig
 from datus.storage.lancedb_conditions import Node, and_, build_where, eq, in_, like, or_
 from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
-from datus.storage.sql_history.store import ReferenceSqlRAG
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -28,7 +28,7 @@ SUPPORTED_COMPONENTS = ("metadata", "metrics", "reference_sql")
 COMPONENT_DIRECTORIES = {
     "metadata": ("schema_metadata.lance", "schema_value.lance"),
     "metrics": ("semantic_model.lance", "metrics.lance"),
-    "reference_sql": ("sql_history.lance",),
+    "reference_sql": ("reference_sql.lance",),
 }
 # TODO: Implement incremental strategy for partial updates
 SubAgentBootstrapStrategy = Literal["overwrite", "plan"]
@@ -142,7 +142,7 @@ class SubAgentBootstrapper:
         handlers = {
             "metadata": ("tables", self._handle_metadata),
             "metrics": ("metrics", self._handle_metrics),
-            "reference_sql": ("sqls", self._handle_sql_history),
+            "reference_sql": ("sqls", self._handle_reference_sql),
         }
         for component in normalized_components:
             attr_name, handler = handlers[component]
@@ -517,7 +517,7 @@ class SubAgentBootstrapper:
     # --------------------------------------------------------------------- #
     # reference SQL
     # --------------------------------------------------------------------- #
-    def _handle_sql_history(
+    def _handle_reference_sql(
         self,
         historical_sql: List[str],
         strategy: SubAgentBootstrapStrategy,
@@ -553,10 +553,10 @@ class SubAgentBootstrapper:
             )
 
         aggregate_condition = self._combine_conditions(condition_map)
-        sql_table = source.sql_history_storage._search_all(where=aggregate_condition)
+        sql_table = source.reference_sql_storage._search_all(where=aggregate_condition)
         sql_rows = sql_table.to_pylist()
 
-        missing = self._missing_tokens(source.sql_history_storage, condition_map)
+        missing = self._missing_tokens(source.reference_sql_storage, condition_map)
 
         if strategy == "plan":
             details = {

@@ -25,7 +25,7 @@ from datus.cli.screen.context_screen import ContextScreen
 from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import SemanticMetricsRAG
-from datus.storage.sql_history import ReferenceSqlRAG
+from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.subject_manager import SubjectUpdater
 from datus.utils.loggings import get_logger
 
@@ -361,7 +361,7 @@ def _sql_details_cache(
     sql_rag: ReferenceSqlRAG, domain: str, layer1: str, layer2: str, name: str
 ) -> List[Dict[str, Any]]:
     try:
-        table = sql_rag.get_sql_history_detail(
+        table = sql_rag.get_reference_sql_detail(
             domain,
             layer1,
             layer2,
@@ -620,7 +620,7 @@ class SubjectScreen(ContextScreen):
             bucket["metrics_count"] += 1
 
         try:
-            sql_table = self.sql_rag.search_all_sql_history(selected_fields=["domain", "layer1", "layer2", "name"])
+            sql_table = self.sql_rag.search_all_reference_sql(selected_fields=["domain", "layer1", "layer2", "name"])
             sql_rows = sql_table if sql_table is not None else []
         except Exception as exc:
             logger.error(f"Failed to load SQL taxonomy for subject screen: {exc}")

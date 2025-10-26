@@ -167,11 +167,11 @@ class GenerationTools:
             logger.error(f"Error checking metric existence: {e}")
             return FuncToolResult(success=0, error=f"Failed to check metric: {str(e)}")
 
-    def _get_sql_history_taxonomy(self) -> FuncToolResult:
+    def _get_reference_sql_taxonomy(self) -> FuncToolResult:
         """
-        Get existing SQL history classification taxonomy.
+        Get existing reference SQL classification taxonomy.
 
-        Use this tool to retrieve the current classification taxonomy used for SQL histories.
+        Use this tool to retrieve the current classification taxonomy used for reference SQLs.
         This helps maintain consistency when classifying new SQL queries.
 
         Returns:
@@ -185,11 +185,11 @@ class GenerationTools:
                     - 'common_tags' (list): Available tags
         """
         try:
-            from datus.storage.sql_history.store import ReferenceSqlRAG
+            from datus.storage.reference_sql.store import ReferenceSqlRAG
 
             # Get SQL history storage
             storage = ReferenceSqlRAG(self.agent_config)
-            taxonomy = storage.sql_history_storage.get_existing_taxonomy()
+            taxonomy = storage.reference_sql_storage.get_existing_taxonomy()
 
             return FuncToolResult(
                 result={
@@ -224,13 +224,13 @@ class GenerationTools:
                     - 'message' (str): Description message
         """
         try:
-            from datus.storage.sql_history.store import ReferenceSqlRAG
+            from datus.storage.reference_sql.store import ReferenceSqlRAG
 
             # Get SQL history storage
             storage = ReferenceSqlRAG(self.agent_config)
 
             # Search for similar names using FTS
-            all_items = storage.search_all_sql_history()
+            all_items = storage.search_all_reference_sql()
 
             # Check for exact match and collect similar names
             exact_match = False
@@ -274,7 +274,7 @@ class GenerationTools:
             logger.error(f"Error checking SQL name existence: {e}")
             return FuncToolResult(success=0, error=f"Failed to check SQL name: {str(e)}")
 
-    def _get_similar_sql_histories(self, comment: str = "", summary: str = "", top_n: int = 5) -> FuncToolResult:
+    def _get_similar_reference_sqls(self, comment: str = "", summary: str = "", top_n: int = 5) -> FuncToolResult:
         """
         Get similar SQL histories based on comment or summary.
 
@@ -296,7 +296,7 @@ class GenerationTools:
                     - 'count' (int): Number of results found
         """
         try:
-            from datus.storage.sql_history.store import ReferenceSqlRAG
+            from datus.storage.reference_sql.store import ReferenceSqlRAG
 
             # Get SQL history storage
             storage = ReferenceSqlRAG(self.agent_config)
@@ -314,7 +314,7 @@ class GenerationTools:
                 )
 
             # Search using vector similarity on summary field
-            similar_items = storage.search_sql_history_by_summary(query_text=query_text, top_n=top_n)
+            similar_items = storage.search_reference_sql_by_summary(query_text=query_text, top_n=top_n)
 
             # Extract relevant fields
             results = []
@@ -390,7 +390,7 @@ class GenerationTools:
                 }
                 messages.append("Taxonomy: Using predefined subject_tree")
             else:
-                taxonomy_result = self._get_sql_history_taxonomy()
+                taxonomy_result = self._get_reference_sql_taxonomy()
                 if taxonomy_result.success:
                     result["taxonomy"] = taxonomy_result.result
                     result["taxonomy"]["source"] = "storage"
@@ -400,8 +400,8 @@ class GenerationTools:
                     logger.debug(f"Failed to get taxonomy: {taxonomy_result.error}")
                     result["taxonomy"] = {"error": taxonomy_result.error, "source": "none"}
 
-            # 2. Find similar histories
-            similar_result = self._get_similar_sql_histories(
+            # 2. Find similar reference SQLs
+            similar_result = self._get_similar_reference_sqls(
                 comment=comment,
                 summary=sql[:200],  # Use first 200 chars of SQL as fallback
                 top_n=5,
@@ -409,9 +409,9 @@ class GenerationTools:
             if similar_result.success:
                 result["similar_items"] = similar_result.result.get("similar_items", [])
                 similar_count = similar_result.result.get("count", 0)
-                messages.append(f"Similar histories: {similar_count}")
+                messages.append(f"Similar reference SQLs: {similar_count}")
             else:
-                logger.debug(f"Failed to get similar histories: {similar_result.error}")
+                logger.debug(f"Failed to get similar reference SQLs: {similar_result.error}")
                 result["similar_items"] = []
 
             # 3. Check name if provided
@@ -487,10 +487,10 @@ class GenerationTools:
             )
         """
         try:
-            from datus.storage.sql_history.init_utils import gen_sql_history_id
+            from datus.storage.reference_sql.init_utils import gen_reference_sql_id
 
             # Generate the ID using the same utility as the storage system
-            generated_id = gen_sql_history_id(sql_query, comment)
+            generated_id = gen_reference_sql_id(sql_query, comment)
 
             logger.info(f"Generated reference SQL ID: {generated_id}")
             return FuncToolResult(result=generated_id)

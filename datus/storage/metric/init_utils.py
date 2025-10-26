@@ -7,15 +7,15 @@ from typing import Set
 from datus.storage.metric.store import SemanticMetricsRAG
 
 
-def exists_semantic_metrics(storage: SemanticMetricsRAG, build_mode: str = "overwrite") -> tuple[Set[str], Set[str]]:
+def existing_semantic_metrics(storage: SemanticMetricsRAG) -> tuple[Set[str], Set[str]]:
+    """
+    Get all existing semantic models and metrics from storage.
+    """
     all_semantic_models, all_metrics = set(), set()
-    if build_mode == "overwrite":
-        return all_semantic_models, all_metrics
-    if build_mode == "incremental":
-        for semantic_model in storage.search_all_semantic_models("", select_fields=["id"]):
-            all_semantic_models.add(str(semantic_model["id"]))
-        for metric in storage.search_all_metrics("", select_fields=["id"]):
-            all_metrics.add(str(metric["id"]))
+    for semantic_model in storage.search_all_semantic_models("", select_fields=["id"]):
+        all_semantic_models.add(str(semantic_model["id"]))
+    for metric in storage.search_all_metrics("", select_fields=["id"]):
+        all_metrics.add(str(metric["id"]))
     return all_semantic_models, all_metrics
 
 

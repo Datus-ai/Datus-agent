@@ -196,7 +196,7 @@ class ReferenceSqlRAG:
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
         from datus.storage.cache import get_storage_cache_instance
 
-        self.reference_sql_storage = get_storage_cache_instance(agent_config).historical_storage(sub_agent_name)
+        self.reference_sql_storage = get_storage_cache_instance(agent_config).reference_sql_storage(sub_agent_name)
 
     def store_batch(self, reference_sql_items: List[Dict[str, Any]]):
         """Store batch of reference SQL items."""

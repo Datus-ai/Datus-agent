@@ -22,7 +22,6 @@ logger = get_logger(__name__)
 def init_success_story_metrics(
     args: argparse.Namespace,
     agent_config: AgentConfig,
-    build_mode: str = "overwrite",
 ):
     """
     Initialize metrics from success story CSV file using SemanticAgenticNode in workflow mode.
@@ -30,8 +29,6 @@ def init_success_story_metrics(
     Args:
         args: Command line arguments
         agent_config: Agent configuration
-        build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
-
     """
     df = pd.read_csv(args.success_story)
 
@@ -39,7 +36,7 @@ def init_success_story_metrics(
         for idx, row in df.iterrows():
             logger.info(f"Processing row {idx + 1}/{len(df)}")
             try:
-                await process_line(row.to_dict(), agent_config, build_mode)
+                await process_line(row.to_dict(), agent_config)
             except Exception as e:
                 logger.error(f"Error processing row {idx + 1}: {e}")
 
@@ -50,7 +47,6 @@ def init_success_story_metrics(
 async def process_line(
     row: dict,
     agent_config: AgentConfig,
-    build_mode: str = "overwrite",
 ):
     """
     Process a single line from the CSV using SemanticAgenticNode in workflow mode.
@@ -58,7 +54,6 @@ async def process_line(
     Args:
         row: CSV row data containing question and sql
         agent_config: Agent configuration
-        build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
     """
     logger.info(f"processing line: {row}")
 
@@ -85,7 +80,6 @@ async def process_line(
         node_name="gen_semantic_model",
         agent_config=agent_config,
         execution_mode="workflow",
-        build_mode=build_mode,
     )
 
     action_history_manager = ActionHistoryManager()
@@ -125,7 +119,6 @@ async def process_line(
         node_name="gen_metrics",
         agent_config=agent_config,
         execution_mode="workflow",
-        build_mode=build_mode,
     )
 
     action_history_manager = ActionHistoryManager()
@@ -145,7 +138,6 @@ async def process_line(
 def init_semantic_yaml_metrics(
     yaml_file_path: str,
     agent_config: AgentConfig,
-    build_mode: str = "overwrite",
 ):
     """
     Initialize metrics from semantic YAML file by syncing directly to LanceDB.
@@ -153,19 +145,17 @@ def init_semantic_yaml_metrics(
     Args:
         yaml_file_path: Path to semantic YAML file
         agent_config: Agent configuration
-        build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
     """
     if not os.path.exists(yaml_file_path):
         logger.error(f"Semantic YAML file {yaml_file_path} not found")
         return
 
-    process_semantic_yaml_file(yaml_file_path, agent_config, build_mode)
+    process_semantic_yaml_file(yaml_file_path, agent_config)
 
 
 def process_semantic_yaml_file(
     yaml_file_path: str,
     agent_config: AgentConfig,
-    build_mode: str = "overwrite",
 ):
     """
     Process semantic YAML file by directly syncing to LanceDB using GenerationHooks.
@@ -173,12 +163,11 @@ def process_semantic_yaml_file(
     Args:
         yaml_file_path: Path to semantic YAML file
         agent_config: Agent configuration
-        build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
     """
     logger.info(f"Processing semantic YAML file: {yaml_file_path}")
 
-    # Use GenerationHooks static method to sync to DB with build_mode
-    result = GenerationHooks._sync_semantic_to_db(yaml_file_path, agent_config, build_mode)
+    # Use GenerationHooks static method to sync to DB
+    result = GenerationHooks._sync_semantic_to_db(yaml_file_path, agent_config)
 
     if result.get("success"):
         logger.info(f"Successfully synced semantic YAML to LanceDB: {result.get('message')}")

@@ -44,16 +44,17 @@ def build_context_tools(mock_agent_config):
 
         sql_rag = Mock()
         sql_entries = sql_cfg.get("entries", [])
-        sql_rag.search_all_sql_history.return_value = sql_entries
-        sql_rag.search_sql_history_by_summary.return_value = sql_cfg.get("search_return", [])
-        sql_rag.get_sql_history_size.return_value = sql_cfg.get("size", len(sql_entries))
+        sql_rag.search_all_reference_sql.return_value = sql_entries
+        sql_rag.search_reference_sql_by_summary.return_value = sql_cfg.get("search_return", [])
+        sql_rag.get_reference_sql_size.return_value = sql_cfg.get("size", len(sql_entries))
         if "search_all_side_effect" in sql_cfg:
-            sql_rag.search_all_sql_history.side_effect = sql_cfg["search_all_side_effect"]
+            sql_rag.search_all_reference_sql.side_effect = sql_cfg["search_all_side_effect"]
         if "search_sql_side_effect" in sql_cfg:
-            sql_rag.search_sql_history_by_summary.side_effect = sql_cfg["search_sql_side_effect"]
+            sql_rag.search_reference_sql_by_summary.side_effect = sql_cfg["search_sql_side_effect"]
 
-        with patch("datus.tools.context_search.SemanticMetricsRAG", return_value=metric_rag), patch(
-            "datus.tools.context_search.SqlHistoryRAG", return_value=sql_rag
+        with (
+            patch("datus.tools.context_search.SemanticMetricsRAG", return_value=metric_rag),
+            patch("datus.tools.context_search.ReferenceSqlRAG", return_value=sql_rag),
         ):
             tools = ContextSearchTools(mock_agent_config)
         return tools, metric_rag, sql_rag
@@ -159,7 +160,7 @@ def test_collect_sql_entries_handles_exception(build_context_tools):
 
     entries = tools._collect_sql_entries()
     assert entries == []
-    sql_rag.search_all_sql_history.assert_called_once()
+    sql_rag.search_all_reference_sql.assert_called_once()
 
 
 def test_search_metrics_passes_filters(build_context_tools):
@@ -213,7 +214,7 @@ def test_search_historical_sql(build_context_tools):
 
     result = tools.search_reference_sql("sales report", domain="Sales", layer1="Revenue", top_n=2)
     assert result.success == 1
-    sql_rag.search_sql_history_by_summary.assert_called_once_with(
+    sql_rag.search_reference_sql_by_summary.assert_called_once_with(
         query_text="sales report", domain="Sales", layer1="Revenue", layer2="", top_n=2
     )
 
@@ -229,4 +230,4 @@ def test_search_historical_sql_handles_failure(build_context_tools):
     result = tools.search_reference_sql("sales report")
     assert result.success == 0
     assert "sql search failed" in (result.error or "")
-    sql_rag.search_sql_history_by_summary.assert_called_once()
+    sql_rag.search_reference_sql_by_summary.assert_called_once()

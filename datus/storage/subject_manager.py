@@ -12,7 +12,7 @@ from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.cache import get_storage_cache_instance
 from datus.storage.lancedb_conditions import And, WhereExpr, eq
 from datus.storage.metric import MetricStorage
-from datus.storage.sql_history import SqlHistoryStorage
+from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -26,21 +26,21 @@ class SubjectUpdater:
         self._agent_config = agent_config
         self.storage_cache = get_storage_cache_instance(self._agent_config)
         self.metrics_storage: MetricStorage = self.storage_cache.metrics_storage()
-        self.sql_storage: SqlHistoryStorage = self.storage_cache.historical_storage()
+        self.sql_storage: ReferenceSqlStorage = self.storage_cache.reference_sql_storage()
 
     def _sub_agent_storage_metrics(self, sub_agent_config: SubAgentConfig) -> MetricStorage:
         name = sub_agent_config.system_prompt
 
         return self.storage_cache.metrics_storage(name)
 
-    def _sub_agent_storage_sql(self, sub_agent_config: SubAgentConfig) -> SqlHistoryStorage:
+    def _sub_agent_storage_sql(self, sub_agent_config: SubAgentConfig) -> ReferenceSqlStorage:
         name = sub_agent_config.system_prompt
-        return self.storage_cache.historical_storage(name)
+        return self.storage_cache.reference_sql_storage(name)
 
     def update_domain_layers(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):
         """
         Only update the fields of the domain layer, including domain, layer1, layer2, name.
-        This method updates both metrics and historical SQL.
+        This method updates both metrics and reference SQL.
         """
         if "name" in update_values:
             unique_filter = And(
@@ -69,7 +69,7 @@ class SubjectUpdater:
             )
         self.metrics_storage.update(where, update_values, unique_filter=unique_filter)
         logger.debug("Updated the domain layers of matrics in the main space successfully")
-        self.sql_storage.update(where, update_values)
+        self.reference_sql_storage.update(where, update_values)
         logger.debug("Updated the domain layers of reference SQL in the main space successfully")
         for name, value in self._agent_config.agentic_nodes.items():
             sub_agent_config = SubAgentConfig.model_validate(value)

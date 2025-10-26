@@ -350,12 +350,12 @@ class InteractiveInit:
 
         # Initialize reference SQL
         if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
-            default_sql_dir = str(Path(self.workspace_path) / "sql_history")
+            default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
             sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
 
             if Path(sql_dir).exists():
                 console.print(f"→ Scanning {sql_dir} for SQL files...")
-                sql_count = self._initialize_sql_history(sql_dir)
+                sql_count = self._initialize_reference_sql(sql_dir)
                 if sql_count > 0:
                     console.print(f"✔ Imported {sql_count} SQL files into reference")
                 else:
@@ -595,10 +595,10 @@ class InteractiveInit:
             logger.error(f"Metadata initialization failed: {e}")
             return False
 
-    def _initialize_sql_history(self, sql_dir: str) -> int:
-        """Initialize SQL history from specified directory."""
+    def _initialize_reference_sql(self, sql_dir: str) -> int:
+        """Initialize reference SQL from specified directory."""
         try:
-            logger.info(f"SQL history initialization...{self.namespace_name}, dir:{sql_dir}")
+            logger.info(f"Reference SQL initialization...{self.namespace_name}, dir:{sql_dir}")
             # Count SQL files first
             sql_files = list(Path(sql_dir).rglob("*.sql"))
             if not sql_files:

@@ -24,7 +24,7 @@ def _build_cache(tmp_path):
         agent_config=DummyAgentConfig(tmp_path),
         schema_factory=RecordingStorage,
         metrics_factory=RecordingStorage,
-        sql_history_factory=RecordingStorage,
+        reference_sql_factory=RecordingStorage,
     )
 
 
@@ -41,8 +41,8 @@ def test_global_instances_are_cached(tmp_path):
     assert metrics_first is metrics_second
     assert metrics_first.path == str(tmp_path / "global")
 
-    sql_first = cache.sql_history_rag()
-    sql_second = cache.sql_history_rag()
+    sql_first = cache.reference_sql_rag()
+    sql_second = cache.reference_sql_rag()
     assert sql_first is sql_second
     assert sql_first.path == str(tmp_path / "global")
 

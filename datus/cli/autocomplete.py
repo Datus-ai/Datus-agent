@@ -788,10 +788,10 @@ class ReferenceSqlCompleter(DynamicAtReferenceCompleter):
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
         self.max_level = 4
 
-        from datus.storage.sql_history.store import ReferenceSqlRAG
+        from datus.storage.reference_sql.store import ReferenceSqlRAG
 
         storage = ReferenceSqlRAG(self.agent_config)
-        search_data = storage.search_all_sql_history(domain="")
+        search_data = storage.search_all_reference_sql(domain="")
         result = {}
         for item in search_data:
             domain = item["domain"]
