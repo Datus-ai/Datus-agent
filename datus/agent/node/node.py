@@ -16,8 +16,6 @@ from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult
 from datus.schemas.fix_node_models import FixInput
-from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult
-from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.schemas.node_models import (
     BaseInput,
     BaseResult,
@@ -63,8 +61,6 @@ class Node(ABC):
             DocSearchNode,
             ExecuteSQLNode,
             FixNode,
-            GenerateMetricsNode,
-            GenerateSemanticModelNode,
             GenerateSQLNode,
             HitlNode,
             OutputNode,
@@ -97,10 +93,6 @@ class Node(ABC):
             return HitlNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_BEGIN:
             return BeginNode(node_id, description, node_type, input_data, agent_config)
-        elif node_type == NodeType.TYPE_GENERATE_METRICS:
-            return GenerateMetricsNode(node_id, description, node_type, input_data, agent_config, tools)
-        elif node_type == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
-            return GenerateSemanticModelNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_SEARCH_METRICS:
             return SearchMetricsNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_PARALLEL:
@@ -356,10 +348,6 @@ class Node(ABC):
                     input_data = OutputInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_FIX:
                     input_data = FixInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_GENERATE_METRICS:
-                    input_data = GenerateMetricsInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
-                    input_data = GenerateSemanticModelInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
                     input_data = DateParserInput(**input_data)
             except Exception as e:
@@ -392,10 +380,6 @@ class Node(ABC):
                     result_data = ReflectionResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_REASONING:
                     result_data = ReasoningResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_GENERATE_METRICS:
-                    result_data = GenerateMetricsResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
-                    result_data = GenerateSemanticModelResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
                     result_data = DateParserResult(**result_data)
                 elif "success" in result_data:

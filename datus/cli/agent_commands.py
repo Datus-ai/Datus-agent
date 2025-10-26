@@ -24,8 +24,6 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.base import BaseInput
 from datus.schemas.compare_node_models import CompareInput
-from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
-from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
@@ -128,22 +126,6 @@ class AgentCommands:
             )
             return ReasoningInput(
                 sql_query=sql_query,
-                sql_task=sql_task,
-                database_type=sql_task.database_type,
-                table_schemas=self.cli_context.get_recent_tables(),
-            )
-
-        elif node_type == NodeType.TYPE_GENERATE_METRICS:
-            sql_query = self.cli.prompt_input(
-                "Enter SQL query to generate metrics from", default=self.cli_context.get_last_sql() or ""
-            )
-            return GenerateMetricsInput(
-                sql_task=sql_task,
-                sql_query=sql_query,
-            )
-
-        elif node_type == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
-            return GenerateSemanticModelInput(
                 sql_task=sql_task,
                 database_type=sql_task.database_type,
                 table_schemas=self.cli_context.get_recent_tables(),
@@ -664,26 +646,6 @@ class AgentCommands:
                     return
             else:
                 self.console.print("[bold red]Error:[/] No SQL context available")
-        elif isinstance(input, GenerateMetricsInput):
-            # Allow user to modify task, sql_query and prompt version
-            task = self.cli.prompt_input("Enter task description", default=input.sql_task.task)
-            input.sql_task.task = task.strip()
-            if not input.sql_task.task.strip():
-                self.console.print("[bold red]Error:[/] Task description is required")
-                return
-            sql_query = self.cli.prompt_input("Enter SQL query to generate metrics from", default=input.sql_query)
-            input.sql_query = sql_query.strip()
-            if not input.sql_query.strip():
-                self.console.print("[bold red]Error:[/] SQL query is required")
-                return
-            prompt_version = self.cli.prompt_input("Enter prompt version", default=input.prompt_version)
-            input.prompt_version = prompt_version.strip()
-        elif isinstance(input, GenerateSemanticModelInput):
-            # Allow user to modify table name
-            table_name = self.cli.prompt_input(
-                "Enter table name to generate semantic model from", default=input.table_name
-            )
-            input.table_name = table_name.strip()
 
             # Interactive prompts for metadata (now using sql_task fields)
             self.console.print("[bold blue]Semantic Model Metadata:[/]")

@@ -12,8 +12,6 @@ from datus.schemas.date_parser_node_models import DateParserInput
 from datus.schemas.doc_search_node_models import DocSearchInput
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
-from datus.schemas.generate_metrics_node_models import GenerateMetricsInput
-from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, ReflectionInput
 from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
 from datus.schemas.reason_sql_node_models import ReasoningInput
@@ -43,8 +41,6 @@ class NodeType:
     TYPE_REASONING = "reasoning"  # For result presentation
     TYPE_DOC_SEARCH = "doc_search"  # For document search
     TYPE_FIX = "fix"  # For fixing the SQL query
-    TYPE_GENERATE_METRICS = "generate_metrics"  # For generating metrics
-    TYPE_GENERATE_SEMANTIC_MODEL = "generate_semantic_model"  # For generating semantic models
     TYPE_SEARCH_METRICS = "search_metrics"  # For search metrics
     TYPE_COMPARE = "compare"  # For comparing SQL with expectations
     TYPE_DATE_PARSER = "date_parser"  # For parsing temporal expressions
@@ -61,8 +57,6 @@ class NodeType:
         TYPE_REASONING,
         TYPE_DOC_SEARCH,
         TYPE_FIX,
-        TYPE_GENERATE_METRICS,
-        TYPE_GENERATE_SEMANTIC_MODEL,
         TYPE_SEARCH_METRICS,
         TYPE_COMPARE,
         TYPE_DATE_PARSER,
@@ -82,8 +76,6 @@ class NodeType:
         TYPE_DOC_SEARCH: "Search related documents",
         TYPE_HITL: "Human in the loop",
         TYPE_FIX: "Fix the SQL query",
-        TYPE_GENERATE_METRICS: "Generate metrics",
-        TYPE_GENERATE_SEMANTIC_MODEL: "Generate semantic model",
         TYPE_SEARCH_METRICS: "Search metrics",
         TYPE_PARALLEL: "Execute child nodes in parallel",
         TYPE_SELECTION: "Select best result from multiple candidates",
@@ -117,10 +109,6 @@ class NodeType:
             input_data_cls = FixInput
         elif node_type == NodeType.TYPE_DOC_SEARCH:
             input_data_cls = DocSearchInput
-        elif node_type == NodeType.TYPE_GENERATE_METRICS:
-            input_data_cls = GenerateMetricsInput
-        elif node_type == NodeType.TYPE_GENERATE_SEMANTIC_MODEL:
-            input_data_cls = GenerateSemanticModelInput
         elif node_type == NodeType.TYPE_SEARCH_METRICS:
             input_data_cls = SearchMetricsInput
         elif node_type == NodeType.TYPE_PARALLEL:
