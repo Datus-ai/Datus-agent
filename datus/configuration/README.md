@@ -1,10 +1,12 @@
 # Datus Configuration Guide
 
-This directory contains the configuration management system for Datus, handling all aspects of agent behavior, LLM models, database connections, and workflow orchestration.
+This directory contains the configuration management system for Datus, handling all aspects of agent behavior, LLM
+models, database connections, and workflow orchestration.
 
 ## Overview
 
 The configuration system is built on a YAML-based structure that allows flexible configuration of:
+
 - **LLM Models**: Multiple providers (OpenAI, Anthropic, Google, DeepSeek)
 - **Database Connections**: Support for SQLite, MySQL, DuckDB, Snowflake, StarRocks
 - **Workflow Plans**: Define execution pipelines with parallel processing
@@ -27,7 +29,7 @@ Datus uses a hierarchical YAML configuration file (`agent.yml`) with the followi
 ```yaml
 agent:
   target: anthropic  # Default LLM provider
-  models:           # Define available models
+  models: # Define available models
     openai:
       type: openai
       vendor: openai
@@ -63,7 +65,7 @@ Configure database connections by namespace:
       account: ${SNOWFLAKE_ACCOUNT}
       username: ${SNOWFLAKE_USER}
       password: ${SNOWFLAKE_PASSWORD}
-    
+
     local_sqlite:
       type: sqlite
       dbs: # Multi-database
@@ -72,7 +74,7 @@ Configure database connections by namespace:
         - name: mydb2
           uri: sqlite:///path/to/mybd2.db # relative path
     bird_sqlite:
-      path_pattern: /Users/lyf/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # fuzzy matching, just support glob pattern
+      path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # fuzzy matching, just support glob pattern
 ```
 
 ### 4. Storage Configuration
@@ -98,12 +100,12 @@ Define execution workflows:
 ```yaml
   workflow:
     plan: bird_para
-    
+
     bird_para:
       - schema_linking
       - parallel:
-        - generate_sql
-        - reasoning
+          - generate_sql
+          - reasoning
       - selection
       - execute_sql
       - output
@@ -112,14 +114,18 @@ Define execution workflows:
 ## Configuration Classes
 
 ### ModelConfig
+
 Configuration for LLM models with support for:
+
 - **OpenAI**: GPT-3.5, GPT-4, GPT-4-turbo ...
 - **Anthropic**: Claude 3.5 Sonnet, Claude 3 Opus, Claude 4 Sonnet ...
 - **Google**: Gemini 2.0 Flash ...
 - **DeepSeek**: DeepSeek-chat, deepseek-reasoner (AliCloud Support deepseek-r1 deepseek-v3 ...)...
 
 ### DbConfig
+
 Database connection configuration supporting:
+
 - **SQLite**: Single file or multiple databases
 - **DuckDB**: Local or remote DuckDB instances
 - **MySQL**: MySQL and MariaDB
@@ -128,7 +134,9 @@ Database connection configuration supporting:
 - **PostgreSQL**: Standard PostgreSQL connections(Not supported yet)
 
 ### Workflow Configuration
+
 Flexible workflow orchestration with:
+
 - **Fixed**: Performed according to standard processes
 - **Reflection**: After generating SQL and execute, reflected by LLMs
 - **Metrics**: Use of metrics in workflow
@@ -257,7 +265,7 @@ agent:
       username: ${POSTGRES_USER}
       password: ${POSTGRES_PASSWORD}
       database: production
-    
+
     analytics:
       type: duckdb
       dbs:
@@ -342,6 +350,7 @@ storage:
 ## Validation
 
 The configuration system validates:
+
 - Required fields are present
 - Environment variables are resolved
 - Database connections are successful
@@ -361,6 +370,7 @@ When adding new configuration options:
 ## Support
 
 For configuration-related issues:
+
 1. Check environment variables are properly set
 2. Validate YAML syntax using online validators
 3. Test database connections independently

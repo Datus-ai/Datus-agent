@@ -2,7 +2,8 @@ This guide introduces three supported usage **modes** that allow you to adopt Da
 
 ### **🗨️ 1. Datus CLI (Chat Mode)**
 
-Use Datus like a chatbot: type natural language questions, get SQL or summaries back. Ideal for **ad hoc queries** and **fast metric exploration**.
+Use Datus like a chatbot: type natural language questions, get SQL or summaries back. Ideal for **ad hoc queries** and *
+*fast metric exploration**.
 
 1. Install Datus:
 
@@ -10,11 +11,11 @@ Use Datus like a chatbot: type natural language questions, get SQL or summaries 
 pip install datus
 ```
 
--  Configure your environment
+- Configure your environment
 
 ```bash
 datus-init
-cp ～/.datus/conf/agent.yml.qs ～/.datus/conf/agent.yml
+cp ~/.datus/conf/agent.yml.qs ~/.datus/conf/agent.yml
 ```
 
 Export environment variables (e.g., default model is DeepSeek-v3)
@@ -23,13 +24,13 @@ Export environment variables (e.g., default model is DeepSeek-v3)
 export DEEPSEEK_API_KEY="your-api-key-here"
 ```
 
--  Launch the CLI
+- Launch the CLI
 
 ```bash
 datus-cli --namespace local_duckdb
 ```
 
-- Start chat with Datus. 
+- Start chat with Datus.
 
 ```bash
 Datus> /Ask any questions you'd like to know
@@ -112,15 +113,16 @@ For more command references and options, see the documentation: [Cli references]
 
 ### **🧪 2. Datus Benchmark (Docker Mode)**
 
-Run benchmark tests in a pre-configured Docker image to evaluate Datus using standard benchmark datasets: Bird and Spider-snow
+Run benchmark tests in a pre-configured Docker image to evaluate Datus using standard benchmark datasets: Bird and
+Spider-snow
 
--  pull image
+- pull image
 
 ```bash
 docker pull luochen2025/datus-agent
 ```
 
--  start container
+- start container
 
 ```bash
 docker run --name datus \
@@ -131,51 +133,51 @@ docker run --name datus \
 -d luochen2025/datus-agent
 ```
 
--  running benchmark
+- running benchmark
     - Bird
-    
-    Run a specific task by ID
-    
-    ```bash
-    docker exec -it datus python -m datus.main benchmark  \
-    --namespace bird_sqlite \
-    --benchmark bird_dev \
-    --benchmark_task_ids 14
-    ```
-    
-    Run all tasks
-    
-    ```bash
-    docker exec -it datus python -m datus.main benchmark  \
-    --namespace bird_sqlite \
-    --benchmark bird_dev
-    ```
-    
-    - Spider-snow
-    
-    Run a specific task by ID
-    
-    ```bash
-    docker exec -it datus python -m datus.main benchmark  \
-    --namespace snowflake \
-    --benchmark spider2 \
-    --benchmark_task_ids sf_bq104
-    ```
-    
-    Run all tasks
-    
-    ```bash
-    docker exec -it datus python -m datus.main benchmark  \
-    --namespace snowflake \
-    --benchmark spider2
-    ```
-    
 
-For more detailed information about Datus benchmarking: [Benchmark](./benchmark/benchmark_manual.md) 
+  Run a specific task by ID
+
+   ```bash
+   docker exec -it datus python -m datus.main benchmark  \
+   --namespace bird_sqlite \
+   --benchmark bird_dev \
+   --benchmark_task_ids 14
+   ```
+
+  Run all tasks
+
+   ```bash
+   docker exec -it datus python -m datus.main benchmark  \
+   --namespace bird_sqlite \
+   --benchmark bird_dev
+   ```
+
+    - Spider-snow
+
+  Run a specific task by ID
+
+   ```bash
+   docker exec -it datus python -m datus.main benchmark  \
+   --namespace snowflake \
+   --benchmark spider2 \
+   --benchmark_task_ids sf_bq104
+   ```
+
+  Run all tasks
+
+   ```bash
+   docker exec -it datus python -m datus.main benchmark  \
+   --namespace snowflake \
+   --benchmark spider2
+   ```
+
+For more detailed information about Datus benchmarking: [Benchmark](./benchmark/benchmark_manual.md)
 
 ### **📊 3. Datus Metric (MetricFlow Integration)**
 
-Connect Datus to **MetricFlow** and a data warehouse (e.g., StarRocks) to enable **semantic understanding of metrics** — with support for model-based reasoning, date interpretation, and domain code mapping.
+Connect Datus to **MetricFlow** and a data warehouse (e.g., StarRocks) to enable **semantic understanding of metrics** —
+with support for model-based reasoning, date interpretation, and domain code mapping.
 
 **Prerequisites**
 
@@ -250,6 +252,7 @@ npm install -g @modelcontextprotocol/server-filesystem
 - Configure Datus for metrics integration.
 
 Add the following section to `~/.datus/conf/agent.yml`
+
 ```bash
   metrics:
     demo:
@@ -303,6 +306,7 @@ Datus> !gen_metrics
 - View the generated metric definitions
 
 Navigate to the directory specified in `FILESYSTEM_MCP_DIRECTORY`
+
 ```bash
 cd ~/mf/metricflow/semantic_models
 
@@ -351,8 +355,8 @@ metric:
     SELECT State 
     FROM demo.main.bank_failures 
     GROUP BY State 
-    ORDER BY SUM("Assets ($mil.)") DESC 
-    LIMIT 1
+    ORDER BY SUM("Assets ($mil.)") DESC
+                LIMIT 1
   )"
   locked_metadata:
     display_name: "Failure Count in Highest Asset State"
