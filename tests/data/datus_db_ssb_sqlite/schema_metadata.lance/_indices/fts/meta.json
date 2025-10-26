@@ -1,0 +1,98 @@
+{
+  "index_settings": {
+    "docstore_compression": "lz4",
+    "docstore_blocksize": 16384
+  },
+  "segments": [
+    {
+      "segment_id": "e4f7614b-2e1b-4a58-ab05-e26f3bc66ac0",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "f9343ae8-605a-4ae8-8059-9ef8fbd31da7",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "750da630-5a11-456e-a695-506a62d561f9",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "2ccffa66-fadd-4db7-b4b1-4a5585c682e2",
+      "max_doc": 1,
+      "deletes": null
+    },
+    {
+      "segment_id": "6a6fec6e-47ab-4382-91ad-c17dae8da22d",
+      "max_doc": 1,
+      "deletes": null
+    }
+  ],
+  "schema": [
+    {
+      "name": "doc_id",
+      "type": "i64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "database_name",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "schema_name",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "table_name",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "definition",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "default"
+        },
+        "stored": true,
+        "fast": false
+      }
+    }
+  ],
+  "opstamp": 10
+}
