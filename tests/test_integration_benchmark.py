@@ -13,7 +13,7 @@ from tests.conftest import load_acceptance_config
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    return load_acceptance_config(namespace="bird_sqlite")
+    return load_acceptance_config(namespace="bird_sqlite", home="~/.datus")
 
 
 @pytest.fixture

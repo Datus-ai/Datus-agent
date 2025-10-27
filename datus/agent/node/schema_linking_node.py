@@ -90,7 +90,7 @@ class SchemaLinkingNode(Node):
             logger.info(f"RAG storage path `{path}` does not exist.")
             return self._execute_schema_linking_fallback(SchemaLineageTool(self.agent_config))
         else:
-            tool = SchemaLineageTool(self.agent_config)
+            tool = SchemaLineageTool(agent_config=self.agent_config)
             try:
                 # Import SchemaLineageTool only when needed
                 if tool:

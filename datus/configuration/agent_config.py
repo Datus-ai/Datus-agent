@@ -146,7 +146,6 @@ class AgentConfig:
         """
         # Initialize home directory and update path_manager
         self.home = kwargs.get("home", "~/.datus")
-        self._init_path_manager()
 
         models_raw = kwargs["models"]
         self.target = kwargs["target"]
@@ -159,10 +158,6 @@ class AgentConfig:
 
         # Save directory is now fixed at {agent.home}/save
         # Trajectory directory is now fixed at {agent.home}/trajectory
-        from datus.utils.path_manager import get_path_manager
-
-        self._save_dir = str(get_path_manager().save_dir)
-        self._trajectory_dir = str(get_path_manager().trajectory_dir)
 
         self._init_storage_config(kwargs.get("storage", {}))
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
@@ -337,13 +332,15 @@ class AgentConfig:
             raise KeyError(f"Model '{key}' not found.")
         return self.models[key]
 
-    def _init_path_manager(self):
+    def _init_path_manager_and_save_dir(self):
         """Initialize or update path manager with configured home directory."""
         from datus.utils.path_manager import get_path_manager
 
         path_manager = get_path_manager()
         path_manager.update_home(self.home)
         logger.info(f"Using datus home directory: {path_manager.datus_home}")
+        self._save_dir = str(path_manager.save_dir)
+        self._trajectory_dir = str(path_manager.trajectory_dir)
 
     def _init_storage_config(self, storage_config: dict):
         # Use fixed path from path_manager: {home}/data
@@ -357,6 +354,9 @@ class AgentConfig:
         self.workspace_root = storage_config.get("workspace_root")
 
     def override_by_args(self, **kwargs):
+        if home := kwargs.get("home"):
+            self.home = home
+            self._init_path_manager_and_save_dir()
         # storage_path parameter has been deprecated - data path is now fixed at {home}/data
         if "storage_path" in kwargs and kwargs["storage_path"] is not None:
             logger.warning(
