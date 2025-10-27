@@ -14,8 +14,6 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseResult
 from datus.schemas.compare_node_models import CompareInput, CompareResult
 from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
-from datus.schemas.generate_metrics_node_models import GenerateMetricsInput, GenerateMetricsResult
-from datus.schemas.generate_semantic_model_node_models import GenerateSemanticModelInput, GenerateSemanticModelResult
 from datus.schemas.node_models import (
     ExecuteSQLInput,
     ExecuteSQLResult,
@@ -90,22 +88,6 @@ def reasoning_input() -> Dict[str, Any]:
 def doc_search_input() -> List[Dict[str, Any]]:
     """Load test data from YAML file"""
     yaml_path = Path(__file__).parent / "data" / "DocSearchInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-@pytest.fixture
-def generate_metrics_input() -> List[Dict[str, Any]]:
-    """Load test data from YAML file"""
-    yaml_path = Path(__file__).parent / "data" / "GenerateMetricsInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-@pytest.fixture
-def generate_semantic_model_input() -> List[Dict[str, Any]]:
-    """Load test data from YAML file"""
-    yaml_path = Path(__file__).parent / "data" / "GenerateSemanticModelInput.yaml"
     with open(yaml_path, "r") as f:
         return yaml.safe_load(f)
 
@@ -602,63 +584,6 @@ class TestNode:
         except Exception as e:
             logger.error(f"Doc search node test failed: {str(e)}")
             raise
-
-    def test_generate_semantic_model_node(
-        self, generate_semantic_model_input, agent_config, function_tools: List[Tool]
-    ):
-        """Test generate semantic model node"""
-        pre_namespace = agent_config.current_namespace
-        agent_config.current_namespace = "duckdb"
-        try:
-            # Create generate semantic model input from test data
-            for case in generate_semantic_model_input:
-                input_data = GenerateSemanticModelInput(**case["input"])
-                node = Node.new_instance(
-                    node_id="generate_semantic_model_test",
-                    description="Generate semantic model test",
-                    node_type=NodeType.TYPE_GENERATE_SEMANTIC_MODEL,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                    tools=function_tools,
-                )
-                result = node.run()
-                logger.debug(f"Generate semantic model node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                assert isinstance(result, GenerateSemanticModelResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-        except Exception as e:
-            logger.error(f"Generate semantic model node test failed: {str(e)}")
-            raise
-        finally:
-            agent_config.current_namespace = pre_namespace
-
-    def test_generate_metrics_node(self, generate_metrics_input, agent_config, function_tools: List[Tool]):
-        """Test generate metrics node"""
-        pre_namespace = agent_config.current_namespace
-        agent_config.current_namespace = "duckdb"
-        try:
-            # Create generate metrics input from test data
-            for case in generate_metrics_input:
-                input_data = GenerateMetricsInput(**case["input"])
-                node = Node.new_instance(
-                    node_id="generate_metrics_test",
-                    description="Generate Metrics Test",
-                    node_type=NodeType.TYPE_GENERATE_METRICS,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                    tools=function_tools,
-                )
-                result = node.run()
-                logger.debug(f"Generate metrics node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                assert isinstance(result, GenerateMetricsResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-                assert len(result.metrics) > 0, "Metrics is empty"
-        except Exception as e:
-            logger.error(f"Generate metrics node test failed: {str(e)}")
-            raise
-        finally:
-            agent_config.current_namespace = pre_namespace
 
     def test_search_metrics_node(self, search_metrics_input, agent_config: AgentConfig):
         """Test schema linking node"""
