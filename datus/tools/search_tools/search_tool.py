@@ -7,7 +7,7 @@ from typing import List
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
-from datus.storage.document.store import DocumentStore
+from datus.storage.document.store import DocumentStore, document_store
 from datus.tools.base import BaseTool
 from datus.utils.loggings import get_logger
 
@@ -30,7 +30,7 @@ class SearchTool(BaseTool):
     def document_store(self) -> DocumentStore:
         """Lazy initialize document store"""
         if self._document_store is None:
-            self._document_store = DocumentStore(self.agent_config)
+            self._document_store = document_store(self.agent_config.rag_storage_path())
         return self._document_store
 
     def execute(self, input_data: DocSearchInput) -> DocSearchResult:

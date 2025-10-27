@@ -2,25 +2,11 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 import os.path
-
-#  Copyright (c) 2023. LanceDB Developers
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
 from typing import Any, List, Optional, Union
 
 import numpy as np
 from fastembed import TextEmbedding
 from fastembed.text.text_embedding_base import TextEmbeddingBase
-from huggingface_hub import snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 from lancedb.embeddings.base import TextEmbeddingFunction
 from lancedb.embeddings.registry import register
@@ -201,8 +187,14 @@ def check_snapshot(model_name: str, cache_dir: str) -> None:
         # Some fastembed models only ship via the GCS mirror; defer to fastembed.
         return
 
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.utils import disable_progress_bars
+
+    disable_progress_bars()
+
     try:
         snapshot_download(repo_id, cache_dir=cache_dir, local_files_only=True)
     except LocalEntryNotFoundError:
         logger.info(f"Downloading {repo_id} to {cache_dir} via huggingface_hub")
         snapshot_download(repo_id, cache_dir=cache_dir, local_files_only=False)
+        logger.info(f"Downloading {repo_id} to {cache_dir} via successful")
