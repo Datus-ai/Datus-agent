@@ -159,7 +159,6 @@ class AgentConfig:
         # Save directory is now fixed at {agent.home}/save
         # Trajectory directory is now fixed at {agent.home}/trajectory
 
-        self._init_storage_config(kwargs.get("storage", {}))
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
         self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
         self.db_type = ""
@@ -357,6 +356,8 @@ class AgentConfig:
         if home := kwargs.get("home"):
             self.home = home
         self._init_path_manager_and_save_dir()
+        self._init_storage_config(kwargs.get("storage", {}))
+
         # storage_path parameter has been deprecated - data path is now fixed at {home}/data
         if "storage_path" in kwargs and kwargs["storage_path"] is not None:
             logger.warning(
