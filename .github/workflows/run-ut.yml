@@ -44,6 +44,13 @@ jobs:
           done < .env
           echo "Environment variables loaded successfully"
 
+      - name: Build test data
+        run: |
+          echo "Building test data before running pytest..."
+          chmod +x build_scripts/build_test_data.sh
+          ./build_scripts/build_test_data.sh
+          echo "Test data build completed"
+
       - name: run pytest
         run: |
           python -m pytest -m acceptance  tests/
