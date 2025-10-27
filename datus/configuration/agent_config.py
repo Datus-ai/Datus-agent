@@ -356,7 +356,7 @@ class AgentConfig:
     def override_by_args(self, **kwargs):
         if home := kwargs.get("home"):
             self.home = home
-            self._init_path_manager_and_save_dir()
+        self._init_path_manager_and_save_dir()
         # storage_path parameter has been deprecated - data path is now fixed at {home}/data
         if "storage_path" in kwargs and kwargs["storage_path"] is not None:
             logger.warning(
