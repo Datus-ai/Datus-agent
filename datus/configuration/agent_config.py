@@ -146,7 +146,6 @@ class AgentConfig:
         """
         # Initialize home directory and update path_manager
         self.home = kwargs.get("home", "~/.datus")
-
         models_raw = kwargs["models"]
         self.target = kwargs["target"]
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
@@ -178,6 +177,7 @@ class AgentConfig:
         self._init_namespace_config(kwargs.get("namespace", {}))
 
         self.metric_meta = {k: MetricMeta.filter_kwargs(MetricMeta, v) for k, v in kwargs.get("metrics", {}).items()}
+        self.workspace_root = None
         # use default embedding model if not provided
         if storage_config := kwargs.get("storage", {}):
             self.storage_configs = init_embedding_models(
