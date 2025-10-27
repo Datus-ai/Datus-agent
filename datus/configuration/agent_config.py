@@ -439,7 +439,7 @@ class AgentConfig:
         # Map benchmark names to subdirectories
         benchmark_subdirs = {
             "bird_dev": "bird",
-            "spider2": "spider2",
+            "spider2": "spider2/spider2-snow",
             "semantic_layer": "semantic_layer",
         }
 

@@ -33,7 +33,7 @@ from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.cli.autocomplete import TableCompleter
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
-from datus.tools.func_tool import ContextSearchTools, DBFuncTool
+from datus.tools.func_tool import ContextSearchTools
 from datus.tools.mcp_tools import MCPTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -1830,8 +1830,10 @@ class SubAgentWizard:
             return self.app.run()
 
     def native_tools_choices(self) -> Dict[str, List[str]]:
+        from datus.tools.func_tool import db_function_tools
+
         return {
-            "db_tools": [str(item.name) for item in DBFuncTool(self.cli_instance.db_connector).available_tools()],
+            "db_tools": [str(item.name) for item in db_function_tools(agent_config=self.cli_instance.agent_config)],
             "context_search_tools": [
                 str(item.name) for item in ContextSearchTools(self.cli_instance.agent_config).available_tools()
             ],

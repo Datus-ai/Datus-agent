@@ -197,4 +197,4 @@ def check_snapshot(model_name: str, cache_dir: str) -> None:
     except LocalEntryNotFoundError:
         logger.info(f"Downloading {repo_id} to {cache_dir} via huggingface_hub")
         snapshot_download(repo_id, cache_dir=cache_dir, local_files_only=False)
-        logger.info(f"Downloading {repo_id} to {cache_dir} via successful")
+        logger.info(f"Model {repo_id} has been downloaded via huggingface_hub to {cache_dir}.")
