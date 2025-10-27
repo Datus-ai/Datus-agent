@@ -3,9 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import os
-from typing import Any, Dict, List
-
-from transformers import AutoTokenizer
+from typing import Any
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_compatible import OpenAICompatibleModel
@@ -24,7 +22,6 @@ class QwenModel(OpenAICompatibleModel):
         """
         super().__init__(model_config)
         # Initialize Qwen-specific tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B")
         self._async_client = None
 
     def _get_api_key(self) -> str:
@@ -72,12 +69,3 @@ class QwenModel(OpenAICompatibleModel):
 
         response = self.client.chat.completions.create(messages=messages, **params)
         return response.choices[0].message.content
-
-    def token_count(self, messages: List[Dict[str, str]]) -> int:
-        input_text = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=False,  # Use False as default to match generate method
-        )
-        return len(self.tokenizer.encode(input_text))

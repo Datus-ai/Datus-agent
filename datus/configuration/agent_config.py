@@ -154,10 +154,6 @@ class AgentConfig:
         self._current_database = ""
         self.nodes = nodes
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
-        # use default embedding model if not provided
-
-        # Save directory is now fixed at {agent.home}/save
-        # Trajectory directory is now fixed at {agent.home}/trajectory
 
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
         self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
@@ -182,6 +178,14 @@ class AgentConfig:
         self._init_namespace_config(kwargs.get("namespace", {}))
 
         self.metric_meta = {k: MetricMeta.filter_kwargs(MetricMeta, v) for k, v in kwargs.get("metrics", {}).items()}
+        # use default embedding model if not provided
+        if storage_config := kwargs.get("storage", {}):
+            self.storage_configs = init_embedding_models(
+                storage_config, openai_configs=self.models, default_openai_config=self.active_model()
+            )
+            self.workspace_root = storage_config.get("workspace_root")
+
+        self._init_dirs()
 
     @property
     def current_database(self):
@@ -331,33 +335,29 @@ class AgentConfig:
             raise KeyError(f"Model '{key}' not found.")
         return self.models[key]
 
-    def _init_path_manager_and_save_dir(self):
+    def _init_dirs(
+        self,
+    ):
         """Initialize or update path manager with configured home directory."""
         from datus.utils.path_manager import get_path_manager
 
         path_manager = get_path_manager()
         path_manager.update_home(self.home)
         logger.info(f"Using datus home directory: {path_manager.datus_home}")
+        # Save directory is now fixed at {agent.home}/save
         self._save_dir = str(path_manager.save_dir)
+        # Trajectory directory is now fixed at {agent.home}/trajectory
         self._trajectory_dir = str(path_manager.trajectory_dir)
 
-    def _init_storage_config(self, storage_config: dict):
         # Use fixed path from path_manager: {home}/data
         from datus.utils.path_manager import get_path_manager
 
         self.rag_base_path = str(get_path_manager().data_dir)
 
-        self.storage_configs = init_embedding_models(
-            storage_config, openai_configs=self.models, default_openai_config=self.active_model()
-        )
-        self.workspace_root = storage_config.get("workspace_root")
-
     def override_by_args(self, **kwargs):
         if home := kwargs.get("home"):
             self.home = home
-        self._init_path_manager_and_save_dir()
-        self._init_storage_config(kwargs.get("storage", {}))
-
+            self._init_dirs()
         # storage_path parameter has been deprecated - data path is now fixed at {home}/data
         if "storage_path" in kwargs and kwargs["storage_path"] is not None:
             logger.warning(
