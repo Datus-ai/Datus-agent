@@ -79,31 +79,38 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         catalog_name: str = "",
         database_name: str = "",
     ) -> List[Dict[str, str]]:
+        """
+
+        :param inner_table_type:
+        :param catalog_name:  If necessary, it will be 'default_catalog' by default
+        :param database_name:
+        :return:
+        """
         self.connect()
         database_name = database_name or self.database_name
-        catalog = self.reset_catalog_to_def(catalog_name or self.catalog_name)
-        where = f"TABLE_CATALOG = '{catalog}'"
+        self._before_metadata_query(catalog_name=catalog_name, database_name=database_name)
+        effective_catalog = catalog_name or self.catalog_name
+
         if database_name:
-            where = f"{where} AND TABLE_SCHEMA = '{database_name}'"
+            where = f"TABLE_SCHEMA = '{database_name}'"
         else:
-            where = f"{where} {list_to_in_str('and TABLE_SCHEMA not in', list(self._sys_databases()))}"
+            where = f"{list_to_in_str('TABLE_SCHEMA not in', list(self._sys_databases()))}"
         metadata_names = table_metadata_names(inner_table_type)
 
         query_result = self._execute_pandas(
             (
-                f"SELECT TABLE_CATALOG, TABLE_SCHEMA,TABLE_NAME FROM information_schema.{metadata_names.info_table}"
-                f" WHERE {where} {list_to_in_str(' and TABLE_TYPE in ', metadata_names.table_types)}"
+                f"SELECT TABLE_SCHEMA,TABLE_NAME FROM information_schema.{metadata_names.info_table}"
+                f" WHERE {where} {list_to_in_str('and TABLE_TYPE in ', metadata_names.table_types)}"
             )
         )
         result = []
         for i in range(len(query_result)):
-            catalog = self.reset_catalog_to_default(str(query_result["TABLE_CATALOG"][i]))
             db_name = query_result["TABLE_SCHEMA"][i]
             tb_name = query_result["TABLE_NAME"][i]
             result.append(
                 {
-                    "identifier": self.identifier(catalog, database_name=db_name, table_name=tb_name),
-                    "catalog_name": catalog,
+                    "identifier": self.identifier(effective_catalog, database_name=db_name, table_name=tb_name),
+                    "catalog_name": effective_catalog,
                     "schema_name": "",
                     "database_name": db_name,
                     "table_name": tb_name,
@@ -168,15 +175,12 @@ class MySQLConnectorBase(SQLAlchemyConnector):
 
     @override
     def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
-        if self.default_catalog():
-            if catalog_name:
-                self._execute(f"SET `{catalog_name}`")
-            if database_name:
-                self._execute(f"USE `{database_name}`")
-        else:
-            # not support catalog
-            if database_name:
-                self._execute(f"USE `{database_name}`")
+        if self.support_catalog():
+            target_catalog = self.reset_catalog_to_default(catalog_name or self.catalog_name or self.default_catalog())
+            if target_catalog:
+                self._execute(f"SET CATALOG {self._quote_identifier(target_catalog)}")
+        if database_name:
+            self._execute(f"USE {self._quote_identifier(database_name)}")
         return
 
     def reset_catalog_to_default(self, catalog: str) -> str:
@@ -194,6 +198,14 @@ class MySQLConnectorBase(SQLAlchemyConnector):
         if not catalog or catalog == self.default_catalog():
             return "def"
         return catalog
+
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        """
+        Safely wrap identifiers with backticks for MySQL-compatible dialects.
+        """
+        escaped = identifier.replace("`", "``")
+        return f"`{escaped}`"
 
     @override
     def get_views_with_ddl(
@@ -284,6 +296,12 @@ class MySQLConnectorBase(SQLAlchemyConnector):
             table["schema_name"] = ""
             result.append(table)
         return result
+
+    def _before_metadata_query(self, catalog_name: str = "", database_name: str = "") -> None:
+        """
+        Hook for subclasses to adjust session state (e.g., switch catalog) before metadata queries run.
+        """
+        return
 
     @override
     def get_tables_with_ddl(

@@ -2,9 +2,12 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import re
 from collections import defaultdict
 from typing import Dict, Optional, Tuple, Union
-from urllib.parse import quote_plus
+from urllib.parse import unquote
+
+from sqlalchemy.engine.url import URL, make_url
 
 from datus.configuration.agent_config import DbConfig
 from datus.tools.db_tools.base import BaseSqlConnector
@@ -21,27 +24,208 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+def _normalize_dialect_name(db_type: Union[str, DBType, None]) -> str:
+    """
+    Normalize dialect names and collapse aliases so downstream checks work reliably.
+    """
+    if isinstance(db_type, DBType):
+        value = db_type.value
+    else:
+        value = str(db_type or "").strip().lower()
+    alias_map = {
+        DBType.POSTGRES.value: DBType.POSTGRESQL.value,
+        DBType.SQLSERVER.value: DBType.MSSQL.value,
+    }
+    return alias_map.get(value, value)
+
+
+def _clean_str(value: Optional[Union[str, int]]) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            if item:
+                return str(item).strip()
+        return ""
+    return str(value).strip()
+
+
+def _resolve_connection_context(db_config: DbConfig, uri: str) -> Tuple[str, str, str, str]:
+    """
+    Infer catalog, database, and schema information from a SQLAlchemy URL.
+    Returns (dialect, catalog_name, database_name, schema_name).
+    """
+    normalized_type = _normalize_dialect_name(db_config.type)
+    try:
+        url = make_url(uri)
+    except Exception as exc:
+        raise DatusException(
+            code=ErrorCode.COMMON_CONFIG_ERROR,
+            message=f"Invalid database uri `{uri}`: {exc}",
+        ) from exc
+
+    backend_normalized = _normalize_dialect_name(url.get_backend_name())
+    dialect = backend_normalized or normalized_type
+    if not dialect:
+        raise DatusException(
+            code=ErrorCode.COMMON_CONFIG_ERROR,
+            message=f"Unable to determine database type from uri `{uri}`",
+        )
+
+    query_params: Dict[str, str] = {k: _clean_str(v) for k, v in url.query.items()}
+    catalog = ""
+    database = _clean_str(url.database)
+    schema = ""
+
+    if dialect == DBType.POSTGRESQL.value:
+        database = database or _clean_str(db_config.database)
+        schema = (
+            query_params.get("currentSchema")
+            or query_params.get("schema")
+            or _extract_schema_from_pg_options(query_params.get("options", ""))
+            or _clean_str(db_config.schema)
+            or "public"
+        )
+        catalog = ""
+        dialect = DBType.POSTGRESQL.value
+    elif dialect == DBType.CLICKHOUSE.value:
+        database = database or _clean_str(db_config.database) or "default"
+        schema = _clean_str(db_config.schema)
+        catalog = _clean_str(db_config.catalog)
+    elif dialect == DBType.BIGQUERY.value:
+        catalog = _clean_str(url.host) or _clean_str(db_config.catalog)
+        dataset = database or _clean_str(db_config.database) or _clean_str(db_config.schema)
+        database = dataset
+        schema = query_params.get("schema") or dataset
+    elif dialect == DBType.MSSQL.value:
+        database = database or _clean_str(db_config.database)
+        schema = query_params.get("schema") or _clean_str(db_config.schema) or "dbo"
+        catalog = ""
+        dialect = DBType.MSSQL.value
+    elif dialect == DBType.ORACLE.value:
+        service = query_params.get("service_name") or query_params.get("sid")
+        database = service or database or _clean_str(db_config.database)
+        schema = query_params.get("schema") or _clean_str(db_config.schema) or _clean_str(url.username)
+        catalog = ""
+        dialect = DBType.ORACLE.value
+    else:
+        catalog = _clean_str(db_config.catalog)
+        database = database or _clean_str(db_config.database)
+        schema = _clean_str(db_config.schema)
+
+    return dialect or "", catalog, database, schema
+
+
+def _extract_schema_from_pg_options(options: str) -> str:
+    if not options:
+        return ""
+    decoded = unquote(options)
+    match = re.search(r"search_path\s*=\s*([^ ,]+)", decoded, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    value = match.group(1)
+    if "," in value:
+        value = value.split(",", 1)[0]
+    return value.strip()
+
+
 def gen_uri(db_config: DbConfig) -> str:
     if db_config.uri:
         return db_config.uri
 
-    elif db_config.type == DBType.SNOWFLAKE:
-        return (
-            f"snowflake://{quote_plus(db_config.username)}:{quote_plus(str(db_config.password))}"
-            f"@{db_config.account}/?warehouse={db_config.warehouse}"
+    normalized_type = _normalize_dialect_name(db_config.type)
+
+    if normalized_type == DBType.POSTGRESQL.value:
+        return str(
+            URL.create(
+                drivername="postgresql+psycopg",
+                username=_value_or_none(db_config.username),
+                password=_value_or_none(db_config.password),
+                host=_value_or_none(db_config.host),
+                port=_port_or_none(db_config.port),
+                database=_value_or_none(db_config.database),
+            )
         )
-    elif db_config.type == DBType.STARROCKS:
-        catalog = getattr(db_config, "catalog", "default_catalog") or "default_catalog"
-        return (
-            f"starrocks://{quote_plus(db_config.username)}:{quote_plus(str(db_config.password))}"
-            f"@{db_config.host}:{db_config.port}/{catalog}.{db_config.database}"
+    if normalized_type == DBType.CLICKHOUSE.value:
+        return str(
+            URL.create(
+                drivername="clickhouse",
+                username=_value_or_none(db_config.username),
+                password=_value_or_none(db_config.password),
+                host=_value_or_none(db_config.host),
+                port=_port_or_none(db_config.port),
+                database=_value_or_none(db_config.database),
+            )
         )
-    else:
-        db_name = "" if not db_config.database else f"/{db_config.database}"
-        return (
-            f"{db_config.type}://{quote_plus(db_config.username)}:{quote_plus(str(db_config.password))}"
-            f"@{db_config.host}:{db_config.port}{db_name}"
+    if normalized_type == DBType.BIGQUERY.value:
+        project = _clean_str(db_config.catalog) or _clean_str(db_config.host)
+        dataset = _clean_str(db_config.database) or _clean_str(db_config.schema)
+        if not project or not dataset:
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message="BigQuery configuration requires `catalog` (project) and `database` (dataset)",
+            )
+        return str(URL.create(drivername="bigquery", host=project, database=dataset))
+    if normalized_type == DBType.MSSQL.value:
+        query: Dict[str, str] = {"driver": "ODBC Driver 17 for SQL Server"}
+        if db_config.schema:
+            query["schema"] = _clean_str(db_config.schema)
+        return str(
+            URL.create(
+                drivername="mssql+pyodbc",
+                username=_value_or_none(db_config.username),
+                password=_value_or_none(db_config.password),
+                host=_value_or_none(db_config.host),
+                port=_port_or_none(db_config.port),
+                database=_value_or_none(db_config.database),
+                query=query,
+            )
         )
+
+    if normalized_type == DBType.ORACLE.value:
+        query = {}
+        service = _clean_str(db_config.database)
+        sid = _clean_str(db_config.schema)
+        if service:
+            query["service_name"] = service
+        elif sid:
+            query["sid"] = sid
+        return str(
+            URL.create(
+                drivername="oracle+cx_oracle",
+                username=_value_or_none(db_config.username),
+                password=_value_or_none(db_config.password),
+                host=_value_or_none(db_config.host),
+                port=_port_or_none(db_config.port),
+                query=query or None,
+            )
+        )
+
+    return str(
+        URL.create(
+            drivername=normalized_type,
+            username=_value_or_none(db_config.username),
+            password=_value_or_none(db_config.password),
+            host=_value_or_none(db_config.host),
+            port=_port_or_none(db_config.port),
+            database=_value_or_none(db_config.database),
+        )
+    )
+
+
+def _value_or_none(value: Optional[Union[str, int]]) -> Optional[str]:
+    cleaned = _clean_str(value)
+    return cleaned or None
+
+
+def _port_or_none(port_value: Optional[Union[str, int]]) -> Optional[int]:
+    cleaned = _clean_str(port_value)
+    if not cleaned:
+        return None
+    try:
+        return int(cleaned)
+    except ValueError:
+        return None
 
 
 class DBManager:
@@ -152,7 +336,27 @@ class DBManager:
                 database=db_config.database,
             )
         else:
-            conn = SQLAlchemyConnector(db_config.uri)
+            connection_uri = db_config.uri
+            if not connection_uri:
+                connection_uri = gen_uri(db_config)
+                dialect = _normalize_dialect_name(db_config.type)
+                catalog_name = db_config.catalog or ""
+                inferred_database = db_config.database or ""
+                inferred_schema = db_config.schema or ""
+            else:
+                dialect, catalog_name, inferred_database, inferred_schema = _resolve_connection_context(
+                    db_config, connection_uri
+                )
+            if not dialect:
+                dialect = _normalize_dialect_name(db_config.type)
+            conn = SQLAlchemyConnector(connection_uri, dialect=dialect)
+            if catalog_name:
+                conn.catalog_name = catalog_name
+            if inferred_database:
+                conn.database_name = inferred_database
+            if inferred_schema:
+                conn.schema_name = inferred_schema
+
         if database_name:
             self._conn_dict[namespace][database_name] = conn
         else:
@@ -164,14 +368,6 @@ class DBManager:
         for name, conn in list(self._conn_dict.items()):
             if conn is not None:
                 try:
-                    # try commit or rollback
-                    # if hasattr(conn, 'engine') and conn.engine:
-                    #     with conn.engine.connect() as connection:
-                    #         try:
-                    #             connection.commit()
-                    #         except:
-                    #             connection.rollback()
-                    # then close connection
                     conn.close()
                 except Exception as e:
                     logger.warning(f"Error closing connection {name}: {str(e)}")

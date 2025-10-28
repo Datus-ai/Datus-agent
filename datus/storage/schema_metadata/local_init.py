@@ -23,12 +23,15 @@ def init_local_schema(
     db_manager: DBManager,
     build_mode: str = "overwrite",
     table_type: TABLE_TYPE = "full",
+    init_catalog_name: str = "",
     init_database_name: str = "",
     pool_size: int = 4,  # TODO: support multi-threading
 ):
     """Initialize local schema from the configured database."""
     logger.info(f"Initializing local schema for namespace: {agent_config.current_namespace}")
     db_configs = agent_config.namespaces[agent_config.current_namespace]
+    if len(db_configs) == 1:
+        db_configs = list(db_configs.values())[0]
 
     if isinstance(db_configs, DbConfig):
         # Single database configuration (like StarRocks, MySQL, PostgreSQL, etc.)
@@ -52,14 +55,24 @@ def init_local_schema(
                 table_type=table_type,
                 build_mode=build_mode,
             )
-        elif db_configs.type in [DBType.MYSQL, DBType.POSTGRES, DBType.POSTGRESQL, DBType.SQLSERVER]:
-            init_other_two_level_schema(
+        elif db_configs.type == DBType.MYSQL:
+            init_mysql_schema(
                 table_lineage_store,
                 agent_config,
                 db_configs,
                 db_manager,
-                database_name="",
-                schema_name=init_database_name,
+                database_name=init_database_name,
+                table_type=table_type,
+                build_mode=build_mode,
+            )
+        elif db_configs.type == DBType.STARROCKS:
+            init_starrocks_schema(
+                table_lineage_store,
+                agent_config,
+                db_configs,
+                db_manager,
+                catalog_name=init_catalog_name,
+                database_name=init_database_name,
                 table_type=table_type,
                 build_mode=build_mode,
             )
@@ -96,7 +109,7 @@ def init_local_schema(
                     table_type=table_type,
                     build_mode=build_mode,
                 )
-            else:
+            elif db_config.type == DBType.DUCKDB:
                 init_duckdb_schema(
                     table_lineage_store,
                     agent_config,
@@ -107,6 +120,8 @@ def init_local_schema(
                     table_type=table_type,
                     build_mode=build_mode,
                 )
+            else:
+                logger.warning(f"Unsupported database type {db_config.type} for multi-database configuration")
     # Create indices after initialization
     table_lineage_store.after_init()
     logger.info("Local schema initialization completed")
@@ -129,7 +144,7 @@ def init_sqlite_schema(
         build_mode=build_mode,
     )
     logger.info(
-        f"Exsits data from LanceDB {database_name}, tables={len(all_schema_tables)}, values={len(all_value_tables)}"
+        f"Exists data from LanceDB {database_name}, tables={len(all_schema_tables)}, values={len(all_value_tables)}"
     )
     if table_type == "table" or table_type == "full":
         tables = sql_connector.get_tables_with_ddl(schema_name=database_name)
@@ -180,7 +195,7 @@ def init_duckdb_schema(
     )
 
     logger.info(
-        f"Exsits data from LanceDB {database_name}, tables={len(all_schema_tables)}," f"values={len(all_value_tables)}"
+        f"Exists data from LanceDB {database_name}, tables={len(all_schema_tables)}," f"values={len(all_value_tables)}"
     )
     sql_connector = db_manager.get_conn(agent_config.current_namespace, database_name)
     if table_type == "table" or table_type == "full":
@@ -214,58 +229,39 @@ def init_duckdb_schema(
         )
 
 
-def init_other_two_level_schema(
+def init_mysql_schema(
     table_lineage_store: SchemaWithValueRAG,
     agent_config: AgentConfig,
     db_config: DbConfig,
     db_manager: DBManager,
     database_name: str = "",
-    schema_name: str = "",
     table_type: TABLE_TYPE = "table",
     build_mode: str = "overwrite",
 ):
-    # means schema_name here
     database_name = database_name or getattr(db_config, "database", "")
-    schema_name = schema_name or getattr(db_config, "schema", "")
+
+    sql_connector = db_manager.get_conn(agent_config.current_namespace)
 
     all_schema_tables, all_value_tables = exists_table_value(
         storage=table_lineage_store,
         database_name=database_name,
-        schema_name=schema_name,
+        catalog_name="",
+        schema_name="",
         table_type=table_type,
         build_mode=build_mode,
     )
 
     logger.info(
-        f"Exsits data from LanceDB {schema_name}, tables={len(all_schema_tables)}," f"values={len(all_value_tables)}"
+        f"Exists data from LanceDB database={database_name}, tables={len(all_schema_tables)}, "
+        f"values={len(all_value_tables)}"
     )
-    sql_connector = db_manager.get_conn(
-        agent_config.current_namespace,
-    )
-    if table_type == "table" or table_type == "full":
+    if table_type in ("full", "table"):
         # Get all tables with DDL
-        if hasattr(sql_connector, "get_tables_with_ddl"):
-            tables = sql_connector.get_tables_with_ddl(database_name=database_name, schema_name=schema_name)
-            for table in tables:
-                if not table["database_name"]:
-                    table["database_name"] = database_name
-        else:
-            # Fallback: get table names and generate basic schema
-            table_names = sql_connector.get_tables(schema_name=schema_name)
-            tables = []
-            for table_name in table_names:
-                tables.append(
-                    {
-                        "database_name": database_name,
-                        "schema_name": schema_name,
-                        "table_name": table_name,
-                        "definition": f"-- Table: {table_name} (DDL not available)",
-                    }
-                )
-        logger.info(f"Found {len(tables)} tables from {database_name or schema_name}")
+        tables = sql_connector.get_tables_with_ddl(database_name=database_name)
+        logger.info(f"Found {len(tables)} tables from database {database_name}")
         store_tables(
             table_lineage_store,
-            schema_name,
+            database_name,
             all_schema_tables,
             all_value_tables,
             tables,
@@ -273,11 +269,12 @@ def init_other_two_level_schema(
             sql_connector,
         )
 
-    if (table_type == "view" or table_type == "full") and hasattr(sql_connector, "get_views_with_ddl"):
-        views = sql_connector.get_views_with_ddl(database_name=database_name, schema_name=schema_name)
+    if table_type in ("full", "view"):
+        views = sql_connector.get_views_with_ddl(database_name=database_name)
+
         store_tables(
             table_lineage_store,
-            schema_name,
+            database_name,
             all_schema_tables,
             all_value_tables,
             views,
@@ -285,11 +282,66 @@ def init_other_two_level_schema(
             sql_connector,
         )
 
-    if (table_type == "mv" or table_type == "full") and hasattr(sql_connector, "get_materialized_views_with_ddl"):
-        materialized_views = sql_connector.get_materialized_views_with_ddl(database_name=database_name)
+
+def init_starrocks_schema(
+    table_lineage_store: SchemaWithValueRAG,
+    agent_config: AgentConfig,
+    db_config: DbConfig,
+    db_manager: DBManager,
+    catalog_name: str = "",
+    database_name: str = "",
+    table_type: TABLE_TYPE = "table",
+    build_mode: str = "overwrite",
+):
+    sql_connector = db_manager.get_conn(agent_config.current_namespace)
+    catalog_name = catalog_name or getattr(db_config, "catalog", "") or sql_connector.catalog_name
+    database_name = database_name or getattr(db_config, "database", "") or sql_connector.database_name
+
+    all_schema_tables, all_value_tables = exists_table_value(
+        table_lineage_store,
+        database_name=database_name,
+        catalog_name=catalog_name,
+        schema_name="",
+        table_type=table_type,
+        build_mode=build_mode,
+    )
+
+    logger.info(
+        f"Exists data from LanceDB {catalog_name}.{database_name}, tables={len(all_schema_tables)}, "
+        f"values={len(all_value_tables)}"
+    )
+    if table_type in ("full", "table"):
+        # Get all tables with DDL
+        tables = sql_connector.get_tables_with_ddl(catalog_name=catalog_name, database_name=database_name)
+        logger.info(f"Found {len(tables)} tables from {database_name}")
         store_tables(
             table_lineage_store,
-            schema_name,
+            database_name,
+            all_schema_tables,
+            all_value_tables,
+            tables,
+            "table",
+            sql_connector,
+        )
+
+    if table_type in ("full", "view"):
+        views = sql_connector.get_views_with_ddl(catalog_name=catalog_name, database_name=database_name)
+        store_tables(
+            table_lineage_store,
+            database_name,
+            all_schema_tables,
+            all_value_tables,
+            views,
+            "view",
+            sql_connector,
+        )
+    if table_type in ("full", "view"):
+        materialized_views = sql_connector.get_materialized_views_with_ddl(
+            catalog_name=catalog_name, database_name=database_name
+        )
+        store_tables(
+            table_lineage_store,
+            database_name,
             all_schema_tables,
             all_value_tables,
             materialized_views,
@@ -307,12 +359,34 @@ def init_other_three_level_schema(
     table_type: TABLE_TYPE = "table",
     build_mode: str = "overwrite",
 ):
+    db_type = db_config.type
     database_name = database_name or getattr(db_config, "database", "")
     schema_name = getattr(db_config, "schema", "")
     catalog_name = getattr(db_config, "catalog", "")
-    sql_connector = db_manager.get_conn(agent_config.current_namespace, "")
-    if hasattr(sql_connector, "default_catalog"):
-        catalog_name = catalog_name or sql_connector.default_catalog()
+
+    sql_connector = db_manager.get_conn(agent_config.current_namespace)
+
+    if not database_name and hasattr(sql_connector, "database_name"):
+        database_name = getattr(sql_connector, "database_name", "")
+
+    if db_type == DBType.STARROCKS:
+        if hasattr(sql_connector, "default_catalog"):
+            catalog_name = catalog_name or sql_connector.default_catalog()
+        elif hasattr(sql_connector, "catalog_name"):
+            catalog_name = catalog_name or getattr(sql_connector, "catalog_name", "")
+        schema_name = ""
+    elif db_type == DBType.SNOWFLAKE:
+        catalog_name = ""
+        if not schema_name and hasattr(sql_connector, "schema_name"):
+            schema_name = getattr(sql_connector, "schema_name", "")
+    else:
+        if hasattr(sql_connector, "default_catalog"):
+            catalog_name = catalog_name or sql_connector.default_catalog()
+        elif hasattr(sql_connector, "catalog_name"):
+            catalog_name = catalog_name or getattr(sql_connector, "catalog_name", "")
+        if not schema_name and hasattr(sql_connector, "schema_name"):
+            schema_name = getattr(sql_connector, "schema_name", "")
+
     all_schema_tables, all_value_tables = exists_table_value(
         table_lineage_store,
         database_name=database_name,
@@ -323,7 +397,8 @@ def init_other_three_level_schema(
     )
 
     logger.info(
-        f"Exsits data from LanceDB {database_name}, tables={len(all_schema_tables)}," f"values={len(all_value_tables)}"
+        f"Exists data from LanceDB {catalog_name or '[no catalog]'}.{database_name}, tables={len(all_schema_tables)}, "
+        f"values={len(all_value_tables)}"
     )
     if table_type == "table" or table_type == "full":
         # Get all tables with DDL
@@ -351,6 +426,15 @@ def init_other_three_level_schema(
                         "definition": f"-- Table: {table_name} (DDL not available)",
                     }
                 )
+        for table in tables:
+            if not table.get("catalog_name"):
+                table["catalog_name"] = catalog_name
+            if not table.get("database_name"):
+                table["database_name"] = database_name
+            if db_type == DBType.STARROCKS:
+                table["schema_name"] = ""
+            elif not table.get("schema_name"):
+                table["schema_name"] = schema_name
         logger.info(f"Found {len(tables)} tables from {database_name}")
         store_tables(
             table_lineage_store,
@@ -366,6 +450,15 @@ def init_other_three_level_schema(
         views = sql_connector.get_views_with_ddl(
             catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
         )
+        for view in views:
+            if not view.get("catalog_name"):
+                view["catalog_name"] = catalog_name
+            if not view.get("database_name"):
+                view["database_name"] = database_name
+            if db_type == DBType.STARROCKS:
+                view["schema_name"] = ""
+            elif not view.get("schema_name"):
+                view["schema_name"] = schema_name
         store_tables(
             table_lineage_store,
             database_name,
@@ -375,11 +468,19 @@ def init_other_three_level_schema(
             "view",
             sql_connector,
         )
-
     if (table_type == "mv" or table_type == "full") and hasattr(sql_connector, "get_materialized_views_with_ddl"):
         materialized_views = sql_connector.get_materialized_views_with_ddl(
-            database_name=database_name, schema_name=schema_name
+            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
         )
+        for mv in materialized_views:
+            if not mv.get("catalog_name"):
+                mv["catalog_name"] = catalog_name
+            if not mv.get("database_name"):
+                mv["database_name"] = database_name
+            if db_type == DBType.STARROCKS:
+                mv["schema_name"] = ""
+            elif not mv.get("schema_name"):
+                mv["schema_name"] = schema_name
         store_tables(
             table_lineage_store,
             database_name,

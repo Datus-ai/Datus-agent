@@ -654,6 +654,8 @@ class Agent:
                         self.db_manager,
                         kb_update_strategy,
                         table_type=self.args.schema_linking_type,
+                        init_catalog_name=self.args.catalog or "",
+                        init_database_name=self.args.database_name or "",
                         pool_size=pool_size,
                     )
                 elif benchmark_platform == "spider2":

@@ -91,10 +91,16 @@ class StarRocksConnector(MySQLConnectorBase):
         return "default_catalog"
 
     @override
+    def _before_metadata_query(self, catalog_name: str = "", database_name: str = "") -> None:
+        target_catalog = catalog_name or self.catalog_name or self.default_catalog()
+        if target_catalog and target_catalog != self.catalog_name:
+            self.switch_context(catalog_name=target_catalog)
+
+    @override
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of views in the database."""
         try:
-            result = self._get_metadata(meta_table_name="VIEWS", catalog_name=catalog_name, database_name=database_name)
+            result = self._get_metadata(inner_table_type="view", catalog_name=catalog_name, database_name=database_name)
             return [view["table_name"] for view in result]
         except Exception as e:
             logger.warning(f"Failed to get views from StarRocks: {e}")
@@ -106,6 +112,17 @@ class StarRocksConnector(MySQLConnectorBase):
     @override
     def db_meta_table_type(self) -> List[str]:
         return ["TABLE", "BASE TABLE"]
+
+    def get_materialized_views(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> List[str]:
+        """Get list of materialized views in the database."""
+        try:
+            result = self._get_metadata(inner_table_type="mv", catalog_name=catalog_name, database_name=database_name)
+            return [view["table_name"] for view in result]
+        except Exception as e:
+            logger.warning(f"Failed to get views from StarRocks: {e}")
+            return []
 
     def get_materialized_views_with_ddl(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
@@ -119,28 +136,28 @@ class StarRocksConnector(MySQLConnectorBase):
             database_name: The database name to filter the materialized views.
             schema_name: The schema name to filter the materialized views.
         """
+        current_catalog = self.reset_catalog_to_default(catalog_name or self.catalog_name)
+
+        self._before_metadata_query(catalog_name=current_catalog, database_name=database_name)
+        query_sql = (
+            "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION FROM information_schema.materialized_views"
+        )
         if database_name:
-            query_sql = (
-                "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION "
-                "FROM information_schema.materialized_views "
-                f"WHERE TABLE_SCHEMA = '{database_name}'"
-            )
+            query_sql = f"{query_sql} WHERE TABLE_SCHEMA = '{database_name}'"
         else:
-            query_sql = (
-                "SELECT TABLE_SCHEMA,TABLE_NAME,MATERIALIZED_VIEW_DEFINITION FROM information_schema.materialized_views"
-                f"{list_to_in_str(' where TABLE_SCHEMA not in ', self.ignore_schemas())}"
-            )
+            query_sql = f"{query_sql}" f"{list_to_in_str(' where TABLE_SCHEMA not in ', self.ignore_schemas())}"
+
         result = self._execute_pandas(query_sql)
         view_list = []
         for i in range(len(result)):
             view_list.append(
                 {
                     "identifier": self.identifier(
-                        catalog_name=self.default_catalog(),
+                        catalog_name=current_catalog,
                         database_name=str(result["TABLE_SCHEMA"][i]),
                         table_name=str(result["TABLE_NAME"][i]),
                     ),
-                    "catalog_name": self.default_catalog(),
+                    "catalog_name": current_catalog,
                     "database_name": result["TABLE_SCHEMA"][i],
                     "schema_name": "",
                     "table_name": result["TABLE_NAME"][i],

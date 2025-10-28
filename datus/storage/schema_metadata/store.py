@@ -266,7 +266,7 @@ class SchemaWithValueRAG:
             final_values.append(item)
         self.value_store.store_batch(final_values)
 
-        logger.debug(f"store {len(schemas)} schemas, {len(final_values)} values")
+        logger.debug(f"Batch stored {len(schemas)} schemas, {len(final_values)} values")
 
     def after_init(self):
         """After init the schema and value, create the indices for the tables."""

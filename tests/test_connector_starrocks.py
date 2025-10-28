@@ -48,28 +48,33 @@ def test_get_views_with_ddl(connector: StarRocksConnector):
         assert view["table_name"]
         assert view["definition"]
         assert view["table_type"] == "view"
-        assert view["database_name"] == "ssb"
+        assert view["database_name"] == "quickstart"
         assert view["schema_name"] == ""
         assert view["catalog_name"]
         full_array = view["identifier"].split(".")
         assert len(full_array) == 3
         assert full_array[0] == "default_catalog"
-        assert full_array[1] == "ssb"
+        assert full_array[1] == "quickstart"
         assert full_array[2] == view["table_name"]
 
 
 def test_get_materialized_views_with_ddl(connector: StarRocksConnector):
-    views = connector.get_materialized_views_with_ddl(catalog_name="default_catalog")
+    views = connector.get_materialized_views_with_ddl(catalog_name="")
     assert len(views) >= 0
     for view in views:
         assert view["table_name"]
         assert view["definition"]
         assert view["table_type"] == "mv"
-        assert view["database_name"] == "ssb"
+        assert view["database_name"] == "quickstart"
         assert view["schema_name"] == ""
         assert view["catalog_name"] == "default_catalog"
         full_array = view["identifier"].split(".")
         assert len(full_array) == 3
+
+
+def test_get_materialized_views(connector: StarRocksConnector):
+    views = connector.get_materialized_views(catalog_name="default_catalog")
+    assert len(views) > 0
 
 
 def test_exceptions(connector: StarRocksConnector):
