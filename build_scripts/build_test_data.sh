@@ -1,3 +1,4 @@
+#!/bin/bash
 set -e
 
 python -m datus.main bootstrap-kb --config tests/conf/agent.yml --namespace bird_school --kb_update_strategy overwrite --debug
