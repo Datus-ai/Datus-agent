@@ -53,7 +53,7 @@ jobs:
         run: |
           echo "Building test data before running pytest..."
           chmod +x build_scripts/build_test_data.sh
-          ./build_scripts/build_test_data.sh
+          ./build_scripts/build_test_data.sh || exit 1
           echo "Test data build completed"
 
       - name: run pytest

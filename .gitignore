@@ -11,7 +11,12 @@
 /output*
 /tests/*.xlsx
 /tests/llm_find_tables
-tests/data/metricflow_csv/*
+/tests/data/metricflow_csv/*
+/tests/data/datus_db*
+/tests/save
+/tests/sessions
+/tests/semantic_models
+sql_processing_errors.log
 /conf/agent.yml
 /save
 uv.lock
