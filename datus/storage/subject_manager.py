@@ -26,7 +26,7 @@ class SubjectUpdater:
         self._agent_config = agent_config
         self.storage_cache = get_storage_cache_instance(self._agent_config)
         self.metrics_storage: MetricStorage = self.storage_cache.metrics_storage()
-        self.sql_storage: ReferenceSqlStorage = self.storage_cache.reference_sql_storage()
+        self.reference_sql_storage: ReferenceSqlStorage = self.storage_cache.reference_sql_storage()
 
     def _sub_agent_storage_metrics(self, sub_agent_config: SubAgentConfig) -> MetricStorage:
         name = sub_agent_config.system_prompt
@@ -69,7 +69,7 @@ class SubjectUpdater:
             )
         self.metrics_storage.update(where, update_values, unique_filter=unique_filter)
         logger.debug("Updated the domain layers of matrics in the main space successfully")
-        self.reference_sql_storage.update(where, update_values)
+        self.reference_sql_storage.update(where, update_values, unique_filter=unique_filter)
         logger.debug("Updated the domain layers of reference SQL in the main space successfully")
         for name, value in self._agent_config.agentic_nodes.items():
             sub_agent_config = SubAgentConfig.model_validate(value)
@@ -136,7 +136,7 @@ class SubjectUpdater:
         where = self._build_where(old_values, {"domain", "layer1", "layer2", "name"})
         if not where:
             return
-        self.sql_storage.update(where, cleaned_update_payload)
+        self.reference_sql_storage.update(where, cleaned_update_payload)
         logger.debug("Updated the reference SQL details in the main space successfully")
         for name, value in self._agent_config.agentic_nodes.items():
             sub_agent_config = SubAgentConfig.model_validate(value)

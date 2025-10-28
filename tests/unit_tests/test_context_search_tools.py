@@ -53,8 +53,8 @@ def build_context_tools(mock_agent_config):
             sql_rag.search_reference_sql_by_summary.side_effect = sql_cfg["search_sql_side_effect"]
 
         with (
-            patch("datus.tools.context_search.SemanticMetricsRAG", return_value=metric_rag),
-            patch("datus.tools.context_search.ReferenceSqlRAG", return_value=sql_rag),
+            patch("datus.tools.func_tool.context_search.SemanticMetricsRAG", return_value=metric_rag),
+            patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=sql_rag),
         ):
             tools = ContextSearchTools(mock_agent_config)
         return tools, metric_rag, sql_rag

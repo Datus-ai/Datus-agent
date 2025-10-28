@@ -34,7 +34,7 @@ agent:
       base_url: https://api.anthropic.com
       api_key: ${ANTHROPIC_API_KEY}
       #model: claude-3-7-sonnet-latest
-      model: claude-sonnet-4-20250514
+      model: claude-haiku-4-5
     kimi-k2:
       type: openai
       vendor: openai

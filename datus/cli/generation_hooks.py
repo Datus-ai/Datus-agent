@@ -180,7 +180,7 @@ class GenerationHooks(AgentHooks):
             file_path = ""
             if isinstance(result, dict):
                 result_msg = result.get("result", "")
-                if "File written successfully" in str(result_msg) or "SQL history file written successfully" in str(
+                if "File written successfully" in str(result_msg) or "Reference SQL file written successfully" in str(
                     result_msg
                 ):
                     parts = str(result_msg).split(": ")
@@ -188,7 +188,7 @@ class GenerationHooks(AgentHooks):
                         file_path = parts[-1].strip()
             elif hasattr(result, "result"):
                 result_msg = result.result
-                if "File written successfully" in str(result_msg) or "SQL history file written successfully" in str(
+                if "File written successfully" in str(result_msg) or "Reference SQL file written successfully" in str(
                     result_msg
                 ):
                     parts = str(result_msg).split(": ")
@@ -227,7 +227,7 @@ class GenerationHooks(AgentHooks):
 
             # Display generated YAML with syntax highlighting
             self.console.print("\n" + "=" * 60)
-            self.console.print("[bold green]Generated SQL History YAML[/]")
+            self.console.print("[bold green]Generated Reference SQL YAML[/]")
             self.console.print(f"[dim]File: {file_path}[/]")
             self.console.print("=" * 60)
 
@@ -323,7 +323,7 @@ class GenerationHooks(AgentHooks):
                 result = await loop.run_in_executor(
                     None, GenerationHooks._sync_reference_sql_to_db, file_path, self.agent_config
                 )
-                item_type = "SQL history"
+                item_type = "reference SQL"
             else:
                 self.console.print("[yellow]Unknown YAML type, cannot determine sync method[/]")
                 self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
@@ -564,10 +564,10 @@ class GenerationHooks(AgentHooks):
     @staticmethod
     def _sync_reference_sql_to_db(file_path: str, agent_config: AgentConfig, build_mode: str = "incremental") -> dict:
         """
-        Sync SQL history YAML file to Knowledge Base.
+        Sync reference SQL YAML file to Knowledge Base.
 
         Args:
-            file_path: Path to the SQL history YAML file
+            file_path: Path to the reference SQL YAML file
             agent_config: Agent configuration
             build_mode: "overwrite" or "incremental" (default: "incremental")
 
@@ -631,7 +631,7 @@ class GenerationHooks(AgentHooks):
             storage.store_batch([reference_sql_dict])
 
             logger.info(f"Successfully synced reference SQL {item_id} to Knowledge Base")
-            return {"success": True, "message": f"Synced SQL history: {reference_sql_dict['name']}"}
+            return {"success": True, "message": f"Synced reference SQL: {reference_sql_dict['name']}"}
 
         except Exception as e:
             logger.error(f"Error syncing reference SQL to DB: {e}", exc_info=True)

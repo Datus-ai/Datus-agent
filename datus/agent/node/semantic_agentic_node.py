@@ -45,7 +45,7 @@ class SemanticAgenticNode(AgenticNode):
     def __init__(
         self,
         node_name: str,
-        agent_config: Optional[AgentConfig] = None,
+        agent_config: AgentConfig,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
     ):
         """
