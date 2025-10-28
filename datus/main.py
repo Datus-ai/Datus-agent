@@ -119,6 +119,12 @@ def create_parser() -> argparse.ArgumentParser:
         "database names in MySQL, StarRocks, PostgreSQL, etc.; SQLite is not supported.",
     )
     bootstrap_parser.add_argument(
+        "--catalog",
+        type=str,
+        default="",
+        help="The catalog of database",
+    )
+    bootstrap_parser.add_argument(
         "--pool_size",
         type=int,
         default=4,
