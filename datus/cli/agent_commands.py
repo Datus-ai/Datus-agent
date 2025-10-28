@@ -503,9 +503,9 @@ class AgentCommands:
         layer2 = self.cli.prompt_input("Enter layer2 (optional)")
         return domain, layer1, layer2
 
-    def cmd_search_history(self, args: str):
+    def cmd_search_reference_sql(self, args: str):
         """
-        Command to search reference SQL queries. Corresponds to !sh
+        Command to search reference SQL queries. Corresponds to !sq and !search_sql
         """
         self.console.print("[bold blue]Search Reference SQL[/]")
         input_text = args.strip() or self.cli.prompt_input("Enter search text for reference SQL")

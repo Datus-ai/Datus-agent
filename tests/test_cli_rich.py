@@ -73,9 +73,9 @@ def test_schema_linking(mock_args, capsys, schema_linking_input: List[Dict[str, 
 
 # This is now a true integration test
 @pytest.mark.acceptance
-def test_search_history(mock_args, capsys, schema_linking_input: List[Dict[str, Any]]):
+def test_search_reference_sql(mock_args, capsys, schema_linking_input: List[Dict[str, Any]]):
     """
-    Tests the '!sh' command against the real execution logic.
+    Tests the '!sq' and '!search_sql' commands against the real execution logic.
     Asserts that the command runs and prints the result table structure.
     """
     input_data = schema_linking_input[0]["input"]
