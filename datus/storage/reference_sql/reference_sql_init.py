@@ -79,7 +79,7 @@ async def process_sql_item(
     Process a single SQL item using SqlSummaryAgenticNode in workflow mode.
 
     Args:
-        item: Dict containing sql, comment, filepath fields
+        item: Dict containing sql, comment, summary, filepath fields
         agent_config: Agent configuration
         build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
 
