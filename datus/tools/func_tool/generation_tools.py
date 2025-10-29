@@ -370,7 +370,11 @@ class GenerationTools:
                 - 'success' (int): 1 if successful, 0 if failed
                 - 'error' (str or None): Error message if failed
                 - 'result' (dict): Contains:
-                    - 'taxonomy' (dict): Classification taxonomy (predefined or from storage)
+                    - 'taxonomy' (dict): Classification taxonomy wrapper with:
+                        - 'taxonomy' (dict): The actual taxonomy
+                          (domains, layer1_categories, layer2_categories, common_tags)
+                        - 'message' (str): Info message (empty for predefined, stats for storage)
+                        - 'source' (str): Source type ("predefined", "storage", or "none")
                     - 'similar_items' (list): Similar SQL histories for reference
                     - 'name_check' (dict): Name uniqueness check result (if suggested_name provided)
                     - 'message' (str): Summary message
@@ -382,23 +386,33 @@ class GenerationTools:
             # 1. Get taxonomy (use predefined if available)
             if self.predefined_taxonomy:
                 result["taxonomy"] = {
-                    "domains": self.predefined_taxonomy.get("domains", []),
-                    "layer1_categories": self.predefined_taxonomy.get("layer1_categories", []),
-                    "layer2_categories": self.predefined_taxonomy.get("layer2_categories", []),
-                    "common_tags": self.predefined_taxonomy.get("common_tags", []),
+                    "taxonomy": {
+                        "domains": self.predefined_taxonomy.get("domains", []),
+                        "layer1_categories": self.predefined_taxonomy.get("layer1_categories", []),
+                        "layer2_categories": self.predefined_taxonomy.get("layer2_categories", []),
+                        "common_tags": self.predefined_taxonomy.get("common_tags", []),
+                    },
+                    "message": "",
                     "source": "predefined",
                 }
                 messages.append("Taxonomy: Using predefined subject_tree")
             else:
                 taxonomy_result = self._get_reference_sql_taxonomy()
                 if taxonomy_result.success:
-                    result["taxonomy"] = taxonomy_result.result
-                    result["taxonomy"]["source"] = "storage"
+                    result["taxonomy"] = {
+                        "taxonomy": taxonomy_result.result.get("taxonomy", taxonomy_result.result),
+                        "message": taxonomy_result.result.get("message", ""),
+                        "source": "storage",
+                    }
                     taxonomy_info = taxonomy_result.result.get("message", "")
                     messages.append(f"Taxonomy: {taxonomy_info}")
                 else:
                     logger.debug(f"Failed to get taxonomy: {taxonomy_result.error}")
-                    result["taxonomy"] = {"error": taxonomy_result.error, "source": "none"}
+                    result["taxonomy"] = {
+                        "taxonomy": None,
+                        "message": str(taxonomy_result.error),
+                        "source": "none",
+                    }
 
             # 2. Find similar reference SQLs
             similar_result = self._get_similar_reference_sqls(
