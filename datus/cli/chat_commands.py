@@ -104,8 +104,13 @@ class ChatCommands:
 
                 self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
                 return SemanticAgenticNode(
-                    node_name=subagent_name,
+                    node_id=f"{subagent_name}_cli",
+                    description=f"Semantic node for {subagent_name}",
+                    node_type=subagent_name,
+                    input_data=None,
                     agent_config=self.cli.agent_config,
+                    tools=None,
+                    node_name=subagent_name,
                 )
             # Use SqlSummaryAgenticNode for gen_sql_summary
             elif subagent_name == "gen_sql_summary":
@@ -113,8 +118,13 @@ class ChatCommands:
 
                 self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
                 return SqlSummaryAgenticNode(
-                    node_name=subagent_name,
+                    node_id="sql_summary_cli",
+                    description="SQL summary generation node",
+                    node_type="gen_sql_summary",
+                    input_data=None,
                     agent_config=self.cli.agent_config,
+                    tools=None,
+                    node_name=subagent_name,
                 )
             else:
                 # Create GenSQLAgenticNode for other subagents
@@ -122,15 +132,24 @@ class ChatCommands:
 
                 self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
                 return GenSQLAgenticNode(
-                    node_name=subagent_name,
+                    node_id=f"{subagent_name}_cli",
+                    description=f"SQL generation node for {subagent_name}",
+                    node_type="chatbot",
+                    input_data=None,
                     agent_config=self.cli.agent_config,
+                    tools=None,
+                    node_name=subagent_name,
                 )
         else:
             # Create ChatAgenticNode for default chat
             self.console.print("[dim]Creating new chat session...[/]")
             return ChatAgenticNode(
-                namespace=self.cli.agent_config.current_namespace,
+                node_id="chat_cli",
+                description="Chat node for CLI interactions",
+                node_type="chat",
+                input_data=None,
                 agent_config=self.cli.agent_config,
+                tools=None,
             )
 
     def create_node_input(
@@ -246,6 +265,9 @@ class ChatCommands:
                 message, current_node, at_tables, at_metrics, at_sqls, plan_mode
             )
 
+            # Set input on the node (new interface: input is accessed from self.input)
+            current_node.input = node_input
+
             # Display streaming execution
             self.console.print(f"[bold green]Processing {node_type} request...[/]")
 
@@ -260,7 +282,7 @@ class ChatCommands:
                 with action_display.display_streaming_actions(incremental_actions):
                     # Run the async streaming method
                     async def run_chat_stream():
-                        async for action in current_node.execute_stream(node_input, self.cli.actions):
+                        async for action in current_node.execute_stream(self.cli.actions):
                             incremental_actions.append(action)
 
                     # Execute the streaming chat
@@ -268,7 +290,7 @@ class ChatCommands:
             else:
                 # In plan mode, run without live display to avoid conflicts with plan hooks
                 async def run_chat_stream():
-                    async for action in current_node.execute_stream(node_input, self.cli.actions):
+                    async for action in current_node.execute_stream(self.cli.actions):
                         incremental_actions.append(action)
                         # No delay needed in plan mode
 

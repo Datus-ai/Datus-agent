@@ -60,10 +60,9 @@ class NodeType:
         TYPE_SEARCH_METRICS,
         TYPE_COMPARE,
         TYPE_DATE_PARSER,
+        TYPE_CHAT,
+        TYPE_CHATBOT,
     ]
-
-    # Agentic node types list
-    AGENTIC_TYPES = [TYPE_CHAT, TYPE_CHATBOT]
 
     NODE_TYPE_DESCRIPTIONS = {
         TYPE_BEGIN: "Beginning of the workflow",

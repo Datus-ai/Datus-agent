@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -62,6 +62,14 @@ class BaseResult(BaseModel):
 
     success: bool = Field(..., description="Indicates whether the operation was successful")
     error: Optional[str] = Field(None, description="Error message if operation failed")
+
+    # Action history and execution stats for agentic nodes
+    action_history: Optional[List[dict]] = Field(
+        default=None, description="Complete history of tool calls and actions during execution"
+    )
+    execution_stats: Optional[dict] = Field(
+        default=None, description="Execution statistics (tokens, tools called, duration, etc.)"
+    )
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value by key with an optional default value."""

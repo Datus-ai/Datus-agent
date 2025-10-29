@@ -84,6 +84,45 @@ def parse_trajectory_filename(filename: str):
         return None, None
 
 
+def analyze_action_history(node_result: Dict) -> Dict:
+    """Analyze action_history from node result.
+
+    Args:
+        node_result: Node result dict containing action_history
+
+    Returns:
+        Dict with tool call statistics
+    """
+    stats = {
+        "total_tool_calls": 0,
+        "tool_usage": defaultdict(int),
+        "tool_success_rate": defaultdict(lambda: {"success": 0, "total": 0}),
+    }
+
+    action_history = node_result.get("action_history", [])
+    if not action_history:
+        return stats
+
+    for action in action_history:
+        if action.get("role") == "tool":
+            tool_name = action.get("action_type", "unknown")
+            stats["total_tool_calls"] += 1
+            stats["tool_usage"][tool_name] += 1
+
+            stats["tool_success_rate"][tool_name]["total"] += 1
+            if action.get("status") == "success":
+                stats["tool_success_rate"][tool_name]["success"] += 1
+
+    # Convert defaultdicts to regular dicts
+    stats["tool_usage"] = dict(stats["tool_usage"])
+    stats["tool_success_rate"] = {
+        tool: (data["success"] / data["total"] * 100) if data["total"] > 0 else 0
+        for tool, data in stats["tool_success_rate"].items()
+    }
+
+    return stats
+
+
 def analyze_trajectory_file(filepath: str, task_id: str, gold_path: str, result_dir: str) -> Dict:
     """Analyze a single trajectory file and compare with gold standard.
 
@@ -117,6 +156,12 @@ def analyze_trajectory_file(filepath: str, task_id: str, gold_path: str, result_
             "completion_time": workflow.get("completion_time"),
             "status": workflow.get("status", "unknown"),
             "comparison_results": [],
+            "tool_call_summary": {
+                "total_tool_calls": 0,
+                "tool_usage": {},
+                "tool_success_rate": {},
+                "nodes_with_tools": 0,
+            },
         }
 
         nodes = workflow.get("nodes", [])
@@ -152,6 +197,25 @@ def analyze_trajectory_file(filepath: str, task_id: str, gold_path: str, result_
                 node_type = node.get("type", "unknown")
                 results["node_types"][node_type] += 1
 
+                # Analyze action_history if present (from agentic nodes)
+                node_result = node.get("result", {}) or {}
+                if node_result.get("action_history"):
+                    action_stats = analyze_action_history(node_result)
+                    results["tool_call_summary"]["total_tool_calls"] += action_stats["total_tool_calls"]
+                    results["tool_call_summary"]["nodes_with_tools"] += 1
+
+                    # Merge tool usage
+                    for tool, count in action_stats["tool_usage"].items():
+                        results["tool_call_summary"]["tool_usage"][tool] = (
+                            results["tool_call_summary"]["tool_usage"].get(tool, 0) + count
+                        )
+
+                    # Update tool success rates (will recalculate later)
+                    for tool, rate in action_stats["tool_success_rate"].items():
+                        if tool not in results["tool_call_summary"]["tool_success_rate"]:
+                            results["tool_call_summary"]["tool_success_rate"][tool] = []
+                        results["tool_call_summary"]["tool_success_rate"][tool].append(rate)
+
                 if node_type == "output":
                     results["output_nodes"] += 1
                     result = node.get("result", {}) or {}
@@ -172,6 +236,12 @@ def analyze_trajectory_file(filepath: str, task_id: str, gold_path: str, result_
                         results["errors"].append(f"node {node.get('id', 'unknown')}: {error_info}")
 
         results["node_types"] = dict(results["node_types"])
+
+        # Calculate average tool success rates
+        for tool, rates in results["tool_call_summary"]["tool_success_rate"].items():
+            if rates:
+                results["tool_call_summary"]["tool_success_rate"][tool] = sum(rates) / len(rates)
+
         return results
 
     except Exception as e:
@@ -389,6 +459,12 @@ def generate_evaluation_report(analysis_results: Dict) -> Dict:
     mismatched_task_ids = []
     empty_result_task_ids = []
 
+    # Tool call aggregation
+    total_tool_calls = 0
+    total_nodes_with_tools = 0
+    aggregated_tool_usage = defaultdict(int)
+    aggregated_tool_success_rates = defaultdict(list)
+
     for task_id, result in analysis_results.items():
         if "error" in result:
             failed_task_ids.append(task_id)
@@ -399,6 +475,18 @@ def generate_evaluation_report(analysis_results: Dict) -> Dict:
 
             if result["output_failure"] > 0:
                 failed_task_ids.append(task_id)
+
+            # Aggregate tool call statistics
+            tool_summary = result.get("tool_call_summary", {})
+            if tool_summary:
+                total_tool_calls += tool_summary.get("total_tool_calls", 0)
+                total_nodes_with_tools += tool_summary.get("nodes_with_tools", 0)
+
+                for tool, count in tool_summary.get("tool_usage", {}).items():
+                    aggregated_tool_usage[tool] += count
+
+                for tool, rate in tool_summary.get("tool_success_rate", {}).items():
+                    aggregated_tool_success_rates[tool].append(rate)
 
             for comp_result in result.get("comparison_results", []):
                 if comp_result.get("comparison"):
@@ -425,6 +513,18 @@ def generate_evaluation_report(analysis_results: Dict) -> Dict:
     # Calculate match rate
     match_rate = (successful_matches / total_comparisons * 100) if total_comparisons > 0 else 0.0
 
+    # Calculate average tool success rates
+    avg_tool_success_rates = {}
+    for tool, rates in aggregated_tool_success_rates.items():
+        if rates:
+            avg_tool_success_rates[tool] = round(sum(rates) / len(rates), 2)
+
+    # Calculate percentage for each tool
+    tool_usage_percentage = {}
+    if total_tool_calls > 0:
+        for tool, count in aggregated_tool_usage.items():
+            tool_usage_percentage[tool] = round((count / total_tool_calls) * 100, 2)
+
     report = {
         "status": "success",
         "generated_time": datetime.now().isoformat(),
@@ -441,6 +541,14 @@ def generate_evaluation_report(analysis_results: Dict) -> Dict:
                 "comparison_errors": comparison_errors,
                 "empty_result_errors": empty_result_errors,
                 "match_rate": round(match_rate, 2),
+            },
+            "tool_call_summary": {
+                "total_tool_calls": total_tool_calls,
+                "nodes_with_tools": total_nodes_with_tools,
+                "average_tools_per_task": round(total_tool_calls / total_files, 2) if total_files > 0 else 0,
+                "tool_usage": dict(aggregated_tool_usage),
+                "tool_usage_percentage": tool_usage_percentage,
+                "tool_success_rates": avg_tool_success_rates,
             },
         },
         "task_ids": {
@@ -761,6 +869,32 @@ def _log_accuracy_summary(accuracy_report: Dict):
             report_lines.append(f"Error rate: {error_rate:.1f}%")
 
     report_lines.append("")
+
+    # Tool Call Summary
+    tool_summary = summary.get("tool_call_summary", {})
+    if tool_summary and tool_summary.get("total_tool_calls", 0) > 0:
+        report_lines.append("TOOL CALL SUMMARY")
+        report_lines.append("-" * 40)
+        report_lines.append(f"Total tool calls across all tasks: {tool_summary['total_tool_calls']}")
+        report_lines.append(f"Tasks with tool calls: {tool_summary['nodes_with_tools']}")
+        report_lines.append(f"Average tool calls per task: {tool_summary['average_tools_per_task']:.2f}")
+        report_lines.append("")
+
+        report_lines.append("Tool usage breakdown:")
+        tool_usage = tool_summary.get("tool_usage", {})
+        tool_percentage = tool_summary.get("tool_usage_percentage", {})
+        for tool in sorted(tool_usage.keys()):
+            count = tool_usage[tool]
+            pct = tool_percentage.get(tool, 0)
+            report_lines.append(f"  - {tool}: {count} calls ({pct:.1f}%)")
+        report_lines.append("")
+
+        report_lines.append("Tool success rates:")
+        tool_success = tool_summary.get("tool_success_rates", {})
+        for tool in sorted(tool_success.keys()):
+            rate = tool_success[tool]
+            report_lines.append(f"  - {tool}: {rate:.1f}%")
+        report_lines.append("")
 
     # Task Breakdown by Category
     report_lines.append("TASK BREAKDOWN BY CATEGORY")

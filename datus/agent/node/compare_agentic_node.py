@@ -28,15 +28,38 @@ class CompareAgenticNode(AgenticNode):
 
     def __init__(
         self,
-        node_name: str,
+        node_id: str,
+        description: str,
+        node_type: str,
+        input_data: Optional[CompareInput] = None,
         agent_config: Optional[AgentConfig] = None,
+        tools: Optional[list] = None,
+        node_name: Optional[str] = None,
     ):
-        # Consider None or empty list as "not provided"
-        self.configured_node_name = node_name
+        """
+        Initialize CompareAgenticNode (CLI-compatible wrapper).
+
+        Args:
+            node_id: Unique identifier for the node
+            description: Human-readable description
+            node_type: Type of the node
+            input_data: Compare input data
+            agent_config: Agent configuration
+            tools: List of tools
+            node_name: Name of the node configuration
+        """
+        # Determine node name from node_type if not provided
+        self.configured_node_name = node_name or node_type
+
+        # Call parent constructor with all required Node parameters
         super().__init__(
-            tools=[],
-            mcp_servers={},
+            node_id=node_id,
+            description=description,
+            node_type=node_type,
+            input_data=input_data,
             agent_config=agent_config,
+            tools=tools or [],
+            mcp_servers={},
         )
 
         config_max_turns = self.node_config.get("max_turns")
@@ -153,12 +176,19 @@ class CompareAgenticNode(AgenticNode):
     @optional_traceable()
     async def execute_stream(
         self,
-        user_input: CompareInput,
         action_history_manager: Optional[ActionHistoryManager] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute SQL comparison with streaming support and action history tracking.
+
+        Input is accessed from self.input instead of parameters.
         """
+        # Get input from self.input (set by CLI or directly)
+        if not self.input:
+            raise ValueError("Compare input not set. Set self.input before calling execute_stream.")
+
+        user_input = self.input
+
         if not isinstance(user_input, CompareInput):
             raise ValueError("Input must be a CompareInput instance")
 
@@ -240,11 +270,24 @@ class CompareAgenticNode(AgenticNode):
                             self._add_session_tokens(tokens_used)
                             break
 
+            # Collect action history and calculate execution stats
+            all_actions = action_history_manager.get_actions()
+            tool_calls = [action for action in all_actions if action.role == ActionRole.TOOL]
+
+            execution_stats = {
+                "total_actions": len(all_actions),
+                "tool_calls_count": len(tool_calls),
+                "tools_used": list(set([a.action_type for a in tool_calls])),
+                "total_tokens": tokens_used,
+            }
+
             result = CompareResult(
                 success=True,
                 explanation=result_dict.get("explanation", "No explanation provided"),
                 suggest=result_dict.get("suggest", "No suggestions provided"),
                 tokens_used=tokens_used,
+                action_history=[action.model_dump() for action in all_actions],
+                execution_stats=execution_stats,
             )
 
             action_history_manager.update_action_by_id(

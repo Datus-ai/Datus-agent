@@ -11,69 +11,78 @@ streaming interactions with tool integration and action history management.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from abc import abstractmethod
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 
 from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
 
+from datus.agent.node.node import Node
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
+from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.agent.workflow import Workflow
 
 logger = get_logger(__name__)
 
 
-class AgenticNode(ABC):
+class AgenticNode(Node):
     """
     Base agentic node that provides session-based, streaming interactions
     with tool integration and automatic context management.
-
-    This is a new architecture that doesn't inherit from the existing Node class
-    and provides more flexible, agentic capabilities.
     """
 
     def __init__(
         self,
+        node_id: str,
+        description: str,
+        node_type: str,
+        input_data: BaseInput = None,
+        agent_config: Optional[AgentConfig] = None,
         tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
-        agent_config: Optional[AgentConfig] = None,
     ):
         """
         Initialize the agentic node.
 
         Args:
+            node_id: Unique identifier for the node
+            description: Human-readable description of the node
+            node_type: Type of the node (e.g., 'chat', 'chatbot')
+            input_data: Input data for the node
+            agent_config: Agent configuration
             tools: List of function tools available to this node
             mcp_servers: Dictionary of MCP servers available to this node
-            agent_config: Agent configuration
         """
-        self.tools = tools or []
+        # Initialize Node base class
+        super().__init__(node_id, description, node_type, input_data, agent_config, tools)
+
+        # AgenticNode-specific attributes
         self.mcp_servers = mcp_servers or {}
-        self.agent_config = agent_config
         self.plan_hooks = None
         self.actions: List[ActionHistory] = []
         self.session_id: Optional[str] = None
         self._session: Optional[SQLiteSession] = None
         self._session_tokens: int = 0
         self.last_summary: Optional[str] = None
+        self.context_length: Optional[int] = None
 
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
 
-        # Initialize the model using agent config
-        if agent_config:
+        # Override model initialization if node-specific model is configured
+        if agent_config and self.node_config.get("model"):
             model_name = self.node_config.get("model")
-            # Create model with agentic-node-specific or default model
             self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config)
-            # Store context length for efficient token validation
             self.context_length = self.model.context_length() if self.model else None
-        else:
-            self.model = None
-            self.context_length = None
 
     def get_node_name(self) -> str:
         """
@@ -437,9 +446,172 @@ class AgenticNode(ABC):
         logger.info(f"Parsed node configuration for '{node_name}': {config}")
         return config
 
+    def setup_input(self, workflow: "Workflow") -> Dict:
+        """
+        Setup input for agentic node from workflow context.
+
+        Default implementation extracts common fields from workflow context
+        and populates the input object. Subclasses can override for custom behavior.
+
+        Args:
+            workflow: Workflow instance containing context and task
+
+        Returns:
+            Dictionary with success status and message
+        """
+        if self.input is None:
+            self.input = BaseInput()
+
+        # Populate common fields from workflow context if input has these attributes
+        if hasattr(self.input, "catalog"):
+            self.input.catalog = workflow.task.catalog_name
+        if hasattr(self.input, "database"):
+            self.input.database = workflow.task.database_name
+        if hasattr(self.input, "db_schema"):
+            self.input.db_schema = workflow.task.schema_name
+        if hasattr(self.input, "schemas"):
+            self.input.schemas = workflow.context.table_schemas
+        if hasattr(self.input, "metrics"):
+            self.input.metrics = workflow.context.metrics
+
+        return {"success": True, "message": f"Agentic node {self.type} input prepared"}
+
+    def update_context(self, workflow: "Workflow") -> Dict:
+        """
+        Update workflow context with agentic node results.
+
+        Default implementation stores SQL results if present.
+        Subclasses can override for custom context updates.
+
+        Args:
+            workflow: Workflow instance to update
+
+        Returns:
+            Dictionary with success status and message
+        """
+        if not self.result:
+            return {"success": False, "message": "No result to update context"}
+
+        result = self.result
+
+        # Store SQL generation results if present
+        if hasattr(result, "sql") and result.sql:
+            from datus.schemas.node_models import SQLContext
+
+            new_record = SQLContext(
+                sql_query=result.sql,
+                explanation=getattr(result, "response", "") or getattr(result, "explanation", ""),
+            )
+            workflow.context.sql_contexts.append(new_record)
+
+        return {"success": True, "message": "Agentic node context updated"}
+
+    def execute(self) -> BaseResult:
+        """
+        Synchronous execution wrapper for agentic nodes.
+
+        Agentic nodes are async by nature, so this wraps the async method
+        to provide synchronous execution interface required by Node base class.
+
+        Returns:
+            BaseResult object with execution results
+        """
+        action_history_manager = ActionHistoryManager()
+
+        async def _run_async():
+            final_action = None
+            async for action in self.execute_stream(action_history_manager):
+                if action.status == ActionStatus.SUCCESS:
+                    final_action = action
+            return final_action
+
+        try:
+            # Get the final action from streaming execution
+            final_action = asyncio.run(_run_async())
+
+            # Extract result from final action output
+            if final_action and final_action.output:
+                output_data = final_action.output
+                if isinstance(output_data, dict):
+                    # Try to determine the result class from the subclass
+                    result_class = self._get_result_class()
+                    if result_class:
+                        try:
+                            self.result = result_class.model_validate(output_data)
+                        except Exception as e:
+                            logger.warning(f"Failed to validate result as {result_class.__name__}: {e}")
+                            # Fallback: create a generic BaseResult
+                            self.result = BaseResult(
+                                success=output_data.get("success", True),
+                                error=output_data.get("error"),
+                            )
+                    else:
+                        # No specific result class, create generic BaseResult
+                        self.result = BaseResult(
+                            success=output_data.get("success", True),
+                            error=output_data.get("error"),
+                        )
+                else:
+                    # Output is already a BaseResult instance
+                    self.result = output_data
+
+            if not self.result:
+                self.result = BaseResult(success=False, error="No result from execution")
+
+            return self.result
+
+        except Exception as e:
+            logger.error(f"Agentic node execution error: {e}")
+            self.result = BaseResult(success=False, error=str(e))
+            return self.result
+
+    def _get_result_class(self):
+        """
+        Get the result class for this node type.
+
+        Subclasses can override this to return their specific result class.
+        Default implementation tries to infer from common naming patterns.
+
+        Returns:
+            Result class or None if cannot determine
+        """
+        # Try to import and return the appropriate result class
+        class_name = self.__class__.__name__
+
+        # Map node class names to result class names
+        result_class_map = {
+            "ChatAgenticNode": "ChatNodeResult",
+            "GenSQLAgenticNode": "GenSQLNodeResult",
+            "CompareAgenticNode": "CompareResult",
+        }
+
+        result_class_name = result_class_map.get(class_name)
+        if not result_class_name:
+            return None
+
+        try:
+            # Try to import the result class from corresponding schema module
+            if class_name == "ChatAgenticNode":
+                from datus.schemas.chat_agentic_node_models import ChatNodeResult
+
+                return ChatNodeResult
+            elif class_name == "GenSQLAgenticNode":
+                from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeResult
+
+                return GenSQLNodeResult
+            elif class_name == "CompareAgenticNode":
+                from datus.schemas.compare_node_models import CompareResult
+
+                return CompareResult
+        except ImportError as e:
+            logger.debug(f"Could not import result class {result_class_name}: {e}")
+            return None
+
+        return None
+
     @abstractmethod
     async def execute_stream(
-        self, user_prompt: str, action_history_manager: Optional[ActionHistoryManager] = None
+        self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute the agentic node with streaming support.
@@ -447,8 +619,9 @@ class AgenticNode(ABC):
         This method should be implemented by subclasses to provide specific
         functionality while using the common session and tool management.
 
+        Input should be accessed from self.input instead of parameters.
+
         Args:
-            user_prompt: User input prompt
             action_history_manager: Optional action history manager for tracking
 
         Yields:
@@ -498,12 +671,6 @@ class AgenticNode(ABC):
         """
         Resolve workspace_root with priority: node-specific > global storage > legacy > default.
         Expands ~ to user home directory if present.
-
-        DEPRECATED: This method is maintained for backward compatibility with other nodes.
-        New specialized nodes (SemanticAgenticNode, SqlSummaryAgenticNode) should use
-        built-in directories from path_manager:
-        - semantic_model_path(namespace) for semantic models
-        - sql_summary_path(namespace) for SQL summaries
 
         Returns:
             Resolved workspace_root path with ~ expanded

@@ -14,8 +14,10 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult
 from datus.schemas.fix_node_models import FixInput
+from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.schemas.node_models import (
     BaseInput,
     BaseResult,
@@ -56,12 +58,14 @@ class Node(ABC):
     ):
         from datus.agent.node import (
             BeginNode,
+            ChatAgenticNode,
             CompareNode,
             DateParserNode,
             DocSearchNode,
             ExecuteSQLNode,
             FixNode,
             GenerateSQLNode,
+            GenSQLAgenticNode,
             HitlNode,
             OutputNode,
             ParallelNode,
@@ -105,6 +109,10 @@ class Node(ABC):
             return CompareNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_DATE_PARSER:
             return DateParserNode(node_id, description, node_type, input_data, agent_config)
+        elif node_type == NodeType.TYPE_CHAT:
+            return ChatAgenticNode(node_id, description, node_type, input_data, agent_config, tools)
+        elif node_type == NodeType.TYPE_CHATBOT:
+            return GenSQLAgenticNode(node_id, description, node_type, input_data, agent_config, tools)
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 
@@ -148,8 +156,13 @@ class Node(ABC):
         model_name = None
         nodes_config = {}
 
-        # Check if model is already set (e.g., by subworkflow config)
-        if self.model:
+        # Check if model is already initialized (e.g., by AgenticNode or subworkflow config)
+        if self.model and isinstance(self.model, LLMBaseModel):
+            # Model already initialized, skip re-initialization
+            logger.debug(f"Model already initialized for node {self.type}, skipping _initialize")
+            return
+        elif self.model:
+            # self.model contains a model name string
             model_name = self.model
         else:
             # Fall back to agent config
@@ -350,12 +363,16 @@ class Node(ABC):
                     input_data = FixInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
                     input_data = DateParserInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_CHAT:
+                    input_data = ChatNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_CHATBOT:
+                    input_data = GenSQLNodeInput(**input_data)
             except Exception as e:
                 logger.warning(f"Failed to convert input data for {node_dict['type']}: {e}")
                 input_data = None
 
         # Create node instance
-        node = cls(
+        node = cls.new_instance(
             node_id=node_dict["id"],
             description=node_dict["description"],
             node_type=node_dict["type"],
@@ -382,6 +399,10 @@ class Node(ABC):
                     result_data = ReasoningResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
                     result_data = DateParserResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_CHAT:
+                    result_data = ChatNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_CHATBOT:
+                    result_data = GenSQLNodeResult(**result_data)
                 elif "success" in result_data:
                     result_data = BaseResult(**result_data)
             except Exception as e:

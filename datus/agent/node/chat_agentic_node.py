@@ -13,6 +13,7 @@ from typing import AsyncGenerator, Dict, Optional
 from agents.mcp import MCPServerStdio
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
@@ -38,16 +39,26 @@ class ChatAgenticNode(AgenticNode):
 
     def __init__(
         self,
-        namespace: Optional[str] = None,
+        node_id: str,
+        description: str,
+        node_type: str,
+        input_data: Optional[ChatNodeInput] = None,
         agent_config: Optional[AgentConfig] = None,
+        tools: Optional[list] = None,
     ):
         """
-        Initialize the ChatAgenticNode.
+        Initialize the ChatAgenticNode as a workflow-compatible node.
 
         Args:
-            namespace: Database namespace for MCP server selection
+            node_id: Unique identifier for the node
+            description: Human-readable description of the node
+            node_type: Type of the node (should be 'chat')
+            input_data: Chat input data
             agent_config: Agent configuration
+            tools: List of tools (will be populated in setup_tools)
         """
+        # Extract namespace from agent_config
+        namespace = agent_config.current_namespace if agent_config else None
         self.namespace = namespace
 
         # Get max_turns from nodes configuration, default to 30
@@ -58,21 +69,136 @@ class ChatAgenticNode(AgenticNode):
                 self.max_turns = chat_node_config.input.max_turns
 
         # Initialize MCP servers based on namespace
-        self.mcp_servers = self._setup_mcp_servers(agent_config)
+        mcp_servers = self._setup_mcp_servers(agent_config)
 
+        # Call parent constructor with all required Node parameters
         super().__init__(
-            tools=[],
-            mcp_servers=self.mcp_servers,
+            node_id=node_id,
+            description=description,
+            node_type=node_type,
+            input_data=input_data,
             agent_config=agent_config,
+            tools=tools or [],
+            mcp_servers=mcp_servers,
         )
+
+        # ChatAgenticNode-specific attributes
         self.db_func_tool: DBFuncTool
         self.context_search_tools: ContextSearchTools
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.plan_mode_active = False
+
+        # Setup tools after initialization
         self.setup_tools()
 
+    def setup_input(self, workflow: Workflow) -> dict:
+        """
+        Setup chat input from workflow context.
+
+        Creates ChatNodeInput with user message from task and context data.
+
+        Args:
+            workflow: Workflow instance containing context and task
+
+        Returns:
+            Dictionary with success status and message
+        """
+        # Update database connection if task specifies a different database
+        task_database = workflow.task.database_name
+        if task_database and task_database != self.db_func_tool.connector.database_name:
+            logger.info(
+                f"Updating database connection from '{self.db_func_tool.connector.database_name}' "
+                f"to '{task_database}' based on workflow task"
+            )
+            self._update_database_connection(task_database)
+
+        # Create ChatNodeInput if not already set
+        if not self.input:
+            self.input = ChatNodeInput(
+                user_message=workflow.task.task,
+                catalog=workflow.task.catalog_name,
+                database=workflow.task.database_name,
+                db_schema=workflow.task.schema_name,
+                schemas=workflow.context.table_schemas,
+                metrics=workflow.context.metrics,
+                reference_sql=None,
+                plan_mode=False,
+            )
+        else:
+            # Update existing input with workflow data
+            self.input.user_message = workflow.task.task
+            self.input.catalog = workflow.task.catalog_name
+            self.input.database = workflow.task.database_name
+            self.input.db_schema = workflow.task.schema_name
+            self.input.schemas = workflow.context.table_schemas
+            self.input.metrics = workflow.context.metrics
+
+        return {"success": True, "message": "Chat input prepared from workflow"}
+
+    def update_context(self, workflow: Workflow) -> dict:
+        """
+        Update workflow context with chat results.
+
+        Stores SQL to workflow context if present in result.
+
+        Args:
+            workflow: Workflow instance to update
+
+        Returns:
+            Dictionary with success status and message
+        """
+        if not self.result:
+            return {"success": False, "message": "No result to update context"}
+
+        result = self.result
+
+        try:
+            if hasattr(result, "sql") and result.sql:
+                from datus.schemas.node_models import SQLContext
+
+                # Extract SQL result from the response if available
+                sql_result = ""
+                if hasattr(result, "response") and result.response:
+                    # Try to extract SQL result from the response
+                    _, sql_result = self._extract_sql_and_output_from_response({"content": result.response})
+                    sql_result = sql_result or ""
+
+                new_record = SQLContext(
+                    sql_query=result.sql,
+                    explanation=result.response if hasattr(result, "response") else "",
+                    sql_return=sql_result,
+                )
+                workflow.context.sql_contexts.append(new_record)
+
+            return {"success": True, "message": "Updated chat context"}
+        except Exception as e:
+            logger.error(f"Failed to update chat context: {e}")
+            return {"success": False, "message": str(e)}
+
+    def _update_database_connection(self, database_name: str):
+        """
+        Update database connection to a different database.
+
+        Args:
+            database_name: The name of the database to connect to
+        """
+        db_manager = db_manager_instance(self.agent_config.namespaces)
+        conn = db_manager.get_conn(self.agent_config.current_namespace, database_name)
+        self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
+        self._rebuild_tools()
+
+    def _rebuild_tools(self):
+        """Rebuild the tools list with current tool instances."""
+        self.tools = (
+            self.db_func_tool.available_tools()
+            + self.context_search_tools.available_tools()
+            + (self.date_parsing_tools.available_tools() if self.date_parsing_tools else [])
+            + (self.filesystem_func_tool.available_tools() if self.filesystem_func_tool else [])
+        )
+
     def setup_tools(self):
+        """Initialize all tools with default database connection."""
         # Only a single database connection is now supported
         db_manager = db_manager_instance(self.agent_config.namespaces)
         conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
@@ -80,12 +206,7 @@ class ChatAgenticNode(AgenticNode):
         self.context_search_tools = ContextSearchTools(self.agent_config)
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
-        self.tools = (
-            self.db_func_tool.available_tools()
-            + self.context_search_tools.available_tools()
-            + (self.date_parsing_tools.available_tools() if self.date_parsing_tools else [])
-            + (self.filesystem_func_tool.available_tools() if self.filesystem_func_tool else [])
-        )
+        self._rebuild_tools()
 
     def _setup_date_parsing_tools(self):
         """Setup date parsing tools."""
@@ -139,26 +260,24 @@ class ChatAgenticNode(AgenticNode):
         Set up MCP servers based on namespace and configuration.
 
         Args:
-            agent_config: Agent configuration (unused currently, kept for compatibility)
+            agent_config: Agent configuration
 
         Returns:
             Dictionary of MCP servers
         """
-        mcp_servers = {}
-
         # No MCP servers for chat node currently
         # (Previously had filesystem MCP server, now using native filesystem tools)
-
-        return mcp_servers
+        return {}
 
     async def execute_stream(
-        self, user_input: ChatNodeInput, action_history_manager: Optional[ActionHistoryManager] = None
+        self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute the chat interaction with streaming support.
 
+        Input is accessed from self.input instead of parameters.
+
         Args:
-            user_input: Chat input containing user message and context
             action_history_manager: Optional action history manager
 
         Yields:
@@ -166,6 +285,12 @@ class ChatAgenticNode(AgenticNode):
         """
         if not action_history_manager:
             action_history_manager = ActionHistoryManager()
+
+        # Get input from self.input (set by setup_input or directly)
+        if not self.input:
+            raise ValueError("Chat input not set. Call setup_input() first or set self.input directly.")
+
+        user_input = self.input
 
         is_plan_mode = getattr(user_input, "plan_mode", False)
         if is_plan_mode:
@@ -284,6 +409,7 @@ class ChatAgenticNode(AgenticNode):
                     last_successful_output.get("content", "")
                     or last_successful_output.get("text", "")
                     or last_successful_output.get("response", "")
+                    or last_successful_output.get("raw_output", "")  # Try raw_output from any action type
                     or str(last_successful_output)  # Fallback to string representation
                 )
 
@@ -338,12 +464,25 @@ class ChatAgenticNode(AgenticNode):
                             else:
                                 logger.warning(f"no usage token found in this action {action.messages}")
 
-            # Create final result
+            # Collect action history and calculate execution stats
+            all_actions = action_history_manager.get_actions()
+            tool_calls = [action for action in all_actions if action.role == ActionRole.TOOL]
+
+            execution_stats = {
+                "total_actions": len(all_actions),
+                "tool_calls_count": len(tool_calls),
+                "tools_used": list(set([a.action_type for a in tool_calls])),
+                "total_tokens": int(tokens_used),
+            }
+
+            # Create final result with action history
             result = ChatNodeResult(
                 success=True,
                 response=response_content,
                 sql=sql_content,
                 tokens_used=int(tokens_used),
+                action_history=[action.model_dump() for action in all_actions],
+                execution_stats=execution_stats,
             )
 
             # # Update assistant action with success
@@ -442,8 +581,8 @@ class ChatAgenticNode(AgenticNode):
         self,
         prompt: str,
         execution_mode: str,
-        original_input: "ChatNodeInput",
-        action_history_manager: "ActionHistoryManager",
+        original_input: ChatNodeInput,
+        action_history_manager: ActionHistoryManager,
         session,
     ):
         """
@@ -500,7 +639,7 @@ class ChatAgenticNode(AgenticNode):
             else:
                 raise
 
-    def _get_execution_config(self, execution_mode: str, original_input: "ChatNodeInput") -> dict:
+    def _get_execution_config(self, execution_mode: str, original_input: ChatNodeInput) -> dict:
         """
         Get execution configuration based on mode.
 
@@ -539,7 +678,7 @@ class ChatAgenticNode(AgenticNode):
         else:
             raise ValueError(f"Unknown execution mode: {execution_mode}")
 
-    def _get_system_instruction(self, original_input: "ChatNodeInput") -> str:
+    def _get_system_instruction(self, original_input: ChatNodeInput) -> str:
         """Get system instruction for normal mode."""
         _, conversation_summary = self._get_or_create_session()
         return self._get_system_prompt(conversation_summary, original_input.prompt_version)
@@ -547,8 +686,6 @@ class ChatAgenticNode(AgenticNode):
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """
         Extract SQL content and formatted output from model response.
-
-        Uses the existing llm_result2json utility for robust JSON parsing.
 
         Args:
             output: Output dictionary from model generation
@@ -567,60 +704,21 @@ class ChatAgenticNode(AgenticNode):
             if not isinstance(content, str) or not content.strip():
                 return None, None
 
-            # First, try direct parsing of the content
+            # Parse the JSON content
             parsed = llm_result2json(content, expected_type=dict)
 
             if parsed and isinstance(parsed, dict):
-                # Check if it has sql/output fields directly
-                if "sql" in parsed or "output" in parsed:
-                    sql = parsed.get("sql")
-                    output_text = parsed.get("output")
+                sql = parsed.get("sql")
+                output_text = parsed.get("output")
 
-                    # Unescape output content if present
-                    if output_text and isinstance(output_text, str):
-                        output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                # Unescape output content if present
+                if output_text and isinstance(output_text, str):
+                    output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
 
-                    return sql, output_text
-
-            # If direct parsing failed, try to handle nested raw_output structure
-            # Format: {'raw_output': '{"sql": "...", "output": "..."}'}
-            import ast
-
-            if content.strip().startswith("{'"):
-                try:
-                    parsed_dict = ast.literal_eval(content.strip())
-                    if isinstance(parsed_dict, dict) and "raw_output" in parsed_dict:
-                        # Parse the nested JSON in raw_output
-                        nested_parsed = llm_result2json(parsed_dict["raw_output"], expected_type=dict)
-
-                        if nested_parsed and isinstance(nested_parsed, dict):
-                            sql = nested_parsed.get("sql")
-                            output_text = nested_parsed.get("output")
-
-                            # Unescape output content
-                            if output_text and isinstance(output_text, str):
-                                output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
-
-                            return sql, output_text
-
-                except (ValueError, SyntaxError) as e:
-                    logger.debug(f"Failed to parse Python dict format: {e}")
+                return sql, output_text
 
             return None, None
 
         except Exception as e:
             logger.warning(f"Failed to extract SQL and output from response: {e}")
             return None, None
-
-    def _extract_sql_from_response(self, output: dict) -> Optional[str]:
-        """
-        Extract SQL content from model response (backward compatibility).
-
-        Args:
-            output: Output dictionary from model generation
-
-        Returns:
-            SQL string if found, None otherwise
-        """
-        sql_content, _ = self._extract_sql_and_output_from_response(output)
-        return sql_content

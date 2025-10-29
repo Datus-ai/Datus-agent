@@ -184,23 +184,19 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES)
-                        | set(NodeType.AGENTIC_TYPES)
-                        | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES) | {NodeType.TYPE_REFLECT},
                         "your_value": nodes_raw,
                     },
                 )
         for node_type, cfg in nodes_raw.items():
             if node_type == NodeType.TYPE_REFLECT:
                 pass
-            elif node_type not in NodeType.ACTION_TYPES and node_type not in NodeType.AGENTIC_TYPES:
+            elif node_type not in NodeType.ACTION_TYPES:
                 raise DatusException(
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES)
-                        | set(NodeType.AGENTIC_TYPES)
-                        | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES) | {NodeType.TYPE_REFLECT},
                         "your_value": node_type,
                     },
                 )

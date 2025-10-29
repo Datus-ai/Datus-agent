@@ -16,6 +16,7 @@ from typing import Any, AsyncGenerator, Dict, Optional, Union
 from agents.mcp import MCPServerStdio
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.agent_models import SubAgentConfig
@@ -43,19 +44,30 @@ class GenSQLAgenticNode(AgenticNode):
 
     def __init__(
         self,
-        node_name: str,
+        node_id: str,
+        description: str,
+        node_type: str,
+        input_data: Optional[GenSQLNodeInput] = None,
         agent_config: Optional[AgentConfig] = None,
+        tools: Optional[list] = None,
+        node_name: Optional[str] = None,
         max_turns: int = 30,
     ):
         """
-        Initialize the GenSQLAgenticNode.
+        Initialize the GenSQLAgenticNode as a workflow-compatible node.
 
         Args:
-            node_name: Name of the node configuration in agent.yml (e.g., "chatbot", "gen_sql")
+            node_id: Unique identifier for the node
+            description: Human-readable description of the node
+            node_type: Type of the node (should be 'chatbot')
+            input_data: SQL generation input data
             agent_config: Agent configuration
+            tools: List of tools (will be populated in setup_tools)
+            node_name: Name of the node configuration in agent.yml (e.g., "chatbot", "gen_sql")
             max_turns: Maximum conversation turns per interaction
         """
-        self.configured_node_name = node_name
+        # Determine node name from node_type if not provided
+        self.configured_node_name = node_name or node_type
         self.max_turns = max_turns
 
         # Initialize tool attributes BEFORE calling parent constructor
@@ -65,11 +77,15 @@ class GenSQLAgenticNode(AgenticNode):
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.date_parsing_tools: Optional[DateParsingTools] = None
 
-        # Call parent constructor to set up node_config
+        # Call parent constructor with all required Node parameters
         super().__init__(
-            tools=[],
-            mcp_servers={},  # Initialize empty, will setup after parent init
+            node_id=node_id,
+            description=description,
+            node_type=node_type,
+            input_data=input_data,
             agent_config=agent_config,
+            tools=tools or [],
+            mcp_servers={},  # Initialize empty, will setup after parent init
         )
 
         # Initialize MCP servers based on configuration (after node_config is available)
@@ -91,6 +107,70 @@ class GenSQLAgenticNode(AgenticNode):
             The configured node name from agent.yml (e.g., "chatbot", "gen_sql")
         """
         return self.configured_node_name
+
+    def setup_input(self, workflow: Workflow) -> dict:
+        """
+        Setup GenSQL input from workflow context.
+
+        Creates GenSQLNodeInput with user message from task and context data.
+
+        Args:
+            workflow: Workflow instance containing context and task
+
+        Returns:
+            Dictionary with success status and message
+        """
+        # Update database connection if task specifies a different database
+        task_database = workflow.task.database_name
+        if task_database and self.db_func_tool and task_database != self.db_func_tool.connector.database_name:
+            logger.info(
+                f"Updating database connection from '{self.db_func_tool.connector.database_name}' "
+                f"to '{task_database}' based on workflow task"
+            )
+            self._update_database_connection(task_database)
+
+        # Create GenSQLNodeInput if not already set
+        if not self.input or not isinstance(self.input, GenSQLNodeInput):
+            self.input = GenSQLNodeInput(
+                user_message=workflow.task.task,
+                catalog=workflow.task.catalog_name,
+                database=workflow.task.database_name,
+                db_schema=workflow.task.schema_name,
+            )
+        else:
+            # Update existing input with workflow data
+            self.input.user_message = workflow.task.task
+            self.input.catalog = workflow.task.catalog_name
+            self.input.database = workflow.task.database_name
+            self.input.db_schema = workflow.task.schema_name
+
+        return {"success": True, "message": "GenSQL input prepared from workflow"}
+
+    def _update_database_connection(self, database_name: str):
+        """
+        Update database connection to a different database.
+
+        Args:
+            database_name: The name of the database to connect to
+        """
+        db_manager = db_manager_instance(self.agent_config.namespaces)
+        conn = db_manager.get_conn(self.agent_config.current_namespace, database_name)
+        self.db_func_tool = DBFuncTool(
+            conn,
+            agent_config=self.agent_config,
+            sub_agent_name=self.node_config.get("system_prompt"),
+        )
+        self._rebuild_tools()
+
+    def _rebuild_tools(self):
+        """Rebuild the tools list with current tool instances."""
+        self.tools = []
+        if self.db_func_tool:
+            self.tools.extend(self.db_func_tool.available_tools())
+        if self.context_search_tools:
+            self.tools.extend(self.context_search_tools.available_tools())
+        if self.date_parsing_tools:
+            self.tools.extend(self.date_parsing_tools.available_tools())
 
     def setup_tools(self):
         """Setup tools based on configuration."""
@@ -349,13 +429,14 @@ class GenSQLAgenticNode(AgenticNode):
             ) from e
 
     async def execute_stream(
-        self, user_input: GenSQLNodeInput, action_history_manager: Optional[ActionHistoryManager] = None
+        self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute the customized node interaction with streaming support.
 
+        Input is accessed from self.input instead of parameters.
+
         Args:
-            user_input: Customized input containing user message and context
             action_history_manager: Optional action history manager
 
         Yields:
@@ -363,6 +444,12 @@ class GenSQLAgenticNode(AgenticNode):
         """
         if not action_history_manager:
             action_history_manager = ActionHistoryManager()
+
+        # Get input from self.input (set by setup_input or directly)
+        if not self.input:
+            raise ValueError("GenSQL input not set. Call setup_input() first or set self.input directly.")
+
+        user_input = self.input
 
         # Create initial action
         action = ActionHistory.create_action(
@@ -442,6 +529,7 @@ class GenSQLAgenticNode(AgenticNode):
                         response_content = (
                             stream_action.output.get("content", "")
                             or stream_action.output.get("response", "")
+                            or stream_action.output.get("raw_output", "")
                             or response_content
                         )
 
@@ -453,6 +541,7 @@ class GenSQLAgenticNode(AgenticNode):
                     last_successful_output.get("content", "")
                     or last_successful_output.get("text", "")
                     or last_successful_output.get("response", "")
+                    or last_successful_output.get("raw_output", "")
                     or str(last_successful_output)  # Fallback to string representation
                 )
 
@@ -506,16 +595,29 @@ class GenSQLAgenticNode(AgenticNode):
                             else:
                                 logger.warning(f"no usage token found in this action {action.messages}")
 
-            # Create final result
+            # Collect action history and calculate execution stats
+            all_actions = action_history_manager.get_actions()
+            tool_calls = [action for action in all_actions if action.role == ActionRole.TOOL]
+
+            execution_stats = {
+                "total_actions": len(all_actions),
+                "tool_calls_count": len(tool_calls),
+                "tools_used": list(set([a.action_type for a in tool_calls])),
+                "total_tokens": int(tokens_used),
+            }
+
+            # Create final result with action history
             result = GenSQLNodeResult(
                 success=True,
                 response=response_content,
                 sql=sql_content,
                 tokens_used=int(tokens_used),
+                action_history=[action.model_dump() for action in all_actions],
+                execution_stats=execution_stats,
             )
 
             # Add to internal actions list
-            self.actions.extend(action_history_manager.get_actions())
+            self.actions.extend(all_actions)
 
             # Create final action
             final_action = ActionHistory.create_action(
@@ -564,6 +666,7 @@ class GenSQLAgenticNode(AgenticNode):
         Extract SQL content and formatted output from model response.
 
         Uses the existing llm_result2json utility for robust JSON parsing.
+        Handles the expected template format: {"sql": "...", "tables": [...], "explanation": "..."}
 
         Args:
             output: Output dictionary from model generation
@@ -582,63 +685,42 @@ class GenSQLAgenticNode(AgenticNode):
             if not isinstance(content, str) or not content.strip():
                 return None, None
 
-            # First, try direct parsing of the content
+            # Parse the JSON content
             parsed = llm_result2json(content, expected_type=dict)
 
             if parsed and isinstance(parsed, dict):
-                # Check if it has sql/output fields directly
-                if "sql" in parsed or "output" in parsed:
-                    sql = parsed.get("sql")
+                # Extract SQL
+                sql = parsed.get("sql")
+
+                # Build output from explanation and tables if available
+                output_text = None
+                explanation = parsed.get("explanation", "")
+                tables = parsed.get("tables", [])
+
+                # If we have explanation or tables, format them as output
+                if explanation or tables:
+                    output_parts = []
+                    if explanation:
+                        output_parts.append(f"Explanation: {explanation}")
+                    if tables:
+                        tables_str = ", ".join(tables) if isinstance(tables, list) else str(tables)
+                        output_parts.append(f"Tables used: {tables_str}")
+                    output_text = "\n".join(output_parts)
+
+                # Fallback to direct output field if no explanation/tables
+                if not output_text:
                     output_text = parsed.get("output")
 
-                    # Unescape output content if present
-                    if output_text and isinstance(output_text, str):
-                        output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                # Unescape output content if present
+                if output_text and isinstance(output_text, str):
+                    output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
 
-                    return sql, output_text
-
-            # If direct parsing failed, try to handle nested raw_output structure
-            # Format: {'raw_output': '{"sql": "...", "output": "..."}'}
-            import ast
-
-            if content.strip().startswith("{'"):
-                try:
-                    parsed_dict = ast.literal_eval(content.strip())
-                    if isinstance(parsed_dict, dict) and "raw_output" in parsed_dict:
-                        # Parse the nested JSON in raw_output
-                        nested_parsed = llm_result2json(parsed_dict["raw_output"], expected_type=dict)
-
-                        if nested_parsed and isinstance(nested_parsed, dict):
-                            sql = nested_parsed.get("sql")
-                            output_text = nested_parsed.get("output")
-
-                            # Unescape output content
-                            if output_text and isinstance(output_text, str):
-                                output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
-
-                            return sql, output_text
-
-                except (ValueError, SyntaxError) as e:
-                    logger.debug(f"Failed to parse Python dict format: {e}")
+                return sql, output_text
 
             return None, None
-
         except Exception as e:
             logger.warning(f"Failed to extract SQL and output from response: {e}")
             return None, None
-
-    def _extract_sql_from_response(self, output: dict) -> Optional[str]:
-        """
-        Extract SQL content from model response (backward compatibility).
-
-        Args:
-            output: Output dictionary from model generation
-
-        Returns:
-            SQL string if found, None otherwise
-        """
-        sql_content, _ = self._extract_sql_and_output_from_response(output)
-        return sql_content
 
 
 def prepare_template_context(

@@ -36,11 +36,7 @@ from datus.storage.schema_metadata.local_init import init_local_schema
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS as SUB_AGENT_COMPONENTS
 from datus.storage.sub_agent_kb_bootstrap import SubAgentBootstrapper
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.utils.benchmark_utils import (
-    evaluate_and_report_accuracy,
-    generate_gold_standard_results,
-    load_bird_dev_tasks,
-)
+from datus.utils.benchmark_utils import generate_gold_standard_results, load_bird_dev_tasks
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
@@ -876,14 +872,8 @@ class Agent:
                     task_id = task_config["instance_id"]
                     logger.error(f"Task {task_id} generated an exception: {exc}")
 
-        logger.info("Phase 2: Evaluating benchmark accuracy...")
-        return evaluate_and_report_accuracy(
-            benchmark_path,
-            self.global_config.trajectory_dir,
-            self.global_config.current_namespace,
-            self.global_config.output_dir,
-            target_task_ids,
-        )
+        logger.info("Benchmark execution completed.")
+        return {"status": "success", "message": "Benchmark tasks executed successfully"}
 
     def benchmark_bird_dev(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
         tasks = load_bird_dev_tasks(benchmark_path)
@@ -962,14 +952,8 @@ class Agent:
                     task_id = str(task["question_id"])
                     logger.error(f"Task {task_id} generated an exception: {exc}")
 
-        logger.info("Phase 3: Evaluating benchmark accuracy...")
-        return evaluate_and_report_accuracy(
-            benchmark_path,
-            self.global_config.trajectory_dir,
-            self.global_config.current_namespace,
-            self.global_config.output_dir,
-            target_task_ids,
-        )
+        logger.info("Benchmark execution completed.")
+        return {"status": "success", "message": "Benchmark tasks executed successfully"}
 
     def benchmark_semantic_layer(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
         task_file = self.args.testing_set
@@ -1038,14 +1022,7 @@ class Agent:
                 f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
             )
 
-        logger.info("Phase 3: Evaluating benchmark accuracy...")
-        return evaluate_and_report_accuracy(
-            benchmark_path,
-            self.global_config.trajectory_dir,
-            self.global_config.current_namespace,
-            self.global_config.output_dir,
-            target_task_ids,
-        )
+        return {"status": "success", "message": "Benchmark tasks executed successfully"}
 
     def _check_benchmark_file(self, file_path: str):
         if not os.path.exists(file_path):

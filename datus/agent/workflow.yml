@@ -29,3 +29,14 @@ workflow:
     - generate_sql
     - execute_sql
     - output
+
+  # Agentic workflow using ChatAgenticNode
+  chat_agentic:
+    - chat
+    - execute_sql
+    - output
+
+  gensql_agentic:
+    - chatbot
+    - execute_sql
+    - output
