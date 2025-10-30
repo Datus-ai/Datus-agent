@@ -263,7 +263,7 @@ python -m datus.main bootstrap-kb --namespace bird_sqlite --benchmark bird_dev -
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium --benchmark_task_ids 14 15
+python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --workflow fixed --schema_linking_rate medium --benchmark_task_ids 14 15
 ```
 
 ```bash
@@ -271,7 +271,7 @@ python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --sc
 ```
 
 ```bash
-python -m datus.main benchmarking --benchmark bird_dev --plan fixed --schema_linking_model medium
+python -m datus.main benchmarking --benchmark bird_dev --workflow fixed --schema_linking_model medium
 ```
 
 ### Using cli to develop
@@ -342,5 +342,5 @@ python -m datus.main bootstrap-kb --namespace duckdb --components metrics --metr
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --plan metric_to_sql --metric_meta tutorial
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --workflow metric_to_sql --metric_meta tutorial
 ```

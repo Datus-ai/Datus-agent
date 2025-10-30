@@ -176,17 +176,17 @@ Workflows can be configured with parameters:
 
 ```bash
 # Use specific workflow
-datus run --namespace your_db --task "your query" --plan reflection
+datus run --namespace your_db --task "your query" --workflow reflection
 
 # Use custom workflow
-datus run --namespace your_db --task "your query" --plan custom_analytics
+datus run --namespace your_db --task "your query" --workflow custom_analytics
 ```
 
 ### Available Parameters
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `--plan` | Workflow type to execute | `reflection` | `reflection`, `fixed`, `metric_to_sql`, custom |
+| `--workflow` | Workflow type to execute | `reflection` | `reflection`, `fixed`, `metric_to_sql`, custom |
 | `--namespace` | Database namespace | Required | Any configured namespace |
 | `--task` | Natural language query | Required | Any string |
 | `--max_iterations` | Maximum reflection rounds | `3` | Integer |

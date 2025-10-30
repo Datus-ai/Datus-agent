@@ -41,7 +41,7 @@ python datus/api/server.py \
   --namespace your_namespace \
   --config conf/agent.yml \
   --max_steps 20 \
-  --plan fixed
+  --workflow fixed
 ```
 
 ### Daemon Options

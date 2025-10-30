@@ -309,18 +309,25 @@ class SemanticAgenticNode(AgenticNode):
             ) from e
 
     async def execute_stream(
-        self, user_input: SemanticNodeInput, action_history_manager: Optional[ActionHistoryManager] = None
+        self,
+        user_input: Optional[SemanticNodeInput] = None,
+        action_history_manager: Optional[ActionHistoryManager] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute the semantic node interaction with streaming support.
 
         Args:
-            user_input: Customized input containing user message and context
+            user_input: Customized input containing user message and context (optional, can use self.input)
             action_history_manager: Optional action history manager
 
         Yields:
             ActionHistory: Progress updates during execution
         """
+        # Support both direct parameter and self.input
+        if user_input is None:
+            if self.input is None:
+                raise ValueError("Semantic input not set. Provide user_input parameter or set self.input.")
+            user_input = self.input
         if not action_history_manager:
             action_history_manager = ActionHistoryManager()
 

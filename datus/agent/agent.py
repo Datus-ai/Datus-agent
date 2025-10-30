@@ -126,8 +126,8 @@ class Agent:
         """
         Generate an initial workflow using the planning module.
         """
-        # Use plan from args if provided, otherwise use config default
-        plan_type = getattr(self.args, "plan", None) or self.global_config.workflow_plan
+        # Use workflow from args if provided, otherwise use config default
+        plan_type = getattr(self.args, "workflow", None) or self.global_config.workflow_plan
 
         self.workflow = generate_workflow(
             task=sql_task,

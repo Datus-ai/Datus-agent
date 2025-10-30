@@ -158,7 +158,7 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
         namespace=args.namespace,
         config=args.config,
         max_steps=args.max_steps,
-        plan=args.plan,
+        workflow=args.workflow,
         load_cp=args.load_cp,
         debug=args.debug,
     )

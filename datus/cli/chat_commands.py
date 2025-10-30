@@ -274,7 +274,7 @@ class ChatCommands:
                 with action_display.display_streaming_actions(incremental_actions):
                     # Run the async streaming method
                     async def run_chat_stream():
-                        async for action in current_node.execute_stream(self.cli.actions):
+                        async for action in current_node.execute_stream(action_history_manager=self.cli.actions):
                             incremental_actions.append(action)
 
                     # Execute the streaming chat
@@ -282,7 +282,7 @@ class ChatCommands:
             else:
                 # In plan mode, run without live display to avoid conflicts with plan hooks
                 async def run_chat_stream():
-                    async for action in current_node.execute_stream(self.cli.actions):
+                    async for action in current_node.execute_stream(action_history_manager=self.cli.actions):
                         incremental_actions.append(action)
                         # No delay needed in plan mode
 

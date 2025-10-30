@@ -296,7 +296,7 @@ def create_parser() -> argparse.ArgumentParser:
     for p in [run_parser, benchmark_parser]:
         workflow_group = p.add_argument_group("Workflow Configuration")
         workflow_group.add_argument(
-            "--plan",
+            "--workflow",
             type=str,
             help="Workflow planning strategy (can be builtin: fixed, reflection, dynamic, empty or custom plan name)",
         )
