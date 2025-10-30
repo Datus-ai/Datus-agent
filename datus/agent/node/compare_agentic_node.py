@@ -171,25 +171,19 @@ class CompareAgenticNode(AgenticNode):
     @optional_traceable()
     async def execute_stream(
         self,
-        user_input: Optional[CompareInput] = None,
+        user_input: CompareInput,
         action_history_manager: Optional[ActionHistoryManager] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute SQL comparison with streaming support and action history tracking.
 
         Args:
-            user_input: Compare input containing SQL task and expectation (optional, can use self.input)
+            user_input: Compare input containing SQL task and expectation
             action_history_manager: Optional action history manager
 
         Yields:
             ActionHistory: Progress updates during execution
         """
-        # Support both direct parameter and self.input
-        if user_input is None:
-            if self.input is None:
-                raise ValueError("Compare input not set. Provide user_input parameter or set self.input.")
-            user_input = self.input
-
         if not isinstance(user_input, CompareInput):
             raise ValueError("Input must be a CompareInput instance")
 
@@ -271,24 +265,11 @@ class CompareAgenticNode(AgenticNode):
                             self._add_session_tokens(tokens_used)
                             break
 
-            # Collect action history and calculate execution stats
-            all_actions = action_history_manager.get_actions()
-            tool_calls = [action for action in all_actions if action.role == ActionRole.TOOL]
-
-            execution_stats = {
-                "total_actions": len(all_actions),
-                "tool_calls_count": len(tool_calls),
-                "tools_used": list(set([a.action_type for a in tool_calls])),
-                "total_tokens": tokens_used,
-            }
-
             result = CompareResult(
                 success=True,
                 explanation=result_dict.get("explanation", "No explanation provided"),
                 suggest=result_dict.get("suggest", "No suggestions provided"),
                 tokens_used=tokens_used,
-                action_history=[action.model_dump() for action in all_actions],
-                execution_stats=execution_stats,
             )
 
             action_history_manager.update_action_by_id(

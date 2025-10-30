@@ -172,9 +172,14 @@ class Node(ABC):
                 node_config = nodes_config[self.type]
                 model_name = node_config.model
                 node_input = node_config.input
-                for attr, value in node_input.__dict__.items():
-                    if value is not None:
-                        setattr(self.input, attr, value)
+                # If self.input is None, use node_input directly
+                if self.input is None:
+                    self.input = node_input
+                # Otherwise, apply non-None values from node_input as defaults
+                elif node_input is not None:
+                    for attr, value in node_input.__dict__.items():
+                        if value is not None:
+                            setattr(self.input, attr, value)
 
         llm_model = LLMBaseModel.create_model(model_name=model_name, agent_config=self.agent_config)
         logger.info(
