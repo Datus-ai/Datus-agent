@@ -78,11 +78,19 @@ class SqlSummaryAgenticNode(AgenticNode):
         path_manager = get_path_manager()
         self.sql_summary_dir = str(path_manager.sql_summary_path(agent_config.current_namespace))
 
+        from datus.configuration.node_type import NodeType
+
+        node_type = NodeType.TYPE_SQL_SUMMARY
+
         # Call parent constructor first to set up node_config
         super().__init__(
+            node_id="sql_summary_node",
+            description="SQL summary generation node",
+            node_type=node_type,
+            input_data=None,
+            agent_config=agent_config,
             tools=[],
             mcp_servers={},
-            agent_config=agent_config,
         )
 
         # Setup tools based on hardcoded configuration

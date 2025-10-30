@@ -56,7 +56,7 @@ class AgenticNode(Node):
         Args:
             node_id: Unique identifier for the node
             description: Human-readable description of the node
-            node_type: Type of the node (e.g., 'chat', 'chatbot')
+            node_type: Type of the node (e.g., 'chat', 'gensql')
             input_data: Input data for the node
             agent_config: Agent configuration
             tools: List of function tools available to this node
@@ -112,19 +112,12 @@ class AgenticNode(Node):
 
         The template name follows the pattern: {get_node_name()}_system_{version}
 
-        NOTE: workspace_root in template variables is DEPRECATED.
-        Specialized nodes should use built-in directories (semantic_model_dir, sql_summary_dir)
-        instead of workspace_root.
-
         Args:
             conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use, overrides agent config version
 
         Returns:
             System prompt string loaded from the template
-
-        Raises:
-            DatusException: If template is not found
         """
         # Get prompt version from parameter, fallback to agent config, then use default
         version = prompt_version

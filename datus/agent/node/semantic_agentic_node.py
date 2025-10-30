@@ -69,11 +69,19 @@ class SemanticAgenticNode(AgenticNode):
         path_manager = get_path_manager()
         self.semantic_model_dir = str(path_manager.semantic_model_path(agent_config.current_namespace))
 
+        from datus.configuration.node_type import NodeType
+
+        node_type = NodeType.TYPE_SEMANTIC
+
         # Call parent constructor first to set up node_config
         super().__init__(
+            node_id=f"{node_name}_node",
+            description=f"Semantic model generation node: {node_name}",
+            node_type=node_type,
+            input_data=None,
+            agent_config=agent_config,
             tools=[],
             mcp_servers={},  # Initialize empty, will setup after parent init
-            agent_config=agent_config,
         )
 
         # Initialize MCP servers based on hardcoded configuration

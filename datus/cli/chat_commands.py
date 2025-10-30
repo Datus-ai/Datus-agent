@@ -104,13 +104,9 @@ class ChatCommands:
 
                 self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
                 return SemanticAgenticNode(
-                    node_id=f"{subagent_name}_cli",
-                    description=f"Semantic node for {subagent_name}",
-                    node_type=subagent_name,
-                    input_data=None,
-                    agent_config=self.cli.agent_config,
-                    tools=None,
                     node_name=subagent_name,
+                    agent_config=self.cli.agent_config,
+                    execution_mode="interactive",
                 )
             # Use SqlSummaryAgenticNode for gen_sql_summary
             elif subagent_name == "gen_sql_summary":
@@ -118,13 +114,9 @@ class ChatCommands:
 
                 self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
                 return SqlSummaryAgenticNode(
-                    node_id="sql_summary_cli",
-                    description="SQL summary generation node",
-                    node_type="gen_sql_summary",
-                    input_data=None,
-                    agent_config=self.cli.agent_config,
-                    tools=None,
                     node_name=subagent_name,
+                    agent_config=self.cli.agent_config,
+                    execution_mode="interactive",
                 )
             else:
                 # Create GenSQLAgenticNode for other subagents
@@ -134,7 +126,7 @@ class ChatCommands:
                 return GenSQLAgenticNode(
                     node_id=f"{subagent_name}_cli",
                     description=f"SQL generation node for {subagent_name}",
-                    node_type="chatbot",
+                    node_type="gensql",
                     input_data=None,
                     agent_config=self.cli.agent_config,
                     tools=None,

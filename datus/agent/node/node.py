@@ -55,6 +55,7 @@ class Node(ABC):
         input_data: BaseInput = None,
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[List[Tool]] = None,
+        node_name: Optional[str] = None,
     ):
         from datus.agent.node import (
             BeginNode,
@@ -111,8 +112,8 @@ class Node(ABC):
             return DateParserNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_CHAT:
             return ChatAgenticNode(node_id, description, node_type, input_data, agent_config, tools)
-        elif node_type == NodeType.TYPE_CHATBOT:
-            return GenSQLAgenticNode(node_id, description, node_type, input_data, agent_config, tools)
+        elif node_type == NodeType.TYPE_GENSQL:
+            return GenSQLAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 
@@ -365,7 +366,7 @@ class Node(ABC):
                     input_data = DateParserInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:
                     input_data = ChatNodeInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_CHATBOT:
+                elif node_dict["type"] == NodeType.TYPE_GENSQL:
                     input_data = GenSQLNodeInput(**input_data)
             except Exception as e:
                 logger.warning(f"Failed to convert input data for {node_dict['type']}: {e}")
@@ -401,7 +402,7 @@ class Node(ABC):
                     result_data = DateParserResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:
                     result_data = ChatNodeResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_CHATBOT:
+                elif node_dict["type"] == NodeType.TYPE_GENSQL:
                     result_data = GenSQLNodeResult(**result_data)
                 elif "success" in result_data:
                     result_data = BaseResult(**result_data)

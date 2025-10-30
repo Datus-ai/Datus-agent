@@ -106,7 +106,7 @@ class ChatAgenticNode(AgenticNode):
         """
         # Update database connection if task specifies a different database
         task_database = workflow.task.database_name
-        if task_database and task_database != self.db_func_tool.connector.database_name:
+        if task_database and self.db_func_tool and task_database != self.db_func_tool.connector.database_name:
             logger.info(
                 f"Updating database connection from '{self.db_func_tool.connector.database_name}' "
                 f"to '{task_database}' based on workflow task"

@@ -59,11 +59,11 @@ class GenSQLAgenticNode(AgenticNode):
         Args:
             node_id: Unique identifier for the node
             description: Human-readable description of the node
-            node_type: Type of the node (should be 'chatbot')
+            node_type: Type of the node (should be 'gensql')
             input_data: SQL generation input data
             agent_config: Agent configuration
             tools: List of tools (will be populated in setup_tools)
-            node_name: Name of the node configuration in agent.yml (e.g., "chatbot", "gen_sql")
+            node_name: Name of the node configuration in agent.yml (e.g., "gensql", "gen_sql")
             max_turns: Maximum conversation turns per interaction
         """
         # Determine node name from node_type if not provided
@@ -104,7 +104,7 @@ class GenSQLAgenticNode(AgenticNode):
         Get the configured node name for this SQL generation agentic node.
 
         Returns:
-            The configured node name from agent.yml (e.g., "chatbot", "gen_sql")
+            The configured node name from agent.yml (e.g., "gensql", "gen_sql")
         """
         return self.configured_node_name
 

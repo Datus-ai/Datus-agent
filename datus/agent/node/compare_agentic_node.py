@@ -28,45 +28,40 @@ class CompareAgenticNode(AgenticNode):
 
     def __init__(
         self,
-        node_id: str,
-        description: str,
-        node_type: str,
-        input_data: Optional[CompareInput] = None,
+        node_name: str = "compare",
         agent_config: Optional[AgentConfig] = None,
-        tools: Optional[list] = None,
-        node_name: Optional[str] = None,
     ):
         """
-        Initialize CompareAgenticNode (CLI-compatible wrapper).
+        Initialize CompareAgenticNode.
 
         Args:
-            node_id: Unique identifier for the node
-            description: Human-readable description
-            node_type: Type of the node
-            input_data: Compare input data
+            node_name: Name of the node configuration in agent.yml (default: "compare")
             agent_config: Agent configuration
-            tools: List of tools
-            node_name: Name of the node configuration
         """
-        # Determine node name from node_type if not provided
-        self.configured_node_name = node_name or node_type
+        self.configured_node_name = node_name
+
+        # Use TYPE_COMPARE as the node type
+        from datus.configuration.node_type import NodeType
+
+        node_type = NodeType.TYPE_COMPARE
 
         # Call parent constructor with all required Node parameters
         super().__init__(
-            node_id=node_id,
-            description=description,
+            node_id=f"{node_name}_node",
+            description=f"SQL comparison node: {node_name}",
             node_type=node_type,
-            input_data=input_data,
+            input_data=None,
             agent_config=agent_config,
-            tools=tools or [],
+            tools=[],
             mcp_servers={},
         )
 
-        config_max_turns = self.node_config.get("max_turns")
-        if config_max_turns:
-            self.max_turns = config_max_turns
-        else:
-            self.max_turns = 30
+        # Get max_turns from agentic_nodes configuration, default to 30
+        self.max_turns = 30
+        if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
+            agentic_node_config = agent_config.agentic_nodes[node_name]
+            if isinstance(agentic_node_config, dict):
+                self.max_turns = agentic_node_config.get("max_turns", 30)
 
         self.setup_tools()
 
@@ -176,18 +171,19 @@ class CompareAgenticNode(AgenticNode):
     @optional_traceable()
     async def execute_stream(
         self,
+        user_input: CompareInput,
         action_history_manager: Optional[ActionHistoryManager] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute SQL comparison with streaming support and action history tracking.
 
-        Input is accessed from self.input instead of parameters.
-        """
-        # Get input from self.input (set by CLI or directly)
-        if not self.input:
-            raise ValueError("Compare input not set. Set self.input before calling execute_stream.")
+        Args:
+            user_input: Compare input containing SQL task and expectation
+            action_history_manager: Optional action history manager
 
-        user_input = self.input
+        Yields:
+            ActionHistory: Progress updates during execution
+        """
 
         if not isinstance(user_input, CompareInput):
             raise ValueError("Input must be a CompareInput instance")

@@ -17,6 +17,8 @@ from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.schemas.subworkflow_node_models import SubworkflowInput
 
 
@@ -47,7 +49,9 @@ class NodeType:
 
     # Agentic node types
     TYPE_CHAT = "chat"  # For conversational AI interactions
-    TYPE_CHATBOT = "chatbot"  # For SQL generation with conversational AI
+    TYPE_GENSQL = "gensql"  # For SQL generation with conversational AI
+    TYPE_SEMANTIC = "semantic"  # For semantic model generation
+    TYPE_SQL_SUMMARY = "sql_summary"  # For SQL summary generation
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
@@ -61,7 +65,9 @@ class NodeType:
         TYPE_COMPARE,
         TYPE_DATE_PARSER,
         TYPE_CHAT,
-        TYPE_CHATBOT,
+        TYPE_GENSQL,
+        TYPE_SEMANTIC,
+        TYPE_SQL_SUMMARY,
     ]
 
     NODE_TYPE_DESCRIPTIONS = {
@@ -82,7 +88,9 @@ class NodeType:
         TYPE_COMPARE: "Compare SQL with expectations",
         TYPE_DATE_PARSER: "Parse temporal expressions in queries",
         TYPE_CHAT: "Conversational AI interactions with tool calling",
-        TYPE_CHATBOT: "SQL generation with conversational AI and tool calling",
+        TYPE_GENSQL: "SQL generation with conversational AI and tool calling",
+        TYPE_SEMANTIC: "Semantic model generation with conversational AI",
+        TYPE_SQL_SUMMARY: "SQL summary generation with conversational AI",
     }
 
     @classmethod
@@ -122,8 +130,12 @@ class NodeType:
             input_data_cls = DateParserInput
         elif node_type == NodeType.TYPE_CHAT:
             input_data_cls = ChatNodeInput
-        elif node_type == NodeType.TYPE_CHATBOT:
+        elif node_type == NodeType.TYPE_GENSQL:
             input_data_cls = GenSQLNodeInput
+        elif node_type == NodeType.TYPE_SEMANTIC:
+            input_data_cls = SemanticNodeInput
+        elif node_type == NodeType.TYPE_SQL_SUMMARY:
+            input_data_cls = SqlSummaryNodeInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 
