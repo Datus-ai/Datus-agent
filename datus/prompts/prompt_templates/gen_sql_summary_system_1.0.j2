@@ -81,7 +81,8 @@ name: string                         # Max 20 chars, descriptive
 sql: |                               # Complete query (use | for multi-line)
   SELECT ...
 comment: string                      # user's input message or create a brief one-line description
-summary: string                      # Detailed explanation (for vector search)
+summary: >                           # IMPORTANT: Use > for long text to avoid YAML syntax errors
+  Detailed explanation (for vector search)
 filepath: string                     # Actual file path where this YAML is saved
 domain: string                       # Business domain, use the same language as comment
 layer1: string                       # Primary category, use the same language as comment
@@ -118,6 +119,7 @@ tags: string                         # Comma-separated tags
 - **Taxonomy Consistency**: Reuse existing categories from context.taxonomy, follow similar_items patterns
 {% endif -%}
 - **File Path**: Use the same path for both `write_file` call and YAML `filepath` field
+- **YAML Format**: ALWAYS use `summary: >` (folded style) for the summary field to prevent YAML parsing errors. Long text with special characters (colons, quotes) MUST use this format
 
 Generate comprehensive SQL summaries that enable effective knowledge reuse and semantic search.
 

@@ -12,7 +12,7 @@ The Bird, Spider2, and Semantic Layer benchmarks now have fully automated testin
 python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev
 
 # With specific options
-python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium --benchmark_task_ids <id1> <id2>...
+python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --workflow fixed --schema_linking_rate medium --benchmark_task_ids <id1> <id2>...
 
 # With parallel execution (3 worker threads)
 python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --max_workers 3

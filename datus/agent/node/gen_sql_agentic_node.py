@@ -67,7 +67,7 @@ class GenSQLAgenticNode(AgenticNode):
             max_turns: Maximum conversation turns per interaction
         """
         # Determine node name from node_type if not provided
-        self.configured_node_name = node_name or node_type
+        self.configured_node_name = node_name
         self.max_turns = max_turns
 
         # Initialize tool attributes BEFORE calling parent constructor

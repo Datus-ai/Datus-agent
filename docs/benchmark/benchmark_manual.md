@@ -198,7 +198,7 @@ This builds a LanceDB vector database at `~/.datus/data/datus_db_bird_sqlite`.
 Run the benchmark:
 
 ```bash
-datus-agent benchmark --namespace bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium --benchmark_task_ids 1 2
+datus-agent benchmark --namespace bird_sqlite --benchmark bird_dev --workflow fixed --schema_linking_rate medium --benchmark_task_ids 1 2
 ```
 
 ### Spider

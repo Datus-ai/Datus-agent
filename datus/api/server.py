@@ -205,7 +205,7 @@ def main():
         help="Path to configuration file (default: conf/agent.yml > ~/.datus/conf/agent.yml)",
     )
     parser.add_argument("--max_steps", type=int, default=20, help="Maximum workflow steps")
-    parser.add_argument("--plan", type=str, default="fixed", help="Workflow plan type")
+    parser.add_argument("--workflow", type=str, default="fixed", help="Workflow plan type")
     parser.add_argument("--load_cp", type=str, help="Load workflow from checkpoint file")
 
     # Daemon control

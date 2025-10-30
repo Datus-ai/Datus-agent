@@ -47,10 +47,10 @@ Workflows are made up of specialized components called "[nodes](nodes.md)." Each
 datus run --namespace your_db --task "Show me monthly sales"
 
 # Use a specific workflow type
-datus run --namespace your_db --task "Show me complex revenue trends" --plan reflection
+datus run --namespace your_db --task "Show me complex revenue trends" --workflow reflection
 
 # Use business metrics
-datus run --namespace your_db --task "Calculate customer lifetime value" --plan metric_to_sql
+datus run --namespace your_db --task "Calculate customer lifetime value" --workflow metric_to_sql
 ```
 
 ### Via API

@@ -78,9 +78,9 @@ class AgenticNode(Node):
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
 
-        # Override model initialization if node-specific model is configured
-        if agent_config and self.node_config.get("model"):
-            model_name = self.node_config.get("model")
+        # Initialize model: use node-specific model if configured, otherwise use default from agent_config
+        if agent_config:
+            model_name = self.node_config.get("model")  # Can be None, which will use active_model()
             self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config)
             self.context_length = self.model.context_length() if self.model else None
 
