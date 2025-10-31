@@ -1,0 +1,1194 @@
+[
+    {
+        "question_id": "sql_1",
+        "question": "统计2025.07.24的手游全量用户且标签为其他，在竞品业务下2025.05.30-2025.07.24的在线时长。\n输出：suin、sgamecode、ionlinetime\n\n",
+        "evidence": "竞品业务：\nsgamecode in (\"projectd\",\"jdqssy\",\"cmelive\",\"af\",\"smoba\",\"lgame\",\"jk\")\nsaccounttype = \"-100\" -- 账号体系，取-100表示汇总\nand suintype in (\"qq\",\"commid\") -- 用户类型\nand splattype = \"-100\" -- 平台类型\nand splat = \"-100\" -- 平台，写死为-100\n",
+        "db_id": "game2",
+        "table_list": [
+            "iplat_fat_mgamejp_login_tbuseract",
+            "spec_dwd_codev_ce1_cbt2_vopenid_vies_df"
+        ]
+    },
+    {
+        "question_id": "sql_2",
+        "question": "提取1个抽样号码包，2025.7.17-2025.7.23期间付费且不包含721号码包内的用户全量\n输出:gopenid。",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "udata_extract_supersql_311381_1753088795",
+            "codev_ce1_mid_tblogin",
+            "spec_dwd_codev_ce1_cbt2_vopenid_suin_di"
+        ]
+    },
+    {
+        "question_id": "sql_3",
+        "question": "统计2025年1月无畏契约端游活跃玩家交叉三角洲端游及手游活跃玩家\n输出：玩家gopenid",
+        "evidence": "三角洲筛选逻辑:\nsgamecode = \"projectd\" -- 筛选三角洲游戏\nand saccounttype = \"-100\" -- 账号体系，取-100表示汇总\nand suintype in (\"qq\", \"commid\") -- 账号类型，取qq或commid\nand splattype in (\"-100\", \"PC\") -- 三角洲手游玩家及PC端玩家\nand splat = \"-100\" -- 写死为-100",
+        "db_id": "game2",
+        "table_list": [
+            "t_dw_agamek6_oss_tblogin",
+            "spec_dwd_agamek6_gopenidtoqqcommid_df",
+            "iplat_fat_mgamejp_login_tbuseract"
+        ]
+    },
+    {
+        "question_id": "sql_4",
+        "question": "统计开服至今使用频率最高的用户昵称\n2023.07.1200 - 2025071523\n输出：昵称（唯一）、人数",
+        "evidence": "昵称筛选逻辑：\nnickname按照#进行划分，取#前半部分的作为nickname\n示例：多喝热水#131234 -> 昵称：多喝热水",
+        "db_id": "game2",
+        "table_list": [
+            "agamek6_dsl_playerlogin_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_5",
+        "question": "统计2025.06活跃用户登录ip的登录次数和ip归属国家\n输出:用户id，ip归属国家，登录次数",
+        "evidence": "注意使用ip进行匹配关联",
+        "db_id": "game2",
+        "table_list": [
+            "agamek6_dsl_playerlogin_fht0",
+            "gslb_ip_info"
+        ]
+    },
+    {
+        "question_id": "sql_6",
+        "question": "统计2025.6.12-2025.7.14号手游T2活跃用户在20250529之前端游注册的号码包。\n输出：vopenid",
+        "evidence": "用户活跃用户筛选条件：\nitag=\"T2\"",
+        "db_id": "game2",
+        "table_list": [
+            "spec_dwd_agamek6_gopenidtoqqcommid_df",
+            "spec_dwd_codev_ce1_cbt2_vopenid_suin_di"
+        ]
+    },
+    {
+        "question_id": "sql_7",
+        "question": "统计2025.7.3-2025.7.6 开白渠道非内部体验和买量测试，排除全平台\n注册渠道为以下，分别的新进用户数\n89903934\n89903933\n89903932\n89902725\n89902724\n89902723\n89900960\n89900961\n89900962\n输出：日期、注册渠道、新进用户数",
+        "evidence": "非内部体验和买量测试：通过sourcename区分\n指定注册渠道:\niregway in (\"89903934\", \"89903933\", \"89903932\", \"89902725\", \"89902724\", \"89902723\", \"89900960\", \"89900961\", \"89900962\")",
+        "db_id": "game2",
+        "table_list": [
+            "spec_dwd_codev_ce1_cbt2_vopenid_suin_di",
+            "zyyk_dsl_tb_codev_cbt2kaibai_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_8",
+        "question": "统计25年4月到25年6月，按月输出gamePodId的峰值数据与游戏对局数。\n输出：\n月份\n服务器节点\n峰值时间\n总游戏结束数\n排位结束数\n普通结束数\n极速结束数",
+        "evidence": "比赛状态逻辑:\nlower(completionState) in (\"completed\", \"surrendered\")\n限定模式（极速模式、排位模式、普通模式）对应逻辑:\nqueueId in (\"swiftplay\", \"competitive\", \"unrated\")",
+        "db_id": "game2",
+        "table_list": [
+            "agamek6_dsl_apmatchdetails_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_9",
+        "question": "统计20250702手游fps最后活跃日期为近半年的用户的城市等级分布。\n输出：城市等级，用户人数",
+        "evidence": "用户固定筛选逻辑:\nand saccounttype = \"-100\" -- 账户类型为-100\nand suintype in (\"qq\",\"commid\") -- 用户类型为qq或commid\nand sgamecode in (\"cmelive\",\"uamobile_live\",\"projectd\",\"af\",\"smoba\",\"jdqssy\",\"jk\",\"lgame\",\"wefire\",\"shootgame\",\"wpzs\",\"hjdt\",\"mdm\",\"apgame\") -- 游戏代码为指定的手游fps\nand splattype = \"-100\" -- 平台类型为-100\n活跃日期逻辑:\n基于当前统计时间20250702向前计算6个月的登陆日期，即ilastactdate >= \"20250104\"\n城市等级分布：\n当前时间为20250702，城市等级分布的相关表是月表，所以需要取kp_imp_date = \"202506\"的数据作为关联数据",
+        "db_id": "game2",
+        "table_list": [
+            "iplat_fat_mgamejp_login_tbaccount",
+            "kp_uf_gametotal_human_m_all"
+        ]
+    },
+    {
+        "question_id": "sql_10",
+        "question": "统计2023.7.12-2025.6.15，赛季bp道具皮肤的使用情况。\n输出：道具id、赛季名称、当前赛季使用人数、当前赛季购买人数",
+        "evidence": "bp枪皮筛选逻辑:\nand purchaseSource = \"BATTLEPASS_PROGRESS\" -- 筛选来源为BATTLEPASS_PROGRESS\nand itemtype = \"d5f120f8-ff8c-4aac-92ea-f2b5acbe9475\" -- 筛选itemtype为指定值\n枪皮使用逻辑：\nexpressionassetid is not null",
+        "db_id": "game2",
+        "table_list": [
+            "agamek6_dsl_applayerloadout_expressions_fht0",
+            "agamek6_dsl_applayerloadout_fht0",
+            "agamek6_dsl_applayerloadout_sprayslots_fht0",
+            "spec_dwd_agamek6_business_itemid_df",
+            "spec_dwd_agamek6_season_date_df"
+        ]
+    },
+    {
+        "question_id": "sql_11",
+        "question": "统计近30天活跃玩家数，近30天活跃且同时拥有奖池所有道具玩家数\n输出：近30天活跃玩家数、近30天活跃且同时拥有奖池所有道具玩家数\n补充说明：\n当前日期时间：'20250617'\n其中奖池道具id为：\n71d260ca-4bad-81f2-0298-44860341a7a6\n48601754-442d-98cb-2109-3fb2075500ec\na9126263-439c-7be6-d668-52a6c0c0a36f\n34ecc788-4034-71d2-a0ac-c398b8ecb2ae\n56f98991-43f8-dcc8-189e-08b7ae6c42ad\n8453f8ef-4c0b-46e2-8768-3e9e45c67a2c\n06d90274-435f-3e32-9d57-26bc228ae2e5\n8196dea4-4229-c951-13a9-088fb13b3512\n3abc330f-444a-6dfd-5863-81856ba62624\n041a43a4-46fe-dab7-c974-36bf91eab33d\n5b863cb9-4e41-ec89-69ee-49a223d05ff1\n",
+        "evidence": "奖池道具筛选逻辑：\niGoodsId in (\n\"71d260ca-4bad-81f2-0298-44860341a7a6\",\n\"48601754-442d-98cb-2109-3fb2075500ec\",\n\"a9126263-439c-7be6-d668-52a6c0c0a36f\",\n\"34ecc788-4034-71d2-a0ac-c398b8ecb2ae\",\n\"56f98991-43f8-dcc8-189e-08b7ae6c42ad\",\n\"8453f8ef-4c0b-46e2-8768-3e9e45c67a2c\",\n\"06d90274-435f-3e32-9d57-26bc228ae2e5\",\n\"8196dea4-4229-c951-13a9-088fb13b3512\",\n\"3abc330f-444a-6dfd-5863-81856ba62624\",\n\"041a43a4-46fe-dab7-c974-36bf91eab33d\",\n\"5b863cb9-4e41-ec89-69ee-49a223d05ff1\"",
+        "db_id": "game2",
+        "table_list": [
+            "spec_dwd_agamek6_itemflow_df",
+            "t_dw_agamek6_oss_tbuseractive"
+        ]
+    },
+    {
+        "question_id": "sql_13",
+        "question": "统计20230712以来，历史累计活跃30天以上，但3月12日及以后未活跃过的用户且剔除掉历史充值 1500 元以上的用户后的玩家commid\n输出：玩家commid\n时间统计范围:20230712-20250612",
+        "evidence": "历史充值1500以上的用户：\nsum(ftranamt)/100 > 1500",
+        "db_id": "game2",
+        "table_list": [
+            "iplat_fat_mgamejp_tbopenid2commid",
+            "t_dw_agamek6_oss_tbportalwater",
+            "iplat_fat_mgamejp_tbcommid2qq",
+            "t_dw_agamek6_oss_tblogin",
+            "iplat_fat_mgamejp_tbopenid2qq"
+        ]
+    },
+    {
+        "question_id": "sql_14",
+        "question": "统计2025年5月份活跃但2025年6月未活跃的qq号码包\n输出:用户suin",
+        "evidence": "6月份未活跃统计逻辑：\nwhere dtstatdate=\"20250610\"",
+        "db_id": "game2",
+        "table_list": [
+            "t_dw_agamek6_oss_tblogin",
+            "spec_dwd_agamek6_gopenidtoqqcommid_df"
+        ]
+    },
+    {
+        "question_id": "sql_15",
+        "question": "统计2025年5月无畏契约流失用户中，流向三角洲PC的玩家gopenid\n输出：玩家gopenid",
+        "evidence": "sgamecode = \"projectd\" -- 筛选三角洲游戏\nand itimes >= 1 -- 活跃用户条件\nand saccounttype = \"-100\" -- 账号体系，取-100表示汇总\nand suintype in (\"qq\", \"commid\") -- 账号类型，取qq或commid\nand splattype = \"PC\" -- 三角洲端游玩家\nand splat = \"-100\" -- 写死为-100",
+        "db_id": "game2",
+        "table_list": [
+            "t_dw_agamek6_oss_tbuseractive",
+            "spec_dwd_agamek6_gopenidtoqqcommid_df",
+            "iplat_fat_mgamejp_login_tbuseract"
+        ]
+    },
+    {
+        "question_id": "sql_16",
+        "question": "统计：近一年（2023/7/12-2025/5/31）所有竞技模式对局中，排除掉投降对局。\n输出：日期（20230712-20250531）、当日竞技模式非投降局对局数、当日竞技模式投降局对局数、当日竞技模式非投降局中 双方胜利回合差>=6和双方胜利回合差>=8的对局数",
+        "evidence": "段位筛选逻辑：\ncase\nwhen competitiveTier in (3, 4, 5) then \"黑铁\"\nwhen competitiveTier in (6, 7, 8) then \"黄铜\"\nwhen competitiveTier in (9, 10, 11) then \"白银\"\nwhen competitiveTier in (12, 13, 14) then \"黄金\"\nwhen competitiveTier in (15, 16, 17) then \"白金\"\nwhen competitiveTier in (18, 19, 20) then \"钻石\"\nwhen competitiveTier in (21, 22, 23) then \"超凡\"\nwhen competitiveTier >= 24 then \"神话及以上\"\nelse \"无段位\"\n模式标识：queueId = \"competitive\"\n对局筛选逻辑:\n使用completion_state筛选投降与非投降对局；使用roundsdiff筛选双方胜利回合差",
+        "db_id": "game2",
+        "table_list": [
+            "agamek6_dsl_playerperformancebymatch_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_17",
+        "question": "统计2023.7.12到2025.5.26，曾经使用win7/8/8.1系统启动游戏的号码包\n输出：iuin，操作系统",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "agamek6_dsl_apgameclientinstance_fht0",
+            "dwd_agamek6_gopenid_vroleid_mapping"
+        ]
+    },
+    {
+        "question_id": "sql_18",
+        "question": "统计20250506-20250512期间每日的指定网吧渠道内每个渠道活跃人数\n输出：日期、渠道、玩家数\n其中：网吧渠道：iloginway in (1,10,11,12,35,20,28,29,30,31,32,33,34,36)",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "t_dw_agamek6_oss_tblogin"
+        ]
+    },
+    {
+        "question_id": "sql_19",
+        "question": "统计2024年5月02日-2024年5月02日，日活跃用户的周边娱乐模式情况。\n\n活跃日期区间：\"20250426-20250502\"\n\n输出：\n日活跃中仅玩Swiftplay模式的玩家数\n日活跃中仅玩Hurm模式的玩家数\n日活跃中仅玩DeathMatch模式的玩家数\n日活跃中仅玩以上三个模式不玩其他模式的玩家数\n日活跃中仅玩以上三个模式不玩其他模式的玩家周活跃频次\n\n其他说明：对局模式为 agamek6_dsl_PlayerPerformanceByMatch_fht0 表的queueId字段，且queueId不为空值",
+        "evidence": "仅玩单一模式逻辑：\nhaving count(distinct queueid) = 1 -- 只玩一个模式\nand max(queueid) = \"xxx\" -- 模式ID为Hurm\n用户角色映射逻辑：\niareaid = \"101\"",
+        "db_id": "game2",
+        "table_list": [
+            "t_dw_agamek6_oss_tblogin",
+            "agamek6_dsl_playerperformancebymatch_fht0",
+            "dwd_agamek6_gopenid_vroleid_mapping"
+        ]
+    },
+    {
+        "question_id": "sql_20",
+        "question": "统计20240101-20240430，网吧特权用户的指标数据。\n输出：\n月份（按月：202401、202402、202403、202404）\n人均对局时长（小时）\n网吧时间占当月游戏时间比例\n有对局的天数\n排位模式时长（小时）\n排位模式组队率\n月付费率\n月ARPA\n月ARPPA\n高校特权激活率\n\n",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "t_dw_agamek6_oss_tblogin",
+            "agamek6_dsl_playerlogout_fht0",
+            "t_dw_agamek6_oss_tbportalwater",
+            "agamek6_dsl_playerperformancebymatch_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_22",
+        "question": "统计：近30天用户在wegame渠道登录的天数为5到8天，取最多天数的用户，并将用户ID转为qq\n输出：QQ\n统计日期：20250330-20250428",
+        "evidence": "wegame筛选条件：iloginway = 3\n用户ID筛选scommid_type = \"qq\" -- 筛选scommid_type为\"qq\"",
+        "db_id": "game2",
+        "table_list": [
+            "t_dw_agamek6_oss_tblogin",
+            "spec_dwd_agamek6_gopenidtoqqcommid_df"
+        ]
+    },
+    {
+        "question_id": "sql_23",
+        "question": "统计2025年3月24日至2025年3月30日，至少完成过一场对局，且wegame渠道登录的用户qq\n输出:qq",
+        "evidence": "wegame筛选条件：iloginway = 3\n用户ID筛选scommid_type = \"qq\" -- 筛选scommid_type为\"qq\"",
+        "db_id": "game2",
+        "table_list": [
+            "t_dw_agamek6_oss_tblogin",
+            "spec_dwd_agamek6_gopenidtoqqcommid_df",
+            "agamek6_dsl_playerperformancebymatch_fht0",
+            "dwd_agamek6_gopenid_vroleid_mapping"
+        ]
+    },
+    {
+        "question_id": "sql_24",
+        "question": "统计下列英雄和对应上线日期，新英雄上线首周的持续选择动力\n输出：英雄id、上线日期、首周选择新英雄次数超过3次的玩家、首周选择新英雄次数超过10次的玩家、首周选择过新英雄的玩家、超过3次的玩家占比、超过10次的玩家占比\n\n",
+        "evidence": "英雄筛选逻辑：\n英雄1上线日期：2023/07/26\n英雄2上线日期：2023/11/01\n英雄3上线日期：2024/03/27\n英雄4上线日期：2024/08/29\n英雄5上线日期：2025/01/09\n英雄6上线日期：2025/03/06\n英雄1对应id:\"e370fa57-4757-3604-3648-499e1f642d3f\",\"cc8b64c8-4b25-4ff9-6e7f-37b4da43d235\"\n英雄2对应id:\"0e38b510-41a8-5780-5e8f-568b2a4f2d6c\"\n英雄3对应id:\"1dbf2edd-4729-0984-3115-daa5eed44993\"\n英雄4对应id:\"efba5359-4016-a1e5-7626-b1ae76895940\"\n英雄5对应id:\"b444168c-4e35-8076-db47-ef9bf368f384\"\n英雄6对应id:\"df1cb487-4902-002e-5c17-d28e83e78588\"\n\n对局筛选逻辑：\nprovisioningflowid = \"Matchmaking\" -- 过滤新手自定义模式",
+        "db_id": "game2",
+        "table_list": [
+            "agamek6_dsl_apmatchdetails_players_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_25",
+        "question": "查询表dapan_pc_game_dayuser最早日期\n输出:最早日期",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "dapan_pc_game_dayuser"
+        ]
+    },
+    {
+        "question_id": "sql_26",
+        "question": "统计：2024-01-01到2024-12-16，闪了敌人x次、闪了队友x次，除自定义模式，新手、训练场外所有模式。\n输出：闪了敌人x次、闪了队友x次",
+        "evidence": "对局筛选逻辑：\nprovisioningFlowId = \"Matchmaking\"\n\n闪光弹区分逻辑：\n闪到敌人：tag = \"EnemiesBlinded\"\n闪到队友：tag = \"AlliesBlinded\"",
+        "db_id": "game2",
+        "table_list": [
+            "agamek6_dsl_apmatchdetails_fht0",
+            "agamek6_dsl_apabilityuseevent_abilityinfoabilityeffects_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_27",
+        "question": "统计：2024-01-01到2024-12-16，购买阶段出现了x次武器代买，除自定义模式，新手、训练场外所有模式。\n输出：武器代买次数",
+        "evidence": "对局筛选逻辑：\nprovisioningFlowId = \"Matchmaking\"\n对局代买筛选逻辑：\nTransactionType = \"FulfillRequest\"",
+        "db_id": "game2",
+        "table_list": [
+            "agamek6_dsl_apmatchdetails_fht0",
+            "agamek6_dsl_apinventorychangeevent_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_28",
+        "question": "统计各个玩法上线首周留存情况\n输出：玩法、上线首周首次玩的日期、第几天留存（0,1,2...7)、玩法留存用户数\n\n各玩法首周上线日期：\n\"大战场\": \"20240723\",\n\"歼灭\": \"20230804\",\n\"奇幻大乱斗\": \"20241115\",\n\"西部传奇\": \"20240903\",\n\"战术车\": \"20241010\",\n\"夏日乱斗\": \"20240625\",\n\"个人军备\": \"20240517\",\n\"十字要塞\": \"20240412\"",
+        "evidence": "说明：\n大战场 （2024/7/23）submodename= '大战场模式'，\n歼灭（2023/8/4） modename='团队竞技' and submodename like '%歼灭模式%'，\n奇幻大乱斗（2024/11/15）modename='创意工坊' and submodename='奇幻大乱斗'，\n西部传奇（2024-09-03）modename='娱乐模式' and submodename in ('西部传奇','西部牛仔沙漠')，\n战术车（2024-10-10）modename='娱乐模式' and submodename like '%战术车%'，\n夏日乱斗（2024-06-25）modename='创意工坊' and submodename like '%夏日乱斗%'，\n个人军备（2024.5.17）modename='团队竞技' and submodename like '%个人军备%'，\n十字要塞（2024.4.12） modename='团队竞技' and submodename like '%十字要塞%'\n\n第几天留存：0表示当天参与、1表示当天参与在第2天也参与、2表示当天参与在第3天也参与，依此类推",
+        "db_id": "game2",
+        "table_list": [
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_29",
+        "question": "统计周期：2024.6.18至2025年3月30日\n输出：自然周（20240617、20240624、...、20250324），玩法名称，周平均日均参与用户数，周平均日均参与率，周平均日均参与场次\n\n参与率：玩法参与用户数 / 活跃用户数\n周平均日均参与场次：每天不同玩法平均对局数再按周求平均",
+        "evidence": "自然周指周一到周日的完整周期，通常以周一作为起始日\n\n玩法：从上往下匹配，如果满足任一条件则返回对应的玩法名称，否则返回“其他模式”。\n如果模式为“经典模式”，且子模式名称以“CG”开头，且地图为“海岛”，则返回“主题海岛”；\n如果模式为“经典模式”且地图为“海岛”，则返回“经典海岛”；\n如果模式为“经典模式”且地图为“度假岛”，则返回“度假岛”；\n如果模式为“经典模式”且地图为“荣都”，则返回“荣都”；\n如果子模式是“大战场模式”，则返回“大战场”；\n如果子模式是“超体模式”，则返回“超体”；\n如果模式是“团队竞技”，则返回“团竞”；\n如果模式是“娱乐模式”，则返回“娱乐”；\n如果模式是“绿洲”，则返回“绿洲”；\n如果模式是“家园”，则返回“家园”；\n如果模式是“大世界”，则返回“大世界”\n如果模式是“逃生模式”，则返回“地铁”。",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_30",
+        "question": "统计2019.5.8至2025.3.30 分月的玩法主玩情况\n输出：月份(201905、201906、...、202503)、主玩玩法、主玩人数、总参与人数",
+        "evidence": "主玩定义：用户累计对局时长最多的玩法；\n\n玩法：从dws_w_jdqssy_all_round_di取\n从上往下匹配，如果满足以下任一条件，则返回对应的名称，否则返回“其他模式”。\n如果模式为“经典模式”，且子模式名称以“CG”开头，且地图为“海岛”，则返回“主题海岛”；\n如果模式为“经典模式”且地图为“海岛”，则返回“经典海岛”；\n如果模式为“经典模式”且地图为“度假岛”，则返回“度假岛”；\n如果模式为“经典模式”且地图为“荣都”，则返回“荣都”；\n如果子模式是“大战场模式”，则返回“大战场”；\n如果子模式是“超体模式”，则返回“超体”；\n如果模式是“团队竞技”，则返回“团竞”；\n如果模式是“娱乐模式”，则返回“娱乐”；\n如果模式是“绿洲”，则返回“绿洲”；\n如果模式是“家园”，则返回“家园”；\n如果模式是“大世界”，则返回“大世界”\n\n注意，参与地铁模式的用户数据从jdqssy_dsl_playerexitgameflow_fht0取，时间限制 2024.6.18-2025.3.30，mode in (3001, 3002, 3003)",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_playerexitgameflow_fht0",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_31",
+        "question": "统计20250217-20250318共创平台活跃但是没有在共创玩法活跃用户的主玩玩法分布\n输出：主玩玩法（经典模式、娱乐模式、...、逃生模式）、人数",
+        "evidence": "主玩定义：用户累计对局时长最多的玩法；\n玩法取 modename in ('经典模式','娱乐模式','团队竞技','家园','绿洲','大世界','创意工坊','逃生模式')\n共创平台活跃：ugcmbuttonclick中的玩家；\n共创玩法活跃：vtemp1='共创'  的玩法记录",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat",
+            "jdqssy_mid_ugcmbuttonclick_pre",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_32",
+        "question": "统计2023/1/14-2023/1/28\n2024/2/2-2024/2/16\n2025/1/21-2025/2/4\n每天所有玩法的参与人数，总时长\n输出：日期（20230101、20230102、...、20230128、20240202、...、20250204），参与人数，时长（分钟）",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_33",
+        "question": "统计2024年12月14日-2024年12月20日参与攻楼玩法的玩家人数（去重）有多少，其中多少人是12月13日及以前有参与过攻楼的老玩家，有多少是新玩家\n输出: 玩家人数、老玩家人数、新玩家人数",
+        "evidence": "攻楼玩法对应的imode为1344338933661592832",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat_bitmap",
+            "jdqssy_mid_baochang_playermatchflow_stat"
+        ]
+    },
+    {
+        "question_id": "sql_34",
+        "question": "统计2024.9.17-2024.9.23 和 2024.10.8-2024.10.14\t每天点击按钮后加入玩法，再之后点击确认的人数和次数                                                       \n输出：日期(20240917、...、20240923、20241008、...、20241014)，人数，人次",
+        "evidence": "buttontype为411111代表点击按钮，411120代表加入玩法，411123代表确认",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_ugcbuttonclick_pre"
+        ]
+    },
+    {
+        "question_id": "sql_35",
+        "question": "统计2024年3月26日~4月3日\n2024年5月28日~6月5日\n不同对局类型的游戏和玩法留存情况\n输出：统计日期(20240326、...、20240403、20240528、...、20240605)、对局类型（第一人称、单排、双排、四排），每日对局人数、次数、对局总时长(秒)、游戏次留人数、游戏7留人数，玩法次留人数、玩法7留人数",
+        "evidence": "第一人称：mode 的取值在 401、402 或 403；\n单排： mode 等于 101；\n双排： mode 等于 102；\n四排： mode 等于 103 或 603。\n\n玩法次留：当天参与玩法且第二天同样参与玩法\n游戏次留：当天在游戏活跃且第2天也在游戏活跃",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_36",
+        "question": "统计2024.11.15-2024.11.17各个玩法参与以及在游戏活跃用户的年龄分布\n输出：玩法模式(地铁、...、游戏活跃)，年龄分层（1-17，18-19，20-24，25-29，30-34，35及以上， 未知），参与用户数\n",
+        "evidence": "玩法：地铁、主题海岛、经典海岛、度假岛、大战场、超体、奇幻大乱斗、绿洲、家园、大世界、团竞。额外再增加一个“游戏活跃”的枚举值\n\n从上往下匹配，如果满足以下任一条件，则返回对应的名称，否则返回“其他模式”。\n如果 modename 是 “逃生模式”，则归类为 “地铁”；\n如果 modename 是 “经典模式”，且 submodename 以 “CG” 开头，且 mapname 是 “海岛”，则归类为 “主题海岛”；\n如果 modename 是 “经典模式”，则归类为 “经典海岛”；\n如果 modename 是 “经典模式”，且 mapname 是 “度假岛”，则归类为 “度假岛”；\n如果 submodename 是 “大战场模式”，则归类为 “大战场”；\n如果 submodename 是 “超体模式”，则归类为 “超体”；\n如果 modename 是 “创意工坊”，且 submodename 是 “奇幻大乱斗”，则归类为 “奇幻大乱斗”；\n如果 modename 是 “娱乐模式”、“绿洲”、“家园”、“大世界” 或 “团队竞技” 中的任意一个，则直接使用该 modename 作为分类；\n\n取年龄时限制统计日期2024.11.17",
+        "db_id": "game2",
+        "table_list": [
+            "ads_w_jdqssy_user_alltag_df",
+            "jdqssy_mid_tblogin",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_37",
+        "question": "统计注册日期在2025.4.1-2025.5.30的模拟器新进用户在用户类型（模拟器、手机端、整体游戏内），次留、三留、七留、14留、30留情况\n输出:日期(20250401、...、20250530)、人数、用户类型（模拟器、手机端、游戏内、未知）、次留人数、三留人数、七留人数、14留人数、30留人数",
+        "evidence": "模拟器新进用户从jdqssy_mid_qswang_emulator_df取，限制统计日期为20251001\n模拟器：device_type in (1,5)；\n手机端：device_type=0\n",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_device_login",
+            "jdqssy_mid_qswang_emulator_df",
+            "jdqssy_mid_tblogin"
+        ]
+    },
+    {
+        "question_id": "sql_38",
+        "question": "统计不同玩法不同用户类型的参与情况\n\n输出：玩法、用户类型（和平新增、和平回流（流失60天以上）、和平回流（流失21-59天）、和平回流（流失14-20天）、和平回流（流失7-13天）、和平留存、腾讯盘内、腾讯盘外）、上线后3天参与用户数、上线后3天总用户数\n\n各玩法上线日期：\n\"大战场\": \"20240723\",\n\"歼灭\": \"20230804\",\n\"奇幻大乱斗\": \"20241115\",\n\"西部传奇\": \"20240903\",\n\"战术车\": \"20241010\",\n\"夏日乱斗\": \"20240625\",\n\"个人军备\": \"20240517\",\n\"十字要塞\": \"20240412\"",
+        "evidence": "从大盘表取数据固定逻辑：\nsAccountType ='-100' and sgamecode <>'-100' and splattype = '-100' and splat = '-100'\nsgamecode='jdqssy'\n\n- 用户类型的定义：\n和平新增：上线后3天和平新增用户，并且参与了玩法的用户\n和平留存：上线前一周在和平活跃过，并且在上线后3天参与了玩法的用户\n和平回流：上线前一周没有在和平活跃过，但是之前在和平注册过，并且上线后3天参与了玩法的用户，然后按上线日期前N天连续未活跃时长区分：流失(7-13]天，流失[14-20]天，流失[21-59]天，流失60天及以上\n腾讯盘内：上线前一周在腾讯大盘活跃过，并且没有在和平活跃过，并且上线后3天参与了玩法的用户\n腾讯盘外：上线前一周没有在腾讯大盘内活跃过的，并且上线后3天参与了玩法的用户；\n\n大战场 （2024/7/23）submodename= '大战场模式'，\n歼灭（2023/8/4） modename='团队竞技' and submodename like '%歼灭模式%'，\n奇幻大乱斗（2024/11/15）modename='创意工坊' and submodename='奇幻大乱斗'，\n西部传奇（2024-09-03）modename='娱乐模式' and submodename in ('西部传奇','西部牛仔沙漠')，\n战术车（2024-10-10）modename='娱乐模式' and submodename like '%战术车%'，\n夏日乱斗（2024-06-25）modename='创意工坊' and submodename like '%夏日乱斗%'，\n个人军备（2024.5.17）modename='团队竞技' and submodename like '%个人军备%'，\n十字要塞（2024.4.12） modename='团队竞技' and submodename like '%十字要塞%'\n\n\n注意：suin 和 vopenid是两套用户账号体系；没有腾讯盘外所有用户的数据。",
+        "db_id": "game2",
+        "table_list": [
+            "iplat_fat_mgamejp_login_tbuseract",
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_mid_qswang_openid2suin_tmp",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_39",
+        "question": "\n统计各个玩法参与用户其他玩法流入和双栖情况\n\n输出：流入玩法、流出玩法、上线后3天流入玩法参与用户数、上线后3天流出用户数、上线后3天双栖用户数、上线前一周流出玩法总参与用户数、流出占比、上线后3天流出玩法总参与用户数、双栖占比\n",
+        "evidence": "\n流入玩法上线日期和取数逻辑：\n大战场 （2024/7/23）submodename= '大战场模式'，\n歼灭（2023/8/4） modename='团队竞技' and submodename like '%歼灭模式%'，\n奇幻大乱斗（2024/11/15）modename='创意工坊' and submodename='奇幻大乱斗'，\n西部传奇（2024-09-03）modename='娱乐模式' and submodename in ('西部传奇','西部牛仔沙漠')，\n战术车（2024-10-10）modename='娱乐模式' and submodename like '%战术车%'，\n夏日乱斗（2024-06-25）modename='创意工坊' and submodename like '%夏日乱斗%'，\n个人军备（2024.5.17）modename='团队竞技' and submodename like '%个人军备%'，\n十字要塞（2024.4.12） modename='团队竞技' and submodename like '%十字要塞%'，\n五周年乱斗（2024/4/26）submode in (2611)，\nCG28战场进化（2024/9/3） modename='经典模式' and submodename ='CG28-动物丛林'，\nCG29流浪地球（2024/11/5） modename='经典模式' and submodename ='CG29-流浪地球'\n\n流出玩法：从上往下匹配，如果满足任一条件则返回对应的玩法名称，否则返回“其他子模式”。\n主题海岛：modename='经典模式' and submodename like 'CG%' and mapname='海岛'\n经典海岛：modename='经典模式' and mapname='海岛'\n度假岛：modename='经典模式' and mapname='度假岛'\n山谷：modename='经典模式' and mapname='山谷'\n超体模式：submodename='超体模式'\n地铁：modename='逃生模式'\n大战场：submodename='大战场模式'\n娱乐模式：modename='娱乐模式'\n绿洲：modename='绿洲'\n家园：modename='家园'\n大世界：modename='大世界'\n团队竞技：modename='团队竞技'\n\n用户定义：\n流出用户：流入玩法上线前一周玩了流出玩法，并且流入玩法上线后3天没有玩流出玩法，但是有玩流入玩法\n双栖用户：流入玩法上线前一周 和 上线后3天都玩了流出玩法\n流出占比：流出用户除以上线前一周流出玩法总参与\n双栖占比：双栖用户除以上线首周流出玩法总参与",
+        "db_id": "game2",
+        "table_list": [
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_40",
+        "question": "时间段2024.3.1-2024.6.30分月看用户当月在和平的 新进、回流、轻度留存、中度留存、重度留存\n\n输出：月份(202403、...、202406)、新进人数、回流人数、轻度留存人数、中度留存人数、重度留存人数\n",
+        "evidence": "新进：当月新进 \n回流：上个月未活跃的历史注册用户，在当月活跃\n轻度留存：留存用户（上个月活跃，本月也活跃的用户）在本月的活跃度1-4天\n中度留存：留存用户（上个月活跃，本月也活跃的用户）在本月的活跃度5-15天\n重度留存：留存用户（上个月活跃，本月也活跃的用户）在本月的活跃度16天及以上",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "jdqssy_mid_tblogin_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_41",
+        "question": "统计2024.1.1～1.3，每天活跃玩家数\n输出：统计日期(20240101、20240102、20240103)、玩家数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin"
+        ]
+    },
+    {
+        "question_id": "sql_42",
+        "question": "统计2021.11.1-2021.11.30每天按extarg2中用\"_\"分割的第2位的值包含(8,16,17)看点击情况\n输出：日期，按extarg2中用\"_\"分割的第2位，人数，次数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_ugcbuttonclick_pre"
+        ]
+    },
+    {
+        "question_id": "sql_43",
+        "question": "统计2025.1.1-2025.1.31期间活跃度分布\n输出：活跃度（轻度、中度、重度）、玩家数\n\n活跃度：轻度1-5天，中度6-15天，重度大于16天",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin"
+        ]
+    },
+    {
+        "question_id": "sql_44",
+        "question": "统计2024.01.01-2024.12.31期间，付费用户的付费区间对应的付费人数和付费金额\n输出：付费区间(小R、中R、大R、超R、未知)、付费人数、付费金额（元）\n\n付费区间：小R小于等于12，中R(12,60]，大R(60,180]，超R(180+)",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tbwater"
+        ]
+    },
+    {
+        "question_id": "sql_45",
+        "question": "统计2024.01.01-2024.01.07参与绿洲子玩法色块派对在202401.08-2024.01.14没玩绿洲子玩法色块派对在2024.01.15-2024.01.21又玩了绿洲子玩法色块派对的用户\n输出：玩家数",
+        "evidence": "imode为1287652322611036928代表绿洲子玩法色块派对",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat"
+        ]
+    },
+    {
+        "question_id": "sql_46",
+        "question": "统计2024.1.1-2024.2.2期间，每个自然周不同周活跃天数玩家数\n输出：统计周(1、2、3...、5)、周活跃天数、玩家数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin"
+        ]
+    },
+    {
+        "question_id": "sql_47",
+        "question": "统计2023.07.01-08.31期间，每天微信活跃用户在2023.09.1-09.21期间流失并且是2023.07.01-08.31有付费的用户\n输出：人数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tbwater",
+            "jdqssy_mid_tblogin"
+        ]
+    },
+    {
+        "question_id": "sql_48",
+        "question": "统计2023.12.1流失7天的回流用户数和流失30天的回流用户数\n输出：流失7天的回流用户数，流失30天的回流用户数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_49",
+        "question": "2024年10月1-2024年10月7 用周期开始时间判断玩法上线时间在7天以上90以内的玩法，统计周期内这些玩法的参与和留存情况\n输出：周期(20241001-20241007)，日期(20241001、...、20241007)，参与人数，次留人数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat",
+            "jdqssy_ret_matchsubmodegroup_conf"
+        ]
+    },
+    {
+        "question_id": "sql_50",
+        "question": "统计2024.10.1-2024.10.31期间点击400211，点击400212，点击400211及400212的重合用户作为用户类型以及性别和平和绿洲活跃度情况\n\n输出：用户类型（400211、400212、400211&400212、other），游戏角色性别（male、female、other）、绿洲活跃度（light、medium、heavy、other）、和平活跃度（light、medium、heavy、other），人数\n\n绿洲跟和平的活跃度： 轻度1-4天；中度5-15天；重度>=16天",
+        "evidence": "性别根据时间开窗取最新一条",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat",
+            "jdqssy_mid_tblogin",
+            "jdqssy_dsl_playerlogin_fht0",
+            "jdqssy_mid_ugcbuttonclick_pre"
+        ]
+    },
+    {
+        "question_id": "sql_51",
+        "question": "统计4个时间段灰度玩法参与情况\n\n时间段1：周期1：2024.11.08-11.21，周期2：2024.11.22-12.4\n时间段2：周期1：2024.11.10-11.23，周期2：2024.11.24-12.4\n时间段3：周期1：2024.11.15-11.28，周期2：2024.11.29-12.4\n时间段4：周期1：2024.11.17-11.30，周期2：2024.12.1-12.4\n输出：时间段（时间段1、时间段2、时间段3、时间段4），第1个周期进入过灰度玩法的用户数，两个周期都进入过灰度的用户数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_ugcbuttonclick_pre",
+            "jdqssy_ret_tdty_matchsubmodegroup_conf"
+        ]
+    },
+    {
+        "question_id": "sql_52",
+        "question": "2024.10.01-10.08期间参与了参与率在后20%子玩法的用户在周期内每天参与所有绿洲子玩法的数量分布\n数量分布：1，2，3，4，5，6-10，11-20，21以上\n输出：统计日期(20241001、...、20241008)、数量分布、人数\n\n参与率：每个子玩法的总对局数从高到低排名",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat"
+        ]
+    },
+    {
+        "question_id": "sql_53",
+        "question": "统计2024.10.21-11.21的期间内的非新注册活跃用户并且在2024.10.14-10.20没有活跃的回流用户量级，以及这些用户在10.20的\n1.前8-14天 (10.7-10.13)有活跃的用户\n2.前15-29天有活跃的用户\n3.前30-59天有活跃的用户\n4.前60-179天有活跃的用户\n5.前180-364天有活跃的用户\n输出：回流用户量级，前8-14天有活跃的用户量级，前15-29天有活跃的用户量级，前30-59天有活跃的用户量级，前60-179天有活跃的用户量级，前180-364天有活跃的用户量级\n\n",
+        "evidence": "dtstatdate限定使用 20241121、20240813、20240505、20240126 这4天的日期\n",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "jdqssy_mid_tblogin_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_54",
+        "question": "统计2024.9.20到2024.10.20期间matchmode=1003 每种玩法参与周期内的日均参与人数和日均玩法次留\n输出：玩法、上线日期、下线日期、日均参与人数、日均玩法次留",
+        "evidence": "玩法次留：每天参与玩法的用户在第2天也参与了该玩法\n日均次留：每种玩法周期内次留人数的平均值",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_playermatchflow_fht0",
+            "jdqssy_lvzhouimode_ret_conf"
+        ]
+    },
+    {
+        "question_id": "sql_55",
+        "question": "统计：2024.11.1-11.30，绿洲当天往前上线180天以内的子玩法，按七天平均 参与率+次留+七留 算一个总排名，需要每天都提供一个榜单\n\n输出，统计日期、绿洲各玩法名、平均参与率排名、次留排名、七留排名、总排名",
+        "evidence": "7天平均参与率：当天参与人数/当天活跃人,七日内平均\n7天平均次留：当天参与且第二天也参与人数/当天参与人数,七日内平均\n7天平均七留：当天参与且第7天也参与人数/当天参与人数,七日内平均\n每个玩法在每天都有一个前七天的平均参与率、次留、七留的数值，先需要按照这三个数值排名，然后按照排名总和再order一下，比如说11.1号，玩法A在前七天也就是10.25-10.31具有前七天的平均参与和次留七留，其中参与率在同期所有玩法里排名第一，次留第三，七留第四，那总排名就是1+3+4=8，玩法B相同排名总和是10，玩法C相同排名总和是2，那整体排名就是C=2>A=8>B=10",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat",
+            "jdqssy_mid_tblogin",
+            "jdqssy_ret_matchsubmodegroup_conf"
+        ]
+    },
+    {
+        "question_id": "sql_56",
+        "question": "时间：2024.01.01-2024.01.31\n每日新增用户的LTV，LTV1~LTV10\n输出：注册日期(20240101、20240102、...、20240131)、新进用户数、LTV1、LTV3、LTV7、LTV14、LTV30、LTV60、LTV90、LTV180\n",
+        "evidence": "LTV（Life Time Value，用户生命周期价值）\n从注册日起，到第 N-1 天为止，这批新用户累计产生的总流水 ÷ 这批新用户的总人数。\n单位：元/人，衡量“每个新注册用户在 N 天内平均贡献了多少收入”。",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tbwater",
+            "jdqssy_mid_tblogin_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_57",
+        "question": "统计不放回漏斗活动每天的pv和uv\n活动日期\t2024.11.29-12.19\t\n输出：日期(20241129、...、20241219、汇总)、pv、uv",
+        "evidence": "不放回漏斗活动：ireason = 2411291018 and buttontype = 10045 and  extarg1 in (117, 115)",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_activityclick_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_58",
+        "question": "统计以下时间对应玩法id下的不同对局时长人数分布\n'20230717'-'20230723'  1310822585431254784    \n'20221116'-'20221122' 1282371711108385024    \n'20221123'-'20221129' 1287652322611036928    \n'20230301'-'20230307' 1294211358396518400    \n'20230607''20230613' 1297394991875754752     \n\n对局时长按照 [0-10min)，[10-30min)，[30min-1h)，[1h,2h)，[2h,3h)，[3h,4h)， [4h,5h)，\n[5h,6h)，[6h,7h)，[7h,8h)，[8h,9h)，[9h,10h)，[10h,∞)\t\t\n输出字段：玩法id、对局时长、人数  ",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat"
+        ]
+    },
+    {
+        "question_id": "sql_59",
+        "question": "统计：20250111-20250124时间区间内，梦域神使活动抽奖用户第X次触发赠送后，这些用户的总抽奖次数\n输出：第X次触发,触发用户数,用户总抽奖次数",
+        "evidence": "actid=2411070621 and acttype= 10062 表示梦域神使活动\narg1表示抽奖次数\nStrArg1<>0表示触发赠送",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_actgeneralflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_60",
+        "question": "统计20250226往前180天军团用户，军团用户的30天滚动付费人数\n输出：统计日期（YYYYMMDD），军团并付费的人数",
+        "evidence": "军团活跃用户统计日期：\nwhere tdbank_imp_date>=date_sub(\"20250226\",180) and tdbank_imp_date<\"20250226\"\n游戏付费流水统计日期：\nwhere dtstatdate>=date_sub(\"20250226\",210) and dtstatdate<\"20250226\" and platid=255",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tbwater",
+            "dws_w_jdqssy_uid_tblogin_bitmap_df",
+            "jdqssy_dsl_playercorpactive_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_61",
+        "question": "统计2024.2.9首日累充活动领奖玩家分R\n输出：用户类型（沉默付费、历史非付费、小R、中R、大R、超R），活跃人数、首日付费人数，首日付费ARPU，前一个月有消耗点券人数\n\n沉默付费：历史付过费且前1个月没有消耗过点券\n点券的分R：\n前一个月的点券消耗总金额，小于100代表小R，[100-500)代表中R，[500,1500)代表大R，大于等于1500 -  代表超R\n",
+        "evidence": "首日累充活动逻辑：\nactid = 2402096612 and awardidx between 1 and 7\n合并\nActType = 661 and RecodType = 1\n\n首日付费ARPU计算方式：新用户首日总付费金额（点券）/新用户首日充值人数\n\n点券换算公式：1:10（rmb:点券）",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tbwater",
+            "jdqssy_mid_tblogin",
+            "jdqssy_dsl_moneyflow_fht0",
+            "jdqssy_mid_tbwater_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_62",
+        "question": "统计20250226军团近180日基础数据 说明：按照uid计算\n输出：统计日期（YYYYMMDD），角色DAU，军团参与角色数，军团完成任务角色数，军团商店兑换次数",
+        "evidence": " \n日期计算：20250226前180天-20250226\ndau是day activate user的意思",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_corpsshopbuy_fht0",
+            "jdqssy_dsl_playercorpactive_fht0",
+            "jdqssy_dsl_corpstraintaskflow_fht0",
+            "jdqssy_dsl_playerlogout_fht0",
+            "jdqssy_dsl_playerlogin_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_63",
+        "question": "统计20250226前90天内军团的性别年龄分布，年龄分层：0-17，18-24，25-29，30-34，35+\n输出：性别（男、女），年龄分层，人数",
+        "evidence": "\n\n军团只记录uid，需要转换vopenid在取值 \n性别按照用户取其最后一条，年龄取当天用户最大",
+        "db_id": "game2",
+        "table_list": [
+            "dws_w_jdqssy_uid_tblogin_bitmap_df",
+            "jdqssy_dsl_playercorpactive_fht0",
+            "jdqssy_dsl_playerlogin_fht0",
+            "dapan_mid_realname_openid_age_info_total"
+        ]
+    },
+    {
+        "question_id": "sql_64",
+        "question": "统计：2024.10.22-2024.11.19、2024.11.22-2024.12.19、2024.10.22-10.27、2024.10.28-11.03、2024.11.04-11.10、2024.11.11-11.17、2024.11.18-11.19、2024.11.22-11.24、2024.11.25-12.01、2024.12.02-12.08、2024.12.09-12.15、2024.12.16-12.19几个时间段的最近上新的曝光用户数（UV）、曝光次数（PV）\n输出：统计日期（例:20241023）、UV、PV\n",
+        "evidence": "buttontype=\"410012\"表示曝光，一条记录代表一次",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_ugcbuttonclick_pre"
+        ]
+    },
+    {
+        "question_id": "sql_65",
+        "question": "查询2024.11.29-2024.12.19期间的任务领取数据，并按类型汇总（跨日期）\n输出 ：日期（YYYYMMDD、汇总），类型，人数，次数",
+        "evidence": "任务领取：actid = 2411291018and acttype = 10045 and awardidx in (1, 2, 3)，一条记录代表领取一次",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_activityawardflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_66",
+        "question": "提取：输出在2024.12.1到2024.12.31期间每天的华为nova系列的登录人数\n输出:日期（YYYYMMDD）、人数",
+        "evidence": "华为nova系列：\"huawei+bra-al00\" ,\"huawei+aln-al00\"  ,\"huawei+aln-al80\" ,\"huawei+aln-al10\" ,\"huawei+aln-al10\" ,\"huawei+alt-al10\",\"huawei+ady-al00\" ,\"huawei+ady-al10\" ,\"huawei+hbn-al00\" ,\"huawei+hbn-al10\" ,\"huawei+hbn-al80\" ,\"huawei+hbp-al00\" ,\"huawei+lem-al00\" ,\"huawei+pce-w30\" ,\"huawei+pce-w40\" ,\"huawei+pce-al30\" ,\"huawei+pce-al40\" ,\"huawei+got-w29\" ,\"huawei+got-w09\" ,\"huawei+got-al09\" ,\"huawei+got-al19\" ,\"huawei+xyao-w00\",\"huawei+caz-al00\",\"huawei+caz-al10\",\"huawei+caz-tl10\",\"huawei+caz-tl20\",\"huawei+was-al00\",\"huawei+was-tl10\",\"huawei+pic-al00\",\"huawei+pic-tl00\",\"huawei+bac-al00\",\"huawei+bac-tl00\",\"huawei+hwi-al00\",\"huawei+hwi-tl00\",\"huawei+ane-al00\",\"huawei+ane-tl00\",\"huawei+par-al00\",\"huawei+par-tl00\",\"huawei+ine-al00\",\"huawei+ine-tl00\",\"huawei+vce-al00\",\"huawei+mar-al00\",\"huawei+mar-tl00\",\"huawei+sea-al00\",\"huawei+sea-tl00\",\"huawei+sea-al10\",\"huawei+sea-tl10\",\"huawei+glk-al00\",\"huawei+glk-tl00\",\"huawei+glk-lx1u\",\"huawei+spn-al00\",\"huawei+spn-tl00\",\"huawei+spn-al00\",\"huawei+spn-tl00\",\"huawei+wlz-al10\",\"huawei+wlz-an00\",\"huawei+jny-al10\",\"huawei+jny-tl10\",\"huawei+jef-an00\",\"huawei+jef-tn00\",\"huawei+jef-an20\",\"huawei+jef-tn20\",\"huawei+jer-an10\",\"huawei+jer-tn10\",\"huawei+jer-an20\",\"huawei+jer-tn20\",\"huawei+cdy-an00\",\"huawei+cdy-tn00\",\"huawei+cdy-an20\",\"huawei+cdy-tn20\",\"huawei+cnd-an00\",\"huawei+cdl-an50\",\"huawei+ang-an00\",\"huawei+brq-an00\",\"huawei+brq-al00\",\"huawei+jsc-an00\",\"huawei+jsc-tn00\",\"huawei+jsc-al50\",\"huawei+chl-al60\",\"huawei+nam-al00\",\"huawei+rte-al00\",\"huawei+jln-al00\",\"huawei+nco-al00\",\"huawei+gla-al00\",\"huawei+cha-al80\",\"huawei+bne-al00\"\n,\"huawei+jln-al00\",\"huawei+foa-al00\",\"huawei+goa-al80\",\"huawei+goa-al80u\",\"huawei+bon-al00\",\"huawei+blk-al00\",\"huawei+fin-al60\",\"huawei+ada-al00\",\"huawei+ada-al00u\",\"huawei+ada-al10u\",\"huawei+psd-al00\",\"huawei+blk-al80\",\"huawei+mis-al00\"",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_playerlogin_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_67",
+        "question": "统计2025.1.24-2025.2.6时间区间内，道具为430487,430485,602004025,602002011 的产出次数\t\n输出：道具id，产出次数",
+        "evidence": " addorreduce=0表示产出，1表示消耗",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_itemflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_68",
+        "question": "统计时间范围：25.1.28-25.2.10，除夕红装id：848，841 \n输出：日期（YYDDMM），人数",
+        "evidence": "除夕红装：\nactivitytype in (848, 841)",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_turntablelotteryflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_69",
+        "question": "统计2024.12.25——2025.1.5 ，不同信息类型的玩家数量\n\n信息类型:chattype in (20,25,26,16,27,8)\n\n输出 日期（20241225-20250105），信息类型，人数，次数",
+        "evidence": "chattype in (20,25,26,16,27,8)",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_test_dsl_secchatflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_70",
+        "question": "统计2024.11.29-2024.12.19期间，不同抽奖档位的对应人数\n抽奖档位：awardidx\n输出 抽奖档位（含汇总档位），人数",
+        "evidence": "抽奖活动：actid = 2411291018\n汇总：额外计算一个全档位统计组",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_activityawardflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_71",
+        "question": "统计2024.11.29-2024.12.19期间，每七天统计一次漏斗活动相关用户数\n输出 日期范围（20241129-20241205、20241206-20241212、20241213-20241219），extarg1类型，用户数，次数",
+        "evidence": "漏斗活动：ireason = 2411291018 and buttontype = 10045 and extarg1 in (101,109,110)",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_activityclick_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_72",
+        "question": "请统计从 2024年12月1日 到 2024年12月31日 期间，每天符合以下条件的用户：\n  用户定义：当天在“大世界玩法”中有过活跃行为的独立用户。\n  区域分布：分析这些用户中，来自“国美”、“上大”、“华科”、“中传”和“天坛”这五个地区的独立用户人数。\n\n输出：统计日期范围（20241201-20241231）、大世界玩法人数（当日）、国美人数（当日）、上大人数（当日）、华科人数（当日）、中传人数（当日）、天坛人数（当日）",
+        "evidence": "大世界玩法：eventid = 200005  \n经纬计算position截取第一位来判断位置    \n国美 432521.531250 and 447521.531250  439074.312500 and 454074.312500 \n上大 453170.000000 and 468170.000000  350220.000000 and 365220.000000\n华科 396610.000000 and 411610.000000  396420.000000 and 411420.000000\n中传 345980.000000 and 360980.000000  398630.000000 and 413630.000000 \n天坛 402789.031250 and 418057.781250  438065.812500 and 470082.031250",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_gameactivityeventpersonal_fht0",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_73",
+        "question": "统计20241123-20241222单挑王，绿洲其他，和绿洲汇总 三类用户，分别的组队率\n输出：绿洲总参与人数，绿洲总参与局数，绿洲组队人数，绿洲组队局数，单挑王总参与人数，单挑王总参与局数，单挑王组队人数，单挑王组队局数，绿洲其他总参与人数，绿洲其他总参与局数，绿洲其他组队人数，绿洲其他组队局数",
+        "evidence": "单挑王：matchmode=1003 and matchsubmodegroup=1345785623905087744\n绿洲其他：matchmode=1003 and matchsubmodegroup<>1345785623905087744\n绿洲汇总：matchmode=1003\n都需要限制 matchresult=\"ok\"\n组队：teamnum>1",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_playermatchflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_74",
+        "question": "统计 SS30赛季手册和SS29赛季手册的按钮人数\nSS30赛季:2024112305 - 2024112616\nSS29赛季:2024092405 - 2024092716\n输出：按钮类型，SS30赛季手册人数（packet1_user_cnt），SS29赛季手册人数（packet2_user_cnt）",
+        "evidence": "按钮：ButtonTypes（411130, 411200）",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_newbuttonclick_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_75",
+        "question": "统计：2022080400-2024112400的研究所解锁语音数量\n输出：baseid,解锁语音数量",
+        "evidence": "研究所：baseid in (3336008, 3304024, 3336012, 3306028, 3304030, 3336016, 3336018, 3304038, 3336023, 3306033, 3349004, 3308014, 3336032, 3304043, 3306039, 3336041, 3301024, 3336045, 3306042)",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_unlockvipvoicethemeflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_76",
+        "question": "统计20240919这天模拟器的注册用户的活跃情况\n注意与合并手机用户计算\n输出：每日首次登录渠道名称，模拟器注册人数，活跃时长（分），付费金额（元），对局次数",
+        "evidence": "登录渠道：loginchannel in (10005121, 10440385, 10053443, 10017093)\n活跃市场：ionlinetime / 60\n付费金额：imoney/100\n手机平台用户筛选方式：device_type = 0",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tbwater",
+            "dim_w_channel_channelid_class_info_nf",
+            "jdqssy_dsl_playermatchflow_fht0",
+            "jdqssy_mid_qswang_emulator_df",
+            "jdqssy_mid_tblogin",
+            "jdqssy_dsl_playerlogin_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_77",
+        "question": "统计：20230123开始7日内五行付费金额\n输出：日期（20230123-20230129），人数，五行付费金额",
+        "evidence": "五行付费计算逻辑：\nreason in (189, 190) -- 筛选货币流动一级原因\naddorreduce = 1 -- 筛选减少的货币流动\nimoneytype = 1027 -- 筛选五行付费类型\n五行付费金额：imoney",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_moneyflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_78",
+        "question": "统计：首日红装活动（2025011923）返场抽奖的用户属性\n输出：首日红装返场抽奖&沙丘之主有抽奖人数\n首日红装返场抽奖&境域双华有抽奖人数\t\t\n首日红装返场抽奖&墨龙九天有抽奖人数\t\t\n首日红装返场抽奖&沙丘之主有抽奖&但没有其主套人数\t\t\n首日红装返场抽奖&境域双华有抽奖&但没有其主套人数\t\t\n首日红装返场抽奖&墨龙九天有抽奖&但没有其主套人数\t\t\n首日红装返场抽奖&【沙丘之主和境域双华有主套】人数\t\t\n首日红装返场抽奖&【沙丘之主和墨龙九天有主套】人数\t\t\t\t\n首日红装返场抽奖&【境域双华和墨龙九天有主套】人数\t\t\t\t\n首日红装返场抽奖但【沙丘之主&境域双华&墨龙九天】没有抽奖人数",
+        "evidence": "抽奖活动时间：\n沙丘之主：20240426-20240606 \n镜域双华：20240607-20240725 \n墨龙九天：20240726-20240822\n抽奖活动筛选条件：\n首日红装返场抽奖 activitytype = 815\n沙丘之主有抽奖 activitytype = 690\n境域双华有抽奖 activitytype = 748\n墨龙九天有抽奖 activitytype = 750\n主套提取逻辑：\n提取道具沙丘之主-有主套的用户 igoodsid = 430179 and addorreduce = 0\n提取道具镜域双华-有主套的用户 igoodsid = 430265  and addorreduce = 0\n提取道具墨龙九天-有主套用户 igoodsid = 430225  and addorreduce = 0",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_itemflow_fht0",
+            "jdqssy_dsl_turntablelotteryflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_79",
+        "question": "统计2024.11.5-2024.11.10期间参与活动的新进用户的年龄分布，年龄段：1-17、18-19、20-24、25-29、30-34、35及以上、未知\n输出：年龄段，人数",
+        "evidence": "actid=2411050171 ",
+        "db_id": "game2",
+        "table_list": [
+            "ads_w_jdqssy_user_alltag_df",
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_dsl_activityawardflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_80",
+        "question": "统计：表dws_w_jdqssy_all_round_di中时间区间（2024.10.1-2025.1.8）内，每七天为一个周期，上周没参与单挑王玩法但下周参与了单挑王玩法的用户，上下周的主玩玩法、参与玩法以及单挑王玩法游玩时长\n输出：时间区间（2024-10-09-2025-01-08），上周主玩玩法游玩时长，上周参与玩法游玩时长，本周主玩玩法游玩时长，本周参与玩法游玩时长，本单挑王玩法游玩时长",
+        "evidence": "单挑王模式是指modename = \"绿洲\" AND submodename = \"单挑王\"\n时间固定从10.2开始计算周期，也就是说10.1实际上算作上周\n玩法时长保留两位小数",
+        "db_id": "game2",
+        "table_list": [
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_81",
+        "question": "统计20240601-20241031月活跃人数的年龄分布，年龄分布：1-17，18-19，20-24，25-29，30-34，35-39，40-44，45+，其他\n输出：自然月(YYYYMM)，平台（微信/手Q），年龄分布，人数",
+        "evidence": "按照月份、平台、年龄进行分组",
+        "db_id": "game2",
+        "table_list": [
+            "ads_w_jdqssy_user_alltag_df",
+            "jdqssy_mid_tblogin"
+        ]
+    },
+    {
+        "question_id": "sql_82",
+        "question": "统计20220408-20220410第三人称四排用户中 玩法类型（海岛 山谷 度假岛）赛季等级总积分的人数\n输出：玩法类型，赛季等级，总积分范围（eg:[2,3)，左闭右开），人数",
+        "evidence": "总积分计算：海岛需要乘1.2，其他乘1\n总积分范围：CONCAT('[', floor(iscore), ',', cast(floor(iscore) + 1 as int), ')') as iscore_range",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_roundflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_83",
+        "question": "统计流失14天以上的回流用户的点击光子鸡礼物、回到大厅和参与绿洲对局的数据\n统计日期\n2024/1/2\n2023/12/19\n2023/12/12\n2023/12/5\n2023/10/10\n2023/9/19\n2023/1/3\n2022/12/20\n输出：统计日（YYYYMMDD）、用户类型（'流失14天以上的回流用户'）、当天回流用户数、点击光子鸡礼物用户数、回到大厅用户数、当天有参与绿洲对局的用户数",
+        "evidence": "点击光子鸡礼物：buttontype =10370\n回到大厅：buttontype 10373或10374  \n流失14天以上的回流用户：统计日往前14天以上没有登陆游戏，在统计日登陆了游戏，比如统计日是2024-1-2，用户在2023-12-19到2024-1-1这14天连续没有登陆游戏，并且在2023-12-18及之前有登陆游戏，就是2024-1-2的流失14天以上的回流用户，其他统计日以此类推。",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat",
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_mid_ugcbuttonclick_pre"
+        ]
+    },
+    {
+        "question_id": "sql_84",
+        "question": "统计2018年注册的用户且在2020年9月到22年4月期间添加过好友的用户，每个月人均在线好友数\n输出：自然月（YYYYMM），人均在线好友数",
+        "evidence": "添加过好友：type=2",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_dsl_playerlogin_fht0",
+            "jdqssy_dsl_friendlist_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_85",
+        "question": "统计 20220506-20220508，20220513-20220515 两个区间的活跃用户进入匹配对局以及是否进入微赛事的情况\n输出：统计日期（YYYYMMDD），活跃人数，匹配人数，参加微赛事人数，未参加微赛事人数",
+        "evidence": "对局匹配成功 matchresult ='ok'  ；\n微赛事时间：每天19-21点",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "jdqssy_dsl_playermatchflow_fht0",
+            "jdqssy_dsl_entertainroundflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_86",
+        "question": "统计20250520- 20250522每天周回流用户并且这个用户在20250520- 20250522这个区间最小登录时间用户，以及用户的玩法对局情况\n输出：统计日期（YYYYMMDD），回流人数, 回流第一场主玩绿洲的人数",
+        "evidence": "回流用户最早登录时间是每天19-21",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_roundflow_fht0",
+            "jdqssy_dsl_playermatchflow_fht0",
+            "jdqssy_dsl_entertainroundflow_fht0",
+            "jdqssy_dsl_vsteamroundflow_fht0",
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_dsl_ugcgameresultflow_fht0",
+            "jdqssy_dsl_funnymoderoundflow_fht0",
+            "jdqssy_dsl_werewolfplayerdataflow_fht0",
+            "jdqssy_dsl_playerlogin_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_87",
+        "question": "统计2023.07.02-2023.07.09 参与绿洲各子玩法的用户里，和平新进、回流、留存用户数\n注：新进，回流，留存都按照7天为一个周期来计算\n输出：统计日期（YYYYMMDD），玩法，类型（新进、回流、留存），人数",
+        "evidence": "绿洲玩法子用户筛选条件：\ninstr(substr(cbitmap,1,7),'1')>0\n回流与留存计算：\ncase when datediff(dtstatdate,dregdate)<=6 then '新进'\nwhen instr(substr(cbitmap,8,7),'1')>0 then '留存'\nwhen instr(substr(cbitmap,8,7),'1')=0 then '回流'\n注意只需要统计上述三种类型",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_mid_qswang_lvzhou_cbitmap"
+        ]
+    },
+    {
+        "question_id": "sql_88",
+        "question": "统计赛季末期（20230529-20230627）的垂类玩法轻中重度及垂类独占用户，从3.22-6.27的，每周玩法分布和段位变化情况\n输出：周期（7天为一个周期），活跃度，玩法，段位，人数",
+        "evidence": "垂类玩法轻中重度用户划分条件：\n when active_days between 1 and 4 then '轻度'\n when active_days between 5 and 15 then '中度'\n when active_days between 16 and 30 then '重度'\n垂类独占用户筛选逻辑:\n至少玩过submode IN (1265972235155284992,1278160113246405632)模式一次且没玩过其他任何模式的用户（注意submode可为空的情况）\n垂类玩法： modename = '绿洲' and submode IN (1265972235155284992,1278160113246405632\n段位截取方式：seasonmaxsegment截取第一位 1-7分别代表青铜、白银、黄金、铂金、星钻、皇冠、王牌",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_playerlogin_fht0",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_89",
+        "question": "赛季末期（20230529-20230627）的垂类玩法轻中重度及垂类独占用户，从3.22-6.27的，每周和平登录天数 和 垂类玩法参与局数和天数分布\n输出：周期（7天为一个周期），活跃度，活跃天数，人数",
+        "evidence": "垂类玩法轻中重度用户划分条件：\n when active_days between 1 and 4 then '轻度'\n when active_days between 5 and 15 then '中度'\n when active_days between 16 and 30 then '重度'\n垂类独占用户筛选逻辑:\n至少玩过submode IN (1265972235155284992,1278160113246405632)模式一次且没玩过其他任何模式的用户（注意submode可为空的情况）\n垂类玩法： modename = '绿洲' and submode IN (1265972235155284992,1278160113246405632",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_90",
+        "question": "统计截至2023.6.30活跃分层，并在2023.7.01~2023.7.16未活跃，后续在2023.7.17-2023.7.23玩攻桥的用户\n输出：活跃分层（itype），玩攻桥人数",
+        "evidence": "攻桥 MatchSubModeGroup=1310822585431254784 \n活跃分层：\nWHEN INSTR(cbitmap400, '1') = 0 OR INSTR(cbitmap400, '1') > 360 THEN '360天内未活跃'\nWHEN INSTR(cbitmap400, '1') > 180 THEN '180天内未活跃'\nWHEN INSTR(cbitmap400, '1') > 90  THEN '90天内未活跃'\nWHEN INSTR(cbitmap400, '1') > 60  THEN '60天内未活跃'\nWHEN INSTR(cbitmap400, '1') > 30  THEN '30天内未活跃'\nWHEN INSTR(cbitmap400, '1') > 14  THEN '14天内未活跃'\nWHEN INSTR(cbitmap400, '1') > 7   THEN '7天内未活跃'\nWHEN INSTR(cbitmap400, '1') BETWEEN 1 AND 7 THEN '7天内活跃'",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_dsl_playermatchflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_91",
+        "question": "统计2023.7.12-7.18,2023.7.19-7.25的全平台活跃用户的回流情况(7留存，14留存，30留存，60留存，90留存，180留存)\n输出：统计日期（20230712，20230713...20230725），类型（新进，留存，7，14，30，60，90，180），人数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_92",
+        "question": "统计日期： 上周：2023.7.5-2023.7.11 本周：2023.7.12-2023.7.18\n统计在上周全平台回流和平的用户中（7天以上回流、30天以上回流），本周的和平活跃情况（轻中重活跃和流失）\n,[1,2]为轻度，[3,5]为中度，[6,7]为重度，否则为流失。输出：回流类型（7天回流，30天回流），活跃情况（轻中重活跃和流失）,人数",
+        "evidence": "给出具体日期时间20230705-20230711；20230712-20230718",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "jdqssy_mid_tblogin_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_93",
+        "question": "统计2024.1到2024.5每月全平台的新增付费、持续付费和回流付费用户人数\n输出：自然月（202401,...,2024.5），类型（1对应 新增付费用户； 2对应 持续付费用户；3对应 回流付费用户）,人数，付费金额（元）",
+        "evidence": "当月新增付费用户：用户第一笔支付在这个月\n当月持续付费用户：用户在本月的第一笔支付距离上一笔支付在30天以内\n当月回流付费用户：用户在本月的第一笔支付距离上一笔支付在30天以上",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tbwater",
+            "jdqssy_mid_tbwater_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_94",
+        "question": "统计20241123-20241128 逃生模式用户注册年份的设备情况\n输出：统计日期，设备类型，首次注册年份，登录人数、玩逃生模式人数，当日玩逃生模式人数比例、次日留存率\n\n统计20241123-20241128 全平台逃生模式用户注册年份的设备情况\n输出：统计日期(20241123-20241128)，设备情况，注册年份，使用设备的人数，使用设备玩逃生模式人数，使用设备玩逃生模式占总设备人数的比例，使用设备玩逃生模式的次留率",
+        "evidence": "设备类型：device_type 0-手机 1,5-模拟器 \n逃生模式：modename='逃生模式'",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_device_login",
+            "jdqssy_mid_tblogin_bitmap",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_95",
+        "question": "统计20250128这一天参与了活动1和2且非补发的玩家，对比和平活跃分年龄段的留存情况（统计这几天的活跃人数：\"20250127\",\"20250128\",\"20250129\",\"20250130\",\"20250203\",\"20250210\",\"20250217\",\"20250224\"）\n输出：活动（\"活动1-领20连\"、\"活动2-领地铁包\"、\"活动1和2去重\"、\"大盘\"），年龄分层（1-17,18-19,20-24,25-29,30-34,35及以上），日期（YYYYMMDD），人数",
+        "evidence": "活动1-领取20连：ActID=2501280902 and AwardIdx=1\n活动2-领地铁包：ActID=2412120891 and ReissueFlag=0\n大盘:  platid =255",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "ads_w_jdqssy_state_df",
+            "jdqssy_dsl_activityawardflow_fht0",
+            "jdqssy_dsl_activityawardflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_96",
+        "question": "统计全平台周期：\n2024.2.9-2024.2.15\t\n2025.1.28-2025.2.3\t\n主玩玩法：\n（主题海岛\t\t\n经典海岛\t\t\n度假岛\t\t \t\n超体\t\t\n娱乐\t\t\n绿洲\t\t\n地铁\t\t\n其他玩法\t\t\n团竞\t\t\n大战场\t\t\n荣都、其他模式）的情况 \n输出：日期(YYYYDMMDD)，主玩玩法（then后的部份），主玩用户数，主玩占比（保留两位小数）",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_97",
+        "question": "在2023.7.19-2023.7.25时间范围内，分别统计参与了捉迷藏的用户人数、既参与捉迷藏也参与了攻桥的用户、既参与捉迷藏也参与了躲猫猫的用户\n输出：参与了捉迷藏的不重复的人的个数、参与捉迷藏并且参与了攻桥的不重复的人的个数、参与捉迷藏并且参与了躲猫猫的不重复的人的个数\n",
+        "evidence": "捉迷藏的用户：imode = 1307095884553538304  and platid <> 255\n攻桥的用户：imode = 1310822585431254784  and platid <> 255\n躲猫猫的用户：mode=2370",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_baochang_playermatchflow_stat",
+            "dws_w_jdqssy_all_round_di"
+        ]
+    },
+    {
+        "question_id": "sql_98",
+        "question": "统计2024.05.27-2024.6.16每天的绿洲高活跃用户和和平高活跃用户不重复人数、\n绿洲高活跃用户和和平高活跃用户在当天登录的不重复人数\n输出：日期（YYYYMMDD），用户类型（绿洲高活、和平高活），用户人数，登录人数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "jdqssy_wwcheng_20240620a_packet_conf",
+            "jdqssy_mid_ugcbuttonclick_pre"
+        ]
+    },
+    {
+        "question_id": "sql_99",
+        "question": "统计2024.6.1-2024.6.30期间绿洲付费用户的和平和绿洲付费分布,需要分ugc模式（按照用户进行付费时所处的特定UGC）\n付费分层（小R 1-30，中小R 30-100，中R 100-500，大R 500-1500，超R 1500+，否则为未付费）\n输出：日期，ugc模式，分类（和平or绿洲），付费分层，不重复人数",
+        "evidence": "res = 'ok'   ",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_ugcpaypayrespond_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_100",
+        "question": "统计2024.3.26~2024.5.27 的玩家类型(7日回流/30日回流/新进玩家)，总人数、总付费、总付费人数，商业化类型，消耗人数，抽奖次数/购买次数，付费数 \n\n输出：日期(yyyymmdd)，玩家类型（7日回流/30日回流/新进），总人数、总付费、总付费人数，商业化类型（手册、军需、不放回、转盘、五行、特权卡、直购），消耗人数，抽奖次数,付费数",
+        "evidence": "\n\n货币转化规则：转盘、不放回、特权卡（*10），军需、直购、五行、手册（*1）\n抽奖次数：转盘需要求和，其他直接计数；\n商业化类型计算逻辑：\n军需：when itemid_1 in (1515013,1515020,1515023,1515060,1515277,1515279) then '军需'\n直购：when itemid_1 not in (1515013,1515020,1515023,1515060,1515277,1515279,1515029,1515120,1515123,1515122,1515121) then '直购'\n五行：when (Reason in (189,190) and AddOrReduce=1 and iMoneyType=1027) then '五行'\n手册：when (Reason in (143,144,156,158,246,269,273) and AddOrReduce=1 and iMoneyType=1 ) then '手册'\n特权卡：select '特权卡' itype,substr(tdbank_imp_date,1,8) dt,vopenid,sum(moneycnt)*10.0 money,count(*) icnt\n转盘：select '转盘' itype,substr(tdbank_imp_date,1,8) dt,vopenid, sum(CostNum)*10.0 money,sum(LotteryRound) icnt from jdqssy_dsl_turntablelotteryflow_fht0 where tdbank_imp_date >= '2024032600' and tdbank_imp_date <= '2024052723' group by substr(tdbank_imp_date,1,8),vopenid\nunion all\n不放回：select '不放回' itype,substr(tdbank_imp_date,1,8) dt,vopenid, sum(CostNum)*10.0 CostNum,count(*) icnt from jdqssy_dsl_twostagelotteryflow_fht0 where tdbank_imp_date >= '2024032600' and tdbank_imp_date <= '2024052723' group by substr(tdbank_imp_date,1,8),vopenid\n且只统计属于商业化类型的用户数据",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_turntablelotteryflow_fht0",
+            "jdqssy_dsl_twostagelotteryflow_fht0",
+            "jdqssy_dsl_privpackageopenflow_fht0",
+            "jdqssy_dsl_moneyflow_fht0",
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_dsl_marketbatchbuy_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_101",
+        "question": "统计日(2024.9.2,2024.9.3,2025.9.8,2025.9.9) 全平台活跃用户的本赛季最高段位等信息\n输出：统计日，本赛季最高段位，活跃用户数，统计日参与主题海岛玩法用户数，参与率",
+        "evidence": "主题海岛玩法：modename='经典模式' and submodename like 'CG%'\n段位分布：case when substr(seasonmaxsegment, 1, 1) = '1' then '青铜'\n                          when substr(seasonmaxsegment, 1, 1) = '2' then '白银'\n                          when substr(seasonmaxsegment, 1, 1) = '3' then '黄金'\n                          when substr(seasonmaxsegment, 1, 1) = '4' then '铂金'\n                          when substr(seasonmaxsegment, 1, 1) = '5' then '星钻'\n                          when substr(seasonmaxsegment, 1, 1) = '6' then '皇冠'\n                          when substr(seasonmaxsegment, 1, 1) >= '7' then '王牌'\n                          else '无段位'\n\t            end",
+        "db_id": "game2",
+        "table_list": [
+            "dws_w_jdqssy_all_round_di",
+            "jdqssy_mid_tblogin",
+            "jdqssy_dsl_playerlogin_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_102",
+        "question": "统计日(2024.9.2,2024.9.3,2025.9.8,2025.9.9) 经典模式下子模式以CG开头，活跃用户的机型档位等信息\n输出：统计日(yyyymmdd)，机型档位，活跃用户数，统计日参与主题海岛玩法用户数，参与率",
+        "evidence": "机型筛选逻辑：\ncase when DeviceTCQualityGrade between 1 and 3 then '低端' when DeviceTCQualityGrade between 4 and 6 then '中端' when DeviceTCQualityGrade>=7 then '高端' end DeviceTCQualityGrade,",
+        "db_id": "game2",
+        "table_list": [
+            "dws_w_jdqssy_all_round_di",
+            "jdqssy_mid_tblogin",
+            "jdqssy_dsl_playerlogin_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_103",
+        "question": "统计2025.9.1到9.10每天productid的参与直购购买人数，直购购买金额以及数量，当天注册人数\n输出：统计日期(yyyymmdd),productid,直购购买人数,直购购买金额,直购购买数量,注册人数",
+        "evidence": "productid的参与直购：op='take' and opres='ok'\n\tand productid in ('com.tencent.tmgp.pubgmhd.businessnewpackage6','com.tencent.tmgp.pubgmhd.businessnewpackage18','com.tencent.tmgp.pubgmhd.businessnewsuit','com.tencent.tmgp.pubgmhd.businessnewgun')",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_dsl_directpaycommflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_104",
+        "question": "统计20250523-20250605期间西瓜人活动区分年龄段的活动情况\n\n\n输出：年龄段，活动人数，获得道具人数",
+        "evidence": "西瓜人活动：extarg1 = 110 and ireason = 5523101062\n西瓜人道具：addorreduce = 0 and igoodsid = 430555\n年龄段： '1-17'\n\t\t '18-19'\n\t\t '20-24'\n\t\t '25-29'\n\t\t '30-34'\n\t\t '35-39'\n\t\t '40-44'\n\t\t '45+'\n\t\t '其他'  ",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_activityclick_fht0",
+            "ads_w_jdqssy_user_alltag_df",
+            "jdqssy_dsl_itemflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_105",
+        "question": "统计20240101-20250601全平台每天充值金额数和消耗金币数\n输出：统计日期(yyyymmdd)，充值金额数，消耗金币数",
+        "evidence": "AddOrReduce=1 and imoneytype=1",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tbwater",
+            "jdqssy_dsl_moneyflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_107",
+        "question": "统计2022.1.18-1.24与2021.10.19-12.20这两个时间段\n buttontype =99123并且 ireason=3的人数，以及两个时间段都满足条件的交叉人数\n输出：2022.1.18-1.24人数，2021.10.19-12.20人数，两个时间段交叉的人数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_activityclick_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_108",
+        "question": "统计2025.4月24日，全平台周流失 +  双周流失 +月流失 包 + 近30天登陆小于3天的低活跃号码包\n输出：类型（iweek，doubleiweek，imonth，30dayxioayu3day）、QQ 号",
+        "evidence": "周流失：近七天没登录，前一个7天登录\n双周流失：近14天没登录，前一个14天登录\n月流失：近30天没登录，前一个30天登录\n近30天登陆3天：三十天内登录小于3天",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_mid_tblogin",
+            "iplat_fat_mgamejp_tbopenid2qq"
+        ]
+    },
+    {
+        "question_id": "sql_109",
+        "question": " 统计 20250424-20250508 期间 经典和娱乐的吃鸡情况\n\n 吃鸡数分布层次：1,2-10,11-20,21-50,51-80,81-100，101-200,201-500,501以上\n 输出：吃鸡数分布层次，人数",
+        "evidence": " 经典模式： mode in(101,102,103,401,402,403)\n 娱乐：mode in(201,202,203,601,602,603) \n 吃鸡：teamrank =1 ",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_funnymoderoundflow_fht0",
+            "jdqssy_dsl_roundflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_110",
+        "question": "统计20220413-20220421全平台每天活跃的次留，3留，7留情况（分活动和登录）\n输出：统计日期(yyyymmdd),活动人数，登录次留，登录3留，登录7留，活动次留，活动3留，活动7留",
+        "evidence": "活动:actid = 2201123904",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin",
+            "jdqssy_dsl_activityawardflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_111",
+        "question": "统计20220425-20220425突变团竞2.0局内数据需求感染人类坐标热区（人类的坐标）  按天分布，重点关注\n类型包括：（变身疾行战士，变身隐身战士，变身神钩战士，变身超级猎手，变身冰爆领主，变身强化战士，变身龙息猎手）\n\n输出：统计日期(yyyymmdd)，类型，x,y,z,次数",
+        "evidence": "每个类型都要限制各自字段不为空\n各种类型计算方式：\n变身疾行战士 用 SpeedInfectedChangeInfo 取坐标（数组下标3,4,5对应x,y,z）\n变身隐身战士 用 InvisInfectedChangeInfo 取坐标（数组下标3,4,5对应x,y,z）\n变身神钩战士 用 HookInfectedChangeInfo 取坐标（数组下标3,4,5对应x,y,z）\n变身超级猎手 用 PowerSuperManChangeInfo 取坐标（数组下标3,4,5对应x,y,z）\n变身冰爆领主 用 FrozenAdvInfectedChangeInfo 取坐标（数组下标3,4,5对应x,y,z）\n变身强化战士 用 PowerAdvInfectedChangeInfo 取坐标（数组下标3,4,5对应x,y,z）\n变身龙息猎手 用 DragonSuperManChangeInfo 取坐标（数组下标3,4,5对应x,y,z）\n坐标保留一位小数点",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_vsteaminfectflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_112",
+        "question": "统计2022.04.23-2022.04.30和2022.05.01-2022.05.08经典模式存活时长达到90分钟的玩家人数，每日人数\n输出：统计日期(yyyymmdd)，人数",
+        "evidence": "经典模式mode in(101,102,103,401,402,403)",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_roundflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_113",
+        "question": "统计20220425-20220508团竞商店购买情况\n输出：统计日期（YYYYMMDD），商店id，人数，次数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_vsteamshopflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_114",
+        "question": "统计截止20250910近30天活跃用户的城市分布，且活跃用户账号体系为wx、qq\n输出：城市等级，人数",
+        "evidence": "\n帐号体系转换：需要根据vopenid与iplat_fat_mgamejp_tbopenid2commid（wx体系）以及iplat_fat_mgamejp_tbopenid2qq（QQ体系）进行转化\nvopenid转微信所用字段以及判断条件：scommid, sopenid ，where sappid in ('wxc4c0253df149f02d')\nvopenid转qq所用字段以及判断条件:iqq, sopenid ，where sappid in ('1106467070'）\n转换关联条件：vopenid = sopenid\n城市分级逻辑：\nwhen vcitylevel in ('1') then '一线'\nwhen vcitylevel in ('2') then '二线'\nwhen vcitylevel in ('3') then '三线'\n when vcitylevel in ('4') then '四线'\nwhen vcitylevel in ('5') then '五线'\nwhen vcitylevel in ('6') then '新一线'\nwhen vcitylevel in ('999') then '未知'",
+        "db_id": "game2",
+        "table_list": [
+            "iplat_fat_mgamejp_tbopenid2commid",
+            "jdqssy_mid_tblogin_bitmap",
+            "iplat_fat_mgamejp_tbopenid2qq",
+            "linksee_user_portrait_suin"
+        ]
+    },
+    {
+        "question_id": "sql_115",
+        "question": "统计 玩家参与\n\t新春挑战杯（20240202-20240204，20240209-20240211）\n\t超级主播杯（20231208-20231210，20231215-20231217）\n\t全民赛道（20231006-20231008，20230929-20231001，20230922-20230924）\n\t鸡不可失杯（20230721-20230723，20230728-20230730）\n\t城市赛道（20230519-20230611，20230616-20230625）\n\t冰工厂杯（20230505-20230507，20230512-20230514）\n\t鱼跃龙门杯（20230121-20230127）\n\t一起四排杯（20221125-20221127，20221202-20221204）\n\tPEL电竞杯（20220819-20220821，20220826-20220828）\n\t盛夏度假杯（20220722-20220724，20220729-20220731）\n\t全民空投杯（20220506-20220508，20220513-20220515，20220520-20220522）且matchmode为（1503,1603）的期数\n\t输出：每个玩家参与的不相同的期数",
+        "evidence": "",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_dsl_playermatchflow_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_116",
+        "question": "统计全平台20250225存量用户的类型（近三个月流失，近三个月活跃但近三个月无付费，近三个月活跃且有付费），历史段位，历史付费分层情况\n\t输出：用户类型，历史段位，历史付费分层，人数",
+        "evidence": "付费分层：\n\t\t0 \n\t\t(0-1200]\n\t\t(1200-6000]\n\t\t(6000-18000]\n\t\t(18000+]\n用户类型计算方式：\nWHEN isact = 0 THEN '近三个月流失'\nWHEN isact > 0 AND IFNULL(pay.money, 0) = 0 THEN '近三个月活跃但近三个月无付费'\nWHEN sact > 0 AND IFNULL(pay.money, 0) > 0 THEN '近三个月活跃且有付费'",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_mid_tbwater",
+            "dws_w_jdqssy_uid_tblogin_bitmap_df",
+            "jdqssy_mid_tbwater_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_117",
+        "question": "统计全平台20250331-20250510当天活跃前30用户回流类型   （活跃，7日回流，14日回流，30日回流），人数\n\t输出：用户回流类型（活跃，7日回流，14日回流，30日回流）， 人数",
+        "evidence": "回流类型计算：\nWHEN dregdate < dtstatdate AND INSTR(SUBSTR(cbitmap, 2, 30), '1') = 0 THEN 4\nWHEN INSTR(SUBSTR(cbitmap, 2, 30), '1') > 14 THEN 3\nWHEN INSTR(SUBSTR(cbitmap, 2, 30), '1') > 7 THEN 2\nELSE 1\n用户类型对应关系：\n1-活跃 2-七日回流 3-14日回流 4-30日回流",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap"
+        ]
+    },
+    {
+        "question_id": "sql_118",
+        "question": "统计20240426-20240505期间活动为1193536的曝光情况\n曝光：itype='1'\n参与：itype in ('10','200','201','202','203','204','31','32','33','34','35','702','703')\n输出：曝光参与情况（曝光未参与，曝光且参与）,人数，经典模式人数，经典模式对局数，经典模式对局时长，活跃人数，活跃时长，专业赛人数，专业赛局数（按照记录数）",
+        "evidence": "注意将曝光未参与中无记录的null值统一转化为0\n用户过滤条件：platid=255\n赛事id：TournamentID = 30002",
+        "db_id": "game2",
+        "table_list": [
+            "dws_w_jdqssy_all_round_di",
+            "jdqssy_mid_tblogin",
+            "jdqssy_dsl_tournamentprofstageupdate_fht0",
+            "pandora_dsl_97_tplayreport_fht0"
+        ]
+    },
+    {
+        "question_id": "sql_119",
+        "question": "2025年4月29日，2025年6月1日这两天\n在后续半个月未登录用户，在后续半个月有登录用户：\n输出：统计日期（yyyymmdd）,用户类型（后续半个月未登录，后续半个月有登录，新增、7日以内留存（不含当天的前七日后面同理）、7~14日回流、14~30日回流、30~90日回流、90日以上回流的用户量级），人数",
+        "evidence": "留存计算规则：\n        WHEN c.dregdate = a.dtstatdate THEN '新增'\n        WHEN INSTR(SUBSTR(c.cbitmap, 2), '1') > 0 AND INSTR(SUBSTR(c.cbitmap, 2), '1') <= 7 THEN '7日以内留存'\n        WHEN INSTR(SUBSTR(c.cbitmap, 2), '1') > 0 AND INSTR(SUBSTR(c.cbitmap, 2), '1') <= 14 THEN '7~14日回流'\n        WHEN INSTR(SUBSTR(c.cbitmap, 2), '1') > 0 AND INSTR(SUBSTR(c.cbitmap, 2), '1') <= 30 THEN '14~30日回流'\n        WHEN INSTR(SUBSTR(c.cbitmap, 2), '1') > 0 AND INSTR(SUBSTR(c.cbitmap, 2), '1') <= 90 THEN '30~90日回流'\n        WHEN INSTR(SUBSTR(c.cbitmap, 2), '1') = 0 OR INSTR(SUBSTR(c.cbitmap, 2), '1') > 90 THEN '90日以上回流'\n用户过滤条件：platid=255",
+        "db_id": "game2",
+        "table_list": [
+            "jdqssy_mid_tblogin_bitmap",
+            "jdqssy_mid_tblogin"
+        ]
+    },
+    {
+        "question_id": "sql_120",
+        "question": "统计用户（2025.7月24~7月25日持续活跃，2025.7.24活跃7.25流失到盘外），且帐号体系为qq的性别人数\n输出：用户类型（7月24~7月25日持续活跃，7.24活跃7.25流失到盘外）,性别,人数",
+        "evidence": "持续活跃:\nWHERE dtstatdate='20250725' \n    AND platid = 255 \n    AND substr(cbitmap,1,2)='11'\n流失盘外：\nWHERE dtstatdate='20250725' \n           AND platid = 255 \n           AND substr(cbitmap,1,2)='01')\n需要将vopenid转化为qq，体系转化用到字段：iqq, sopenid\nWHERE dtstatdate='20250725' \n           AND saccounttype='-100'\n           AND sgamecode='-100'\n           AND splattype='-100'\n           AND splat='-100'",
+        "db_id": "game2",
+        "table_list": [
+            "iplat_fat_mgamejp_login_tbuseract",
+            "jdqssy_mid_tblogin_bitmap",
+            "iplat_fat_mgamejp_tbopenid2qq",
+            "dws_w_jdqssy_uid_tblogin_bitmap_df"
+        ]
+    }
+]

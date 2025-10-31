@@ -38,6 +38,7 @@ class SqlTask(BaseModel):
     schema_name: str = Field(default="", description="Schema name for context")
     output_dir: str = Field(default="output", description="Output directory path")
     external_knowledge: str = Field(default="", description="External knowledge for the input")
+    table_list: Optional[List[str]] = Field(default=None, description="Optional whitelist of tables to consider")
     schema_linking_type: TABLE_TYPE = Field(default="table", description="Schema linking type for the task")
     current_date: Optional[str] = Field(
         default=None, description="Current date reference for relative time expressions"

@@ -168,7 +168,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--benchmark",
         type=str,
         required=True,
-        choices=["spider2", "bird_dev", "semantic_layer"],
+        choices=["spider2", "bird_dev", "semantic_layer", "tencent"],
         help="Benchmark type to run",
     )
     benchmark_parser.add_argument(
