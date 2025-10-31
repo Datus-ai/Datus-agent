@@ -25,3 +25,10 @@ before_reflection_*.yaml
 /benchmark/semantic_layer/semantic_models
 /dist
 *.egg-info
+
+save_sql1/
+save_sql2/
+save_sql_all/
+output_sql_all/
+output_sql1/
+output_sql2/
