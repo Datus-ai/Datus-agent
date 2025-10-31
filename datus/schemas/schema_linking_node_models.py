@@ -33,6 +33,9 @@ class SchemaLinkingInput(BaseInput):
     prompt_version: str = Field(default="1.0", description="Version for prompt")
     top_n: int = Field(default=5, description="Number of top tables to return")
     table_type: TABLE_TYPE = Field(default="table", description="Table type for the task")
+    table_list: Optional[List[str]] = Field(
+        default=None, description="Optional whitelist of tables to consider during schema linking"
+    )
 
     def top_n_by_rate(self) -> int:
         if self.matching_rate == "fast":
@@ -68,6 +71,7 @@ class SchemaLinkingInput(BaseInput):
             schema_name=sql_task.schema_name,
             matching_rate=matching_rate,
             table_type=sql_task.schema_linking_type,
+            table_list=getattr(sql_task, "table_list", None),
         )
 
 

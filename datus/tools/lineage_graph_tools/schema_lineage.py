@@ -97,6 +97,26 @@ class SchemaLineageTool(BaseTool):
         table_schemas = TableSchema.from_arrow(similar_schemas)
         table_values = TableValue.from_arrow(similar_values)
 
+        # Prefer explicit table_list; otherwise use similar table names; else return RAG results
+        table_names = None
+        if getattr(input_param, "table_list", None):
+            table_names = input_param.table_list
+        elif table_schemas:
+            table_names = [schema.table_name for schema in table_schemas]
+
+        if table_names:
+            if getattr(input_param, "table_list", None):
+                logger.info("found table!")
+            full_schemas, full_values = self.get_table_and_values(input_param.database_name, table_names)
+            return SchemaLinkingResult(
+                success=True,
+                error=None,
+                table_schemas=full_schemas,
+                schema_count=len(full_schemas),
+                table_values=full_values,
+                value_count=len(full_values),
+            )
+
         return SchemaLinkingResult(
             success=True,
             error=None,
@@ -137,9 +157,13 @@ class SchemaLineageTool(BaseTool):
             database_name=input_param.database_name,
             schema_name=input_param.schema_name,
         )
-        top_n = input_param.top_n_by_rate()
-        # Limit to top_n tables
-        tables_with_ddl = tables_with_ddl[:top_n] if tables_with_ddl else []
+        # If explicit table_list is provided, filter by it; else limit by top_n
+        if getattr(input_param, "table_list", None):
+            names = set(input_param.table_list)
+            tables_with_ddl = [t for t in (tables_with_ddl or []) if t.get("table_name") in names]
+        else:
+            top_n = input_param.top_n_by_rate()
+            tables_with_ddl = tables_with_ddl[:top_n] if tables_with_ddl else []
 
         # Convert to TableSchema objects
         table_schemas = []

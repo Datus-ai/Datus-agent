@@ -811,6 +811,9 @@ class Agent:
         elif benchmark_platform == "bird_dev":
             self.global_config.check_init_storage_config("database")
             return self.benchmark_bird_dev(benchmark_path, target_task_ids)
+        elif benchmark_platform == "tencent":
+            self.global_config.check_init_storage_config("database")
+            return self.benchmark_tencent(benchmark_path, target_task_ids)
         elif benchmark_platform == "semantic_layer":
             self.global_config.check_init_storage_config("metric")
             return self.benchmark_semantic_layer(benchmark_path, target_task_ids)
@@ -888,6 +891,78 @@ class Agent:
             self.global_config.output_dir,
             target_task_ids,
         )
+
+        # new benchmark for test
+    def benchmark_tencent(self, benchmark_path, target_task_ids):
+       
+        json_file_path = os.path.join(benchmark_path, "after.json") 
+        logger.info(f"Loading custom benchmark file from: {json_file_path}")
+
+        try:
+            with open(json_file_path, 'r', encoding='utf-8') as f:
+                processed_tasks = json.load(f) 
+        except Exception as e:
+            logger.error(f"Failed to load {json_file_path}: {e}")
+            return {"status": "error", "message": "File not found or invalid JSON"}
+
+        
+        total = len(processed_tasks)
+        success = 0
+        logger.info(f"Found {total} tasks in tencent.")
+        
+        for i, task in enumerate(processed_tasks):
+            task_id = task.get("question_id", f"unknown_{i}")
+            
+            if target_task_ids and task_id not in target_task_ids:
+                continue
+
+            logger.info(f"Running custom task {i + 1}/{total} [ID: {task_id}]")
+            
+
+            result = self.run_single_tencent_task(task) 
+            
+            if result.get("status") == "success":
+                success += 1
+        
+        logger.info(f"Custom benchmark completed. {success}/{total} succeeded.")
+        return {"status": "success", "message": f"{success}/{total} succeeded."}
+
+    def run_single_tencent_task(self, task: dict):
+        """
+        run single task 
+        """
+        task_id = str(task["question_id"])
+        question = task["question"]
+        
+       
+        database_name = task["db_id"] 
+        table_list = task["table_list"]
+        
+        logger.info(f"start custom benchmark with {task_id}: {question}")
+
+        result = self.run(
+            SqlTask(
+                id=task_id,                
+            
+                database_type=DBType.STARROCKS, 
+                
+                task=question,
+                
+                database_name=database_name, 
+                
+                table_list=table_list,
+              
+                external_knowledge="" if "evidence" not in task else task["evidence"],
+                
+                output_dir=self.global_config.output_dir,
+                current_date=self.args.current_date,
+            )
+        )
+        
+        logger.info(
+            f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
+        )
+        return result
 
     def benchmark_bird_dev(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
         tasks = load_bird_dev_tasks(benchmark_path)

@@ -26,9 +26,11 @@ before_reflection_*.yaml
 /dist
 *.egg-info
 
+save/
 save_sql1/
 save_sql2/
 save_sql_all/
 output_sql_all/
 output_sql1/
+output/
 output_sql2/

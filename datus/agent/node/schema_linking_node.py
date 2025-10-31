@@ -64,13 +64,9 @@ class SchemaLinkingNode(Node):
         start = matching_rates.index(matching_rate)
         final_matching_rate = matching_rates[min(start + workflow.reflection_round, len(matching_rates) - 1)]
         logger.debug(f"Final matching rate: {final_matching_rate}")
-        next_input = SchemaLinkingInput(
-            input_text=workflow.task.task,
+        next_input = SchemaLinkingInput.from_sql_task(
+            workflow.task,
             matching_rate=final_matching_rate,
-            database_type=workflow.task.database_type,
-            database_name=workflow.task.database_name,
-            sql_context=None,
-            table_type=workflow.task.schema_linking_type,
         )
         self.input = next_input
         return {"success": True, "message": "Schema and external knowledge prepared"}
@@ -88,9 +84,9 @@ class SchemaLinkingNode(Node):
         logger.debug(f"Checking if rag storage path exists: {path}")
         if not os.path.exists(path):
             logger.info(f"RAG storage path `{path}` does not exist.")
-            return self._execute_schema_linking_fallback(SchemaLineageTool(self.agent_config))
+            return self._execute_schema_linking_fallback(SchemaLineageTool(agent_config=self.agent_config))
         else:
-            tool = SchemaLineageTool(self.agent_config)
+            tool = SchemaLineageTool(agent_config=self.agent_config)
             try:
                 # Import SchemaLineageTool only when needed
                 if tool:
