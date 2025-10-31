@@ -827,7 +827,6 @@ class Agent:
             filtered_tasks.append(task_config)
 
         logger.info(f"Loaded {len(filtered_tasks)} tasks from Spider2 benchmark")
-        logger.info("Phase 1: Running agent benchmark tests...")
 
         def run_single_spider2_task(task_config):
             """Execute a single Spider2 benchmark task"""
@@ -876,6 +875,8 @@ class Agent:
         return {"status": "success", "message": "Benchmark tasks executed successfully"}
 
     def benchmark_bird_dev(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
+        from datus.utils.benchmark_utils import load_bird_dev_tasks
+
         tasks = load_bird_dev_tasks(benchmark_path)
         current_namespace = self.global_config.current_namespace
 
@@ -898,17 +899,6 @@ class Agent:
             logger.warning("There are no benchmarks that need to be run.")
             return {}
         logger.info(f"Loaded {task_size} tasks from Bird benchmark")
-        logger.info("Phase 1: Generating gold standard results...")
-
-        for db_id, converted_tasks in group_task_ids.items():
-            generate_gold_standard_results(
-                converted_tasks,
-                benchmark_path,
-                self.db_manager.get_conn(current_namespace, logic_name=db_id),
-                target_task_ids,
-            )
-
-        logger.info("Phase 2: Running agent benchmark tests...")
 
         def run_single_bird_task(task):
             """Execute a single Bird benchmark task"""
@@ -975,14 +965,8 @@ class Agent:
                     tasks.append(task_data)
 
         logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
-        logger.info("Phase 1: Generating gold standard results...")
-
-        generate_gold_standard_results(
-            tasks, benchmark_path, self.db_manager.get_conn(self.global_config.current_namespace), target_task_ids
-        )
         metric_meta = self.global_config.current_metric_meta(self.args.metric_meta)
 
-        logger.info("Phase 2: Running agent benchmark tests...")
         for task in tasks:
             task_id = str(task["question_id"])
             if target_task_ids and task_id not in target_task_ids:
