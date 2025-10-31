@@ -376,7 +376,8 @@ class SemanticAgenticNode(AgenticNode):
                 enhanced_parts.append(context_part_str)
 
             if enhanced_parts:
-                enhanced_message = f"{'\\n\\n'.join(enhanced_parts)}\\n\\nUser question: {user_input.user_message}"
+                separator = "\n\n"
+                enhanced_message = f"{separator.join(enhanced_parts)}\n\nUser question: {user_input.user_message}"
 
             # Create assistant action for processing
             assistant_action = ActionHistory.create_action(

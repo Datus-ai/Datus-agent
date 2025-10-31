@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from .base import BaseSqlConnector
+from .clickzetta_connector import ClickzettaConnector
 from .snowflake_connector import SnowflakeConnector
 from .sqlalchemy_connector import SQLAlchemyConnector
 from .sqlite_connector import SQLiteConnector
@@ -13,5 +14,6 @@ __all__ = [
     "SnowflakeConnector",
     "StarRocksConnector",
     "SQLAlchemyConnector",
+    "ClickzettaConnector",
     "BaseSqlConnector",
 ]

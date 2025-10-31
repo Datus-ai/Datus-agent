@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Callable, Optional
+from typing import Callable, Generic, Optional, TypeVar
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
@@ -21,15 +21,15 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+T = TypeVar("T", bound=BaseEmbeddingStore)
+
 
 @lru_cache(maxsize=12)
-def _cached_storage[
-    T: BaseEmbeddingStore
-](factory: Callable[[str, EmbeddingModel], T], path: str, model_name: str) -> T:
+def _cached_storage(factory: Callable[[str, EmbeddingModel], T], path: str, model_name: str) -> T:
     return factory(path, get_embedding_model(model_name))
 
 
-class StorageCacheHolder[T: BaseEmbeddingStore]:
+class StorageCacheHolder(Generic[T]):
     def __init__(
         self,
         storage_factory: Callable[[str, EmbeddingModel], T],

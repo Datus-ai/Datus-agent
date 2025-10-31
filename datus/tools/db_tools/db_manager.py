@@ -11,6 +11,7 @@ from sqlalchemy.engine.url import URL, make_url
 
 from datus.configuration.agent_config import DbConfig
 from datus.tools.db_tools.base import BaseSqlConnector
+from datus.tools.db_tools.clickzetta_connector import ClickzettaConnector
 from datus.tools.db_tools.duckdb_connector import DuckdbConnector
 from datus.tools.db_tools.mysql_connector import MySQLConnector
 from datus.tools.db_tools.snowflake_connector import SnowflakeConnector
@@ -334,6 +335,19 @@ class DBManager:
                 password=db_config.password,
                 catalog=db_config.catalog or "default_catalog",
                 database=db_config.database,
+            )
+        elif db_config.type == DBType.CLICKZETTA:
+            conn = ClickzettaConnector(
+                service=db_config.service or db_config.host,
+                username=db_config.username,
+                password=db_config.password,
+                instance=db_config.instance,
+                workspace=db_config.workspace or db_config.database,
+                schema=db_config.schema,
+                vcluster=db_config.vcluster,
+                secure=db_config.secure if isinstance(db_config.secure, bool) else None,
+                hints=db_config.hints or None,
+                extra=db_config.extra or None,
             )
         else:
             connection_uri = db_config.uri

@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
+from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
 
 from pandas import DataFrame
 from pyarrow import DataType, RecordBatch, Table, array, ipc
@@ -29,6 +29,7 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_context_switch, parse_sql_type
+from datus.utils.typing_compat import override
 
 logger = get_logger(__name__)
 

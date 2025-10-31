@@ -110,6 +110,15 @@ exclude = ["benchmark*", "docs*"]
 [tool.uv.pip]
 index-url = "http://mirrors.aliyun.com/pypi/simple"
 
+# Optional dependencies (extras)
+[project.optional-dependencies]
+# Install with: pip install datus-agent[clickzetta]
+clickzetta = [
+    # ClickZetta integration packages (not available on Python 3.12+)
+    "clickzetta-zettapark-python>=0.1.3; python_version < \"3.12\"",
+    "clickzetta-connector-python>=0.1.0; python_version < \"3.12\"",
+]
+
 # uv tool run black
 [tool.black]
 line-length = 120

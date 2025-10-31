@@ -17,6 +17,7 @@ class DBType(str, Enum):
     CLICKHOUSE = "clickhouse"
     BIGQUERY = "bigquery"
     STARROCKS = "starrocks"
+    CLICKZETTA = "clickzetta"
     SQLSERVER = "sqlserver"  # same as mssql
     MSSQL = "mssql"  # same as sqlserver
     ORACLE = "oracle"
@@ -47,6 +48,7 @@ SUPPORT_DATABASE_DIALECTS = {
     DBType.POSTGRES,
     DBType.POSTGRESQL,
     DBType.DUCKDB,
+    DBType.CLICKZETTA,
 }
 SUPPORT_SCHEMA_DIALECTS = {
     DBType.SNOWFLAKE,
@@ -57,6 +59,7 @@ SUPPORT_SCHEMA_DIALECTS = {
     DBType.DUCKDB,
     DBType.POSTGRES,
     DBType.POSTGRESQL,
+    DBType.CLICKZETTA,
 }
 
 

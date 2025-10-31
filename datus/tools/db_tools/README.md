@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `db_tools` module provides a unified interface for interacting with various SQL databases in the Datus agent system. It abstracts database-specific operations through a common connector pattern, supporting multiple database types including SQLite, MySQL, PostgreSQL, DuckDB, Snowflake, and StarRocks.
+The `db_tools` module provides a unified interface for interacting with various SQL databases in the Datus agent system. It abstracts database-specific operations through a common connector pattern, supporting multiple database types including SQLite, MySQL, PostgreSQL, DuckDB, Snowflake, StarRocks, and ClickZetta.
 
 **Key Problems Solved:**
 - Provides a consistent API for different SQL database types
@@ -40,6 +40,7 @@ The `db_tools` module provides a unified interface for interacting with various 
 | `sqlite_connector.py` | SQLite | Lightweight file database, DDL extraction |
 | `starrocks_connector.py` | StarRocks | OLAP database, materialized views, catalog support |
 | `duckdb_connector.py` | DuckDB | Analytical database, read-only mode, schema introspection |
+| `clickzetta_connector.py` | ClickZetta | Cloud-native lakehouse, volume files, workspace management. [ClickZetta](https://www.singdata.com/) is developed by [Singdata](https://www.singdata.com/) and [Yunqi](https://www.yunqi.tech/) |
 
 ### Entry Points and Public Interfaces
 
@@ -102,6 +103,30 @@ result = connector.execute(
     ExecuteSQLInput(sql_query="SELECT * FROM sales WHERE date > '2024-01-01'"),
     result_format="arrow"  # Options: "csv", "arrow", "list"
 )
+```
+
+### ClickZetta Connector Usage
+
+```python
+from datus.tools.db_tools import ClickzettaConnector
+
+# ClickZetta connector with workspace and schema support
+connector = ClickzettaConnector(
+    service="<your-service-endpoint>",
+    username="<your_username>",
+    password="<your_password>",
+    instance="<your_instance>",
+    workspace="<your_workspace>",
+    schema="<your_schema>",
+    vcluster="<your_vcluster>"
+)
+
+# Execute queries with ClickZetta-specific features
+result = connector.execute_query("SELECT * FROM sales_data", result_format="pandas")
+
+# Work with volume files (ClickZetta-specific feature)
+file_content = connector.read_volume_file("volume:user://~/", "semantic_models/sales.yml")
+volume_files = connector.list_volume_files("volume:user://~/", "semantic_models/")
 ```
 
 ### Metadata Operations
@@ -170,6 +195,11 @@ The module uses `DbConfig` objects with the following fields:
 | `database` | string | Default database/schema | Yes |
 | `warehouse` | string | Snowflake warehouse | For Snowflake |
 | `catalog` | string | StarRocks catalog | For StarRocks |
+| `service` | string | ClickZetta service endpoint | For ClickZetta |
+| `instance` | string | ClickZetta instance | For ClickZetta |
+| `workspace` | string | ClickZetta workspace | For ClickZetta |
+| `vcluster` | string | ClickZetta virtual cluster | For ClickZetta |
+| `schema` | string | ClickZetta schema | For ClickZetta |
 | `path_pattern` | string | Glob pattern for SQLite/DuckDB files | For file databases |
 
 ### Example Configuration
@@ -194,6 +224,17 @@ namespace:
     duckdb_files:
       type: "duckdb"
       path_pattern: "data/*.duckdb"
+
+  clickzetta_data:
+    main_workspace:
+      type: "clickzetta"
+      service: "${CLICKZETTA_SERVICE}"
+      username: "${CLICKZETTA_USERNAME}"
+      password: "${CLICKZETTA_PASSWORD}"
+      instance: "${CLICKZETTA_INSTANCE}"
+      workspace: "${CLICKZETTA_WORKSPACE}"
+      schema: "${CLICKZETTA_SCHEMA}"
+      vcluster: "${CLICKZETTA_VCLUSTER}"
 ```
 
 ### Environment Variables
@@ -213,6 +254,15 @@ export MYSQL_PASSWORD=secret
 # StarRocks
 export STARROCKS_USER=admin
 export STARROCKS_PASSWORD=secret
+
+# ClickZetta
+export CLICKZETTA_SERVICE=your_service_endpoint
+export CLICKZETTA_USERNAME=your_username
+export CLICKZETTA_PASSWORD=your_password
+export CLICKZETTA_INSTANCE=your_instance
+export CLICKZETTA_WORKSPACE=your_workspace
+export CLICKZETTA_SCHEMA=your_schema
+export CLICKZETTA_VCLUSTER=your_vcluster
 ```
 
 ## How to Contribute to This Module
@@ -354,3 +404,69 @@ When adding a new database type, update the configuration schema in `datus/confi
 - **Streaming**: Use `execute_arrow_iterator()` for large result sets
 - **Batch Processing**: Configure `batch_size` parameter for optimal memory usage
 - **Read-Only Mode**: DuckDB connector uses read-only mode to prevent lock conflicts
+
+## ClickZetta Multi-Workspace Support
+
+ClickZetta workspaces require separate authentication sessions and cannot be switched at runtime. To work with multiple ClickZetta workspaces, configure separate namespaces:
+
+### ✅ Recommended Approach: Multiple Namespaces
+
+```yaml
+# conf/agent.yml
+namespace:
+  clickzetta_dev:
+    type: clickzetta
+    service: dev-clickzetta.company.com
+    username: dev_user
+    password: dev_password
+    instance: dev_instance
+    workspace: development
+    schema: PUBLIC
+    vcluster: DEFAULT_AP
+
+  clickzetta_prod:
+    type: clickzetta
+    service: prod-clickzetta.company.com
+    username: prod_user
+    password: prod_password
+    instance: prod_instance
+    workspace: production
+    schema: PUBLIC
+    vcluster: DEFAULT_AP
+```
+
+### Usage Examples
+
+```bash
+# Switch between environments using namespace parameter
+datus-agent --namespace clickzetta_dev
+datus-agent --namespace clickzetta_prod
+```
+
+```python
+# Programmatic namespace switching
+config.current_namespace = "clickzetta_dev"
+dev_connector = config.current_db_config().create_connector()
+
+config.current_namespace = "clickzetta_prod"
+prod_connector = config.current_db_config().create_connector()
+```
+
+### ✅ Supported Context Switching
+
+Within the same workspace, you can switch schemas:
+
+```python
+# Schema switching within same workspace (supported)
+connector.switch_context(schema_name="analytics")
+connector.switch_context(schema_name="reporting")
+```
+
+### ❌ Unsupported Operations
+
+```python
+# Workspace switching is NOT supported (requires re-login)
+connector.switch_context(database_name="different_workspace")  # Raises DatusException
+```
+
+**Note**: ClickZetta workspace switching requires separate authentication sessions. Use different namespace configurations for different workspaces instead of runtime switching.
