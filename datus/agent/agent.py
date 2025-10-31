@@ -1056,6 +1056,56 @@ class Agent:
     def benchmark_bird_critic(self):
         pass
 
+    def evaluation(self):
+        """Evaluate the benchmarking"""
+        benchmark_platform = self.args.benchmark
+        if benchmark_platform in ("semantic_layer", "bird_critic"):
+            return {
+                "status": "failed",
+                "message": "Benchmark bird_critic and semantic_layer evaluation is not supported at the moment",
+            }
+
+        benchmark_path = self.args.benchmark_path
+        benchmark_result_path = self.args.result_path or self.global_config.output_dir
+        benchmark_trajectory_path = self.args.save_path or self.global_config.trajectory_dir
+
+        if benchmark_platform in ("bird_dev", "spider2"):
+            if not benchmark_path:
+                benchmark_path = self.global_config.benchmark_path(benchmark_platform)
+            from datus.utils.benchmark_utils import evaluate_and_report_accuracy
+
+            return evaluate_and_report_accuracy(
+                benchmark_platform=benchmark_platform,
+                benchmark_path=benchmark_path,
+                trajectory_dir=benchmark_trajectory_path,
+                result_dir=benchmark_result_path,
+                target_task_ids=self.args.task_ids,
+                output_file=self.args.output_file,
+            )
+
+        elif benchmark_platform in self.global_config.agentic_nodes:
+            if not benchmark_path:
+                benchmark_path = os.path.join(self.global_config.home, "benchmark", f"{benchmark_platform}.csv")
+            if not os.path.exists(benchmark_path):
+                return {
+                    "status": "failed",
+                    "message": f"The benchmark corresponding to the sub-agent was not found: {benchmark_path}",
+                }
+            from datus.utils.benchmark_utils import evaluate_sub_agent_and_report
+
+            return evaluate_sub_agent_and_report(
+                benchmark_path,
+                benchmark_trajectory_path,
+                benchmark_result_path,
+                target_task_ids=self.args.task_ids,
+                output_file=self.args.output_file,
+            )
+        else:
+            return {
+                "status": "failed",
+                "message": "No corresponding benchmark or sub-agent found",
+            }
+
     def generate_dataset(self):
         """Generate dataset from trajectory files."""
         logger.info("Generating dataset from trajectory files")

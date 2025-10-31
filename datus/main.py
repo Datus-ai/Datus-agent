@@ -265,6 +265,35 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--layer1", type=str, default="", help="Layer1 of the metrics")
     run_parser.add_argument("--layer2", type=str, default="", help="Layer2 of the metrics")
 
+    # evaluation for benchmark
+    evaluation_parser = subparsers.add_parser(
+        "evaluation",
+        help="Run evaluation for benchmark",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    evaluation_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
+    evaluation_parser.add_argument(
+        "--benchmark",
+        type=str,
+        required=True,
+        help="Benchmark type to run, choice for spider2, bird_dev, semantic_layer and subagents",
+    )
+    evaluation_parser.add_argument("--task_ids", type=str, nargs="+", help="Specific benchmark task IDs to run")
+    evaluation_parser.add_argument(
+        "--benchmark_path",
+        required=False,
+        help=(
+            "The path of the benchmark needs to contain the corresponding tasks and results"
+            "(<benchmark_path>/gold/exec_result>)"
+        ),
+    )
+    evaluation_parser.add_argument("--result_path", help="result directory (default: {agent.home}/output)")
+    evaluation_parser.add_argument(
+        "--save_path", help="save directory containing trajectory files (default: {agent.home}/save)"
+    )
+    evaluation_parser.add_argument("--output_file", help="Output file name, if not set, the report file is not output")
+
     # Node configuration group (available for run and benchmark)
     for p in [run_parser, benchmark_parser]:
         node_group = p.add_argument_group("Node Configuration")
@@ -363,7 +392,8 @@ def main():
         result = agent.benchmark()
     elif args.action == "generate-dataset":
         result = agent.generate_dataset()
-
+    elif args.action == "evaluation":
+        result = agent.evaluation()
     if agent.is_complete():
         logger.info(f"\nFinal Result: {result}")
 
