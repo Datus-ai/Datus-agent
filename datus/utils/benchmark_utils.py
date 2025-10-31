@@ -18,7 +18,8 @@ import io
 import json
 import math
 import os
-from collections import defaultdict
+import re
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,9 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Seque
 import pandas as pd
 import yaml
 
+from datus.configuration.agent_config import AgentConfig
+from datus.tools.db_tools import BaseSqlConnector
+from datus.tools.db_tools.db_manager import db_manager_instance, get_connection
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -35,6 +39,26 @@ from datus.utils.sql_utils import extract_table_names, metadata_identifier, pars
 logger = get_logger(__name__)
 
 FAIL_STATUSES = {"pending", "failed", "error"}
+
+
+@dataclass
+class WorkflowArtifacts:
+    files: list[str] = field(default_factory=list)
+    reference_sqls: list[str] = field(default_factory=list)
+    reference_sql_names: list[str] = field(default_factory=list)
+    semantic_models: list[str] = field(default_factory=list)
+    metrics_names: list[str] = field(default_factory=list)
+    metrics_texts: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, List[str]]:
+        return {
+            "files": list(self.files),
+            "reference_sqls": list(self.reference_sqls),
+            "reference_sql_names": list(self.reference_sql_names),
+            "semantic_models": list(self.semantic_models),
+            "metrics_names": list(self.metrics_names),
+            "metrics_texts": list(self.metrics_texts),
+        }
 
 
 @dataclass
@@ -54,6 +78,7 @@ class WorkflowAnalysis:
     node_types: Dict[str, int] = field(default_factory=dict)
     outputs: list[WorkflowOutput] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    artifacts: WorkflowArtifacts = field(default_factory=WorkflowArtifacts)
 
     @property
     def output_nodes(self) -> int:
@@ -81,8 +106,11 @@ class ComparisonOutcome:
     actual_tables: list[str] = field(default_factory=list)
     expected_tables: list[str] = field(default_factory=list)
     matched_tables: list[str] = field(default_factory=list)
+    actual_sql: Optional[str] = None
+    gold_sql: Optional[str] = None
     actual_sql_error: Optional[str] = None
-    expected_sql_error: Optional[str] = None
+    match_sql_error: Optional[str] = None
+    artifact_comparison: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
 
     @classmethod
@@ -103,7 +131,10 @@ class ComparisonOutcome:
             "expected_tables": self.expected_tables,
             "matched_tables": self.matched_tables,
             "actual_sql_error": self.actual_sql_error,
-            "expected_sql_error": self.expected_sql_error,
+            "sql_error": self.match_sql_error,
+            "actual_sql": self.actual_sql,
+            "gold_sql": self.gold_sql,
+            "artifact_comparison": self.artifact_comparison,
             "error": self.error,
         }
 
@@ -137,6 +168,14 @@ class SqlData:
 class SqlProvider(Protocol):
     def fetch(self, task_id: str) -> SqlData:
         ...
+
+
+@dataclass
+class GoldArtifacts:
+    file_reference: str = ""
+    expected_sql: str = ""
+    semantic_model: str = ""
+    expected_metrics: str = ""
 
 
 def csv_str_to_pands(csv_str: str) -> pd.DataFrame:
@@ -223,6 +262,173 @@ def compute_table_matches(actual_tables: Iterable[str], expected_tables: Iterabl
     return _unique_preserve_order(matches)
 
 
+def _normalize_text(value: str) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip().lower()
+
+
+def _find_matching_candidates(expected: str, candidates: List[str]) -> List[str]:
+    normalized_expected = _normalize_text(expected)
+    if not normalized_expected:
+        return []
+    matches: list[str] = []
+    for candidate in candidates:
+        normalized_candidate = _normalize_text(candidate)
+        if not normalized_candidate:
+            continue
+        if (
+            normalized_expected == normalized_candidate
+            or normalized_expected in normalized_candidate
+            or normalized_candidate in normalized_expected
+        ):
+            matches.append(candidate)
+    return _unique_preserve_order(matches)
+
+
+def _split_expected_items(value: str) -> list[str]:
+    if not value:
+        return []
+    parts = re.split(r"[;\n,]+", value)
+    return [part.strip() for part in parts if part and part.strip()]
+
+
+def _append_unique(container: list[str], value: Any) -> None:
+    if value is None:
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _append_unique(container, item)
+        return
+    if isinstance(value, Mapping):
+        return
+    text = str(value).strip()
+    if not text:
+        return
+    if text not in container:
+        container.append(text)
+
+
+def _extract_result_payload(output: Any) -> Any:
+    if isinstance(output, Mapping):
+        raw_output = output.get("raw_output")
+        if isinstance(raw_output, Mapping) and "result" in raw_output:
+            return raw_output.get("result")
+        if raw_output is not None:
+            return raw_output
+        if "result" in output:
+            return output.get("result")
+    return output
+
+
+def _append_file_candidate(artifacts: WorkflowArtifacts, candidate: str) -> None:
+    if not candidate:
+        return
+    _append_unique(artifacts.files, candidate)
+    match = re.search(r"file (?:written|created|saved) successfully:\s*(.+)", candidate, re.IGNORECASE)
+    if match:
+        _append_unique(artifacts.files, match.group(1))
+
+
+def _collect_file_artifacts(artifacts: WorkflowArtifacts, output: Any, result_payload: Any) -> None:
+    if isinstance(result_payload, str):
+        _append_file_candidate(artifacts, result_payload)
+    elif isinstance(result_payload, Mapping):
+        for value in result_payload.values():
+            if isinstance(value, str):
+                _append_file_candidate(artifacts, value)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    if isinstance(item, str):
+                        _append_file_candidate(artifacts, item)
+    elif isinstance(result_payload, (list, tuple, set)):
+        for item in result_payload:
+            if isinstance(item, str):
+                _append_file_candidate(artifacts, item)
+
+    if isinstance(output, Mapping):
+        for key in ("summary", "status_message"):
+            value = output.get(key)
+            if isinstance(value, str):
+                _append_file_candidate(artifacts, value)
+
+
+def _collect_reference_sql_artifacts(artifacts: WorkflowArtifacts, result_payload: Any) -> None:
+    if isinstance(result_payload, str):
+        _append_unique(artifacts.reference_sqls, result_payload)
+        return
+
+    items: List[Mapping[str, Any]] = []
+    if isinstance(result_payload, Mapping):
+        items = [result_payload]
+    elif isinstance(result_payload, (list, tuple)):
+        items = [item for item in result_payload if isinstance(item, Mapping)]
+
+    for item in items:
+        sql_text = item.get("sql") or item.get("SQL")
+        if sql_text:
+            _append_unique(artifacts.reference_sqls, sql_text)
+        name = item.get("name")
+        if name:
+            _append_unique(artifacts.reference_sql_names, name)
+
+
+def _collect_semantic_model_artifacts(artifacts: WorkflowArtifacts, result_payload: Any) -> None:
+    metadata_entries = None
+    if isinstance(result_payload, Mapping):
+        metadata_entries = result_payload.get("metadata")
+    if isinstance(metadata_entries, list):
+        for entry in metadata_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            model_name = entry.get("semantic_model_name") or entry.get("description")
+            if model_name:
+                _append_unique(artifacts.semantic_models, model_name)
+
+
+def _collect_metric_artifacts(artifacts: WorkflowArtifacts, result_payload: Any) -> None:
+    candidates: List[Mapping[str, Any]] = []
+    if isinstance(result_payload, Mapping):
+        candidates = [result_payload]
+    elif isinstance(result_payload, (list, tuple)):
+        candidates = [item for item in result_payload if isinstance(item, Mapping)]
+
+    for item in candidates:
+        name = item.get("name") or item.get("metric_name")
+        if name:
+            _append_unique(artifacts.metrics_names, name)
+        text = item.get("llm_text") or item.get("description") or item.get("summary")
+        if text:
+            _append_unique(artifacts.metrics_texts, text)
+
+
+def _extract_artifacts_from_action_history(action_history: Any, artifacts: WorkflowArtifacts) -> None:
+    if not action_history:
+        return
+    for entry in action_history:
+        if not isinstance(entry, Mapping):
+            continue
+        role = str(entry.get("role", "")).lower()
+        if role != "tool":
+            continue
+        input_payload = entry.get("input") or {}
+        function_name = str(input_payload.get("function_name", "") or "").lower()
+        if "." in function_name:
+            function_name = function_name.split(".")[-1]
+
+        output_payload = entry.get("output") or {}
+        result_payload = _extract_result_payload(output_payload)
+
+        if function_name in {"write_file", "read_file", "read_multiple_files", "search_files"}:
+            _collect_file_artifacts(artifacts, output_payload, result_payload)
+        elif function_name in {"search_reference_sql", "search_sql"}:
+            _collect_reference_sql_artifacts(artifacts, result_payload)
+        elif function_name == "search_table":
+            _collect_semantic_model_artifacts(artifacts, result_payload)
+        elif function_name == "search_metrics":
+            _collect_metric_artifacts(artifacts, result_payload)
+
+
 @dataclass
 class ComparisonRecord:
     task_id: str
@@ -258,6 +464,7 @@ class TaskEvaluation:
             "completion_time": self.analysis.completion_time,
             "status": self.analysis.status,
             "comparison_results": [record.to_dict() for record in self.comparisons],
+            "artifacts": self.analysis.artifacts.to_dict(),
         }
 
 
@@ -301,14 +508,34 @@ class CsvPerTaskResultProvider(ResultProvider):
 
 
 class SingleFileGoldProvider(ResultProvider):
-    def __init__(self, result_file: str, task_id_key: str = "task_id", query_result_key: str = "Expected answer"):
+    def __init__(
+        self,
+        result_file: str,
+        connections: Dict[str, BaseSqlConnector],
+        task_id_key: str = "task_id",
+        sql_key: str = "",
+        query_result_key: str = "",
+        db_key: str = "",
+        allowed_task_ids: Optional[Iterable[str]] = None,
+        frame_cache_size: int = 32,
+    ):
         self.task_id_key = task_id_key
         self.query_result_key = query_result_key
+        self.sql_key = sql_key
+        self.db_key = db_key
         self.result_file = Path(result_file)
-        self._cache: Dict[str, pd.DataFrame] = {}
+        self.connections = connections
+        self.allowed_task_ids = {str(task_id) for task_id in allowed_task_ids} if allowed_task_ids else None
+        self.frame_cache_size = max(frame_cache_size, 1)
+
+        self._raw_expected_results: Dict[str, str] = {}
+        self._sql_tasks: Dict[str, Tuple[str, str]] = {}
+        self._frame_cache: OrderedDict[str, pd.DataFrame] = OrderedDict()
         self._errors: Dict[str, str] = {}
+        self._artifacts: Dict[str, GoldArtifacts] = {}
         self._loaded = False
         self._global_error: Optional[str] = None
+        self._suffix: Optional[str] = None
 
     def fetch(self, task_id: str) -> ResultData:
         self._ensure_loaded()
@@ -317,10 +544,36 @@ class SingleFileGoldProvider(ResultProvider):
             return ResultData(task_id=task_id, source=source, error=self._global_error)
         if task_id in self._errors:
             return ResultData(task_id=task_id, source=source, error=self._errors[task_id])
-        dataframe = self._cache.get(task_id)
-        if dataframe is None:
-            return ResultData(task_id=task_id, source=source, error=f"Result not found for task_id={task_id}")
-        return ResultData(task_id=task_id, source=source, dataframe=dataframe)
+
+        dataframe = self._frame_cache.get(task_id)
+        if dataframe is not None:
+            self._frame_cache.move_to_end(task_id)
+            return ResultData(task_id=task_id, source=source, dataframe=dataframe)
+
+        raw_expected = self._raw_expected_results.get(task_id)
+        if raw_expected is not None:
+            dataframe = self._convert_to_dataframe(task_id, raw_expected)
+            if dataframe is None:
+                return ResultData(task_id=task_id, source=source, error=self._errors.get(task_id))
+            self._remember_dataframe(task_id, dataframe)
+            return ResultData(task_id=task_id, source=source, dataframe=dataframe)
+
+        sql_task = self._sql_tasks.get(task_id)
+        if sql_task is not None:
+            dataframe = self._execute_gold_sql(task_id, *sql_task)
+            if dataframe is None:
+                return ResultData(task_id=task_id, source=source, error=self._errors.get(task_id))
+            self._remember_dataframe(task_id, dataframe)
+            return ResultData(task_id=task_id, source=source, dataframe=dataframe)
+
+        if self._lazy_load_task(task_id):
+            return self.fetch(task_id)
+
+        return ResultData(task_id=task_id, source=source, error=f"Result not found for task_id={task_id}")
+
+    def get_artifacts(self, task_id: str) -> GoldArtifacts:
+        self._ensure_loaded()
+        return self._artifacts.get(task_id, GoldArtifacts())
 
     def _ensure_loaded(self) -> None:
         if self._loaded:
@@ -330,101 +583,199 @@ class SingleFileGoldProvider(ResultProvider):
             self._global_error = f"Result file not found: {self.result_file}"
             return
 
-        suffix = self.result_file.suffix.lower()
+        self._suffix = self.result_file.suffix.lower()
+        if self._suffix == ".csv":
+            self._load_csv_sources()
+        elif self._suffix == ".json":
+            self._load_json_sources()
+        else:
+            self._global_error = f"Unsupported result file format: {self.result_file.suffix}"
+
+    def _load_csv_sources(self) -> None:
         try:
-            if suffix == ".json":
-                with self.result_file.open("r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
-                self._ingest_json_payload(payload)
-            elif suffix == ".csv":
-                df = pd.read_csv(self.result_file)
-                if self.task_id_key not in df.columns:
+            with self.result_file.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                fieldnames = reader.fieldnames or []
+                if self.task_id_key not in fieldnames:
                     self._global_error = (
-                        f"CSV result file must contain a '{self.task_id_key}' column to disambiguate records."
+                        f"Gold file must contain a '{self.task_id_key}' column to disambiguate records."
                     )
                     return
-                if self.query_result_key not in df.columns:
+                if self.query_result_key and self.query_result_key not in fieldnames:
                     self._global_error = (
-                        f"CSV result file must contain a '{self.query_result_key}' column with the expected answers."
+                        f"Gold result file must contain '{self.query_result_key}' when query_result_key is provided."
+                    )
+                    return
+                if not self.query_result_key and self.sql_key and self.sql_key not in fieldnames:
+                    self._global_error = (
+                        f"Gold result file must contain '{self.sql_key}' when query_result_key is not provided."
                     )
                     return
 
-                for _, row in df.iterrows():
-                    task_id = str(row[self.task_id_key])
-                    expected_value = str(row.get(self.query_result_key, "") or "")
-                    if not expected_value:
-                        self._errors[task_id] = f"Empty `{self.query_result_key}` value"
+                for row in reader:
+                    task_id = str(row.get(self.task_id_key, "") or "").strip()
+                    if not task_id:
                         continue
-                    parsed_df = self._parse_csv_to_df(expected_value)
-                    if parsed_df is None:
-                        self._errors[task_id] = f"Invalid `{self.query_result_key}` value"
+                    if self.allowed_task_ids and task_id not in self.allowed_task_ids:
                         continue
-                    self._cache[task_id] = parsed_df
-            else:
-                self._global_error = f"Unsupported result file format: {self.result_file.suffix}"
+                    self._record_row(task_id, row)
         except Exception as exc:  # pragma: no cover - logging side effect
             self._global_error = f"Failed to load result file: {exc}"
 
-    def _ingest_json_payload(self, data: Any) -> None:
-        handled = False
-
-        if isinstance(data, dict):
-            for task_id, values in data.items():
-                df = None
-                if isinstance(values, dict):
-                    df = self._ingest_result_to_df(values)
-                elif isinstance(values, str):
-                    value_dict = None
-                    try:
-                        value_dict = json.loads(values)
-                    except json.JSONDecodeError:
-                        pass
-                    if value_dict is not None:
-                        df = self._ingest_result_to_df(value_dict)
-                    else:
-                        df = self._parse_csv_to_df(str(values))
-                else:
-                    self._global_error = "Unsupported JSON result format"
-                if df:
-                    self._cache[task_id] = df
-                    handled = True
-
-        elif isinstance(data, list):
-            for item in data:
-                if not isinstance(item, dict):
-                    logger.warning(f"Unsupported json line format: {item}")
-                    continue
-                if self.task_id_key not in item:
-                    logger.warning(f"Result file must contain a '{self.task_id_key}' column to disambiguate records.")
-                    continue
-                if self.query_result_key not in item:
-                    logger.warning(f"Result file must contain a '{self.query_result_key}' column to parse result.")
-                    continue
-                df = self._parse_csv_to_df(str(item[self.query_result_key]))
-                if df:
-                    self._cache[item[self.task_id_key]] = df
-                    handled = True
-        else:
-            self._global_error = "Unsupported JSON result format"
-
-        if not handled and not self._global_error:
-            self._global_error = "Unsupported JSON result format"
-
-    def _ingest_result_to_df(self, data: Dict[str, Any]) -> Optional[pd.DataFrame]:
-        if self.query_result_key not in data:
-            self._global_error = f"Column `{self.query_result_key}` not found in json line"
-
-        return self._parse_csv_to_df(data[self.query_result_key])
-
-    def _parse_csv_to_df(self, csv_str: str) -> Optional[pd.DataFrame]:
+    def _load_json_sources(self) -> None:
         try:
-            return csv_str_to_pands(csv_str)
-        except Exception as exc:
-            logger.warning(f"Failed to parse result: {exc}")
-            self._global_error = (
-                f"The value corresponding to the field `{self.query_result_key}` " f"should be in csv format"
-            )
+            with self.result_file.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self._global_error = f"Failed to load result file: {exc}"
+            return
+
+        def handle_record(record: Mapping[str, Any]) -> None:
+            task_id = str(record.get(self.task_id_key, "") or "").strip()
+            if not task_id:
+                return
+            if self.allowed_task_ids and task_id not in self.allowed_task_ids:
+                return
+            self._record_row(task_id, record)
+
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, Mapping):
+                    handle_record(item)
+        elif isinstance(payload, Mapping):
+            if self.task_id_key in payload:
+                handle_record(payload)
+            else:
+                for value in payload.values():
+                    if isinstance(value, Mapping):
+                        handle_record(value)
+                    elif isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, Mapping):
+                                handle_record(item)
+
+    def _record_row(self, task_id: str, row: Mapping[str, Any]) -> None:
+        expected_value = None
+        if self.query_result_key:
+            expected_value = row.get(self.query_result_key)
+
+        if expected_value:
+            raw_csv = str(expected_value)
+            self._raw_expected_results[task_id] = raw_csv
+        else:
+            sql_text = str(row.get(self.sql_key, "") or "").strip()
+            if not sql_text:
+                self._errors[task_id] = f"Missing `{self.sql_key or self.query_result_key}` value"
+                return
+            db_name = str(row.get(self.db_key, "") or "").strip()
+            self._sql_tasks[task_id] = (sql_text, db_name)
+
+        self._store_artifacts(task_id, row)
+
+    def _lazy_load_task(self, task_id: str) -> bool:
+        if self._suffix == ".csv":
+            return self._load_single_csv_row(task_id)
+        if self._suffix == ".json":
+            return self._load_single_json_entry(task_id)
+        return False
+
+    def _load_single_csv_row(self, task_id: str) -> bool:
+        try:
+            with self.result_file.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    current_id = str(row.get(self.task_id_key, "") or "").strip()
+                    if current_id != task_id:
+                        continue
+                    self._record_row(task_id, row)
+                    return True
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to lazily load gold result for %s: %s", task_id, exc)
+        return False
+
+    def _load_single_json_entry(self, task_id: str) -> bool:
+        try:
+            with self.result_file.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to lazily load gold result for %s: %s", task_id, exc)
+            return False
+
+        stack = [payload]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, Mapping):
+                if str(item.get(self.task_id_key, "") or "").strip() == task_id:
+                    self._record_row(task_id, item)
+                    return True
+                stack.extend(item.values())
+            elif isinstance(item, list):
+                stack.extend(item)
+        return False
+
+    def _execute_gold_sql(self, task_id: str, sql_text: str, db_name: str) -> Optional[pd.DataFrame]:
+        connector = get_connection(self.connections, db_name)
+        if connector is None:
+            error_msg = f"Connector not found for database '{db_name}'"
+            self._errors[task_id] = error_msg
             return None
+        try:
+            exec_result = connector.execute_csv(sql_text)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            error_msg = f"Execute gold sql failed: {exc}"
+            logger.warning(error_msg)
+            self._errors[task_id] = error_msg
+            return None
+
+        if not getattr(exec_result, "success", False):
+            error_msg = f"Execute gold sql failed: {getattr(exec_result, 'error', 'unknown error')}"
+            self._errors[task_id] = error_msg
+            return None
+
+        expected_value = getattr(exec_result, "sql_return", "") or ""
+        if not expected_value:
+            error_msg = "Gold SQL execution returned empty result"
+            self._errors[task_id] = error_msg
+            return None
+
+        dataframe = self._convert_to_dataframe(task_id, expected_value)
+        if dataframe is not None:
+            # cache raw csv to avoid re-executing on subsequent fetches
+            self._raw_expected_results[task_id] = expected_value
+        return dataframe
+
+    def _convert_to_dataframe(self, task_id: str, csv_str_value: str) -> Optional[pd.DataFrame]:
+        try:
+            return csv_str_to_pands(csv_str_value)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            error_msg = f"Failed to parse expected answer for task {task_id}: {exc}"
+            logger.warning(error_msg)
+            self._errors[task_id] = error_msg
+            return None
+
+    def _remember_dataframe(self, task_id: str, dataframe: pd.DataFrame) -> None:
+        self._frame_cache[task_id] = dataframe
+        self._frame_cache.move_to_end(task_id)
+        while len(self._frame_cache) > self.frame_cache_size:
+            self._frame_cache.popitem(last=False)
+
+    def _store_artifacts(self, task_id: str, row: Mapping[str, Any]) -> None:
+        if not isinstance(row, Mapping):
+            return
+        try:
+            normalized = {_normalize_field_name(str(k)): row[k] for k in row}
+        except Exception:
+            normalized = {}
+        file_value = str(normalized.get(_normalize_field_name("file"), "") or "").strip()
+        expected_sql = str(normalized.get(_normalize_field_name("expected_sql"), "") or "").strip()
+        semantic_model = str(normalized.get(_normalize_field_name("semantic_model"), "") or "").strip()
+        expected_metrics = str(normalized.get(_normalize_field_name("expected_metrics"), "") or "").strip()
+        self._artifacts[task_id] = GoldArtifacts(
+            file_reference=file_value,
+            expected_sql=expected_sql,
+            semantic_model=semantic_model,
+            expected_metrics=expected_metrics,
+        )
 
 
 class DirectorySqlProvider(SqlProvider):
@@ -599,8 +950,8 @@ class CsvColumnSqlProvider(SqlProvider):
     def __init__(
         self,
         csv_path: str = "",
-        task_id_key: str = "task_id",
-        sql_key="SQL",
+        task_id_key: str = "",
+        sql_key="",
         dialect: str = DBType.SQLITE,
     ):
         self.csv_path = Path(csv_path)
@@ -675,6 +1026,7 @@ class TrajectoryParser:
         errors: list[str] = []
         node_types: defaultdict[str, int] = defaultdict(int)
         outputs: list[WorkflowOutput] = []
+        artifacts = WorkflowArtifacts()
 
         try:
             with filepath.open("r", encoding="utf-8") as handle:
@@ -689,6 +1041,7 @@ class TrajectoryParser:
                 node_types={},
                 outputs=outputs,
                 errors=errors,
+                artifacts=artifacts,
             )
         except Exception as exc:
             errors.append(f"Failed to read trajectory file: {exc}")
@@ -700,6 +1053,7 @@ class TrajectoryParser:
                 node_types={},
                 outputs=outputs,
                 errors=errors,
+                artifacts=artifacts,
             )
 
         workflow = data.get("workflow") if isinstance(data, dict) else None
@@ -713,6 +1067,7 @@ class TrajectoryParser:
                 node_types={},
                 outputs=outputs,
                 errors=errors,
+                artifacts=artifacts,
             )
 
         completion_time = workflow.get("completion_time")
@@ -728,9 +1083,11 @@ class TrajectoryParser:
                 total_nodes += 1
                 node_type = node.get("type", "unknown")
                 node_types[node_type] += 1
+                result = node.get("result") or {}
+                action_history = result.get("action_history")
+                _extract_artifacts_from_action_history(action_history, artifacts)
 
                 if node_type == "output":
-                    result = node.get("result") or {}
                     success = bool(result.get("success"))
                     node_status = str(result.get("status", "unknown")).lower()
                     error_message = result.get("error")
@@ -752,6 +1109,8 @@ class TrajectoryParser:
                 node_types[node_type] += 1
                 if node_type == "output":
                     result = workflow.get("result") or {}
+                    action_history = result.get("action_history")
+                    _extract_artifacts_from_action_history(action_history, artifacts)
                     success = bool(result.get("success"))
                     node_status = str(result.get("status", "unknown")).lower()
                     error_message = result.get("error")
@@ -775,6 +1134,7 @@ class TrajectoryParser:
             node_types=dict(node_types),
             outputs=outputs,
             errors=errors,
+            artifacts=artifacts,
         )
 
 
@@ -922,7 +1282,7 @@ class BenchmarkEvaluator:
 
             for output in analysis.outputs:
                 if output.success and output.status not in FAIL_STATUSES:
-                    comparison_records.append(self._build_comparison_record(task_id))
+                    comparison_records.append(self._build_comparison_record(task_id, analysis))
 
             evaluations[task_id] = TaskEvaluation(
                 task_id=task_id,
@@ -932,28 +1292,31 @@ class BenchmarkEvaluator:
 
         return self.report_builder.build(evaluations)
 
-    def _build_comparison_record(self, task_id: str) -> ComparisonRecord:
+    def _build_comparison_record(self, task_id: str, analysis: WorkflowAnalysis) -> ComparisonRecord:
         actual = self.result_provider.fetch(task_id)
         expected = self.gold_result_provider.fetch(task_id)
         record = ComparisonRecord(task_id=task_id, actual=actual, expected=expected)
 
         actual_sql = self._fetch_sql_data(self.result_sql_provider, task_id)
-        expected_sql = self._fetch_sql_data(self.gold_sql_provider, task_id)
+        gold_sql = self._fetch_sql_data(self.gold_sql_provider, task_id)
+        expected_artifacts = self._fetch_gold_artifacts(task_id)
 
         if not actual.available:
             outcome = ComparisonOutcome.with_error(actual.error or "Actual result unavailable")
-            self._apply_sql_metadata(outcome, actual_sql, expected_sql)
+            self._apply_tools_comparison(outcome, actual_sql, gold_sql, analysis.artifacts, expected_artifacts)
             record.outcome = outcome
             return record
 
         if not expected.available:
             outcome = ComparisonOutcome.with_error(expected.error or "Gold standard unavailable")
-            self._apply_sql_metadata(outcome, actual_sql, expected_sql)
+            self._apply_tools_comparison(outcome, actual_sql, gold_sql, analysis.artifacts, expected_artifacts)
             record.outcome = outcome
             return record
 
         outcome = self.comparator.compare(actual.dataframe, expected.dataframe)
-        self._apply_sql_metadata(outcome, actual_sql, expected_sql)
+        outcome.actual_sql = actual_sql.sql
+        outcome.gold_sql = gold_sql.sql
+        self._apply_tools_comparison(outcome, actual_sql, gold_sql, analysis.artifacts, expected_artifacts)
         record.outcome = outcome
         return record
 
@@ -966,11 +1329,31 @@ class BenchmarkEvaluator:
             logger.warning("Failed to fetch SQL for task %s: %s", task_id, exc)
             return SqlData(task_id=task_id, source="", error=str(exc))
 
-    def _apply_sql_metadata(
+    def _fetch_gold_artifacts(self, task_id: str) -> GoldArtifacts:
+        getter = getattr(self.gold_result_provider, "get_artifacts", None)
+        if callable(getter):
+            try:
+                artifacts = getter(task_id)
+                if isinstance(artifacts, GoldArtifacts):
+                    return artifacts
+                if isinstance(artifacts, Mapping):
+                    return GoldArtifacts(
+                        file_reference=str(artifacts.get("file", "") or ""),
+                        expected_sql=str(artifacts.get("expected_sql", "") or ""),
+                        semantic_model=str(artifacts.get("semantic_model", "") or ""),
+                        expected_metrics=str(artifacts.get("expected_metrics", "") or ""),
+                    )
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning("Failed to fetch gold artifacts for %s: %s", task_id, exc)
+        return GoldArtifacts()
+
+    def _apply_tools_comparison(
         self,
         outcome: ComparisonOutcome,
         actual_sql: Optional[SqlData],
-        expected_sql: Optional[SqlData],
+        match_sql: Optional[SqlData],
+        actual_artifacts: Optional[WorkflowArtifacts],
+        expected_artifacts: Optional[GoldArtifacts],
     ) -> None:
         actual_tables = []
         expected_tables = []
@@ -982,12 +1365,12 @@ class BenchmarkEvaluator:
             if actual_sql.error:
                 outcome.actual_sql_error = actual_sql.error
 
-        if expected_sql:
-            if expected_sql.tables:
-                expected_tables = _unique_preserve_order(expected_sql.tables)
+        if match_sql:
+            if match_sql.tables:
+                expected_tables = _unique_preserve_order(match_sql.tables)
                 outcome.expected_tables = expected_tables
-            if expected_sql.error:
-                outcome.expected_sql_error = expected_sql.error
+            if match_sql.error:
+                outcome.match_sql_error = match_sql.error
 
         if not outcome.actual_tables and actual_tables:
             outcome.actual_tables = actual_tables
@@ -996,6 +1379,93 @@ class BenchmarkEvaluator:
 
         if outcome.actual_tables or outcome.expected_tables:
             outcome.matched_tables = compute_table_matches(outcome.actual_tables, outcome.expected_tables)
+        self._apply_trajectory_artifact_comparison(outcome, actual_sql, actual_artifacts, expected_artifacts)
+
+    def _apply_trajectory_artifact_comparison(
+        self,
+        outcome: ComparisonOutcome,
+        actual_sql: Optional[SqlData],
+        actual_artifacts: Optional[WorkflowArtifacts],
+        expected_artifacts: Optional[GoldArtifacts],
+    ) -> None:
+        """
+        Compare tool calls and return results during execution
+        :param outcome:
+        :param actual_sql:
+        :param actual_artifacts:
+        :param expected_artifacts:
+        :param expected_sql_data:
+        :return:
+        """
+        actual_artifacts = actual_artifacts or WorkflowArtifacts()
+        expected_artifacts = expected_artifacts or GoldArtifacts()
+
+        artifact_results: Dict[str, Any] = {}
+
+        # File comparison
+        actual_file_candidates = _unique_preserve_order(actual_artifacts.files)
+        expected_file = expected_artifacts.file_reference.strip()
+        matched_files = _find_matching_candidates(expected_file, actual_file_candidates) if expected_file else []
+        artifact_results["file"] = {
+            "expected": expected_file,
+            "actual": actual_file_candidates,
+            "matched_actual": matched_files,
+            "match": bool(matched_files) if expected_file else True,
+        }
+
+        # Expected SQL comparison (reference search results)
+        sql_candidates_source: List[str] = []
+        sql_candidates_source.extend(actual_artifacts.reference_sqls)
+        sql_candidates_source.extend(actual_artifacts.reference_sql_names)
+        sql_candidates = _unique_preserve_order(sql_candidates_source)
+        expected_sql_value = expected_artifacts.expected_sql.strip()
+        matched_sql = _find_matching_candidates(expected_sql_value, sql_candidates) if expected_sql_value else []
+        artifact_results["expected_sql"] = {
+            "expected": expected_sql_value,
+            "actual": sql_candidates,
+            "matched_actual": matched_sql,
+            "match": bool(matched_sql) if expected_sql_value else True,
+        }
+
+        # Semantic model comparison
+        semantic_candidates = _unique_preserve_order(actual_artifacts.semantic_models)
+        expected_semantic = expected_artifacts.semantic_model.strip()
+        matched_semantic = (
+            _find_matching_candidates(expected_semantic, semantic_candidates) if expected_semantic else []
+        )
+        artifact_results["semantic_model"] = {
+            "expected": expected_semantic,
+            "actual": semantic_candidates,
+            "matched_actual": matched_semantic,
+            "match": bool(matched_semantic) if expected_semantic else True,
+        }
+
+        # Metrics comparison
+        expected_metrics_raw = expected_artifacts.expected_metrics.strip()
+        expected_metric_items = _split_expected_items(expected_metrics_raw)
+        metric_candidates = _unique_preserve_order(actual_artifacts.metrics_names + actual_artifacts.metrics_texts)
+        matched_metric_expected: list[str] = []
+        matched_metric_actual: list[str] = []
+        missing_metric_expected: list[str] = []
+
+        for item in expected_metric_items:
+            matches = _find_matching_candidates(item, metric_candidates)
+            if matches:
+                matched_metric_expected.append(item)
+                matched_metric_actual.extend(matches)
+            else:
+                missing_metric_expected.append(item)
+
+        artifact_results["expected_metrics"] = {
+            "expected": expected_metric_items,
+            "actual": metric_candidates,
+            "matched_expected": matched_metric_expected,
+            "matched_actual": _unique_preserve_order(matched_metric_actual),
+            "missing_expected": missing_metric_expected,
+            "match": not missing_metric_expected if expected_metric_items else True,
+        }
+
+        outcome.artifact_comparison = artifact_results
 
 
 def collect_latest_trajectory_files(save_dir: str) -> Dict[str, Path]:
@@ -1046,13 +1516,6 @@ def _default_sql_dialect(benchmark_type: str) -> str:
     if benchmark_type == "bird_dev":
         return DBType.SQLITE
     return DBType.SNOWFLAKE
-
-
-def create_result_provider(path: str, task_id_field_name: str = "task_id") -> ResultProvider:
-    path_obj = Path(path)
-    if path_obj.is_file():
-        return SingleFileGoldProvider(str(path_obj), task_id_key=task_id_field_name)
-    return CsvPerTaskResultProvider(str(path_obj))
 
 
 def parse_trajectory_filename(filename: str) -> tuple[Optional[str], Optional[float]]:
@@ -1113,7 +1576,11 @@ def columns_match(series_a: pd.Series, series_b: pd.Series, tol: float = 1e-6) -
     if len(series_a) != len(series_b):
         return False
 
-    for a, b in zip(series_a, series_b):
+    # Sort both series to ensure order-independent comparison
+    series_a_sorted = series_a.sort_values(ignore_index=True)
+    series_b_sorted = series_b.sort_values(ignore_index=True)
+
+    for a, b in zip(series_a_sorted, series_b_sorted):
         if pd.isna(a) and pd.isna(b):
             continue
         if isinstance(a, (int, float)) and isinstance(b, (int, float)):
@@ -1153,7 +1620,8 @@ def preview_dataframe(df: pd.DataFrame, max_rows: int = 3, max_cols: int = 5) ->
     return "\n       ".join(result_lines)
 
 
-def evaluate_benchmark_accuracy(
+def evaluate_benchmark(
+    agent_config: AgentConfig,
     benchmark_platform: str,
     benchmark_path: str,
     trajectory_dir: str,
@@ -1163,12 +1631,12 @@ def evaluate_benchmark_accuracy(
     if not os.path.exists(result_dir):
         logger.warning(f"Result directory not found at {result_dir}")
         return {}
-
     benchmark_path_obj = Path(benchmark_path)
 
-    result_provider = CsvPerTaskResultProvider(result_dir)
+    agent_result_provider = CsvPerTaskResultProvider(result_dir)
     dialect: str = DBType.SQLITE if benchmark_platform == "bird_dev" else DBType.SNOWFLAKE
     result_sql_provider = AgentResultSqlProvider(result_dir, dialect=dialect)
+    allowed_task_ids = {str(task_id) for task_id in target_task_ids} if target_task_ids else None
 
     if benchmark_platform == "spider2":
         gold_result_dir = benchmark_path_obj / "evaluation_suite" / "gold" / "exec_result"
@@ -1184,15 +1652,22 @@ def evaluate_benchmark_accuracy(
         gold_sql_provider = DirectorySqlProvider(str(gold_sql_dir), dialect=dialect)
         gold_result_provider = CsvPerTaskResultProvider(str(gold_result_dir))
     else:
-        gold_dir = benchmark_path_obj / "gold" / "exec_result"
-        gold_result_provider = CsvPerTaskResultProvider(str(gold_dir))
-        gold_sql_provider = JsonMappingSqlProvider(
-            str(os.path.join(benchmark_path, "dev.json")), task_id_key="question_id", sql_key="SQL", dialect=dialect
+        task_file = str(os.path.join(benchmark_path, "dev.json"))
+        gold_sql_provider = JsonMappingSqlProvider(task_file, task_id_key="question_id", sql_key="SQL", dialect=dialect)
+        db_manager = db_manager_instance(agent_config.namespaces)
+
+        gold_result_provider = SingleFileGoldProvider(
+            result_file=task_file,
+            connections=db_manager.get_connections(agent_config.current_namespace),
+            task_id_key="question_id",
+            sql_key="SQL",
+            db_key="db_id",
+            allowed_task_ids=allowed_task_ids,
         )
 
     evaluator = BenchmarkEvaluator(
         trajectory_parser=TrajectoryParser(),
-        result_provider=result_provider,
+        result_provider=agent_result_provider,
         gold_result_provider=gold_result_provider,
         result_sql_provider=result_sql_provider,
         gold_sql_provider=gold_sql_provider,
@@ -1202,7 +1677,8 @@ def evaluate_benchmark_accuracy(
     return report.to_dict()
 
 
-def evaluate_and_report_accuracy(
+def evaluate_benchmark_and_report(
+    agent_config: AgentConfig,
     benchmark_platform: str,
     benchmark_path: str,
     trajectory_dir: str,
@@ -1210,7 +1686,8 @@ def evaluate_and_report_accuracy(
     target_task_ids: Optional[Iterable[str]] = None,
     output_file: Optional[str] = None,
 ) -> Dict[str, Any]:
-    accuracy_report = evaluate_benchmark_accuracy(
+    accuracy_report = evaluate_benchmark(
+        agent_config=agent_config,
         benchmark_platform=benchmark_platform,
         benchmark_path=benchmark_path,
         trajectory_dir=trajectory_dir,
@@ -1231,6 +1708,7 @@ def evaluate_and_report_accuracy(
 
 
 def evaluate_sub_agent_and_report(
+    agent_config: AgentConfig,
     benchmark_path: str,
     trajectory_dir: str,
     result_path: str,
@@ -1238,14 +1716,24 @@ def evaluate_sub_agent_and_report(
     output_file: Optional[str] = None,
     db_type: DBType = DBType.SQLITE,
 ) -> Dict[str, Any]:
+    db_manager = db_manager_instance(agent_config.namespaces)
+    allowed_task_ids = {str(task_id) for task_id in target_task_ids} if target_task_ids else None
     evaluator = BenchmarkEvaluator(
         trajectory_parser=TrajectoryParser(),
         result_provider=CsvPerTaskResultProvider(str(result_path)),
         gold_result_provider=SingleFileGoldProvider(
-            benchmark_path, task_id_key="SQL", query_result_key="Expected answer"
+            result_file=benchmark_path,
+            connections=db_manager.get_connections(agent_config.current_namespace),
+            task_id_key="task_id",
+            sql_key="gold_sql",
+            query_result_key="expected_answer",
+            db_key="db_id",
+            allowed_task_ids=allowed_task_ids,
         ),
         result_sql_provider=AgentResultSqlProvider(str(result_path), dialect=db_type),
-        gold_sql_provider=CsvColumnSqlProvider(benchmark_path, task_id_key="SQL", sql_key="Gold sql", dialect=db_type),
+        gold_sql_provider=CsvColumnSqlProvider(
+            benchmark_path, task_id_key="task_id", sql_key="gold_sql", dialect=db_type
+        ),
     )
 
     report = evaluator.evaluate_directory(trajectory_dir, target_task_ids)

@@ -36,7 +36,6 @@ from datus.storage.schema_metadata.local_init import init_local_schema
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS as SUB_AGENT_COMPONENTS
 from datus.storage.sub_agent_kb_bootstrap import SubAgentBootstrapper
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.utils.benchmark_utils import generate_gold_standard_results, load_bird_dev_tasks
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
@@ -878,7 +877,6 @@ class Agent:
         from datus.utils.benchmark_utils import load_bird_dev_tasks
 
         tasks = load_bird_dev_tasks(benchmark_path)
-        current_namespace = self.global_config.current_namespace
 
         # Convert Bird tasks to format expected by generate_gold_standard_results
         task_size = 0
@@ -900,16 +898,16 @@ class Agent:
             return {}
         logger.info(f"Loaded {task_size} tasks from Bird benchmark")
 
-        def run_single_bird_task(task):
+        def run_single_bird_task(_task):
             """Execute a single Bird benchmark task"""
-            task_id = str(task["question_id"])
-            question = task["question"]
-            database_name = task["db_id"]
-            logger.info(f"start benchmark with {task_id}: {question}")
+            _task_id = str(_task["question_id"])
+            question = _task["question"]
+            database_name = _task["db_id"]
+            logger.info(f"start benchmark with {_task_id}: {question}")
 
             result = self.run(
                 SqlTask(
-                    id=task_id,
+                    id=_task_id,
                     database_type=DBType.SQLITE,
                     task=question,
                     database_name=database_name,
@@ -965,6 +963,7 @@ class Agent:
                     tasks.append(task_data)
 
         logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
+
         metric_meta = self.global_config.current_metric_meta(self.args.metric_meta)
 
         for task in tasks:
@@ -1051,14 +1050,15 @@ class Agent:
 
         benchmark_path = self.args.benchmark_path
         benchmark_result_path = self.args.result_path or self.global_config.output_dir
-        benchmark_trajectory_path = self.args.save_path or self.global_config.trajectory_dir
+        benchmark_trajectory_path = self.args.trajectory_path or self.global_config.trajectory_dir
 
         if benchmark_platform in ("bird_dev", "spider2"):
             if not benchmark_path:
                 benchmark_path = self.global_config.benchmark_path(benchmark_platform)
-            from datus.utils.benchmark_utils import evaluate_and_report_accuracy
+            from datus.utils.benchmark_utils import evaluate_benchmark_and_report
 
-            return evaluate_and_report_accuracy(
+            return evaluate_benchmark_and_report(
+                agent_config=self.global_config,
                 benchmark_platform=benchmark_platform,
                 benchmark_path=benchmark_path,
                 trajectory_dir=benchmark_trajectory_path,
