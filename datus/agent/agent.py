@@ -1078,6 +1078,7 @@ class Agent:
             from datus.utils.benchmark_utils import evaluate_sub_agent_and_report
 
             return evaluate_sub_agent_and_report(
+                self.global_config,
                 benchmark_path,
                 benchmark_trajectory_path,
                 benchmark_result_path,

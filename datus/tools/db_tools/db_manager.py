@@ -234,7 +234,7 @@ def get_connection(
     if isinstance(connections, BaseSqlConnector):
         return connections
     if len(connections) == 1:
-        return connections.values()[0]
+        return next(iter(connections.values()))
 
     if not logic_name:
         return list(connections.values())[0]
