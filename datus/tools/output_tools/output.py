@@ -68,7 +68,7 @@ class OutputTool(BaseTool):
             )
         else:
             file_name = f"{input_data.task_id}.json" if input_data.task_id else "result.json"
-            with open(os.path.join(target_dir, file_name), "w") as f:
+            with open(os.path.join(target_dir, file_name), "w", encoding="utf-8") as f:
                 json.dump(
                     {
                         "finished": False,
@@ -147,14 +147,14 @@ class OutputTool(BaseTool):
 
 def save_sql(target_dir: str, file_name: str, sql_query: str) -> str:
     sql_file = f"{target_dir}/{file_name}.sql"
-    with open(sql_file, "w") as f:
+    with open(sql_file, "w", encoding="utf-8") as f:
         f.write(sql_query)
     return sql_file
 
 
 def save_csv(target_dir: str, file_name: str, query_result: str) -> str:
     csv_file = f"{target_dir}/{file_name}.csv"
-    with open(csv_file, "w") as f:
+    with open(csv_file, "w", encoding="utf-8") as f:
         f.write(query_result)
     return csv_file
 
@@ -185,7 +185,7 @@ def save_json(
     if input_data.task:
         result_json["instruction"] = input_data.task
 
-    with open(json_file, "w") as json_f:
+    with open(json_file, "w", encoding="utf-8") as json_f:
         json.dump(
             result_json,
             json_f,

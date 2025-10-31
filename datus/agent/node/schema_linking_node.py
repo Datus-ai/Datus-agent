@@ -71,6 +71,7 @@ class SchemaLinkingNode(Node):
             database_name=workflow.task.database_name,
             sql_context=None,
             table_type=workflow.task.schema_linking_type,
+            table_list=workflow.task.table_list,
         )
         self.input = next_input
         return {"success": True, "message": "Schema and external knowledge prepared"}
@@ -90,7 +91,7 @@ class SchemaLinkingNode(Node):
             logger.info(f"RAG storage path `{path}` does not exist.")
             return self._execute_schema_linking_fallback(SchemaLineageTool(self.agent_config))
         else:
-            tool = SchemaLineageTool(self.agent_config)
+            tool = SchemaLineageTool(agent_config=self.agent_config)
             try:
                 # Import SchemaLineageTool only when needed
                 if tool:

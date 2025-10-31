@@ -84,18 +84,22 @@ class SchemaLineageTool(BaseTool):
         return self._search_similar_schemas(input_param, input_param.top_n_by_rate())
 
     def _search_similar_schemas(self, input_param: SchemaLinkingInput, top_n: int = 5) -> SchemaLinkingResult:
-        (similar_schemas, similar_values) = self.store.search_similar(
-            input_param.input_text,
-            top_n=top_n,
-            catalog_name=input_param.catalog_name,
-            database_name=input_param.database_name,
-            schema_name=input_param.schema_name,
-            table_type=input_param.table_type,
-        )
+        if input_param.table_list:
+            (table_schemas, table_values) = self.get_table_and_values(input_param.database_name, input_param.table_list)
+        
+        else:    
+            (similar_schemas, similar_values) = self.store.search_similar(
+                input_param.input_text,
+                top_n=top_n,
+                catalog_name=input_param.catalog_name,
+                database_name=input_param.database_name,
+                schema_name=input_param.schema_name,
+                table_type=input_param.table_type,
+            )
 
-        # Convert dictionaries to proper model instances
-        table_schemas = TableSchema.from_arrow(similar_schemas)
-        table_values = TableValue.from_arrow(similar_values)
+            # Convert dictionaries to proper model instances
+            table_schemas = TableSchema.from_arrow(similar_schemas)
+            table_values = TableValue.from_arrow(similar_values)
 
         return SchemaLinkingResult(
             success=True,
@@ -105,7 +109,7 @@ class SchemaLineageTool(BaseTool):
             table_values=table_values,
             value_count=len(table_values),
         )
-        # Return validated result using Pydantic model
+            # Return validated result using Pydantic model
 
     def search_similar_schemas_by_schema(self, input_param: SchemaLinkingInput, top_n=20) -> SchemaLinkingResult:
         """Get most similar under all schemas

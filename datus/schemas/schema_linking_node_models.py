@@ -24,6 +24,7 @@ class SchemaLinkingInput(BaseInput):
     catalog_name: str = Field("", description="Catalog name for context")
     database_name: str = Field("", description="Database name for context")
     schema_name: str = Field("", description="Schema name for context")
+    table_list: Optional[list[str]] = Field(default_factory=list, description="List of table names")
 
     matching_rate: Literal["fast", "medium", "slow", "from_llm"] = Field(
         "fast",

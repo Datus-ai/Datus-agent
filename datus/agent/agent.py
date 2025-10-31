@@ -817,6 +817,10 @@ class Agent:
         elif benchmark_platform == "bird_critic":
             self.global_config.check_init_storage_config("database")
             logger.info(f"Benchmark {benchmark_platform} not support now, please wait for update.")
+
+        elif benchmark_platform == "tencent":
+            self.global_config.check_init_storage_config("database")
+            return self.benchmark_tencent(benchmark_path, target_task_ids)
         return {"status": "success", "message": "Benchmarking completed"}
 
     def benchmark_spider2(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
@@ -974,6 +978,84 @@ class Agent:
             self.global_config.output_dir,
             target_task_ids,
         )
+    def benchmark_tencent(self, benchmark_path, target_task_ids):
+        # 1. 构造 JSON 文件的完整路径
+        json_file_path = os.path.join(benchmark_path, "after.json") 
+        logger.info(f"Loading custom benchmark file from: {json_file_path}")
+
+        try:
+            with open(json_file_path, 'r', encoding='utf-8') as f:
+                # 此时 processed_tasks 就是 after.json 的内容
+                processed_tasks = json.load(f) 
+        except Exception as e:
+            logger.error(f"Failed to load {json_file_path}: {e}")
+            return {"status": "error", "message": "File not found or invalid JSON"}
+
+        # 2. 循环运行转换后的任务
+        total = len(processed_tasks)
+        success = 0
+        logger.info(f"Found {total} tasks in tencent.")
+        
+        for i, task in enumerate(processed_tasks):
+            task_id = task.get("question_id", f"unknown_{i}")
+            # 检查是否只运行特定ID的任务
+            if target_task_ids and task_id not in target_task_ids:
+                continue
+
+            logger.info(f"Running custom task {i + 1}/{total} [ID: {task_id}]")
+            
+            # 3. 调用“任务执行者” (即我们下面定义的第二个函数)
+            result = self.run_single_tencent_task(task) 
+            
+            if result.get("status") == "success":
+                success += 1
+        
+        logger.info(f"Custom benchmark completed. {success}/{total} succeeded.")
+        return {"status": "success", "message": f"{success}/{total} succeeded."}
+
+    def run_single_tencent_task(self, task: dict):
+        """
+        执行单个任务 
+        """
+        task_id = str(task["question_id"])
+        question = task["question"]
+        
+       
+        # 从 task 字典中读取 "db_id"，并将其值 ("game2") 赋给 database_name 变量
+        database_name = task["db_id"] 
+        table_list = task["table_list"]
+        
+        logger.info(f"start custom benchmark with {task_id}: {question}")
+
+        result = self.run(
+            SqlTask(
+                id=task_id,
+                
+            
+                # 指定为 STARROCKS，使其匹配 "game2" 的数据库类型
+                database_type=DBType.STARROCKS, 
+                
+                task=question,
+                
+                # "game2" 被传递给 database_name 参数
+                database_name=database_name, 
+                
+                table_list=table_list,
+                # 从 task 字典中读取 "evidence" (即原来的 "knowledge")
+                external_knowledge="" if "evidence" not in task else task["evidence"],
+                
+                output_dir=self.global_config.output_dir,
+                current_date=self.args.current_date,
+            )
+        )
+        
+        logger.info(
+            f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
+        )
+        return result
+
+
+
 
     def benchmark_semantic_layer(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
         task_file = self.args.testing_set

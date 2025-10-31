@@ -25,3 +25,13 @@ before_reflection_*.yaml
 /benchmark/semantic_layer/semantic_models
 /dist
 *.egg-info
+
+
+
+# 忽略所有 save_sql / out_sql 相关的目录
+save_sql1/
+save_sql2/
+save_sql_all/
+output_sql_all/
+output_sql1/
+output_sql2/

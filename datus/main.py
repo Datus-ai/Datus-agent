@@ -101,7 +101,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     bootstrap_parser.add_argument("--storage_path", type=str, help="Parent directory for all storage components")
     bootstrap_parser.add_argument(
-        "--benchmark", type=str, choices=["spider2", "bird_dev", "bird_critic"], help="Benchmark dataset to use"
+        "--benchmark", type=str, choices=["spider2", "bird_dev", "bird_critic", "game2"], help="Benchmark dataset to use"
     )
     bootstrap_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
     bootstrap_parser.add_argument(
@@ -169,7 +169,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--benchmark",
         type=str,
         required=True,
-        choices=["spider2", "bird_dev", "semantic_layer"],
+        choices=["spider2", "bird_dev", "semantic_layer", "tencent"],
         help="Benchmark type to run",
     )
     benchmark_parser.add_argument("--benchmark_path", type=str, help="Path to benchmark configuration")

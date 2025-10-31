@@ -43,6 +43,7 @@ class SqlTask(BaseModel):
         default=None, description="Current date reference for relative time expressions"
     )
     date_ranges: str = Field(default="", description="Parsed date ranges context from date parser for SQL generation")
+    table_list: Optional[list[str]] = Field(default_factory=list, description="List of table names")
 
     # Metrics relative part
     layer1: str = Field(default="", description="Layer1 name")
