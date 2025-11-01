@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📚 Documentation
+    url: https://docs.datus.ai/
+    about: Check the official documentation for help and guides
+  - name: 💬 Slack Community
+    url: https://join.slack.com/t/datus-ai/shared_invite/zt-3g6h4fsdg-iOl5uNoz6A4GOc4xKKWUYg
+    about: Ask questions and discuss ideas with the community
+  - name: 🌐 Official Website
+    url: https://datus.ai
+    about: Visit the Datus official website
