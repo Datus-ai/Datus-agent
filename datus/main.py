@@ -168,7 +168,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--benchmark",
         type=str,
         required=True,
-        choices=["spider2", "bird_dev", "semantic_layer"],
+        # choices=["spider2", "bird_dev", "semantic_layer"],
         help="Benchmark type to run",
     )
     benchmark_parser.add_argument(
@@ -264,6 +264,23 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--domain", type=str, default="", help="Domain of the success story")
     run_parser.add_argument("--layer1", type=str, default="", help="Layer1 of the metrics")
     run_parser.add_argument("--layer2", type=str, default="", help="Layer2 of the metrics")
+
+    # evaluation for benchmark
+    evaluation_parser = subparsers.add_parser(
+        "evaluation",
+        help="Run evaluation for benchmark",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    evaluation_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
+    evaluation_parser.add_argument(
+        "--benchmark",
+        type=str,
+        required=True,
+        help="Benchmark type to run, choice for spider2, bird_dev, semantic_layer and subagents",
+    )
+    evaluation_parser.add_argument("--task_ids", type=str, nargs="+", help="Specific benchmark task IDs to run")
+    evaluation_parser.add_argument("--output_file", help="Output file name, if not set, the report file is not output")
 
     # Node configuration group (available for run and benchmark)
     for p in [run_parser, benchmark_parser]:
@@ -363,7 +380,8 @@ def main():
         result = agent.benchmark()
     elif args.action == "generate-dataset":
         result = agent.generate_dataset()
-
+    elif args.action == "evaluation":
+        result = agent.evaluation()
     if agent.is_complete():
         logger.info(f"\nFinal Result: {result}")
 

@@ -228,6 +228,26 @@ def _port_or_none(port_value: Optional[Union[str, int]]) -> Optional[int]:
         return None
 
 
+def get_connection(
+    connections: Union[BaseSqlConnector, Dict[str, BaseSqlConnector]], logic_name: str = ""
+) -> BaseSqlConnector:
+    if isinstance(connections, BaseSqlConnector):
+        return connections
+    if len(connections) == 1:
+        return next(iter(connections.values()))
+
+    if not logic_name:
+        return list(connections.values())[0]
+    if logic_name not in connections:
+        raise DatusException(
+            code=ErrorCode.DB_CONNECTION_FAILED,
+            message_args={
+                "error_message": f"Database {logic_name} not found in current namespace",
+            },
+        )
+    return connections[logic_name]
+
+
 class DBManager:
     def __init__(self, db_configs: Dict[str, Dict[str, DbConfig]]):
         self._conn_dict: Dict[str, Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]] = defaultdict(dict)
@@ -236,19 +256,7 @@ class DBManager:
     def get_conn(self, namespace: str, logic_name: str = "") -> BaseSqlConnector:
         self._init_connections(namespace)
         connector_or_dict = self._conn_dict[namespace]
-        if isinstance(connector_or_dict, Dict):
-            if not logic_name:
-                return list(connector_or_dict.values())[0]
-            if logic_name not in connector_or_dict:
-                raise DatusException(
-                    code=ErrorCode.DB_CONNECTION_FAILED,
-                    message_args={
-                        "error_message": f"Database {logic_name} not found in namespace {namespace}",
-                    },
-                )
-            return connector_or_dict[logic_name]
-        else:
-            return connector_or_dict
+        return get_connection(connector_or_dict, logic_name)
 
     def get_connections(self, namespace: str = "") -> Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]:
         self._init_connections(namespace)

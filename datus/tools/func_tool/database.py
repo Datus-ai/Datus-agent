@@ -155,7 +155,7 @@ class DBFuncTool:
             database_name=database,
             schema_name=schema,
             table_name=table_name,
-            select_fields=["dimensions", "measures", "semantic_model_desc"],
+            select_fields=["semantic_model_name", "dimensions", "measures", "semantic_model_desc"],
         )
         return {} if not result else result[0]
 
@@ -365,7 +365,6 @@ class DBFuncTool:
                         "schema_name",
                         "table_name",
                         "table_type",
-                        "definition",
                         "identifier",
                         "_distance",
                     ]
@@ -384,6 +383,7 @@ class DBFuncTool:
                     )
                     if semantic_model:
                         current_has_semantic = True
+                        metadata_row["semantic_model_name"] = semantic_model["semantic_model_name"]
                         metadata_row["description"] = semantic_model["semantic_model_desc"]
                         metadata_row["dimensions"] = semantic_model["dimensions"]
                         metadata_row["measures"] = semantic_model["measures"]
@@ -546,6 +546,7 @@ class DBFuncTool:
             if self.has_semantic_models:
                 semantic_model = self._get_semantic_model(catalog, database, schema_name, table_name)
                 if semantic_model:
+                    table_info["semantic_model_name"] = semantic_model["semantic_model_name"]
                     table_info["description"] = semantic_model["semantic_model_desc"]
                     table_info["dimensions"] = semantic_model["dimensions"]
                     table_info["measures"] = semantic_model["measures"]

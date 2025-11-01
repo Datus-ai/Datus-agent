@@ -3,10 +3,9 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from abc import abstractmethod
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, override
 from urllib.parse import quote_plus
-
-from pydantic import BaseModel, Field
 
 from datus.schemas.base import TABLE_TYPE
 from datus.tools.db_tools.base import list_to_in_str
@@ -18,32 +17,25 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-class TableMetadataNames(BaseModel):
+@dataclass
+class TableMetadataNames:
     """
     The corresponding database commands are SHOW/SHOW CREAT/INFORMATION_SCHEMA.<TABLES>
     """
 
-    show_table: str = Field(..., init=True, description="The corresponding database commands SHOW")
-    show_create_table: str = Field(..., init=True, description="The corresponding database commands SHOW CREATE")
-    info_table: str = Field(..., init=True, description="The name of metadata table")
-    table_types: Optional[List[str]] = Field(
-        default=None, init=True, description="The type of table INFORMATION_SCHEMA.TABLES"
-    )
+    show_table: str  # The corresponding database commands SHOW
+    show_create_table: str  # The corresponding database commands SHOW CREATE
+    info_table: str  # The name of metadata table
+    table_types: Optional[List[str]] = field(default=None)  # The type of table INFORMATION_SCHEMA.TABLES
 
 
 METADATA_DICT: Dict[TABLE_TYPE, TableMetadataNames] = {
     "table": TableMetadataNames(
         show_table="TABLES", show_create_table="TABLE", info_table="TABLES", table_types=["TABLE", "BASE TABLE"]
     ),
-    "view": TableMetadataNames(
-        show_table="VIEWS",
-        show_create_table="VIEW",
-        info_table="VIEWS",
-    ),
+    "view": TableMetadataNames(show_table="VIEWS", show_create_table="VIEW", info_table="VIEWS"),
     "mv": TableMetadataNames(
-        show_table="MATERIALIZED VIEWS",
-        show_create_table="MATERIALIZED VIEW",
-        info_table="MATERIALIZED_VIEWS",
+        show_table="MATERIALIZED VIEWS", show_create_table="MATERIALIZED VIEW", info_table="MATERIALIZED_VIEWS"
     ),
 }
 

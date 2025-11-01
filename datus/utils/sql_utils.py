@@ -182,7 +182,7 @@ def metadata_identifier(
     Generate a unique identifier for a table based on its metadata.
     """
     if dialect == DBType.SQLITE:
-        return f"{database_name}.{table_name}"
+        return f"{database_name}.{table_name}" if database_name else table_name
     elif dialect == DBType.DUCKDB:
         return f"{database_name}.{schema_name}.{table_name}"
     elif dialect in (DBType.MYSQL, DBType.STARROCKS):

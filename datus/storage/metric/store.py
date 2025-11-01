@@ -243,7 +243,7 @@ class SemanticMetricsRAG:
         logger.info(f"start to search metrics, metric_where: {where}, query_text: {query_text}")
         metric_search_results = self.metric_storage.search(
             query_txt=query_text,
-            select_fields=["llm_text"],
+            select_fields=["name", "llm_text"],
             top_n=top_n,
             where=where,
         )

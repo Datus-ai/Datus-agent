@@ -67,7 +67,7 @@ class MetricMeta:
     @staticmethod
     def filter_kwargs(cls, kwargs):
         valid_fields = {f.name for f in fields(cls)}
-        return cls(**{k: resolve_env(v) for k, v in kwargs.items() if k in valid_fields})
+        return MetricMeta(**{k: resolve_env(v) for k, v in kwargs.items() if k in valid_fields})
 
 
 @dataclass
@@ -87,6 +87,30 @@ class ModelConfig:
 class NodeConfig:
     model: str
     input: BaseInput | None
+
+
+@dataclass
+class BenchmarkConfig:
+    benchmark_path: str  # benchmark files dir
+    question_file: str  # The corresponding task file can be csv/json/json
+    question_key: str = "question"  # The key corresponding to question
+    question_id_key: str = "question_id"  # If empty, use the line number
+    db_key: str | None = None  # The key corresponding to database name
+    ext_knowledge_key: str | None = None  # The key corresponding to external knowledge
+
+    gold_sql_key: str | None = None  # The key corresponding to gold sql
+    # The standard SQL relative path，Can be a directory ({gold_sql_path}/{task_id}.sql) or json/csv file
+    gold_sql_path: str | None = None
+    # Optional, the key corresponding to the standard SQL relative path，can be a directory
+    # ({gold_sql_path}/{task_id}.sql) or json/csv file.
+    # If not set, gold sql will be executed to obtain the standard answer
+    gold_result_path: str | None = None
+    gold_result_key: str | None = None  # The key corresponding to gold result
+
+    @staticmethod
+    def filter_kwargs(cls, kwargs: dict) -> "BenchmarkConfig":
+        valid_fields = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in kwargs.items() if k in valid_fields})
 
 
 logger = get_logger(__name__)
@@ -149,11 +173,12 @@ class AgentConfig:
         models_raw = kwargs["models"]
         self.target = kwargs["target"]
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
+        self._benchmark_config_dict = kwargs.get("benchmark", {})
         self._current_namespace = ""
         self._current_database = ""
         self.nodes = nodes
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
-
+        self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
         self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
         self.db_type = ""
@@ -280,7 +305,7 @@ class AgentConfig:
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message=(
-                    f"No available database files found under namespace {namespace}," f" path_pattern: `{path_pattern}`"
+                    f"No available database files found under namespace {namespace}, path_pattern: `{path_pattern}`"
                 ),
             )
 
@@ -353,6 +378,47 @@ class AgentConfig:
         from datus.utils.path_manager import get_path_manager
 
         self.rag_base_path = str(get_path_manager().data_dir)
+
+        self._init_benchmark_configs()
+
+    def _init_benchmark_configs(self):
+        self.benchmark_configs = {
+            "spider2": BenchmarkConfig(
+                benchmark_path="spider2/spider2-snow",
+                question_file="spider2-snow.jsonl",
+                question_id_key="instance_id",
+                question_key="instruction",
+                db_key="db_id",
+                ext_knowledge_key="",
+                gold_sql_path="spider2/spider2-snow/evaluation_suite/gold/sql",
+                gold_result_path="spider2/spider2-snow/evaluation_suite/gold/exec_result",
+            ),
+            "bird_dev": BenchmarkConfig(
+                benchmark_path="bird/dev_20240627",
+                question_file="dev.json",
+                question_id_key="question_id",
+                question_key="question",
+                db_key="db_id",
+                ext_knowledge_key="evidence",
+                gold_sql_path="dev.json",
+                gold_sql_key="SQL",
+            ),
+            "semantic_layer": BenchmarkConfig(
+                benchmark_path="semantic_layer",
+                question_file="question",
+                gold_sql_key="gold",
+            ),
+        }
+        for k, v in self._benchmark_config_dict.items():
+            if k in ("spider2", "bird_dev", "semantic_layer"):
+                logger.warning(
+                    f"The benchmark configuration for {k} is built-in and requires no additional setup."
+                    f"Please place it within the {self.home}/benchmark directory."
+                )
+                continue
+            if not v.get("benchmark_path"):
+                v["benchmark_path"] = k
+            self.benchmark_configs[k] = BenchmarkConfig.filter_kwargs(BenchmarkConfig, v)
 
     def override_by_args(self, **kwargs):
         if home := kwargs.get("home"):
@@ -427,25 +493,12 @@ class AgentConfig:
             )
 
         # Supported benchmark names
-        supported_benchmarks = ["bird_dev", "spider2", "semantic_layer"]
-        if name not in supported_benchmarks:
-            raise DatusException(
-                code=ErrorCode.COMMON_UNSUPPORTED,
-                message_args={"field_name": "benchmark", "your_value": name},
-            )
 
+        config = self.benchmark_config(name)
         # Return fixed path: {agent.home}/benchmark/{name}
         from datus.utils.path_manager import get_path_manager
 
-        # Map benchmark names to subdirectories
-        benchmark_subdirs = {
-            "bird_dev": "bird/dev_20240627",
-            "spider2": "spider2/spider2-snow",
-            "semantic_layer": "semantic_layer",
-        }
-
-        subdir = benchmark_subdirs[name]
-        return str(get_path_manager().benchmark_dir / subdir)
+        return str(get_path_manager().benchmark_dir / config.benchmark_path)
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
         if not self._current_namespace:
@@ -512,6 +565,14 @@ class AgentConfig:
 
     def sub_agent_config(self, sub_agent_name: str) -> Dict[str, Any]:
         return self.agentic_nodes.get(sub_agent_name, {})
+
+    def benchmark_config(self, benchmark_platform) -> BenchmarkConfig:
+        if benchmark_platform not in self.benchmark_configs:
+            raise DatusException(
+                code=ErrorCode.COMMON_UNSUPPORTED,
+                message_args={"field_name": "benchmark", "your_value": benchmark_platform},
+            )
+        return self.benchmark_configs[benchmark_platform]
 
 
 def rag_storage_path(namespace: str, rag_base_path: str = "data") -> str:
