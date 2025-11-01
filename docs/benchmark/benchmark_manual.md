@@ -1,4 +1,3 @@
-
 # Datus-Agent User Manual
 
 ## Installation
@@ -24,7 +23,8 @@ Edit `~/.datus/conf/agent.yml`:
 
 By default, it uses deepseek v3, with the storage directory at `~/.datus/data`.
 
-However, you need to manually `export` environment variables or add them to `.bashrc` and re-`source` it, as `.env` is not currently supported.
+However, you need to manually `export` environment variables or add them to `.bashrc` and re-`source` it, as `.env` is
+not currently supported.
 
 ```yaml
 agent:
@@ -126,6 +126,7 @@ datus-agent probe-llm
 ```
 
 Sample output:
+
 ```
 2025-05-31 07:44:06 [info] Storage modules initialized: [] [sql_agent]
 2025-05-31 07:44:06 [info] Testing LLM model connectivity [sql_agent]
@@ -137,9 +138,11 @@ HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
 
 ## Prompt Template Directory
 
-You can modify Jinja templates as needed to adjust prompts to your business and model. Combined with workflow and node configurations, this allows flexible customization.
+You can modify Jinja templates as needed to adjust prompts to your business and model. Combined with workflow and node
+configurations, this allows flexible customization.
 
-Templates are stored in `{agent.home}/template/` (default: `~/.datus/template/`). Configure `agent.home` in `agent.yml` to use a different root directory.
+Templates are stored in `{agent.home}/template/` (default: `~/.datus/template/`). Configure `agent.home` in `agent.yml`
+to use a different root directory.
 
 ```bash
 ls ~/.datus/template
@@ -167,19 +170,15 @@ Download the Bird dataset:
 wget https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
 unzip dev.zip
 
-mkdir -p benchmark/bird
-mv dev_20240627 benchmark/bird
-cd benchmark/bird/dev_20240627
+mkdir -p ~/.datus/benchmark/bird
+mv dev_20240627 ~/.datus/benchmark/bird
+cd ~/.datus/benchmark/bird/dev_20240627
 unzip dev_databases
-cd ../../..
 ```
 
 Edit `agent.yml`:
 
 ```yaml
-benchmark:
-  bird_dev:
-    benchmark_path: benchmark/bird/dev_20240627
 
 namespace:
   bird_sqlite:
@@ -227,6 +226,78 @@ namespace:
     password: ${SNOWFLAKE_PASSWORD}
 ```
 
+### Custom Benchmarks
+
+You can register any benchmark by adding an entry under `agent.benchmark` in `agent.yml`. Each entry is mapped into a
+`BenchmarkConfig` object; the core fields are:
+
+- `benchmark_path`: Relative to `{agent.home}/benchmark`; points to the folder that hosts all benchmark assets.
+- `question_file`: Relative path to the question manifest (supports `.json`, `.jsonl`, `.csv`, `.tsv`).
+- `question_id_key`: Optional column/key that contains task IDs. When omitted the evaluator uses row order.
+- `question_key`: Field containing the natural language question.
+- `db_key`: Field that indicates which database to run against; falls back to the namespace default.
+- `ext_knowledge_key`: Optional field that carries extra knowledge (e.g. documentation snippets).
+- `tables_key`: Optional field that limits the tables exposed to the agent for that task.
+
+Evaluation relies on the gold SQL/result configuration. Depending on the source format you can choose either a directory
+layout (one file per task) or a single manifest.
+
+- `gold_sql_path`: Relative path to either a directory (`{gold_sql_path}/{task_id}.sql`) or a single JSON/CSV file.
+- `gold_sql_key`: Required when `gold_sql_path` points to a JSON/CSV/JSONL file; names the column that stores SQL.
+- `gold_result_path`: Optional path to pre-computed results (directory or single JSON/CSV/JSONL file). If omitted the
+  evaluator executes `gold_sql` against the configured databases.
+- `gold_result_key`: Required when `gold_result_path` is a JSON/CSV/JSONL file and stores the expected result payload.
+
+Example configuration:
+
+```yaml
+agent:
+  benchmark:
+    sales_demo:
+      benchmark_path: benchmark/sales_demo
+      question_file: tasks.jsonl
+      question_id_key: task_id
+      question_key: prompt
+      db_key: db_id
+      ext_knowledge_key: knowledge
+      tables_key: allowed_tables
+      gold_sql_path: gold/sql
+      gold_result_path: gold/results.jsonl
+      gold_sql_key: reference_sql
+      gold_result_key: expected_answer
+```
+
+With this configuration in place you can run and evaluate the benchmark exactly like the built-in suites:
+
+```bash
+datus-agent benchmark --namespace my_namespace --benchmark sales_demo
+datus-agent evaluation --namespace my_namespace --benchmark sales_demo
+```
+
+## Evaluating Results
+
+After running a benchmark (whether partially via `--benchmark_task_ids` or the entire suite), use the new `evaluation`
+action to compare your generated outputs against the gold answers and generate a report.
+
+Typical usage:
+
+```bash
+# Evaluate the previously run Bird tasks 1 and 2 and write a JSON report
+datus-agent evaluation \
+  --namespace bird_sqlite \
+  --benchmark bird_dev \
+  --task_ids 1 2 \
+  --output_file bird_eval_report.json
+```
+
+Key flags:
+
+- `--task_ids`: Restrict evaluation to specific benchmark tasks; omit to process the full benchmark.
+
+For custom benchmarks, You can at the gold result file containing the columns `task_id`, `question`, `gold_sql`,
+`expected_answer`, `answer_rows`,
+`file`, `expected_table`, `expected_sql`, `semantic_model`, `expected_metrics`, and `expected_knowledge`.
+
 ## Exploring Datus-cli with StarRocks
 
 Initialize the knowledge base (`bootstrap-kb`).
@@ -266,4 +337,3 @@ datus-agent run --namespace sr --task_db_name ssb_1 --task "how many parts are t
 ```bash
 datus-cli --namespace sr
 ```
-

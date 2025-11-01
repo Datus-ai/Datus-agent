@@ -4,20 +4,18 @@
 
 import argparse
 import csv
-import json
 import os
 import shutil
 import time
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import AsyncGenerator, Optional, Set
+from typing import Any, AsyncGenerator, Dict, Optional, Set
 
 from pydantic import ValidationError
 
 from datus.agent.evaluate import evaluate_result, setup_node_input
 from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
-from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
 from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
 
@@ -36,7 +34,7 @@ from datus.storage.schema_metadata.local_init import init_local_schema
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS as SUB_AGENT_COMPONENTS
 from datus.storage.sub_agent_kb_bootstrap import SubAgentBootstrapper
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.utils.constants import DBType
+from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
@@ -796,48 +794,36 @@ class Agent:
 
         target_task_ids = getattr(self.args, "benchmark_task_ids", [])
         target_task_ids = set(target_task_ids) if target_task_ids else None
-        if benchmark_platform == "spider2":
-            self.global_config.check_init_storage_config("database")
-            return self.benchmark_spider2(benchmark_path, target_task_ids)
-        elif benchmark_platform == "bird_dev":
-            self.global_config.check_init_storage_config("database")
-            return self.benchmark_bird_dev(benchmark_path, target_task_ids)
-        elif benchmark_platform == "semantic_layer":
+
+        if benchmark_platform == "semantic_layer":
             self.global_config.check_init_storage_config("metric")
             return self.benchmark_semantic_layer(benchmark_path, target_task_ids)
-        elif benchmark_platform == "bird_critic":
+        else:
             self.global_config.check_init_storage_config("database")
-            logger.info(f"Benchmark {benchmark_platform} not support now, please wait for update.")
-        return {"status": "success", "message": "Benchmarking completed"}
+            self.global_config.check_init_storage_config("metric")
+            return self.do_benchmark(benchmark_platform, benchmark_path, target_task_ids)
 
-    def benchmark_spider2(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
-        task_file = os.path.join(benchmark_path, "spider2-snow.jsonl")
-        self._check_benchmark_file(task_file)
+    def do_benchmark(self, benchmark_platform: str, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
+        default_db_name, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
+            self.global_config.current_namespace
+        )
 
-        with open(task_file, "r") as f:
-            task_configs = [json.loads(line) for line in f]
-
-        # Filter tasks by target_task_ids if specified
-        filtered_tasks = []
-        for task_config in task_configs:
-            task_id = task_config["instance_id"]
-            if target_task_ids and task_id not in target_task_ids:
-                continue
-            filtered_tasks.append(task_config)
-
-        logger.info(f"Loaded {len(filtered_tasks)} tasks from Spider2 benchmark")
-
-        def run_single_spider2_task(task_config):
+        def run_single_task(task_id: str, benchmark_config: BenchmarkConfig, task_item: Dict[str, Any]):
             """Execute a single Spider2 benchmark task"""
-            task_id = task_config["instance_id"]
-            task = task_config["instruction"]
-            database_name = task_config["db_id"]
+            task = task_item.get(benchmark_config.question_key)
+            if not task:
+                logger.warning(
+                    f"The question content was not obtained through {benchmark_config.question_key}, "
+                    "please check your benchmark configuration."
+                )
+                return task_id, ""
+            database_name = task_item.get(benchmark_config.db_key) or conn.database_name or ""
             logger.info(f"start benchmark with {task_id}: {task}")
 
             result = self.run(
                 SqlTask(
                     id=task_id,
-                    database_type="snowflake",
+                    database_type=conn.dialect,
                     task=task,
                     database_name=database_name,
                     output_dir=self.global_config.output_dir,
@@ -849,97 +835,31 @@ class Agent:
             )
             return task_id, result
 
-        # Get concurrency level from args or default to 1
-        max_workers = getattr(self.args, "max_workers", 1)
-        logger.info(f"Using {max_workers} worker threads for parallel execution")
-
-        # Execute tasks with thread pool
+        max_workers = getattr(self.args, "max_workers", 1) or 1
+        logger.info(f"Loaded tasks from {benchmark_platform} benchmark")
+        benchmark_config = self.global_config.benchmark_config(benchmark_platform)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
-            future_to_task = {
-                executor.submit(run_single_spider2_task, task_config): task_config for task_config in filtered_tasks
-            }
+            future_to_task = {}
+            for idx, task_item in enumerate(
+                load_benchmark_tasks(self.global_config.benchmark_config(benchmark_platform), benchmark_path)
+            ):
+                task_id = str(task_item.get(benchmark_config.question_id_key))
+                if not task_id:
+                    task_id = str(idx + 1)
+                    task_item["_task_id"] = task_id
+                if not target_task_ids or task_id in target_task_ids:
+                    f = executor.submit(run_single_task, task_id, benchmark_config, task_item)
+                    future_to_task[f] = task_item
 
             # Wait for completion
             for future in as_completed(future_to_task):
-                task_config = future_to_task[future]
+                task_item = future_to_task[future]
                 try:
                     task_id, _ = future.result()
                     logger.debug(f"Task {task_id} completed successfully")
                 except Exception as exc:
-                    task_id = task_config["instance_id"]
+                    task_id = task_item.get(benchmark_config.question_id_key) or task_item.get("_task_id")
                     logger.error(f"Task {task_id} generated an exception: {exc}")
-
-        logger.info("Benchmark execution completed.")
-        return {"status": "success", "message": "Benchmark tasks executed successfully"}
-
-    def benchmark_bird_dev(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
-        from datus.utils.benchmark_utils import load_bird_dev_tasks
-
-        tasks = load_bird_dev_tasks(benchmark_path)
-
-        # Convert Bird tasks to format expected by generate_gold_standard_results
-        task_size = 0
-        group_task_ids = defaultdict(list)
-        # Prepare filtered tasks for parallel execution
-        filtered_bird_tasks = []
-        for task in tasks:
-            task_id = str(task["question_id"])
-            if target_task_ids and task_id not in target_task_ids:
-                continue
-            db_id = task["db_id"]
-            filtered_bird_tasks.append(task)
-            group_task_ids[db_id].append(
-                {"question_id": task["question_id"], "sql": task["SQL"], "question": task["question"]}
-            )
-            task_size += 1
-        if task_size == 0:
-            logger.warning("There are no benchmarks that need to be run.")
-            return {}
-        logger.info(f"Loaded {task_size} tasks from Bird benchmark")
-
-        def run_single_bird_task(_task):
-            """Execute a single Bird benchmark task"""
-            _task_id = str(_task["question_id"])
-            question = _task["question"]
-            database_name = _task["db_id"]
-            logger.info(f"start benchmark with {_task_id}: {question}")
-
-            result = self.run(
-                SqlTask(
-                    id=_task_id,
-                    database_type=DBType.SQLITE,
-                    task=question,
-                    database_name=database_name,
-                    external_knowledge="" if "evidence" not in task else task["evidence"],
-                    output_dir=self.global_config.output_dir,
-                    current_date=self.args.current_date,
-                )
-            )
-            logger.info(
-                f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
-            )
-            return task_id, result
-
-        # Get concurrency level from args or default to 1
-        max_workers = getattr(self.args, "max_workers", 1)
-        logger.info(f"Using {max_workers} worker threads for parallel execution")
-
-        # Execute tasks with thread pool
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
-            future_to_task = {executor.submit(run_single_bird_task, task): task for task in filtered_bird_tasks}
-
-            # Wait for completion
-            for future in as_completed(future_to_task):
-                task = future_to_task[future]
-                try:
-                    task_id, _ = future.result()
-                    logger.debug(f"Task {task_id} completed successfully")
-                except Exception as exc:
-                    task_id = str(task["question_id"])
-                    logger.error(f"Task {task_id} generated an exception: {exc}")
-
         logger.info("Benchmark execution completed.")
         return {"status": "success", "message": "Benchmark tasks executed successfully"}
 
@@ -948,7 +868,7 @@ class Agent:
         self._check_benchmark_file(task_file)
 
         # Clean up previous execution results to avoid interference
-        self._cleanup_benchmark_paths(benchmark_path)
+        self._cleanup_benchmark_output_paths(benchmark_path)
 
         tasks = []
         with open(task_file, "r", encoding="utf-8") as f:
@@ -1011,7 +931,7 @@ class Agent:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Benchmarking task file not found, file_path={file_path}")
 
-    def _cleanup_benchmark_paths(self, benchmark_path: str):
+    def _cleanup_benchmark_output_paths(self, benchmark_path: str):
         """Clean up previous benchmark execution results to avoid interference."""
         current_namespace = self.global_config.current_namespace
 
@@ -1048,48 +968,14 @@ class Agent:
                 "message": "Benchmark bird_critic and semantic_layer evaluation is not supported at the moment",
             }
 
-        benchmark_path = self.args.benchmark_path
-        benchmark_result_path = self.args.result_path or self.global_config.output_dir
-        benchmark_trajectory_path = self.args.trajectory_path or self.global_config.trajectory_dir
+        from datus.utils.benchmark_utils import evaluate_benchmark_and_report
 
-        if benchmark_platform in ("bird_dev", "spider2"):
-            if not benchmark_path:
-                benchmark_path = self.global_config.benchmark_path(benchmark_platform)
-            from datus.utils.benchmark_utils import evaluate_benchmark_and_report
-
-            return evaluate_benchmark_and_report(
-                agent_config=self.global_config,
-                benchmark_platform=benchmark_platform,
-                benchmark_path=benchmark_path,
-                trajectory_dir=benchmark_trajectory_path,
-                result_dir=benchmark_result_path,
-                target_task_ids=self.args.task_ids,
-                output_file=self.args.output_file,
-            )
-
-        elif benchmark_platform in self.global_config.agentic_nodes:
-            if not benchmark_path:
-                benchmark_path = os.path.join(self.global_config.home, "benchmark", f"{benchmark_platform}.csv")
-            if not os.path.exists(benchmark_path):
-                return {
-                    "status": "failed",
-                    "message": f"The benchmark corresponding to the sub-agent was not found: {benchmark_path}",
-                }
-            from datus.utils.benchmark_utils import evaluate_sub_agent_and_report
-
-            return evaluate_sub_agent_and_report(
-                self.global_config,
-                benchmark_path,
-                benchmark_trajectory_path,
-                benchmark_result_path,
-                target_task_ids=self.args.task_ids,
-                output_file=self.args.output_file,
-            )
-        else:
-            return {
-                "status": "failed",
-                "message": "No corresponding benchmark or sub-agent found",
-            }
+        return evaluate_benchmark_and_report(
+            agent_config=self.global_config,
+            benchmark_platform=benchmark_platform,
+            target_task_ids=self.args.task_ids,
+            output_file=self.args.output_file,
+        )
 
     def generate_dataset(self):
         """Generate dataset from trajectory files."""

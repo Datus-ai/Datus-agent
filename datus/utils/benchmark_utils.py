@@ -28,7 +28,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Seque
 import pandas as pd
 import yaml
 
-from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance, get_connection
 from datus.utils.constants import DBType
@@ -586,7 +586,7 @@ class SingleFileGoldProvider(ResultProvider):
         self._suffix = self.result_file.suffix.lower()
         if self._suffix == ".csv":
             self._load_csv_sources()
-        elif self._suffix == ".json":
+        elif self._suffix in (".json", ".jsonl"):
             self._load_json_sources()
         else:
             self._global_error = f"Unsupported result file format: {self.result_file.suffix}"
@@ -624,35 +624,45 @@ class SingleFileGoldProvider(ResultProvider):
 
     def _load_json_sources(self) -> None:
         try:
+            if self._suffix == ".jsonl":
+                with self.result_file.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        record = json.loads(line)
+                        if isinstance(record, Mapping):
+                            self._record_row_from_mapping(record)
+                return
             with self.result_file.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
         except Exception as exc:  # pragma: no cover - defensive logging
             self._global_error = f"Failed to load result file: {exc}"
             return
 
-        def handle_record(record: Mapping[str, Any]) -> None:
-            task_id = str(record.get(self.task_id_key, "") or "").strip()
-            if not task_id:
-                return
-            if self.allowed_task_ids and task_id not in self.allowed_task_ids:
-                return
-            self._record_row(task_id, record)
-
         if isinstance(payload, list):
             for item in payload:
                 if isinstance(item, Mapping):
-                    handle_record(item)
+                    self._record_row_from_mapping(item)
         elif isinstance(payload, Mapping):
             if self.task_id_key in payload:
-                handle_record(payload)
+                self._record_row_from_mapping(payload)
             else:
                 for value in payload.values():
                     if isinstance(value, Mapping):
-                        handle_record(value)
+                        self._record_row_from_mapping(value)
                     elif isinstance(value, list):
                         for item in value:
                             if isinstance(item, Mapping):
-                                handle_record(item)
+                                self._record_row_from_mapping(item)
+
+    def _record_row_from_mapping(self, record: Mapping[str, Any]) -> None:
+        task_id = str(record.get(self.task_id_key, "") or "").strip()
+        if not task_id:
+            return
+        if self.allowed_task_ids and task_id not in self.allowed_task_ids:
+            return
+        self._record_row(task_id, record)
 
     def _record_row(self, task_id: str, row: Mapping[str, Any]) -> None:
         expected_value = None
@@ -677,6 +687,8 @@ class SingleFileGoldProvider(ResultProvider):
             return self._load_single_csv_row(task_id)
         if self._suffix == ".json":
             return self._load_single_json_entry(task_id)
+        if self._suffix == ".jsonl":
+            return self._load_single_jsonl_entry(task_id)
         return False
 
     def _load_single_csv_row(self, task_id: str) -> bool:
@@ -711,6 +723,28 @@ class SingleFileGoldProvider(ResultProvider):
                 stack.extend(item.values())
             elif isinstance(item, list):
                 stack.extend(item)
+        return False
+
+    def _load_single_jsonl_entry(self, task_id: str) -> bool:
+        try:
+            with self.result_file.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(record, Mapping):
+                        continue
+                    current_id = str(record.get(self.task_id_key, "") or "").strip()
+                    if current_id != task_id:
+                        continue
+                    self._record_row(task_id, record)
+                    return True
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to lazily load gold result for %s: %s", task_id, exc)
         return False
 
     def _execute_gold_sql(self, task_id: str, sql_text: str, db_name: str) -> Optional[pd.DataFrame]:
@@ -910,10 +944,20 @@ class JsonMappingSqlProvider(SqlProvider):
         if not self.json_path.exists():
             self._global_error = f"SQL reference file not found: {self.json_path}"
             return
+        suffix = self.json_path.suffix.lower()
         try:
-            with self.json_path.open("r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            self._ingest(payload)
+            if suffix == ".jsonl":
+                with self.json_path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        record = json.loads(line)
+                        self._ingest(record)
+            else:
+                with self.json_path.open("r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+                self._ingest(payload)
         except Exception as exc:  # pragma: no cover - logging side effect
             self._global_error = f"Failed to load SQL reference file: {exc}"
             return
@@ -1314,8 +1358,8 @@ class BenchmarkEvaluator:
             return record
 
         outcome = self.comparator.compare(actual.dataframe, expected.dataframe)
-        outcome.actual_sql = actual_sql.sql
-        outcome.gold_sql = gold_sql.sql
+        outcome.actual_sql = actual_sql.sql if actual_sql else None
+        outcome.gold_sql = gold_sql.sql if gold_sql else None
         self._apply_tools_comparison(outcome, actual_sql, gold_sql, analysis.artifacts, expected_artifacts)
         record.outcome = outcome
         return record
@@ -1620,50 +1664,169 @@ def preview_dataframe(df: pd.DataFrame, max_rows: int = 3, max_cols: int = 5) ->
     return "\n       ".join(result_lines)
 
 
+def _resolve_optional_path(base_path: Path, relative_path: Optional[str]) -> Optional[Path]:
+    if not relative_path:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(relative_path))
+    candidate = Path(expanded)
+    if not candidate.is_absolute():
+        candidate = base_path / candidate
+    return candidate
+
+
+def _ensure_question_file_path(base_path: Path, config: BenchmarkConfig) -> Path:
+    question_path = _resolve_optional_path(base_path, config.question_file)
+    if question_path is None:
+        raise DatusException(
+            code=ErrorCode.COMMON_FIELD_REQUIRED,
+            message_args={"field_name": "question_file"},
+        )
+    return question_path
+
+
+def _build_gold_sql_provider(
+    config: BenchmarkConfig,
+    base_path: Path,
+    question_file_path: Path,
+    dialect: str,
+) -> Optional[SqlProvider]:
+    sql_source = _resolve_optional_path(base_path, config.gold_sql_path) or question_file_path
+    if sql_source.is_dir():
+        return DirectorySqlProvider(str(sql_source), dialect=dialect)
+
+    suffix = sql_source.suffix.lower()
+    task_id_key = config.question_id_key or "task_id"
+    sql_key = config.gold_sql_key or ""
+
+    if suffix in {".json", ".jsonl"}:
+        if not sql_key:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message="gold_sql_key is required when gold_sql_path points to a JSON/JSONL file",
+            )
+        return JsonMappingSqlProvider(
+            str(sql_source),
+            task_id_key=task_id_key,
+            sql_key=sql_key,
+            dialect=dialect,
+        )
+
+    if suffix in {".csv", ".tsv"}:
+        if not sql_key:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message="gold_sql_key is required when gold_sql_path points to a CSV/TSV file",
+            )
+        return CsvColumnSqlProvider(
+            str(sql_source),
+            task_id_key=task_id_key,
+            sql_key=sql_key,
+            dialect=dialect,
+        )
+
+    logger.warning(f"Unsupported gold SQL source format: {sql_source}")
+    return None
+
+
+def _build_gold_result_provider(
+    agent_config: AgentConfig,
+    config: BenchmarkConfig,
+    base_path: Path,
+    question_file_path: Path,
+    allowed_task_ids: Optional[set[str]],
+) -> ResultProvider:
+    result_path = _resolve_optional_path(base_path, config.gold_result_path)
+
+    if result_path and result_path.is_dir():
+        return CsvPerTaskResultProvider(str(result_path))
+
+    task_id_key = config.question_id_key or "task_id"
+    sql_key = config.gold_sql_key or ""
+    query_result_key = config.gold_result_key or ""
+    db_key = config.db_key or ""
+
+    if result_path is None:
+        gold_sql_path = _resolve_optional_path(base_path, config.gold_sql_path)
+        if gold_sql_path and gold_sql_path.is_dir():
+            raise DatusException(
+                code=ErrorCode.COMMON_VALIDATION_FAILED,
+                message="gold_result_path must be provided when gold_sql_path is a directory.",
+            )
+        result_file = gold_sql_path or question_file_path
+    else:
+        result_file = result_path
+
+    if not result_file.exists():
+        raise DatusException(
+            code=ErrorCode.COMMON_FILE_NOT_FOUND,
+            message_args={"config_name": "Gold Result", "file_name": str(result_file)},
+        )
+
+    if not query_result_key and not sql_key:
+        raise DatusException(
+            code=ErrorCode.COMMON_FIELD_REQUIRED,
+            message="At least one of gold_result_key or gold_sql_key must be provided for gold result evaluation.",
+        )
+
+    db_manager = db_manager_instance(agent_config.namespaces)
+    connections = db_manager.get_connections(agent_config.current_namespace)
+
+    return SingleFileGoldProvider(
+        result_file=str(result_file),
+        connections=connections,
+        task_id_key=task_id_key,
+        sql_key=sql_key,
+        query_result_key=query_result_key,
+        db_key=db_key,
+        allowed_task_ids=allowed_task_ids,
+    )
+
+
 def evaluate_benchmark(
     agent_config: AgentConfig,
     benchmark_platform: str,
-    benchmark_path: str,
-    trajectory_dir: str,
-    result_dir: str,
     target_task_ids: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
-    if not os.path.exists(result_dir):
-        logger.warning(f"Result directory not found at {result_dir}")
+    result_directory = Path(agent_config.output_dir)
+    if not result_directory.exists():
+        logger.warning(f"Result directory not found at {result_directory}")
         return {}
-    benchmark_path_obj = Path(benchmark_path)
 
-    agent_result_provider = CsvPerTaskResultProvider(result_dir)
-    dialect: str = DBType.SQLITE if benchmark_platform == "bird_dev" else DBType.SNOWFLAKE
-    result_sql_provider = AgentResultSqlProvider(result_dir, dialect=dialect)
+    trajectory_directory = Path(agent_config.trajectory_dir)
+
+    try:
+        benchmark_config = agent_config.benchmark_config(benchmark_platform)
+    except DatusException as exc:
+        logger.error(f"Failed to load benchmark configuration for {benchmark_platform}: {exc}")
+        return {}
+
+    benchmark_root = Path(agent_config.benchmark_path(benchmark_platform))
+    question_file_path = _ensure_question_file_path(benchmark_root, benchmark_config)
+
     allowed_task_ids = {str(task_id) for task_id in target_task_ids} if target_task_ids else None
 
-    if benchmark_platform == "spider2":
-        gold_result_dir = benchmark_path_obj / "evaluation_suite" / "gold" / "exec_result"
-
-        if not gold_result_dir.exists():
-            logger.warning(f"Gold exec_result directory not found at {gold_result_dir}")
-            return {}
-
-        gold_sql_dir = benchmark_path_obj / "evaluation_suite" / "gold" / "sql"
-        if not gold_sql_dir.exists():
-            logger.warning(f"Gold sql directory not found at {gold_sql_dir}")
-            return {}
-        gold_sql_provider = DirectorySqlProvider(str(gold_sql_dir), dialect=dialect)
-        gold_result_provider = CsvPerTaskResultProvider(str(gold_result_dir))
+    configured_dialect = getattr(agent_config, "db_type", "")
+    if isinstance(configured_dialect, DBType):
+        dialect = configured_dialect.value
     else:
-        task_file = str(os.path.join(benchmark_path, "dev.json"))
-        gold_sql_provider = JsonMappingSqlProvider(task_file, task_id_key="question_id", sql_key="SQL", dialect=dialect)
-        db_manager = db_manager_instance(agent_config.namespaces)
+        dialect = str(configured_dialect or "").strip().lower()
+    if not dialect:
+        dialect = _default_sql_dialect(benchmark_platform)
 
-        gold_result_provider = SingleFileGoldProvider(
-            result_file=task_file,
-            connections=db_manager.get_connections(agent_config.current_namespace),
-            task_id_key="question_id",
-            sql_key="SQL",
-            db_key="db_id",
-            allowed_task_ids=allowed_task_ids,
+    agent_result_provider = CsvPerTaskResultProvider(str(result_directory))
+    result_sql_provider = AgentResultSqlProvider(str(result_directory), dialect=dialect)
+    try:
+        gold_sql_provider = _build_gold_sql_provider(benchmark_config, benchmark_root, question_file_path, dialect)
+        gold_result_provider = _build_gold_result_provider(
+            agent_config,
+            benchmark_config,
+            benchmark_root,
+            question_file_path,
+            allowed_task_ids,
         )
+    except DatusException as exc:
+        logger.error(f"Failed to prepare gold references for benchmark {benchmark_platform}: {exc}")
+        return {}
 
     evaluator = BenchmarkEvaluator(
         trajectory_parser=TrajectoryParser(),
@@ -1673,25 +1836,19 @@ def evaluate_benchmark(
         gold_sql_provider=gold_sql_provider,
     )
 
-    report = evaluator.evaluate_directory(trajectory_dir, target_task_ids)
+    report = evaluator.evaluate_directory(str(trajectory_directory), target_task_ids)
     return report.to_dict()
 
 
 def evaluate_benchmark_and_report(
     agent_config: AgentConfig,
     benchmark_platform: str,
-    benchmark_path: str,
-    trajectory_dir: str,
-    result_dir: str,
     target_task_ids: Optional[Iterable[str]] = None,
     output_file: Optional[str] = None,
 ) -> Dict[str, Any]:
     accuracy_report = evaluate_benchmark(
         agent_config=agent_config,
         benchmark_platform=benchmark_platform,
-        benchmark_path=benchmark_path,
-        trajectory_dir=trajectory_dir,
-        result_dir=result_dir,
         target_task_ids=target_task_ids,
     )
 
@@ -1705,50 +1862,6 @@ def evaluate_benchmark_and_report(
         logger.error(f"Accuracy evaluation failed: {accuracy_report.get('message')}")
 
     return accuracy_report
-
-
-def evaluate_sub_agent_and_report(
-    agent_config: AgentConfig,
-    benchmark_path: str,
-    trajectory_dir: str,
-    result_path: str,
-    target_task_ids: Optional[Iterable[str]] = None,
-    output_file: Optional[str] = None,
-    db_type: DBType = DBType.SQLITE,
-) -> Dict[str, Any]:
-    db_manager = db_manager_instance(agent_config.namespaces)
-    allowed_task_ids = {str(task_id) for task_id in target_task_ids} if target_task_ids else None
-    evaluator = BenchmarkEvaluator(
-        trajectory_parser=TrajectoryParser(),
-        result_provider=CsvPerTaskResultProvider(str(result_path)),
-        gold_result_provider=SingleFileGoldProvider(
-            result_file=benchmark_path,
-            connections=db_manager.get_connections(agent_config.current_namespace),
-            task_id_key="task_id",
-            sql_key="gold_sql",
-            query_result_key="expected_answer",
-            db_key="db_id",
-            allowed_task_ids=allowed_task_ids,
-        ),
-        result_sql_provider=AgentResultSqlProvider(str(result_path), dialect=db_type),
-        gold_sql_provider=CsvColumnSqlProvider(
-            benchmark_path, task_id_key="task_id", sql_key="gold_sql", dialect=db_type
-        ),
-    )
-
-    report = evaluator.evaluate_directory(trajectory_dir, target_task_ids)
-    report_dict = report.to_dict()
-
-    if report_dict.get("status") == "success":
-        _log_accuracy_summary(report_dict)
-        if output_file:
-            with open(output_file, "w", encoding="utf-8") as handle:
-                json.dump(report_dict, handle, ensure_ascii=False, indent=2)
-            logger.info(f"Detailed accuracy report saved to: {output_file}")
-    else:
-        logger.error(f"Sub-agent accuracy evaluation failed: {report_dict.get('message')}")
-
-    return report_dict
 
 
 def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
@@ -1875,3 +1988,34 @@ def load_bird_dev_tasks(benchmark_path: str) -> List[Dict[str, Any]]:
         raise DatusException(
             ErrorCode.COMMON_JSON_PARSE_ERROR, message_args={"file_path": file_path, "error_detail": str(e)}
         )
+
+
+def load_benchmark_tasks(benchmark_config: BenchmarkConfig, benchmark_path: str = "") -> Iterable[Dict[str, Any]]:
+    benchmark_path = benchmark_path or benchmark_config.benchmark_path
+    benchmark_file = Path(benchmark_path) / benchmark_config.question_file
+    if not benchmark_file.exists():
+        raise DatusException(
+            ErrorCode.COMMON_FILE_NOT_FOUND,
+            message_args={"config_name": "Benchmarking Task File", "file_name": benchmark_file},
+        )
+
+    if benchmark_file.suffix == ".json":
+        with benchmark_file.open(mode="r", encoding="utf-8") as f:
+            data = json.load(f)
+            if not isinstance(data, list):
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED, message="Only supports JSON task files in List format"
+                )
+            for item in data:
+                yield item
+        return
+    elif benchmark_file.suffix in (".csv", ".tsv"):
+        delimiter = "\t" if benchmark_file.suffix == ".tsv" else ","
+        with benchmark_file.open(mode="r", encoding="utf-8") as f:
+            csv_reader = csv.DictReader(f, delimiter=delimiter)
+            for row in csv_reader:
+                yield row
+    elif benchmark_file.suffix == ".jsonl":
+        with benchmark_file.open(mode="r", encoding="utf-8") as f:
+            for line in f:
+                yield json.loads(line)

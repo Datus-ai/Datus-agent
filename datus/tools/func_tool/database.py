@@ -546,7 +546,7 @@ class DBFuncTool:
             if self.has_semantic_models:
                 semantic_model = self._get_semantic_model(catalog, database, schema_name, table_name)
                 if semantic_model:
-                    table_info["name"] = semantic_model["semantic_model_name"]
+                    table_info["semantic_model_name"] = semantic_model["semantic_model_name"]
                     table_info["description"] = semantic_model["semantic_model_desc"]
                     table_info["dimensions"] = semantic_model["dimensions"]
                     table_info["measures"] = semantic_model["measures"]

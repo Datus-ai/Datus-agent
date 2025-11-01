@@ -5,8 +5,8 @@ from typing import Optional
 import pytest
 import yaml
 
-from datus.configuration.agent_config import AgentConfig
-from datus.utils.benchmark_utils import evaluate_sub_agent_and_report
+from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
+from datus.utils.benchmark_utils import evaluate_benchmark_and_report
 from datus.utils.constants import DBType
 from tests.conftest import load_acceptance_config
 
@@ -74,7 +74,8 @@ def _write_trajectory(path: Path, task_id: str, tool_actions: Optional[list[dict
 
 
 @pytest.mark.parametrize("db_type", [DBType.SQLITE, DBType.SNOWFLAKE])
-def test_evaluate_sub_agent_and_report(agent_config: AgentConfig, tmp_path: Path, db_type: str) -> None:
+def test_evaluate_sub_agent_and_report(agent_config: AgentConfig, tmp_path: Path, db_type: DBType) -> None:
+    benchmark_name = "sub_agent_evaluation"
     # Arrange gold answers
     gold_file = tmp_path / "gold.csv"
     expected_answer = "name,total\nAlice,1\nBob,2"
@@ -257,13 +258,24 @@ def test_evaluate_sub_agent_and_report(agent_config: AgentConfig, tmp_path: Path
     _write_trajectory(trajectory_dir / "task-123_1.yaml", "task-123", match_tool_actions)
     _write_trajectory(trajectory_dir / "task-456_1.yaml", "task-456", mismatch_tool_actions)
 
+    agent_config.benchmark_configs[benchmark_name] = BenchmarkConfig(
+        benchmark_path=".",
+        question_file=gold_file.name,
+        question_id_key="task_id",
+        gold_sql_path=gold_file.name,
+        gold_sql_key="gold_sql",
+        gold_result_path=gold_file.name,
+        gold_result_key="expected_answer",
+    )
+    agent_config.db_type = db_type
+
     # Act
-    report = evaluate_sub_agent_and_report(
+    report = evaluate_benchmark_and_report(
         agent_config=agent_config,
-        benchmark_path=str(gold_file),
+        benchmark_platform=benchmark_name,
+        benchmark_path=str(tmp_path),
         trajectory_dir=str(trajectory_dir),
-        result_path=str(result_dir),
-        db_type=db_type,
+        result_dir=str(result_dir),
     )
     # Assert successful evaluation structure
     assert report["status"] == "success"

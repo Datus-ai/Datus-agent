@@ -168,7 +168,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--benchmark",
         type=str,
         required=True,
-        choices=["spider2", "bird_dev", "semantic_layer"],
+        # choices=["spider2", "bird_dev", "semantic_layer"],
         help="Benchmark type to run",
     )
     benchmark_parser.add_argument(
@@ -280,21 +280,6 @@ def create_parser() -> argparse.ArgumentParser:
         help="Benchmark type to run, choice for spider2, bird_dev, semantic_layer and subagents",
     )
     evaluation_parser.add_argument("--task_ids", type=str, nargs="+", help="Specific benchmark task IDs to run")
-    evaluation_parser.add_argument(
-        "--benchmark_path",
-        required=False,
-        help=(
-            "The path of the benchmark needs to contain the corresponding tasks and results, "
-            "the default value is $DATUS_HOME/benchmark/<benchmark_name>. "
-            "When using sub-agents, the value of this parameter should be a csv or JSON file and contains columns:"
-            "task_id,question,gold_sql,expected_answer,answer_rows,file,expected_table,expected_sql,semantic_model,"
-            "expected_metrics,expected_knowledge"
-        ),
-    )
-    evaluation_parser.add_argument("--result_path", help="result directory (default: {agent.home}/output)")
-    evaluation_parser.add_argument(
-        "--trajectory_path", help="save directory containing trajectory files (default: {agent.home}/save)"
-    )
     evaluation_parser.add_argument("--output_file", help="Output file name, if not set, the report file is not output")
 
     # Node configuration group (available for run and benchmark)
