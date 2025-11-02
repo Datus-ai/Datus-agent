@@ -1,0 +1,57 @@
+name: Other
+description: Report documentation issues, ask questions, or submit other types of issues
+title: "[Other]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your contribution! Use this template for questions, documentation improvements, or other issues that don't fit bug reports or feature requests.
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue Type
+      description: What type of issue is this?
+      options:
+        - Question
+        - Documentation
+        - Performance
+        - Security
+        - Refactoring
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Please describe your issue, question, or suggestion
+      placeholder: Describe your issue...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide any relevant context, links, or examples
+      placeholder: |
+        - Related documentation: 
+        - Code examples:
+        - Screenshots:
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution (Optional)
+      description: If you have ideas on how to address this, please share
+      placeholder: I think we could...
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Information
+      description: Any other information you'd like to add
+      placeholder: Any additional context...
