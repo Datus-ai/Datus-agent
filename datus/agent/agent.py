@@ -842,10 +842,12 @@ class Agent:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {}
             for idx, task_item in enumerate(load_benchmark_tasks(self.global_config, benchmark_platform)):
-                task_id = str(task_item.get(benchmark_config.question_id_key))
-                if not task_id:
+                raw_task_id = str(task_item.get(benchmark_config.question_id_key))
+                if raw_task_id in (None, ""):
                     task_id = str(idx + 1)
-                    task_item["_task_id"] = task_id
+                    task_item[benchmark_config.question_id_key] = task_id
+                else:
+                    task_id = str(raw_task_id)
                 if not target_task_ids or task_id in target_task_ids:
                     f = executor.submit(run_single_task, task_id, benchmark_config, task_item)
                     future_to_task[f] = task_item

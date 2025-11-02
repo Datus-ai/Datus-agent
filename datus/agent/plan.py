@@ -256,8 +256,8 @@ def generate_workflow(
         try:
             rag = SchemaWithValueRAG(agent_config=agent_config)
             schemas, values = rag.search_tables(task.tables, task.catalog_name, task.database_name, task.schema_name)
-            if len(schemas) != len(schemas):
-                schema_table_names = [item["table_name"] for item in schemas]
+            if len(schemas) != len(task.tables):
+                schema_table_names = [item.table_name for item in schemas]
                 logger.warning(
                     f"The obtained table schema is: {schema_table_names}; "
                     f"The table required for the task is: {schemas}"
