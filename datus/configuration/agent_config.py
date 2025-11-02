@@ -97,6 +97,7 @@ class BenchmarkConfig:
     question_id_key: str = "question_id"  # If empty, use the line number
     db_key: str | None = None  # The key corresponding to database name
     ext_knowledge_key: str | None = None  # The key corresponding to external knowledge
+    use_tables_key: str | None = None  # The key corresponding to the table to be used
 
     gold_sql_key: str | None = None  # The key corresponding to gold sql
     # The standard SQL relative path，Can be a directory ({gold_sql_path}/{task_id}.sql) or json/csv file
@@ -412,7 +413,7 @@ class AgentConfig:
         for k, v in self._benchmark_config_dict.items():
             if k in ("spider2", "bird_dev", "semantic_layer"):
                 logger.warning(
-                    f"The benchmark configuration for {k} is built-in and requires no additional setup."
+                    f"The benchmark configuration for {k} is built-in and requires no additional setup. "
                     f"Please place it within the {self.home}/benchmark directory."
                 )
                 continue

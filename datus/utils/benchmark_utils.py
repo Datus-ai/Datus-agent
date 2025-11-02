@@ -702,7 +702,7 @@ class SingleFileGoldProvider(ResultProvider):
                     self._record_row(task_id, row)
                     return True
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to lazily load gold result for %s: %s", task_id, exc)
+            logger.warning(f"Failed to lazily load gold result for {task_id}: {exc}")
         return False
 
     def _load_single_json_entry(self, task_id: str) -> bool:
@@ -710,7 +710,7 @@ class SingleFileGoldProvider(ResultProvider):
             with self.result_file.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to lazily load gold result for %s: %s", task_id, exc)
+            logger.warning(f"Failed to lazily load gold result for {task_id}: {exc}")
             return False
 
         stack = [payload]
@@ -744,7 +744,7 @@ class SingleFileGoldProvider(ResultProvider):
                     self._record_row(task_id, record)
                     return True
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to lazily load gold result for %s: %s", task_id, exc)
+            logger.warning(f"Failed to lazily load gold result for {task_id}: {exc}")
         return False
 
     def _execute_gold_sql(self, task_id: str, sql_text: str, db_name: str) -> Optional[pd.DataFrame]:
@@ -979,7 +979,7 @@ class JsonMappingSqlProvider(SqlProvider):
             return
         task_id_value = record.get(self.task_id_key)
         sql_value = record.get(self.sql_key)
-        if not sql_value or not task_id_value:
+        if not sql_value or task_id_value is None:
             logger.warning(f"This item must contain {self.task_id_key} and {self.sql_key}")
             return
 
@@ -1309,13 +1309,11 @@ class BenchmarkEvaluator:
         self.comparator = comparator or TableComparator()
         self.report_builder = report_builder or EvaluationReportBuilder()
 
-    def evaluate_directory(
-        self, trajectory_dir: str, target_task_ids: Optional[Iterable[str]] = None
-    ) -> EvaluationReport:
+    def evaluate_directory(self, trajectory_dir: str, target_task_ids: Iterable[str]) -> EvaluationReport:
         trajectories = collect_latest_trajectory_files(trajectory_dir)
-        if target_task_ids:
-            target_ids = {str(task_id) for task_id in target_task_ids}
-            trajectories = {task_id: path for task_id, path in trajectories.items() if task_id in target_ids}
+        target_ids = {str(task_id) for task_id in target_task_ids}
+        trajectories = {task_id: path for task_id, path in trajectories.items() if task_id in target_ids}
+
         return self.evaluate(trajectories)
 
     def evaluate(self, trajectories: Mapping[str, Path]) -> EvaluationReport:
@@ -1800,6 +1798,14 @@ def evaluate_benchmark(
         logger.error(f"Failed to load benchmark configuration for {benchmark_platform}: {exc}")
         return {}
 
+    if not target_task_ids:
+        question_id_key = benchmark_config.question_id_key
+        target_task_ids = {
+            str(task.get(question_id_key))
+            for task in load_benchmark_tasks(agent_config, benchmark_platform)
+            if task.get(question_id_key) is not None
+        }
+
     benchmark_root = Path(agent_config.benchmark_path(benchmark_platform))
     question_file_path = _ensure_question_file_path(benchmark_root, benchmark_config)
 
@@ -1990,9 +1996,9 @@ def load_bird_dev_tasks(benchmark_path: str) -> List[Dict[str, Any]]:
         )
 
 
-def load_benchmark_tasks(benchmark_config: BenchmarkConfig, benchmark_path: str = "") -> Iterable[Dict[str, Any]]:
-    benchmark_path = benchmark_path or benchmark_config.benchmark_path
-    benchmark_file = Path(benchmark_path) / benchmark_config.question_file
+def load_benchmark_tasks(agent_config: AgentConfig, benchmark_platform: str) -> Iterable[Dict[str, Any]]:
+    benchmark_config = agent_config.benchmark_config(benchmark_platform)
+    benchmark_file = Path(agent_config.benchmark_path(benchmark_platform)) / benchmark_config.question_file
     if not benchmark_file.exists():
         raise DatusException(
             ErrorCode.COMMON_FILE_NOT_FOUND,

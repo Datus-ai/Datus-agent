@@ -69,16 +69,18 @@ agent:
   # Configuration of custom benchmarks
   # benchmark:
   #   my_benchmark:
-  #       question_file: task.json # Relative path to the benchmark question file, can be csv/json/json
+  #       question_file: dev.json # Relative path to the benchmark question file, can be csv/json/json
   #       question_id_key: question_id # The question id, use the line number when empty; The default value is question_id
   #       db_key: db_id # The key corresponding to database name; By default, the database of namespaces will be taken.
   #       ext_knowledge_key: evidence # Optional, the key corresponding to external knowledge
+  #       use_tables_key: tables # Optional: specify which tables to use
 
   #       # Below is the configuration of the baseline answer to evaluate，if evaluation is not required, you do not need to configure it.
-  #       gold_sql_path: "dev.json" # The standard SQL relative path，Can be a directory ({gold_sql_path}/{task_id}.sql) or json/csv file
-  #       gold_sql_key: SQL # The key corresponding to the gold SQL.When `gold_sql_path` is a file, this configuration cannot be empty
-  #       gold_result_path: "" # Optional, the standard answer relative path，Can be a directory ({gold_sql_path}/{task_id}.sql) or json/csv file. If not set, gold sql will be executed to obtain the standard answer
+  #       gold_sql_path: "gold/sql" # The standard SQL relative path，Can be a directory ({gold_sql_path}/{task_id}.sql) or json/csv file
+  #       gold_sql_key: "" # The key corresponding to the gold SQL.When `gold_sql_path` is a file, this configuration cannot be empty
+  #       gold_result_path: "gold/exec_result" # Optional, the standard answer relative path，Can be a directory ({gold_sql_path}/{task_id}.sql) or json/csv file. If not set, gold sql will be executed to obtain the standard answer
   #       gold_result_key: "" # Optional, the key corresponding to the standard answer. When `gold_result_path` is a file, this configuration cannot be empty
+
 
   # local databases configuration
   namespace:

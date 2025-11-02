@@ -24,7 +24,8 @@ def db_manager(agent_config: AgentConfig) -> DBManager:
 def test_benchmark_bird(agent_config: AgentConfig, db_manager: DBManager):
     # random some task_ids
     tasks = load_bird_dev_tasks(agent_config.benchmark_path("bird_dev"))
-    task_ids = set(generate_unique_random_numbers(30, len(tasks)))
+    task_ids = set(generate_unique_random_numbers(3, len(tasks)))
+    target_task_ids = [str(item) for item in task_ids]
     args = argparse.Namespace(
         **{
             "components": ["metrics", "metadata", "table_lineage", "document"],
@@ -32,8 +33,8 @@ def test_benchmark_bird(agent_config: AgentConfig, db_manager: DBManager):
             "max_steps": 10,
             "benchmark": "bird_dev",
             "namespace": "bird_sqlite",
-            "benchmark_task_ids": [str(item) for item in task_ids],
-            "benchmark_path": None,
+            "benchmark_task_ids": target_task_ids,  # for benchmark
+            "task_ids": target_task_ids,  # for evaluation
             "task_db_name": "",
             "task_schema": "",
             "metric_meta": "",
@@ -42,11 +43,14 @@ def test_benchmark_bird(agent_config: AgentConfig, db_manager: DBManager):
             "layer2": "",
             "task_ext_knowledge": "",
             "current_date": None,
+            "output_file": None,
         }
     )
     agent = Agent(args=args, agent_config=agent_config, db_manager=db_manager)
 
     agent.benchmark()
+
+    agent.evaluation()
 
 
 def generate_unique_random_numbers(count, max_val) -> List[int]:

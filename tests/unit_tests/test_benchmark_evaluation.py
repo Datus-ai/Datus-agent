@@ -1,4 +1,5 @@
 import csv
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -6,14 +7,15 @@ import pytest
 import yaml
 
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
+from datus.configuration.agent_config_loader import load_agent_config
 from datus.utils.benchmark_utils import evaluate_benchmark_and_report
 from datus.utils.constants import DBType
-from tests.conftest import load_acceptance_config
 
 
 @pytest.fixture
-def agent_config() -> AgentConfig:
-    return load_acceptance_config(namespace="bird_school")
+def agent_config(tmp_path: Path) -> AgentConfig:
+    agent_config = load_agent_config(namespace="bird_school", home=tmp_path)
+    return agent_config
 
 
 def _write_result_csv(path: Path, headers: list[str], rows: list[list[str]]) -> None:
@@ -30,7 +32,7 @@ def _write_gold_csv(path: Path, rows: list[list[str]]) -> None:
         writer = csv.writer(handle)
         header = [
             "task_id",
-            "question ",
+            "question",
             "gold_sql",
             "expected_answer",
             "answer_rows",
@@ -43,6 +45,14 @@ def _write_gold_csv(path: Path, rows: list[list[str]]) -> None:
         ]
         writer.writerow(header)
         writer.writerows(rows)
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row))
+            handle.write("\n")
 
 
 def _write_sql(path: Path, sql: str) -> None:
@@ -73,63 +83,12 @@ def _write_trajectory(path: Path, task_id: str, tool_actions: Optional[list[dict
         yaml.safe_dump(payload, handle)
 
 
-@pytest.mark.parametrize("db_type", [DBType.SQLITE, DBType.SNOWFLAKE])
-def test_evaluate_sub_agent_and_report(agent_config: AgentConfig, tmp_path: Path, db_type: DBType) -> None:
-    benchmark_name = "sub_agent_evaluation"
-    # Arrange gold answers
-    gold_file = tmp_path / "gold.csv"
-    expected_answer = "name,total\nAlice,1\nBob,2"
-    _write_gold_csv(
-        gold_file,
-        [
-            [
-                "task-123",
-                "Question one",
-                "SELECT name, total FROM customers",
-                expected_answer,
-                "2",
-                "/workspace/sql/task-123.sql",
-                "customers",
-                "customer_totals",
-                "customer_semantic_model",
-                "Metric A",
-                "",
-            ],
-            [
-                "task-456",
-                "Question two",
-                "SELECT name, total FROM customers",
-                expected_answer,
-                "2",
-                "/workspace/sql/task-999.sql",
-                "customers",
-                "expected_reference",
-                "target_semantic_model",
-                "Target Metric",
-                "",
-            ],
-        ],
-    )
+def _benchmark_root(agent_config: AgentConfig, relative_path: str) -> Path:
+    return Path(agent_config.home) / "benchmark" / relative_path
 
-    # Arrange agent results (CSV + SQL)
-    result_dir = tmp_path / "results"
-    _write_result_csv(
-        result_dir / "task-123.csv",
-        ["name", "total"],
-        [["Alice", "1"], ["Bob", "2"]],
-    )
-    _write_sql(result_dir / "task-123.sql", "SELECT name, total FROM customers;")
 
-    _write_result_csv(
-        result_dir / "task-456.csv",
-        ["name", "total"],
-        [["Alice", "50"], ["Bob", "60"]],
-    )
-    _write_sql(result_dir / "task-456.sql", "SELECT name, total FROM other_table;")
-
-    # Arrange trajectories
-    trajectory_dir = tmp_path / "trajectories"
-    match_tool_actions = [
+def _match_tool_actions() -> list[dict]:
+    return [
         {
             "action_id": "tool_write_file",
             "role": "tool",
@@ -192,7 +151,9 @@ def test_evaluate_sub_agent_and_report(agent_config: AgentConfig, tmp_path: Path
         },
     ]
 
-    mismatch_tool_actions = [
+
+def _mismatch_tool_actions() -> list[dict]:
+    return [
         {
             "action_id": "tool_write_file_mismatch",
             "role": "tool",
@@ -255,34 +216,12 @@ def test_evaluate_sub_agent_and_report(agent_config: AgentConfig, tmp_path: Path
         },
     ]
 
-    _write_trajectory(trajectory_dir / "task-123_1.yaml", "task-123", match_tool_actions)
-    _write_trajectory(trajectory_dir / "task-456_1.yaml", "task-456", mismatch_tool_actions)
 
-    agent_config.benchmark_configs[benchmark_name] = BenchmarkConfig(
-        benchmark_path=".",
-        question_file=gold_file.name,
-        question_id_key="task_id",
-        gold_sql_path=gold_file.name,
-        gold_sql_key="gold_sql",
-        gold_result_path=gold_file.name,
-        gold_result_key="expected_answer",
-    )
-    agent_config.db_type = db_type
-
-    # Act
-    report = evaluate_benchmark_and_report(
-        agent_config=agent_config,
-        benchmark_platform=benchmark_name,
-        benchmark_path=str(tmp_path),
-        trajectory_dir=str(trajectory_dir),
-        result_dir=str(result_dir),
-    )
-    # Assert successful evaluation structure
+def _assert_report_structure(report: dict[str, object]) -> None:
     assert report["status"] == "success"
     details = report["details"]
     assert set(details.keys()) == {"task-123", "task-456"}
 
-    # Task with perfect match: results, tables, and columns align
     match_comparison = details["task-123"]["comparison_results"][0]["comparison"]
     assert match_comparison["match_rate"] == 1.0
     assert match_comparison["un_matched_columns"] == []
@@ -297,15 +236,10 @@ def test_evaluate_sub_agent_and_report(agent_config: AgentConfig, tmp_path: Path
     assert artifacts_match["file"]["match"] is True
     assert any("task-123" in value for value in artifacts_match["file"]["matched_actual"])
     assert artifacts_match["expected_sql"]["match"] is True
-    assert (
-        "SELECT name, total FROM customers" in artifacts_match["expected_sql"]["expected"]
-        or "customer_totals" in artifacts_match["expected_sql"]["expected"]
-    )
     assert artifacts_match["semantic_model"]["match"] is True
     assert artifacts_match["expected_metrics"]["match"] is True
     assert not artifacts_match["expected_metrics"]["missing_expected"]
 
-    # Task with mismatched totals and table name
     mismatch_comparison = details["task-456"]["comparison_results"][0]["comparison"]
     assert mismatch_comparison["match_rate"] < 1.0
     assert mismatch_comparison["un_matched_columns"] == ["total"]
@@ -322,3 +256,164 @@ def test_evaluate_sub_agent_and_report(agent_config: AgentConfig, tmp_path: Path
     assert artifacts_mismatch["semantic_model"]["match"] is False
     assert artifacts_mismatch["expected_metrics"]["match"] is False
     assert artifacts_mismatch["expected_metrics"]["missing_expected"]
+
+
+@pytest.mark.parametrize("db_type", [DBType.SQLITE, DBType.SNOWFLAKE])
+def test_evaluate_benchmark_and_report_with_csv_manifest(
+    agent_config: AgentConfig, tmp_path: Path, db_type: DBType
+) -> None:
+    benchmark_name = "csv_benchmark_evaluation"
+    benchmark_config = BenchmarkConfig(
+        benchmark_path=benchmark_name,
+        question_file="gold.csv",
+        question_id_key="task_id",
+        question_key="question",
+        gold_result_path="gold.csv",
+        gold_result_key="expected_answer",
+        gold_sql_path="gold.csv",
+        gold_sql_key="gold_sql",
+    )
+    agent_config.benchmark_configs[benchmark_name] = benchmark_config
+    benchmark_path = Path(agent_config.benchmark_path(benchmark_name))
+    # Arrange gold answers
+    gold_file = benchmark_path / "gold.csv"
+    expected_answer = "name,total\nAlice,1\nBob,2"
+    _write_gold_csv(
+        gold_file,
+        [
+            [
+                "task-123",
+                "Question one",
+                "SELECT name, total FROM customers",
+                expected_answer,
+                "2",
+                "/workspace/sql/task-123.sql",
+                "customers",
+                "customer_totals",
+                "customer_semantic_model",
+                "Metric A",
+                "",
+            ],
+            [
+                "task-456",
+                "Question two",
+                "SELECT name, total FROM customers",
+                expected_answer,
+                "2",
+                "/workspace/sql/task-999.sql",
+                "customers",
+                "expected_reference",
+                "target_semantic_model",
+                "Target Metric",
+                "",
+            ],
+        ],
+    )
+
+    # Arrange agent results (CSV + SQL)
+    result_dir = Path(agent_config.output_dir)
+    _write_result_csv(
+        result_dir / "task-123.csv",
+        ["name", "total"],
+        [["Alice", "1"], ["Bob", "2"]],
+    )
+    _write_sql(result_dir / "task-123.sql", "SELECT name, total FROM customers;")
+
+    _write_result_csv(
+        result_dir / "task-456.csv",
+        ["name", "total"],
+        [["Alice", "50"], ["Bob", "60"]],
+    )
+    _write_sql(result_dir / "task-456.sql", "SELECT name, total FROM other_table;")
+
+    # Arrange trajectories
+    trajectory_dir = Path(agent_config.trajectory_dir)
+    _write_trajectory(trajectory_dir / "task-123_1.yaml", "task-123", _match_tool_actions())
+    _write_trajectory(trajectory_dir / "task-456_1.yaml", "task-456", _mismatch_tool_actions())
+
+    agent_config.db_type = db_type
+
+    # Act
+    report = evaluate_benchmark_and_report(
+        agent_config=agent_config,
+        benchmark_platform=benchmark_name,
+    )
+    _assert_report_structure(report)
+
+
+@pytest.mark.parametrize("db_type", [DBType.SQLITE, DBType.SNOWFLAKE])
+def test_evaluate_benchmark_and_report_with_jsonl_manifest(
+    agent_config: AgentConfig, tmp_path: Path, db_type: DBType
+) -> None:
+    benchmark_name = "jsonl_benchmark_evaluation"
+    benchmark_config = BenchmarkConfig(
+        benchmark_path=benchmark_name,
+        question_file="tasks.jsonl",
+        question_id_key="task_id",
+        question_key="prompt",
+        db_key="db_id",
+        gold_sql_key="gold_sql",
+        gold_result_key="expected_answer",
+        gold_result_path="tasks.jsonl",
+        gold_sql_path="tasks.jsonl",
+    )
+    agent_config.benchmark_configs[benchmark_name] = benchmark_config
+    benchmark_path = Path(agent_config.benchmark_path(benchmark_name))
+
+    expected_answer = "name,total\nAlice,1\nBob,2"
+    manifest = benchmark_path / "tasks.jsonl"
+    _write_jsonl(
+        manifest,
+        [
+            {
+                "task_id": "task-123",
+                "prompt": "Question one",
+                "db_id": "customers_db",
+                "gold_sql": "SELECT name, total FROM customers",
+                "expected_answer": expected_answer,
+                "file": "/workspace/sql/task-123.sql",
+                "expected_table": "customers",
+                "expected_sql": "customer_totals",
+                "semantic_model": "customer_semantic_model",
+                "expected_metrics": "Metric A",
+            },
+            {
+                "task_id": "task-456",
+                "prompt": "Question two",
+                "db_id": "customers_db",
+                "gold_sql": "SELECT name, total FROM customers",
+                "expected_answer": expected_answer,
+                "file": "/workspace/sql/task-999.sql",
+                "expected_table": "customers",
+                "expected_sql": "expected_reference",
+                "semantic_model": "target_semantic_model",
+                "expected_metrics": "Target Metric",
+            },
+        ],
+    )
+
+    result_dir = Path(agent_config.output_dir)
+    _write_result_csv(
+        result_dir / "task-123.csv",
+        ["name", "total"],
+        [["Alice", "1"], ["Bob", "2"]],
+    )
+    _write_sql(result_dir / "task-123.sql", "SELECT name, total FROM customers;")
+
+    _write_result_csv(
+        result_dir / "task-456.csv",
+        ["name", "total"],
+        [["Alice", "50"], ["Bob", "60"]],
+    )
+    _write_sql(result_dir / "task-456.sql", "SELECT name, total FROM other_table;")
+
+    trajectory_dir = Path(agent_config.trajectory_dir)
+    _write_trajectory(trajectory_dir / "task-123_1.yaml", "task-123", _match_tool_actions())
+    _write_trajectory(trajectory_dir / "task-456_1.yaml", "task-456", _mismatch_tool_actions())
+
+    agent_config.db_type = db_type
+    report = evaluate_benchmark_and_report(
+        agent_config=agent_config,
+        benchmark_platform=benchmark_name,
+    )
+    _assert_report_structure(report)

@@ -801,9 +801,9 @@ class Agent:
         else:
             self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metric")
-            return self.do_benchmark(benchmark_platform, benchmark_path, target_task_ids)
+            return self.do_benchmark(benchmark_platform, target_task_ids)
 
-    def do_benchmark(self, benchmark_platform: str, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
+    def do_benchmark(self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None):
         default_db_name, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
             self.global_config.current_namespace
         )
@@ -828,6 +828,7 @@ class Agent:
                     database_name=database_name,
                     output_dir=self.global_config.output_dir,
                     current_date=self.args.current_date,
+                    tables=task_item.get(benchmark_config.use_tables_key) or [],
                 )
             )
             logger.info(
@@ -840,9 +841,7 @@ class Agent:
         benchmark_config = self.global_config.benchmark_config(benchmark_platform)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {}
-            for idx, task_item in enumerate(
-                load_benchmark_tasks(self.global_config.benchmark_config(benchmark_platform), benchmark_path)
-            ):
+            for idx, task_item in enumerate(load_benchmark_tasks(self.global_config, benchmark_platform)):
                 task_id = str(task_item.get(benchmark_config.question_id_key))
                 if not task_id:
                     task_id = str(idx + 1)
