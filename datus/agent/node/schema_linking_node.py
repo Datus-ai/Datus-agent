@@ -81,6 +81,14 @@ class SchemaLinkingNode(Node):
         if workflow.context and workflow.context.table_schemas:
             self._table_schemas = workflow.context.table_schemas
             self._table_values = workflow.context.table_values
+            self.input = SchemaLinkingInput(
+                input_text=workflow.task.task,
+                matching_rate=self.agent_config.schema_linking_rate,
+                database_type=workflow.task.database_type,
+                database_name=workflow.task.database_name,
+                sql_context=None,
+                table_type=workflow.task.schema_linking_type,
+            )
         else:
             # Setup schema linking input
             matching_rate = self.agent_config.schema_linking_rate
