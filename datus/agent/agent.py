@@ -809,7 +809,7 @@ class Agent:
         )
 
         def run_single_task(task_id: str, benchmark_config: BenchmarkConfig, task_item: Dict[str, Any]):
-            """Execute a single Spider2 benchmark task"""
+            """Execute a single benchmark task"""
             task = task_item.get(benchmark_config.question_key)
             if not task:
                 logger.warning(

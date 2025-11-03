@@ -391,8 +391,8 @@ class AgentConfig:
                 question_key="instruction",
                 db_key="db_id",
                 ext_knowledge_key="",
-                gold_sql_path="spider2/spider2-snow/evaluation_suite/gold/sql",
-                gold_result_path="spider2/spider2-snow/evaluation_suite/gold/exec_result",
+                gold_sql_path="evaluation_suite/gold/sql",
+                gold_result_path="evaluation_suite/gold/exec_result",
             ),
             "bird_dev": BenchmarkConfig(
                 benchmark_path="bird/dev_20240627",
