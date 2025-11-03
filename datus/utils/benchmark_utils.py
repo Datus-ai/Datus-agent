@@ -330,27 +330,18 @@ def _append_file_candidate(artifacts: WorkflowArtifacts, candidate: str) -> None
         _append_unique(artifacts.files, match.group(1))
 
 
-def _collect_file_artifacts(artifacts: WorkflowArtifacts, output: Any, result_payload: Any) -> None:
+def _collect_file_artifacts(artifacts: WorkflowArtifacts, result_payload: Any) -> None:
     if isinstance(result_payload, str):
         _append_file_candidate(artifacts, result_payload)
     elif isinstance(result_payload, Mapping):
-        for value in result_payload.values():
-            if isinstance(value, str):
-                _append_file_candidate(artifacts, value)
-            elif isinstance(value, (list, tuple)):
-                for item in value:
-                    if isinstance(item, str):
-                        _append_file_candidate(artifacts, item)
+        for key in result_payload.keys():
+            _append_file_candidate(artifacts, key)
     elif isinstance(result_payload, (list, tuple, set)):
         for item in result_payload:
             if isinstance(item, str):
                 _append_file_candidate(artifacts, item)
-
-    if isinstance(output, Mapping):
-        for key in ("summary", "status_message"):
-            value = output.get(key)
-            if isinstance(value, str):
-                _append_file_candidate(artifacts, value)
+    else:
+        logger.warning(f"Unable to parse file call: {result_payload}")
 
 
 def _collect_reference_sql_artifacts(artifacts: WorkflowArtifacts, result_payload: Any) -> None:
@@ -365,7 +356,7 @@ def _collect_reference_sql_artifacts(artifacts: WorkflowArtifacts, result_payloa
         items = [item for item in result_payload if isinstance(item, Mapping)]
 
     for item in items:
-        sql_text = item.get("sql") or item.get("SQL")
+        sql_text = item.get("sql")
         if sql_text:
             _append_unique(artifacts.reference_sqls, sql_text)
         name = item.get("name")
@@ -394,10 +385,10 @@ def _collect_metric_artifacts(artifacts: WorkflowArtifacts, result_payload: Any)
         candidates = [item for item in result_payload if isinstance(item, Mapping)]
 
     for item in candidates:
-        name = item.get("name") or item.get("metric_name")
+        name = item.get("name")
         if name:
             _append_unique(artifacts.metrics_names, name)
-        text = item.get("llm_text") or item.get("description") or item.get("summary")
+        text = item.get("llm_text")
         if text:
             _append_unique(artifacts.metrics_texts, text)
 
@@ -418,9 +409,8 @@ def _extract_artifacts_from_action_history(action_history: Any, artifacts: Workf
 
         output_payload = entry.get("output") or {}
         result_payload = _extract_result_payload(output_payload)
-
         if function_name in {"write_file", "read_file", "read_multiple_files", "search_files"}:
-            _collect_file_artifacts(artifacts, output_payload, result_payload)
+            _collect_file_artifacts(artifacts, result_payload)
         elif function_name in {"search_reference_sql", "search_sql"}:
             _collect_reference_sql_artifacts(artifacts, result_payload)
         elif function_name == "search_table":
