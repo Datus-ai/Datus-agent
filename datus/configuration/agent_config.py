@@ -100,9 +100,9 @@ class BenchmarkConfig:
     use_tables_key: str | None = None  # The key corresponding to the table to be used
 
     gold_sql_key: str | None = None  # The key corresponding to gold sql
-    # The standard SQL relative path，Can be a directory ({gold_sql_path}/{task_id}.sql) or json/csv file
+    # The standard SQL relative path, Can be a directory ({gold_sql_path}/{task_id}.sql) or json/csv file
     gold_sql_path: str | None = None
-    # Optional, the key corresponding to the standard SQL relative path，can be a directory
+    # Optional, the key corresponding to the standard SQL relative path, can be a directory
     # ({gold_sql_path}/{task_id}.sql) or json/csv file.
     # If not set, gold sql will be executed to obtain the standard answer
     gold_result_path: str | None = None
