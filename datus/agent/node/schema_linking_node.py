@@ -111,7 +111,7 @@ class SchemaLinkingNode(Node):
                 success=True,
                 table_schemas=self._table_schemas,
                 table_values=self._table_values,
-                schema_count=0 if not self._table_values else len(self._table_values),
+                schema_count=0 if not self._table_schemas else len(self._table_schemas),
                 value_count=0 if not self._table_values else len(self._table_values),
             )
         import os
