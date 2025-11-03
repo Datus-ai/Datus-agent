@@ -264,6 +264,7 @@ def generate_workflow(
                     f"The obtained table schema is: {schema_table_names}; "
                     f"The table required for the task is: {schemas}"
                 )
+            logger.debug(f"Use task tables: {schemas}")
             workflow.context.update_schema_and_values(schemas, values)
         except Exception as e:
             logger.warning(f"Failed to obtain the schema corresponding to {task.tables}: {e}")

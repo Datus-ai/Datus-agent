@@ -819,6 +819,7 @@ class Agent:
                 return task_id, ""
             database_name = task_item.get(benchmark_config.db_key) or conn.database_name or ""
             logger.info(f"start benchmark with {task_id}: {task}")
+            use_tables = None if not benchmark_config.use_tables_key else task_item.get(benchmark_config.use_tables_key)
 
             result = self.run(
                 SqlTask(
@@ -828,7 +829,11 @@ class Agent:
                     database_name=database_name,
                     output_dir=self.global_config.output_dir,
                     current_date=self.args.current_date,
-                    tables=task_item.get(benchmark_config.use_tables_key) or [],
+                    tables=use_tables,
+                    external_knowledge=""
+                    if not benchmark_config.ext_knowledge_key
+                    else task_item.get(benchmark_config.ext_knowledge_key, ""),
+                    schema_linking_type="full",
                 )
             )
             logger.info(

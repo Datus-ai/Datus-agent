@@ -21,10 +21,12 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
+from datus.schemas.node_models import TableSchema
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.mcp_tools.mcp_server import MCPServer
+from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -136,6 +138,8 @@ class GenSQLAgenticNode(AgenticNode):
                 catalog=workflow.task.catalog_name,
                 database=workflow.task.database_name,
                 db_schema=workflow.task.schema_name,
+                schemas=workflow.context.table_schemas,
+                metrics=workflow.context.metrics,
             )
         else:
             # Update existing input with workflow data
@@ -485,6 +489,17 @@ class GenSQLAgenticNode(AgenticNode):
                     context_parts.append(f"schema: {user_input.db_schema}")
                 context_part_str = f'Context: {", ".join(context_parts)}'
                 enhanced_parts.append(context_part_str)
+
+            if user_input.schemas:
+                table_schemas_str = TableSchema.list_to_prompt(user_input.schemas, dialect=self.agent_config.db_type)
+                enhanced_parts.append(f"Table Schemas: \n{table_schemas_str}")
+            if user_input.metrics:
+                enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in user_input.metrics])}")
+
+            if user_input.reference_sql:
+                enhanced_parts.append(
+                    f"Reference SQL: \n{to_str([item.model_dump() for item in user_input.reference_sql])}"
+                )
 
             if enhanced_parts:
                 enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {user_input.user_message}"

@@ -507,6 +507,12 @@ class Context(BaseModel):
     selection_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Metadata about selection process")
 
     def update_schema_and_values(self, table_schemas: List[TableSchema], table_values: List[TableValue]):
+        """
+        Update the table schema and sample data to be used in the context.
+        ⚠️⚠️⚠️Special note: If this method is called, it will have the following effects:
+            1. `schema_linking_node` will always return the updated value and will not match it in the vector library.
+            2. It will be expanded and spliced into user questions in `agentic_node`
+        """
         self.table_schemas = table_schemas
         self.table_values = table_values
 

@@ -2,11 +2,14 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import AsyncGenerator, Dict, Optional
+from typing import AsyncGenerator, Dict, List, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.base import BaseInput
+from datus.schemas.node_models import TableSchema, TableValue
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
@@ -16,6 +19,24 @@ logger = get_logger(__name__)
 
 
 class SchemaLinkingNode(Node):
+    def __init__(
+        self,
+        node_id: str,
+        description: str,
+        node_type: str,
+        input_data: Optional[BaseInput] = None,
+        agent_config: Optional[AgentConfig] = None,
+    ):
+        super().__init__(
+            node_id=node_id,
+            description=description,
+            node_type=node_type,
+            input_data=input_data,
+            agent_config=agent_config,
+        )
+        self._table_schemas: List[TableSchema] = []
+        self._table_values: List[TableValue] = []
+
     def execute(self):
         self.result = self._execute_schema_linking()
 
@@ -57,22 +78,25 @@ class SchemaLinkingNode(Node):
             original_knowledge = workflow.task.external_knowledge
             combined_knowledge = self._combine_knowledge(original_knowledge, enhanced_external_knowledge)
             workflow.task.external_knowledge = combined_knowledge
-
-        # Setup schema linking input
-        matching_rate = self.agent_config.schema_linking_rate
-        matching_rates = ["fast", "medium", "slow", "from_llm"]
-        start = matching_rates.index(matching_rate)
-        final_matching_rate = matching_rates[min(start + workflow.reflection_round, len(matching_rates) - 1)]
-        logger.debug(f"Final matching rate: {final_matching_rate}")
-        next_input = SchemaLinkingInput(
-            input_text=workflow.task.task,
-            matching_rate=final_matching_rate,
-            database_type=workflow.task.database_type,
-            database_name=workflow.task.database_name,
-            sql_context=None,
-            table_type=workflow.task.schema_linking_type,
-        )
-        self.input = next_input
+        if workflow.context and workflow.context.table_schemas:
+            self._table_schemas = workflow.context.table_schemas
+            self._table_values = workflow.context.table_values
+        else:
+            # Setup schema linking input
+            matching_rate = self.agent_config.schema_linking_rate
+            matching_rates = ["fast", "medium", "slow", "from_llm"]
+            start = matching_rates.index(matching_rate)
+            final_matching_rate = matching_rates[min(start + workflow.reflection_round, len(matching_rates) - 1)]
+            logger.debug(f"Final matching rate: {final_matching_rate}")
+            next_input = SchemaLinkingInput(
+                input_text=workflow.task.task,
+                matching_rate=final_matching_rate,
+                database_type=workflow.task.database_type,
+                database_name=workflow.task.database_name,
+                sql_context=None,
+                table_type=workflow.task.schema_linking_type,
+            )
+            self.input = next_input
         return {"success": True, "message": "Schema and external knowledge prepared"}
 
     def _execute_schema_linking(self) -> SchemaLinkingResult:
@@ -82,6 +106,14 @@ class SchemaLinkingNode(Node):
         Returns:
             A validated SchemaLinkingResult containing table schemas and values.
         """
+        if self._table_schemas:
+            return SchemaLinkingResult(
+                success=True,
+                table_schemas=self._table_schemas,
+                table_values=self._table_values,
+                schema_count=0 if not self._table_values else len(self._table_values),
+                value_count=0 if not self._table_values else len(self._table_values),
+            )
         import os
 
         path = self.agent_config.rag_storage_path()

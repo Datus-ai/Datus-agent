@@ -503,6 +503,8 @@ class SubAgentWizard:
         self.native_category_entries: List[Dict[str, Any]] = []
         tool_widgets = []
         for category, tools in sorted(self.native_tools_choices().items()):
+            if not tools:
+                continue
             cbl = CheckboxList(values=[(tool, tool) for tool in tools])
             self.tool_checkbox_lists.append(cbl)
 
