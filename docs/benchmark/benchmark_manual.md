@@ -274,7 +274,7 @@ datus-agent eval --namespace my_namespace --benchmark sales_demo
 
 ## Evaluating Results
 
-After running a benchmark (whether partially via `--task_ids` or the entire suite), use the new `evaluation`
+After running a benchmark (whether partially via `--benchmark_task_ids` or the entire suite), use the new `eval`
 action to compare your generated outputs against the gold answers and generate a report.
 
 Typical usage:
