@@ -2053,6 +2053,7 @@ def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
         _format_list_line(" Failed (Column Value Mismatch):", column_value_mismatch_ids),
         "",
         separator,
+        "",
     ]
 
     logger.info(f'\n\n{"\n".join(report_lines)}')

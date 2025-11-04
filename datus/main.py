@@ -381,7 +381,7 @@ def main():
         result = agent.benchmark()
     elif args.action == "generate-dataset":
         result = agent.generate_dataset()
-    elif args.action == "evaluation":
+    elif args.action in ("eval", "evaluation", "evaluate"):
         result = agent.evaluation()
     if agent.is_complete():
         logger.info(f"\nFinal Result: {result}")
