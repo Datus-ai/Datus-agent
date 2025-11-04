@@ -27,7 +27,7 @@ jobs:
         run: |
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
           cp /home/datus_ci/ci_template/ci.env .env
-          
+
       - name: Load environment variables
         run: |
           echo "Loading environment variables from .env file..."
@@ -83,7 +83,7 @@ jobs:
             try {
               const logFiles = fs.readdirSync('.').filter(file => file.startsWith('test_output_') && file.endsWith('.log'));
               const latestLogFile = logFiles.sort().pop();
-              
+            
               // Use execSync to get last 200 lines using tail command
               const { execSync } = require('child_process');
               let logContent = '';
@@ -92,11 +92,11 @@ jobs:
               } catch (error) {
                 logContent = fs.readFileSync(latestLogFile || 'test_output.log', 'utf8');
               }
-              
-              const benchmarkStart = logContent.indexOf('BENCHMARK ACCURACY EVALUATION REPORT');
-              let benchmarkEnd = logContent.lastIndexOf('================================================================================');
+              let separator = '────────────────────────────────────────────────────────────────────────────────'
+              const benchmarkStart = logContent.indexOf(separator);
+              let benchmarkEnd = logContent.lastIndexOf(separator);
               if (benchmarkStart !== -1) {
-                benchmarkEnd = benchmarkEnd === -1 ? logContent.length : benchmarkEnd + '================================================================================'.length;
+                benchmarkEnd = benchmarkEnd === -1 ? logContent.length : benchmarkEnd + separator.length;
                 benchmarkReport = logContent.substring(benchmarkStart, benchmarkEnd);
               } else {
                 benchmarkReport = logContent;

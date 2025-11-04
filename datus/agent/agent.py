@@ -965,7 +965,7 @@ class Agent:
     def benchmark_bird_critic(self):
         pass
 
-    def evaluation(self):
+    def evaluation(self) -> Dict[str, Any]:
         """Evaluate the benchmarking"""
         benchmark_platform = self.args.benchmark
         if benchmark_platform in ("semantic_layer", "bird_critic"):
@@ -976,12 +976,17 @@ class Agent:
 
         from datus.utils.benchmark_utils import evaluate_benchmark_and_report
 
-        return evaluate_benchmark_and_report(
+        evaluation_result = evaluate_benchmark_and_report(
             agent_config=self.global_config,
             benchmark_platform=benchmark_platform,
             target_task_ids=self.args.task_ids,
             output_file=self.args.output_file,
         )
+        return {
+            "status": evaluation_result.get("status"),
+            "generated_time": evaluation_result.get("generated_time"),
+            "error": evaluation_result.get("error"),
+        }
 
     def generate_dataset(self):
         """Generate dataset from trajectory files."""

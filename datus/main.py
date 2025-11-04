@@ -267,7 +267,8 @@ def create_parser() -> argparse.ArgumentParser:
 
     # evaluation for benchmark
     evaluation_parser = subparsers.add_parser(
-        "evaluation",
+        "eval",
+        aliases=["evaluation", "evaluate"],
         help="Run evaluation for benchmark",
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,

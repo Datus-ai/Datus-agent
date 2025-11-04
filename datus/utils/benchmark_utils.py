@@ -23,7 +23,7 @@ from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Protocol, Sequence, Tuple
 
 import pandas as pd
 import yaml
@@ -76,6 +76,7 @@ class WorkflowAnalysis:
     status: str
     total_nodes: int
     node_types: Dict[str, int] = field(default_factory=dict)
+    tool_calls: Dict[str, int] = field(default_factory=dict)
     outputs: list[WorkflowOutput] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     artifacts: WorkflowArtifacts = field(default_factory=WorkflowArtifacts)
@@ -97,8 +98,8 @@ class WorkflowAnalysis:
 class ComparisonOutcome:
     match_rate: float = 0.0
     matched_columns: list[tuple[str, str]] = field(default_factory=list)
-    unmatched_columns: list[str] = field(default_factory=list)
-    unnecessary_columns: list[str] = field(default_factory=list)
+    missing_columns: list[str] = field(default_factory=list)
+    extra_columns: list[str] = field(default_factory=list)
     actual_shape: Optional[tuple[int, int]] = None
     expected_shape: Optional[tuple[int, int]] = None
     actual_preview: Optional[str] = None
@@ -110,7 +111,7 @@ class ComparisonOutcome:
     gold_sql: Optional[str] = None
     actual_sql_error: Optional[str] = None
     match_sql_error: Optional[str] = None
-    artifact_comparison: Dict[str, Any] = field(default_factory=dict)
+    tools_comparison: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
 
     @classmethod
@@ -121,8 +122,8 @@ class ComparisonOutcome:
         return {
             "match_rate": self.match_rate,
             "matched_columns": self.matched_columns,
-            "un_matched_columns": self.unmatched_columns,
-            "unnecessary_columns": self.unnecessary_columns,
+            "missing_columns": self.missing_columns,
+            "extra_columns": self.extra_columns,
             "actual_shape": self.actual_shape,
             "expected_shape": self.expected_shape,
             "actual_preview": self.actual_preview,
@@ -134,7 +135,7 @@ class ComparisonOutcome:
             "sql_error": self.match_sql_error,
             "actual_sql": self.actual_sql,
             "gold_sql": self.gold_sql,
-            "artifact_comparison": self.artifact_comparison,
+            "tools_comparison": self.tools_comparison,
             "error": self.error,
         }
 
@@ -393,7 +394,11 @@ def _collect_metric_artifacts(artifacts: WorkflowArtifacts, result_payload: Any)
             _append_unique(artifacts.metrics_texts, text)
 
 
-def _extract_artifacts_from_action_history(action_history: Any, artifacts: WorkflowArtifacts) -> None:
+def _extract_artifacts_from_action_history(
+    action_history: Any,
+    artifacts: WorkflowArtifacts,
+    tool_calls: Optional[MutableMapping[str, int]] = None,
+) -> None:
     if not action_history:
         return
     for entry in action_history:
@@ -406,6 +411,8 @@ def _extract_artifacts_from_action_history(action_history: Any, artifacts: Workf
         function_name = str(input_payload.get("function_name", "") or "").lower()
         if "." in function_name:
             function_name = function_name.split(".")[-1]
+        if tool_calls is not None and function_name:
+            tool_calls[function_name] = tool_calls.get(function_name, 0) + 1
 
         output_payload = entry.get("output") or {}
         result_payload = _extract_result_payload(output_payload)
@@ -445,16 +452,16 @@ class TaskEvaluation:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "total_nodes": self.analysis.total_nodes,
-            "output_nodes": self.analysis.output_nodes,
-            "output_success": self.analysis.output_success,
-            "output_failure": self.analysis.output_failure,
+            "total_node_count": self.analysis.total_nodes,
+            "output_node_count": self.analysis.output_nodes,
+            "output_success_count": self.analysis.output_success,
+            "output_failure_count": self.analysis.output_failure,
             "errors": list(self.analysis.errors),
             "node_types": dict(self.analysis.node_types),
+            "tool_calls": dict(self.analysis.tool_calls),
             "completion_time": self.analysis.completion_time,
             "status": self.analysis.status,
             "comparison_results": [record.to_dict() for record in self.comparisons],
-            "artifacts": self.analysis.artifacts.to_dict(),
         }
 
 
@@ -1061,6 +1068,7 @@ class TrajectoryParser:
         node_types: defaultdict[str, int] = defaultdict(int)
         outputs: list[WorkflowOutput] = []
         artifacts = WorkflowArtifacts()
+        tool_calls: defaultdict[str, int] = defaultdict(int)
 
         try:
             with filepath.open("r", encoding="utf-8") as handle:
@@ -1073,6 +1081,7 @@ class TrajectoryParser:
                 status="missing",
                 total_nodes=0,
                 node_types={},
+                tool_calls=dict(tool_calls),
                 outputs=outputs,
                 errors=errors,
                 artifacts=artifacts,
@@ -1085,6 +1094,7 @@ class TrajectoryParser:
                 status="error",
                 total_nodes=0,
                 node_types={},
+                tool_calls=dict(tool_calls),
                 outputs=outputs,
                 errors=errors,
                 artifacts=artifacts,
@@ -1099,6 +1109,7 @@ class TrajectoryParser:
                 status="invalid",
                 total_nodes=0,
                 node_types={},
+                tool_calls=dict(tool_calls),
                 outputs=outputs,
                 errors=errors,
                 artifacts=artifacts,
@@ -1119,7 +1130,7 @@ class TrajectoryParser:
                 node_types[node_type] += 1
                 result = node.get("result") or {}
                 action_history = result.get("action_history")
-                _extract_artifacts_from_action_history(action_history, artifacts)
+                _extract_artifacts_from_action_history(action_history, artifacts, tool_calls)
 
                 if node_type == "output":
                     success = bool(result.get("success"))
@@ -1144,7 +1155,7 @@ class TrajectoryParser:
                 if node_type == "output":
                     result = workflow.get("result") or {}
                     action_history = result.get("action_history")
-                    _extract_artifacts_from_action_history(action_history, artifacts)
+                    _extract_artifacts_from_action_history(action_history, artifacts, tool_calls)
                     success = bool(result.get("success"))
                     node_status = str(result.get("status", "unknown")).lower()
                     error_message = result.get("error")
@@ -1166,6 +1177,7 @@ class TrajectoryParser:
             status=status,
             total_nodes=total_nodes,
             node_types=dict(node_types),
+            tool_calls=dict(tool_calls),
             outputs=outputs,
             errors=errors,
             artifacts=artifacts,
@@ -1181,8 +1193,8 @@ class TableComparator:
             return ComparisonOutcome(
                 match_rate=compares_result["match_rate"],
                 matched_columns=compares_result["matched_columns"],
-                unmatched_columns=compares_result["un_matched_columns"],
-                unnecessary_columns=compares_result["unnecessary_columns"],
+                missing_columns=compares_result["missing_columns"],
+                extra_columns=compares_result["extra_columns"],
                 actual_shape=actual_df.shape,
                 expected_shape=expected_df.shape,
                 actual_preview=actual_preview,
@@ -1200,10 +1212,10 @@ class EvaluationReportBuilder:
         total_output_failure = 0
 
         total_comparisons = 0
-        successful_matches = 0
+        match_count = 0
         mismatches = 0
-        comparison_errors = 0
-        empty_result_errors = 0
+        comparison_error_count = 0
+        empty_result_count = 0
 
         failed_task_ids: set[str] = set()
         matched_task_ids: set[str] = set()
@@ -1229,21 +1241,21 @@ class EvaluationReportBuilder:
 
                 if outcome.error:
                     if "No columns to parse from file" in outcome.error:
-                        empty_result_errors += 1
+                        empty_result_count += 1
                         empty_result_task_ids.add(task_id)
                     else:
-                        comparison_errors += 1
+                        comparison_error_count += 1
                     continue
 
                 if outcome.match_rate == 1:
-                    successful_matches += 1
+                    match_count += 1
                     matched_task_ids.add(task_id)
                 else:
                     mismatches += 1
                     mismatched_task_ids.add(task_id)
 
         success_rate = (total_output_success / total_output_nodes * 100) if total_output_nodes else 0.0
-        match_rate = (successful_matches / total_comparisons * 100) if total_comparisons else 0.0
+        match_rate = (match_count / total_comparisons * 100) if total_comparisons else 0.0
 
         summary = {
             "total_files": total_files,
@@ -1253,10 +1265,10 @@ class EvaluationReportBuilder:
             "success_rate": round(success_rate, 2),
             "comparison_summary": {
                 "total_comparisons": total_comparisons,
-                "successful_matches": successful_matches,
-                "mismatches": mismatches,
-                "comparison_errors": comparison_errors,
-                "empty_result_errors": empty_result_errors,
+                "match_count": match_count,
+                "mismatch_count": mismatches,
+                "comparison_error_count": comparison_error_count,
+                "empty_result_count": empty_result_count,
                 "match_rate": round(match_rate, 2),
             },
         }
@@ -1438,7 +1450,7 @@ class BenchmarkEvaluator:
         actual_file_candidates = _unique_preserve_order(actual_artifacts.files)
         expected_file = expected_artifacts.file_reference.strip()
         matched_files = _find_matching_candidates(expected_file, actual_file_candidates) if expected_file else []
-        artifact_results["file"] = {
+        artifact_results["expected_file"] = {
             "expected": expected_file,
             "actual": actual_file_candidates,
             "matched_actual": matched_files,
@@ -1465,7 +1477,7 @@ class BenchmarkEvaluator:
         matched_semantic = (
             _find_matching_candidates(expected_semantic, semantic_candidates) if expected_semantic else []
         )
-        artifact_results["semantic_model"] = {
+        artifact_results["expected_semantic_model"] = {
             "expected": expected_semantic,
             "actual": semantic_candidates,
             "matched_actual": matched_semantic,
@@ -1497,7 +1509,7 @@ class BenchmarkEvaluator:
             "match": not missing_metric_expected if expected_metric_items else True,
         }
 
-        outcome.artifact_comparison = artifact_results
+        outcome.tools_comparison = artifact_results
 
 
 def collect_latest_trajectory_files(save_dir: str) -> Dict[str, Path]:
@@ -1569,8 +1581,8 @@ def compare_pandas_tables(pred_df: pd.DataFrame, gold_df: pd.DataFrame) -> Dict[
         return {
             "match_rate": 0.0,
             "matched_columns": [],
-            "un_matched_columns": list(gold_df.columns),
-            "unnecessary_columns": list(pred_df.columns),
+            "missing_columns": list(gold_df.columns),
+            "extra_columns": list(pred_df.columns),
         }
 
     matches: list[tuple[str, str]] = []
@@ -1591,7 +1603,7 @@ def compare_pandas_tables(pred_df: pd.DataFrame, gold_df: pd.DataFrame) -> Dict[
                 continue
 
     un_matches = list(unmatched_gold_cols)
-    unnecessary_columns = [col for col in pred_df.columns if col not in matched_pred_cols]
+    extra_columns = [col for col in pred_df.columns if col not in matched_pred_cols]
 
     total_gold_cols = len(gold_df.columns)
     match_rate = (len(matches) / total_gold_cols) if total_gold_cols > 0 else 1.0
@@ -1599,8 +1611,8 @@ def compare_pandas_tables(pred_df: pd.DataFrame, gold_df: pd.DataFrame) -> Dict[
     return {
         "match_rate": round(match_rate, 4),
         "matched_columns": matches,
-        "un_matched_columns": un_matches,
-        "unnecessary_columns": unnecessary_columns,
+        "missing_columns": un_matches,
+        "extra_columns": extra_columns,
     }
 
 
@@ -1853,7 +1865,9 @@ def evaluate_benchmark_and_report(
         if output_file:
             with open(output_file, "w", encoding="utf-8") as handle:
                 json.dump(accuracy_report, handle, ensure_ascii=False, indent=2)
-            logger.info(f"Detailed accuracy report saved to: {output_file}")
+            logger.info(f" For detailed comparison results, see: {output_file}")
+        else:
+            logger.info(" If you want to see the details, please pass in the parameter --output_file")
     else:
         logger.error(f"Accuracy evaluation failed: {accuracy_report.get('message')}")
 
@@ -1861,112 +1875,187 @@ def evaluate_benchmark_and_report(
 
 
 def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
-    summary = accuracy_report["summary"]
-    task_ids = accuracy_report.get("task_ids", {})
-    comp_summary = summary.get("comparison_summary", {})
+    summary = accuracy_report.get("summary", {})
+    task_ids_section = accuracy_report.get("task_ids", {})
+    details_section = accuracy_report.get("details", {})
 
-    failed_ids = [task_id.strip() for task_id in task_ids.get("failed_task_ids", "").split(",") if task_id.strip()]
-    matched_ids = [task_id.strip() for task_id in task_ids.get("matched_task_ids", "").split(",") if task_id.strip()]
-    mismatched_ids = [
-        task_id.strip() for task_id in task_ids.get("mismatched_task_ids", "").split(",") if task_id.strip()
+    def _parse_task_ids(raw_ids: Any) -> list[str]:
+        if not raw_ids:
+            return []
+        if isinstance(raw_ids, (list, tuple, set)):
+            iterable = raw_ids
+        else:
+            iterable = str(raw_ids).split(",")
+        parsed = []
+        for value in iterable:
+            text = str(value).strip()
+            if text:
+                parsed.append(text)
+        return parsed
+
+    def _natural_sort_key(value: str) -> list[Any]:
+        parts = re.split(r"(\\d+)", value)
+        key: list[Any] = []
+        for part in parts:
+            if not part:
+                continue
+            if part.isdigit():
+                key.append(int(part))
+            else:
+                key.append(part.lower())
+        return key
+
+    def _sorted_task_ids(task_id_set: Iterable[str]) -> list[str]:
+        return sorted({task_id for task_id in task_id_set if task_id}, key=_natural_sort_key)
+
+    def _row_count(shape: Any) -> Optional[int]:
+        if isinstance(shape, (list, tuple)) and shape:
+            try:
+                return int(shape[0])
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    matched_ids = set(_parse_task_ids(task_ids_section.get("matched_task_ids")))
+    empty_result_ids = set(_parse_task_ids(task_ids_section.get("empty_result_task_ids")))
+    mismatched_ids = set(_parse_task_ids(task_ids_section.get("mismatched_task_ids")))
+    failed_task_ids = set(_parse_task_ids(task_ids_section.get("failed_task_ids")))
+
+    if isinstance(details_section, Mapping):
+        detail_map = {str(key): value for key, value in details_section.items()}
+    else:
+        detail_map = {}
+
+    all_task_ids = set(detail_map.keys()) | matched_ids | empty_result_ids | mismatched_ids | failed_task_ids
+
+    total_queries_raw = summary.get("total_files")
+    try:
+        total_queries = int(total_queries_raw) if total_queries_raw is not None else 0
+    except (TypeError, ValueError):
+        total_queries = 0
+    if total_queries == 0:
+        total_queries = len(all_task_ids)
+
+    remaining_failures = (all_task_ids | failed_task_ids | mismatched_ids) - matched_ids - empty_result_ids
+
+    table_mismatch_ids: set[str] = set()
+    row_count_mismatch_ids: set[str] = set()
+    column_value_mismatch_ids: set[str] = set()
+
+    for task_id in remaining_failures:
+        detail = detail_map.get(task_id, {})
+        comparison_results = []
+        if isinstance(detail, Mapping):
+            comparison_results = detail.get("comparison_results") or []
+        table_mismatch = False
+        row_mismatch = False
+        value_mismatch = False
+
+        if not comparison_results:
+            value_mismatch = True
+        else:
+            for record in comparison_results:
+                if not isinstance(record, Mapping):
+                    continue
+                comparison = record.get("comparison")
+                if not isinstance(comparison, Mapping):
+                    value_mismatch = True
+                    continue
+                if comparison.get("error"):
+                    value_mismatch = True
+                    continue
+
+                actual_tables = {table for table in comparison.get("actual_tables") or [] if table}
+                expected_tables = {table for table in comparison.get("expected_tables") or [] if table}
+                if actual_tables and expected_tables and actual_tables != expected_tables:
+                    table_mismatch = True
+                    break
+
+                actual_rows = _row_count(comparison.get("actual_shape"))
+                expected_rows = _row_count(comparison.get("expected_shape"))
+                if actual_rows is not None and expected_rows is not None and actual_rows != expected_rows:
+                    row_mismatch = True
+                    continue
+
+                match_rate_value = comparison.get("match_rate")
+                try:
+                    match_rate = float(match_rate_value) if match_rate_value is not None else None
+                except (TypeError, ValueError):
+                    match_rate = None
+
+                if match_rate is not None and match_rate >= 1.0:
+                    continue
+
+                missing_cols = comparison.get("missing_columns")
+
+                extra_cols = comparison.get("extra_columns")
+
+                if missing_cols or extra_cols:
+                    value_mismatch = True
+                elif match_rate is None or match_rate < 1.0:
+                    value_mismatch = True
+
+        if table_mismatch:
+            table_mismatch_ids.add(task_id)
+            continue
+        if row_mismatch:
+            row_count_mismatch_ids.add(task_id)
+            continue
+        if value_mismatch or task_id in mismatched_ids or task_id in failed_task_ids:
+            column_value_mismatch_ids.add(task_id)
+
+    unclassified_failures = remaining_failures - table_mismatch_ids - row_count_mismatch_ids - column_value_mismatch_ids
+    if unclassified_failures:
+        column_value_mismatch_ids.update(unclassified_failures)
+
+    result_mismatch_ids = row_count_mismatch_ids | column_value_mismatch_ids
+
+    passed_count = len(matched_ids)
+    no_sql_count = len(empty_result_ids)
+    failed_count = len(remaining_failures)
+    table_mismatch_count = len(table_mismatch_ids)
+    missmatch_row_count = len(row_count_mismatch_ids)
+    missmatch_column_count = len(column_value_mismatch_ids)
+    result_mismatch_count = len(result_mismatch_ids)
+
+    def _percentage(count: int) -> float:
+        if total_queries <= 0:
+            return 0.0
+        return (count / total_queries) * 100
+
+    def _format_stat_line(label: str, count: int) -> str:
+        pct_text = f"({_percentage(count):.0f}%)"
+        return f"{label:<40}{count:>5}    {pct_text}"
+
+    def _format_list_line(label: str, items: Iterable[str]) -> str:
+        values = _sorted_task_ids(items)
+        list_text = ", ".join(values) if values else "None"
+        return f"{label:<40}{list_text}"
+
+    separator = "─" * 80
+    report_lines = [
+        separator,
+        f" Datus Evaluation Summary (Total: {total_queries} Queries)",
+        separator,
+        _format_stat_line(" ✅ Passed:", passed_count),
+        _format_stat_line(" ⚠️  No SQL / Empty Result:", no_sql_count),
+        _format_stat_line(" ❌ Failed:", failed_count),
+        _format_stat_line("     • Table Mismatch:", table_mismatch_count),
+        _format_stat_line("     • Table Matched (Result Mismatch):", result_mismatch_count),
+        _format_stat_line("         - Row Count Mismatch:", missmatch_row_count),
+        _format_stat_line("         - Column Value Mismatch:", missmatch_column_count),
+        separator,
+        "",
+        _format_list_line(" Passed Queries:", matched_ids),
+        _format_list_line(" No SQL / Empty Result Queries:", empty_result_ids),
+        _format_list_line(" Failed (Table Mismatch):", table_mismatch_ids),
+        _format_list_line(" Failed (Row Count Mismatch):", row_count_mismatch_ids),
+        _format_list_line(" Failed (Column Value Mismatch):", column_value_mismatch_ids),
+        "",
+        separator,
     ]
-    empty_result_ids = [
-        task_id.strip() for task_id in task_ids.get("empty_result_task_ids", "").split(",") if task_id.strip()
-    ]
 
-    report_lines = []
-    report_lines.append("=" * 80)
-    report_lines.append("BENCHMARK ACCURACY EVALUATION REPORT")
-    report_lines.append("=" * 80)
-    report_lines.append(f"Generated Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    report_lines.append("")
-
-    report_lines.append("EXECUTIVE SUMMARY")
-    report_lines.append("-" * 40)
-    report_lines.append(f"Total tasks analyzed: {summary['total_files']}")
-
-    if summary.get("success_rate") is not None:
-        report_lines.append(f"Execution success rate: {summary['success_rate']:.1f}%")
-
-    if comp_summary:
-        match_rate = comp_summary.get("match_rate", 0)
-        report_lines.append(f"Result comparison match rate: {match_rate:.1f}%")
-
-    report_lines.append("")
-    report_lines.append("DETAILED STATISTICS")
-    report_lines.append("-" * 40)
-
-    if comp_summary:
-        total_comparisons = comp_summary.get("total_comparisons", 0)
-        successful_matches = comp_summary.get("successful_matches", 0)
-        mismatches = comp_summary.get("mismatches", 0)
-        comparison_errors = comp_summary.get("comparison_errors", 0)
-        empty_result_errors = comp_summary.get("empty_result_errors", 0)
-
-        report_lines.append(f"Total comparisons performed: {total_comparisons}")
-        report_lines.append(f"Successful matches: {successful_matches}")
-        report_lines.append(f"Mismatches: {mismatches}")
-        report_lines.append(f"Comparison errors: {comparison_errors}")
-        report_lines.append(f"Empty result errors: {empty_result_errors}")
-
-        if total_comparisons > 0:
-            mismatch_rate = (mismatches / total_comparisons) * 100
-            error_rate = ((comparison_errors + empty_result_errors) / total_comparisons) * 100
-            report_lines.append(f"Mismatch rate: {mismatch_rate:.1f}%")
-            report_lines.append(f"Error rate: {error_rate:.1f}%")
-
-    report_lines.append("")
-    report_lines.append("TASK BREAKDOWN BY CATEGORY")
-    report_lines.append("-" * 40)
-
-    def _format_task_list(task_list: list[str], max_display: int = 10) -> str:
-        if not task_list:
-            return "None"
-        try:
-            sorted_list = sorted(task_list, key=int)
-        except ValueError:
-            sorted_list = sorted(task_list, key=str)
-        if len(sorted_list) <= max_display:
-            return ", ".join(sorted_list)
-        displayed = sorted_list[:max_display]
-        return f"{', '.join(displayed)} ... (+{len(sorted_list) - max_display} more)"
-
-    report_lines.append(f"Matched tasks ({len(matched_ids)}):")
-    report_lines.append(f"   {_format_task_list(matched_ids)}")
-    report_lines.append("")
-
-    report_lines.append(f"Mismatched tasks ({len(mismatched_ids)}):")
-    report_lines.append(f"   {_format_task_list(mismatched_ids)}")
-    report_lines.append("")
-
-    report_lines.append(f"Failed tasks ({len(failed_ids)}):")
-    report_lines.append(f"   {_format_task_list(failed_ids)}")
-    report_lines.append("")
-
-    if empty_result_ids:
-        report_lines.append(f"Empty result tasks ({len(empty_result_ids)}):")
-        report_lines.append(f"   {_format_task_list(empty_result_ids)}")
-        report_lines.append("")
-
-    report_lines.append("ADDITIONAL STATISTICS")
-    report_lines.append("-" * 40)
-
-    total_tasks = summary["total_files"]
-    success_count = len(matched_ids)
-    if total_tasks > 0:
-        overall_success_rate = (success_count / total_tasks) * 100
-        report_lines.append(f"Overall success rate: {overall_success_rate:.1f}%")
-
-    report_lines.append(f"Successful tasks: {success_count}")
-    report_lines.append(f"Failed tasks: {len(failed_ids)}")
-    report_lines.append(f"Mismatched tasks: {len(mismatched_ids)}")
-    if empty_result_ids:
-        report_lines.append(f"Empty result tasks: {len(empty_result_ids)}")
-
-    report_lines.append("")
-    report_lines.append("=" * 80)
-
-    logger.info("\n%s", "\n".join(report_lines))
+    logger.info(f'\n\n{"\n".join(report_lines)}')
 
 
 def load_bird_dev_tasks(benchmark_path: str) -> List[Dict[str, Any]]:
