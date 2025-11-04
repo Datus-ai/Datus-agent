@@ -231,13 +231,12 @@ namespace:
 You can register any benchmark by adding an entry under `agent.benchmark` in `agent.yml`. Each entry is mapped into a
 `BenchmarkConfig` object; the core fields are:
 
-- `benchmark_path`: Relative to `{agent.home}/benchmark`; points to the folder that hosts all benchmark assets.
 - `question_file`: Relative path to the question manifest (supports `.json`, `.jsonl`, `.csv`, `.tsv`).
 - `question_id_key`: Optional column/key that contains task IDs. When omitted the evaluator uses row order.
 - `question_key`: Field containing the natural language question.
 - `db_key`: Field that indicates which database to run against; falls back to the namespace default.
 - `ext_knowledge_key`: Optional field that carries extra knowledge (e.g. documentation snippets).
-- `tables_key`: Optional field that limits the tables exposed to the agent for that task.
+- `use_tables_key`: Optional field that limits the tables exposed to the agent for that task.
 
 Evaluation relies on the gold SQL/result configuration. Depending on the source format you can choose either a directory
 layout (one file per task) or a single manifest.
@@ -254,13 +253,12 @@ Example configuration:
 agent:
   benchmark:
     sales_demo:
-      benchmark_path: benchmark/sales_demo
       question_file: tasks.jsonl
       question_id_key: task_id
       question_key: prompt
       db_key: db_id
       ext_knowledge_key: knowledge
-      tables_key: allowed_tables
+      use_tables_key: allowed_tables
       gold_sql_path: gold/sql
       gold_result_path: gold/results.jsonl
       gold_sql_key: reference_sql
@@ -271,19 +269,19 @@ With this configuration in place you can run and evaluate the benchmark exactly 
 
 ```bash
 datus-agent benchmark --namespace my_namespace --benchmark sales_demo
-datus-agent evaluation --namespace my_namespace --benchmark sales_demo
+datus-agent eval --namespace my_namespace --benchmark sales_demo
 ```
 
 ## Evaluating Results
 
-After running a benchmark (whether partially via `--benchmark_task_ids` or the entire suite), use the new `evaluation`
+After running a benchmark (whether partially via `--task_ids` or the entire suite), use the new `evaluation`
 action to compare your generated outputs against the gold answers and generate a report.
 
 Typical usage:
 
 ```bash
 # Evaluate the previously run Bird tasks 1 and 2 and write a JSON report
-datus-agent evaluation \
+datus-agent eval \
   --namespace bird_sqlite \
   --benchmark bird_dev \
   --task_ids 1 2 \
@@ -296,7 +294,8 @@ Key flags:
 
 For custom benchmarks, You can at the gold result file containing the columns `task_id`, `question`, `gold_sql`,
 `expected_answer`, `answer_rows`,
-`file`, `expected_table`, `expected_sql`, `semantic_model`, `expected_metrics`, and `expected_knowledge`.
+`expected_file`, `expected_table`, `expected_sql`, `expected_semantic_model`, `expected_metrics`, and
+`expected_knowledge`.
 
 ## Exploring Datus-cli with StarRocks
 
