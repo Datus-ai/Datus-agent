@@ -376,7 +376,7 @@ class InteractiveInit:
                     "bird/debit_card_specializing,bird/student_club",
                 )
                 console.print(
-                    "🔔You can also configure {agent.storage.workspace_root} to your sql file, "
+                    "🔔[bold cyan] You can also configure {agent.storage.workspace_root} to your sql file, [/]"
                     "and then use `bootstrap-kb --components reference_sql` to build Reference SQL"
                 )
         else:
