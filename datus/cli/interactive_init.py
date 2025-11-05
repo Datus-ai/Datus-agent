@@ -42,10 +42,14 @@ class InteractiveInit:
         self.conf_dir = path_manager.conf_dir
         self.template_dir = path_manager.template_dir
         self.sample_dir = path_manager.sample_dir
+        self.benchmark_dir = path_manager.benchmark_dir
+        # Whether the model can initialize the indicator
+        self._can_init_metrics = False
         try:
             text = read_data_file_text(resource_path="conf/agent.yml.qs", encoding="utf-8")
             self.config = yaml.safe_load(text)
-        except Exception:
+        except Exception as e:
+            logger.error(f"Loading sample configuration failed: {e}")
             console.print("[yellow]Unable to load sample configuration file, using default configuration[/]")
             self.config = {
                 "agent": {
@@ -226,14 +230,26 @@ class InteractiveInit:
         success, error_msg = self._test_llm_connectivity()
         if success:
             console.print("✔ LLM model test successful\n")
+            self._can_init_metrics = providers[provider]["type"] in ("deepseek", "claude")
             return True
         else:
             console.print(f"❌ LLM connectivity test failed: {error_msg}\n")
+            self._can_init_metrics = False
             return False
 
     def _configure_namespace(self) -> bool:
         """Step 2: Configure namespace and database."""
         console.print("[bold yellow][2/5] Configure Namespace[/bold yellow]")
+        config_choice = Prompt.ask(
+            "Please choose the configuration method you want:\n"
+            " 1. Use Datus’ built-in california_schools data copied from BIRD_DEV;\n"
+            " 2. Custom database configuration;",
+            choices=["1", "2"],
+            default="1",
+        )
+        if config_choice == "1":
+            self.namespace_name = "california_schools"
+            return True
 
         # Namespace name
         self.namespace_name = Prompt.ask("- Namespace name")
@@ -342,29 +358,64 @@ class InteractiveInit:
 
         # Initialize metadata knowledge base
         if Confirm.ask("- Initialize vector DB for metadata?", default=False):
-            console.print("→ Initializing metadata knowledge base...")
-            if self._initialize_metadata():
-                console.print("✔ Metadata knowledge base initialized")
-            else:
-                console.print("❌ Metadata initialization failed")
+            with console.status("→ Initializing metadata knowledge base..."):
+                if self._initialize_metadata():
+                    console.print("✔ Metadata knowledge base initialized")
+                else:
+                    console.print("❌ Metadata initialization failed")
 
         # Initialize reference SQL
-        if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
-            default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
-            sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
+        if self.namespace_name == "california_schools":
+            sql_dir = self.benchmark_dir / "california_schools" / "reference_sql"
+            if Confirm.ask("- Initialize reference SQL for California Schools?", default=False):
+                self._initialize_reference_sql(
+                    str(sql_dir),
+                    subject_tree="bird/california_schools/FRPM_Meal_Analysis,"
+                    "bird/california_schools/Enrollment_Demographics,"
+                    "bird/california_schools/SAT_Academic_Performance,"
+                    "bird/debit_card_specializing,bird/student_club",
+                )
+                console.print(
+                    "🔔You can also configure {agent.storage.workspace_root} to your sql file, "
+                    "and then use `bootstrap-kb --components reference_sql` to build Reference SQL"
+                )
+        else:
+            if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
+                default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
+                sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
+                sql_path = Path(sql_dir)
+                if not sql_path.exists():
+                    console.print(f"→ Directory {sql_dir} does not exist, creating it...")
+                    sql_path.mkdir(parents=True, exist_ok=True)
+                console.print(f"→ Scanning {sql_dir} for SQL files...")
+                sql_count = self._initialize_reference_sql(sql_dir)
+                if sql_count > 0:
+                    console.print(f"✔ Imported {sql_count} SQL files into reference")
+                else:
+                    console.print("⚠️ No SQL files found in specified directory")
+                    console.print(f"   You can add SQL files to {sql_dir} and regenerate SQL summary later")
 
-            sql_path = Path(sql_dir)
-            if not sql_path.exists():
-                console.print(f"→ Directory {sql_dir} does not exist, creating it...")
-                sql_path.mkdir(parents=True, exist_ok=True)
-
-            console.print(f"→ Scanning {sql_dir} for SQL files...")
-            sql_count = self._initialize_reference_sql(sql_dir)
-            if sql_count > 0:
-                console.print(f"✔ Imported {sql_count} SQL files into reference")
+        if self.namespace_name == "california_schools" and self._can_init_metrics:
+            if Confirm.ask("- Initialize metrics using success stories?", default=False):
+                with console.status("Initializing metrics using success stories..."):
+                    if self._init_metrics():
+                        console.print("✔ Metrics initialized")
+                    else:
+                        console.print("❌ Metrics initialization failed")
             else:
                 console.print("⚠️ No SQL files found in specified directory")
-                console.print(f"   You can add SQL files to {sql_dir} and regenerate SQL summary later")
+        console.print()
+
+    def _init_reference_sql(self, sql_dir: str):
+        if Path(sql_dir).exists():
+            with console.status(f"→ Scanning {sql_dir} for SQL files..."):
+                sql_count = self._initialize_reference_sql(sql_dir)
+                if sql_count > 0:
+                    console.print(f"✔ Imported {sql_count} SQL files into reference")
+                else:
+                    console.print("⚠️ No SQL files found in specified directory")
+        else:
+            console.print(f"❌ Directory {sql_dir} does not exist")
 
         console.print()
 
@@ -595,7 +646,7 @@ class InteractiveInit:
             logger.error(f"Metadata initialization failed: {e}")
             return False
 
-    def _initialize_reference_sql(self, sql_dir: str) -> int:
+    def _initialize_reference_sql(self, sql_dir: str, subject_tree: Optional[str] = None) -> int:
         """Initialize reference SQL from specified directory."""
         try:
             logger.info(f"Reference SQL initialization...{self.namespace_name}, dir:{sql_dir}")
@@ -604,7 +655,9 @@ class InteractiveInit:
             if not sql_files:
                 return 0
 
-            args = self._create_bootstrap_args(["reference_sql"], sql_dir=sql_dir, validate_only=False)
+            args = self._create_bootstrap_args(
+                ["reference_sql"], sql_dir=sql_dir, validate_only=False, subject_tree=subject_tree
+            )
             agent = self._create_agent_with_config(args)
             result = agent.bootstrap_kb()
 
@@ -628,12 +681,38 @@ class InteractiveInit:
             logger.error(f"Reference SQL initialization failed: {e}")
             return 0
 
+    def _init_metrics(self):
+        """Initialize metrics using success stories."""
+        logger.info(
+            f"Metrics initialization...{self.namespace_name}, {self.benchmark_dir}/california_schools/success_story.csv"
+        )
+        try:
+            args = self._create_bootstrap_args(
+                ["metrics"],
+                success_story=f"{self.benchmark_dir}/california_schools/success_story.csv",
+                validate_only=False,
+            )
+            agent = self._create_agent_with_config(args)
+            result = agent.bootstrap_kb()
+            logger.info(f"Metrics bootstrap result: {result}")
+            metrics_size = 0 if not agent.metrics_store else agent.metrics_store.get_metrics_size()
+            if metrics_size > 0:
+                console.print(f"  → Processed {metrics_size} metrics")
+            return True
+        except Exception as e:
+            logger.error(f"Metrics initialization failed: {e}")
+            return False
+
     def _copy_files(self):
         copy_data_file(
-            resource_path="tests/duckdb-demo.duckdb",
+            resource_path="sample_data/duckdb-demo.duckdb",
             target_dir=self.sample_dir,
         )
 
+        copy_data_file(
+            resource_path="sample_data/california_schools",
+            target_dir=self.benchmark_dir / "california_schools",
+        )
         copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir)
 
 

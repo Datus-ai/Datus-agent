@@ -76,7 +76,6 @@ Repository = "https://github.com/datus-ai/datus-agent"
 datus-agent = "datus.main:main"
 datus-cli = "datus.cli.main:main"
 datus = "datus.cli.main:main"
-datus-init = "datus.cli.interactive_init:main"
 
 [build-system]
 requires = ["setuptools>=80.9.0", "wheel"]
@@ -103,7 +102,14 @@ exclude = ["benchmark*", "docs*"]
 [tool.setuptools.data-files]
 "mcp/mcp-metricflow-server" = ["mcp/mcp-metricflow-server/LICENSE", "mcp/mcp-metricflow-server/pyproject.toml"]
 "datus/conf" = ["conf/*.yml.*"]
-"datus/tests" = ["tests/*.duckdb"]
+"datus/sample_data" = ["sample_data/duckdb-demo.duckdb"]
+"datus/sample_data/california_schools" = [
+    "sample_data/california_schools/success_story.csv",
+    "sample_data/california_schools/california_schools.sqlite"
+]
+"datus/sample_data/california_schools/reference_sql" = [
+    "tests/data/california_schools/reference_sql/*.sql"
+]
 
 [tool.uv.pip]
 index-url = "http://mirrors.aliyun.com/pypi/simple"

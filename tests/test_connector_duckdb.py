@@ -9,7 +9,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 
 @pytest.fixture
 def duckdb_connector() -> DuckdbConnector:
-    config = DuckDBConfig(db_path="tests/duckdb-demo.duckdb")
+    config = DuckDBConfig(db_path="sample_data/duckdb-demo.duckdb")
     return DuckdbConnector(config)
 
 
