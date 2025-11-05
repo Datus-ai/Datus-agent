@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Optional, Union
 
+from datus.utils.exceptions import DatusException, ErrorCode
+
 
 def package_data_path(resource_path: str, package: str = "datus") -> Optional[Path]:
     path = Path(sys.prefix) / package / resource_path
@@ -29,11 +31,16 @@ def read_data_file(resource_path: str, package: str = "datus") -> bytes:
 
 
 def read_data_file_text(resource_path: str, package: str = "datus", encoding="utf-8") -> str:
-    path = Path(resource_path).expanduser().resolve()
-    if not path.exists():
-        path = package_data_path(resource_path, package)
-    with path as f:
-        return f.read_text(encoding=encoding)
+    fs_path = Path(resource_path).expanduser().resolve()
+    if fs_path.exists():
+        return fs_path.read_text(encoding=encoding)
+    pkg_entry = package_data_path(resource_path, package)
+    if pkg_entry is None or not pkg_entry.exists():
+        raise DatusException(
+            code=ErrorCode.COMMON_FILE_NOT_FOUND,
+            message=f"Unable to locate resource '{resource_path}' in package '{package}'",
+        )
+    return pkg_entry.read_text(encoding=encoding)
 
 
 def copy_data_file(resource_path: str, target_dir: Union[str, Path], package: str = "datus", replace: bool = False):
@@ -46,13 +53,14 @@ def copy_data_file(resource_path: str, target_dir: Union[str, Path], package: st
     """
     # Use path directly
     src_path = Path(resource_path).resolve()
-    if not src_path.exists():
-        src_path = package_data_path(resource_path, package)
-
+    if src_path.exists():
+        src_candidate = src_path
+    else:
+        src_candidate = package_data_path(resource_path, package)
         if not src_path.exists():
             return
     target_dir_path = (target_dir if isinstance(target_dir, Path) else Path(target_dir)).expanduser()
-    do_copy_data_file(src_path, target_dir_path, replace=replace)
+    do_copy_data_file(src_candidate, target_dir_path, replace=replace)
 
 
 def do_copy_data_file(src_path: Path, target_dir: Path, replace: bool = False):

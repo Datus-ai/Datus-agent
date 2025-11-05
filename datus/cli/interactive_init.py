@@ -242,7 +242,7 @@ class InteractiveInit:
         console.print("[bold yellow][2/5] Configure Namespace[/bold yellow]")
         config_choice = Prompt.ask(
             "Please choose the configuration method you want:\n"
-            " 1. Use Datus’ built-in california_schools data copied from BIRD_DEV;\n"
+            " 1. Use Datus' built-in california_schools data copied from BIRD_DEV;\n"
             " 2. Custom database configuration;",
             choices=["1", "2"],
             default="1",
@@ -402,8 +402,6 @@ class InteractiveInit:
                         console.print("✔ Metrics initialized")
                     else:
                         console.print("❌ Metrics initialization failed")
-            else:
-                console.print("⚠️ No SQL files found in specified directory")
         console.print()
 
     def _init_reference_sql(self, sql_dir: str):
