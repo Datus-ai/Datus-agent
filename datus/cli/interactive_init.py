@@ -368,32 +368,24 @@ class InteractiveInit:
         if self.namespace_name == "california_schools":
             sql_dir = self.benchmark_dir / "california_schools" / "reference_sql"
             if Confirm.ask("- Initialize reference SQL for California Schools?", default=False):
-                self._initialize_reference_sql(
-                    str(sql_dir),
-                    subject_tree="bird/california_schools/FRPM_Meal_Analysis,"
-                    "bird/california_schools/Enrollment_Demographics,"
-                    "bird/california_schools/SAT_Academic_Performance,"
-                    "bird/debit_card_specializing,bird/student_club",
-                )
+                with console.status("Initializing reference SQL for California Schools..."):
+                    self._initialize_reference_sql(
+                        str(sql_dir),
+                        subject_tree="bird/california_schools/FRPM_Meal_Analysis,"
+                        "bird/california_schools/Enrollment_Demographics,"
+                        "bird/california_schools/SAT_Academic_Performance,"
+                        "bird/debit_card_specializing,bird/student_club",
+                    )
                 console.print(
-                    "🔔[bold cyan] You can also configure {agent.storage.workspace_root} to your sql file, [/]"
-                    "and then use `bootstrap-kb --components reference_sql` to build Reference SQL"
+                    "🔔[bold cyan] You can also configure {agent.storage.workspace_root} to your sql file, "
+                    "and then use `bootstrap-kb --components reference_sql` to build Reference SQL[/]"
                 )
         else:
             if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
                 default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
                 sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
-                sql_path = Path(sql_dir)
-                if not sql_path.exists():
-                    console.print(f"→ Directory {sql_dir} does not exist, creating it...")
-                    sql_path.mkdir(parents=True, exist_ok=True)
-                console.print(f"→ Scanning {sql_dir} for SQL files...")
-                sql_count = self._initialize_reference_sql(sql_dir)
-                if sql_count > 0:
-                    console.print(f"✔ Imported {sql_count} SQL files into reference")
-                else:
-                    console.print("⚠️ No SQL files found in specified directory")
-                    console.print(f"   You can add SQL files to {sql_dir} and regenerate SQL summary later")
+                with console.status("Initializing reference SQL for from workspace..."):
+                    self._initialize_reference_sql(sql_dir)
 
         if self.namespace_name == "california_schools" and self._can_init_metrics:
             if Confirm.ask("- Initialize metrics using success stories?", default=False):
