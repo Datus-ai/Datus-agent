@@ -66,7 +66,10 @@ class ChatAgenticNode(AgenticNode):
         if agent_config and hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
             chat_node_config = agent_config.nodes["chat"]
             if chat_node_config.input and hasattr(chat_node_config.input, "max_turns"):
-                self.max_turns = chat_node_config.input.max_turns
+                config_max_turns = chat_node_config.input.max_turns
+                # Only override if the config value is not None
+                if config_max_turns is not None:
+                    self.max_turns = config_max_turns
 
         # Initialize MCP servers based on namespace
         mcp_servers = self._setup_mcp_servers(agent_config)
