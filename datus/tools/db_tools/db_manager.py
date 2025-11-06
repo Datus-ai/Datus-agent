@@ -11,12 +11,7 @@ from sqlalchemy.engine.url import URL, make_url
 
 from datus.configuration.agent_config import DbConfig
 from datus.tools.db_tools.base import BaseSqlConnector
-from datus.tools.db_tools.duckdb_connector import DuckdbConnector
-from datus.tools.db_tools.mysql_connector import MySQLConnector
-from datus.tools.db_tools.snowflake_connector import SnowflakeConnector
-from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
-from datus.tools.db_tools.sqlite_connector import SQLiteConnector
-from datus.tools.db_tools.starrocks_connector import StarRocksConnector
+from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -313,62 +308,25 @@ class DBManager:
         return {name: db.uri for name, db in dbs.items()}
 
     def _init_conn(self, namespace: str, db_config: DbConfig, database_name: Optional[str] = None) -> BaseSqlConnector:
-        if db_config.type == DBType.SQLITE:
-            conn: BaseSqlConnector = SQLiteConnector(db_config.uri, database_name=db_config.database)
-        elif db_config.type == DBType.DUCKDB:
-            conn = DuckdbConnector(db_config.uri, database_name=db_config.database)
-        elif db_config.type == DBType.SNOWFLAKE:
-            conn = SnowflakeConnector(
-                account=db_config.account,
-                user=db_config.username,
-                password=db_config.password,
-                warehouse=db_config.warehouse,
-                database=db_config.database,
-                schema=db_config.schema,
-            )
-        elif db_config.type == DBType.MYSQL:
-            conn = MySQLConnector(
-                host=db_config.host,
-                port=int(db_config.port) if db_config.port else 0,
-                user=db_config.username,
-                password=db_config.password,
-                database=db_config.database,
-            )
-        elif db_config.type == DBType.STARROCKS:
-            conn = StarRocksConnector(
-                host=db_config.host,
-                port=int(db_config.port) if db_config.port else 0,
-                user=db_config.username,
-                password=db_config.password,
-                catalog=db_config.catalog or "default_catalog",
-                database=db_config.database,
-            )
-        else:
-            connection_uri = db_config.uri
-            if not connection_uri:
-                connection_uri = gen_uri(db_config)
-                dialect = _normalize_dialect_name(db_config.type)
-                catalog_name = db_config.catalog or ""
-                inferred_database = db_config.database or ""
-                inferred_schema = db_config.schema or ""
-            else:
-                dialect, catalog_name, inferred_database, inferred_schema = _resolve_connection_context(
-                    db_config, connection_uri
-                )
-            if not dialect:
-                dialect = _normalize_dialect_name(db_config.type)
-            conn = SQLAlchemyConnector(connection_uri, dialect=dialect)
-            if catalog_name:
-                conn.catalog_name = catalog_name
-            if inferred_database:
-                conn.database_name = inferred_database
-            if inferred_schema:
-                conn.schema_name = inferred_schema
+        """Initialize connection using the registry
 
+        Args:
+            namespace: Namespace identifier
+            db_config: Database configuration
+            database_name: Optional database name for multi-database setup
+
+        Returns:
+            Initialized connector instance
+        """
+        # Use registry to create connector
+        conn = connector_registry.create_connector(db_config.type, db_config)
+
+        # Store connection
         if database_name:
             self._conn_dict[namespace][database_name] = conn
         else:
             self._conn_dict[namespace] = conn
+
         return conn
 
     def close(self):

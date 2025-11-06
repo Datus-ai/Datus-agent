@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import warnings
 from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
 
 from pandas import DataFrame
@@ -47,6 +48,12 @@ class SQLAlchemyConnector(BaseSqlConnector):
             connection_string: SQLAlchemy connection string or Engine/Connection object
             batch_size: Rows per batch for streaming
         """
+        warnings.warn(
+            "SQLAlchemyConnector from datus.tools.db_tools is deprecated and will be removed in v0.2.3. "
+            "Please install: pip install datus-adapter-sqlalchemy",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         prefix = connection_string.split(":")[0] if isinstance(connection_string, str) else "Unknown"
         if dialect:
             self.dialect = dialect

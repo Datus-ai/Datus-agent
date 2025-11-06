@@ -4,6 +4,7 @@
 
 import atexit
 import threading
+import warnings
 import weakref
 from typing import Any, Dict, List, override
 
@@ -52,6 +53,12 @@ class StarRocksConnector(MySQLConnectorBase):
         catalog: str = "default_catalog",
         database: str = "",
     ):
+        warnings.warn(
+            "StarRocksConnector from datus.tools.db_tools is deprecated and will be removed in v0.2.3. "
+            "Please install: pip install datus-adapter-starrocks",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(host, port, user, password, database)
         self.dialect = DBType.STARROCKS
         self.catalog_name = catalog

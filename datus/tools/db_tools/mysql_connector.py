@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import warnings
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, override
@@ -434,6 +435,12 @@ class MySQLConnectorBase(SQLAlchemyConnector):
 
 class MySQLConnector(MySQLConnectorBase):
     def __init__(self, host: str, port: int, user: str, password: str, database: str):
+        warnings.warn(
+            "MySQLConnector from datus.tools.db_tools is deprecated and will be removed in v0.2.3. "
+            "Please install: pip install datus-adapter-mysql",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(host, port, user, password, database)
 
     def sqlalchemy_schema(

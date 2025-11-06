@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import warnings
 from typing import Any, Dict, List, Literal, Optional, Sequence, Set, override
 
 import pyarrow as pa
@@ -89,6 +90,12 @@ class SnowflakeConnector(BaseSqlConnector):
         schema: str = "",
         timeout_seconds: int = 30,
     ):
+        warnings.warn(
+            "SnowflakeConnector from datus.tools.db_tools is deprecated and will be removed in v0.2.3. "
+            "Please install: pip install datus-adapter-snowflake",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(dialect=DBType.SNOWFLAKE, timeout_seconds=timeout_seconds)
         # FIXME lazy init
         self.connection: SnowflakeConnection = Connect(
