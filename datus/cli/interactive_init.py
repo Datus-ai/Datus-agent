@@ -540,6 +540,7 @@ class InteractiveInit:
             "storage_path": None,
             "benchmark": None,
             "schema_linking_type": "full",
+            "catalog": "",
             "database_name": "",
             "benchmark_path": None,
             "pool_size": 4,
