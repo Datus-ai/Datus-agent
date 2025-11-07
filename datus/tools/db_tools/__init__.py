@@ -4,12 +4,7 @@
 
 from .base import BaseSqlConnector
 from .registry import ConnectorRegistry, connector_registry
-
-# Import deprecated connectors (will be removed in v0.2.3)
-from .snowflake_connector import SnowflakeConnector
-from .sqlalchemy_connector import SQLAlchemyConnector
 from .sqlite_connector import SQLiteConnector
-from .starrocks_connector import StarRocksConnector
 
 __all__ = [
     "BaseSqlConnector",
@@ -17,10 +12,6 @@ __all__ = [
     "DuckdbConnector",
     "connector_registry",
     "ConnectorRegistry",
-    # Deprecated - will be removed in v0.2.3
-    "SnowflakeConnector",
-    "StarRocksConnector",
-    "SQLAlchemyConnector",
 ]
 
 

@@ -2,9 +2,18 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Callable, Dict, Optional, Type
+"""
+Connector Registry
 
-from datus.configuration.agent_config import DbConfig
+Responsibilities:
+1. Register built-in connectors
+2. Auto-discover plugins via Entry Points
+3. Dynamically load adapters
+4. Create connector instances
+"""
+
+from typing import Callable, Dict, Optional, Type
+
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -13,7 +22,7 @@ logger = get_logger(__name__)
 
 
 class ConnectorRegistry:
-    """Connector registry for dynamic plugin loading and management"""
+    """Central registry for database connectors."""
 
     _connectors: Dict[str, Type[BaseSqlConnector]] = {}
     _factories: Dict[str, Callable] = {}
@@ -21,14 +30,18 @@ class ConnectorRegistry:
 
     @classmethod
     def register(
-        cls, db_type: str, connector_class: Type[BaseSqlConnector], factory: Optional[Callable] = None
-    ) -> None:
-        """Register a connector class, optionally with a factory method
+        cls,
+        db_type: str,
+        connector_class: Type[BaseSqlConnector],
+        factory: Optional[Callable] = None,
+    ):
+        """
+        Register a database connector.
 
         Args:
-            db_type: Database type identifier (e.g., 'mysql', 'postgresql')
-            connector_class: The connector class to register
-            factory: Optional factory function to create connector instances
+            db_type: Database type (e.g., "sqlite", "mysql")
+            connector_class: Connector class
+            factory: Optional factory method for custom instantiation logic
         """
         db_type_lower = db_type.lower()
         cls._connectors[db_type_lower] = connector_class
@@ -37,117 +50,68 @@ class ConnectorRegistry:
         logger.debug(f"Registered connector: {db_type} -> {connector_class.__name__}")
 
     @classmethod
-    def create_connector(cls, db_type: str, db_config: DbConfig) -> BaseSqlConnector:
-        """Create a connector instance for the given database type
+    def create_connector(cls, db_type: str, config) -> BaseSqlConnector:
+        """
+        Create a connector instance.
 
         Args:
-            db_type: Database type identifier
-            db_config: Database configuration
+            db_type: Database type
+            config: Database configuration object
 
         Returns:
-            Initialized connector instance
+            Connector instance
 
         Raises:
-            DatusException: If connector is not found
+            DatusException: If connector is not registered
         """
         db_type_lower = db_type.lower()
 
-        # If not registered, try to load plugin dynamically
+        # Try to dynamically load if not registered
         if db_type_lower not in cls._connectors:
             cls._try_load_adapter(db_type_lower)
 
-        # Check again after loading attempt
+        # Check again after attempting to load
         if db_type_lower not in cls._connectors:
             raise DatusException(
                 ErrorCode.DB_CONNECTION_FAILED,
                 message=f"Connector '{db_type}' not found. "
-                f"Install it with: pip install datus-adapter-{db_type_lower}",
+                f"Available connectors: {list(cls._connectors.keys())}. "
+                f"For additional databases, install: pip install datus-{db_type_lower}",
             )
 
-        # Use factory method if available
+        # Prefer factory method if available
         if db_type_lower in cls._factories:
-            return cls._factories[db_type_lower](db_config)
+            return cls._factories[db_type_lower](config)
 
         # Use default construction
         connector_class = cls._connectors[db_type_lower]
-        params = cls._build_default_params(db_config)
-        return connector_class(**params)
+        return connector_class(config)
 
     @classmethod
-    def _try_load_adapter(cls, db_type: str) -> None:
-        """Try to dynamically import adapter package
+    def _try_load_adapter(cls, db_type: str):
+        """
+        Attempt to dynamically load a plugin adapter.
 
         Args:
-            db_type: Database type identifier
+            db_type: Database type
         """
         try:
-            adapter_module = f"datus_adapter_{db_type}"
+            # Try to import the plugin package
+            module_name = f"datus_{db_type}"
             import importlib
 
-            module = importlib.import_module(adapter_module)
-            # The adapter's __init__.py should call register()
+            module = importlib.import_module(module_name)
             if hasattr(module, "register"):
                 module.register()
-                logger.info(f"Dynamically loaded adapter: {adapter_module}")
+                logger.info(f"Dynamically loaded adapter: {db_type}")
         except ImportError:
-            logger.debug(f"Adapter {db_type} not installed")
+            logger.debug(f"No adapter found for: {db_type}")
         except Exception as e:
             logger.warning(f"Failed to load adapter {db_type}: {e}")
 
     @classmethod
-    def _build_default_params(cls, db_config: DbConfig) -> dict:
-        """Build default connection parameters from config
-
-        Args:
-            db_config: Database configuration
-
-        Returns:
-            Dictionary of connection parameters
-        """
-        params: Dict[str, Any] = {}
-
-        # Handle URI-based configuration
-        if db_config.uri:
-            if db_config.type in ("sqlite", "duckdb"):
-                # File-based databases
-                params["db_path"] = db_config.uri.replace(f"{db_config.type}:///", "")
-                if db_config.database:
-                    params["database_name"] = db_config.database
-            else:
-                # SQLAlchemy-based databases
-                params["connection_string"] = db_config.uri
-                params["dialect"] = db_config.type
-            return params
-
-        # Build from individual fields
-        if db_config.host:
-            params["host"] = db_config.host
-        if db_config.port:
-            params["port"] = int(db_config.port)
-        if db_config.username:
-            params["user"] = db_config.username
-        if db_config.password:
-            params["password"] = db_config.password
-        if db_config.database:
-            params["database"] = db_config.database
-        if db_config.catalog:
-            params["catalog"] = db_config.catalog
-        if db_config.schema:
-            params["schema"] = db_config.schema
-        if db_config.warehouse:
-            params["warehouse"] = db_config.warehouse
-        if db_config.account:
-            params["account"] = db_config.account
-
-        return params
-
-    @classmethod
-    def discover_adapters(cls) -> None:
-        """Auto-discover plugins via Entry Points
-
-        This method uses Python's entry points mechanism to automatically
-        discover and load installed adapter packages.
-        """
+    def discover_adapters(cls):
+        """Auto-discover plugins via Entry Points."""
         if cls._initialized:
             return
         cls._initialized = True
@@ -155,16 +119,46 @@ class ConnectorRegistry:
         try:
             from importlib.metadata import entry_points
 
-            adapter_eps = entry_points(group="datus.adapters")
+            # Python 3.10+ uses select(), Python 3.9 uses dict access
+            try:
+                adapter_eps = entry_points(group="datus.adapters")
+            except TypeError:
+                # Python 3.9 fallback
+                eps = entry_points()
+                adapter_eps = eps.get("datus.adapters", [])
+
             for ep in adapter_eps:
                 try:
                     register_func = ep.load()
                     register_func()
-                    logger.debug(f"Discovered adapter via entry point: {ep.name}")
+                    logger.info(f"Discovered adapter: {ep.name}")
                 except Exception as e:
                     logger.warning(f"Failed to load adapter {ep.name}: {e}")
         except Exception as e:
             logger.warning(f"Entry points discovery failed: {e}")
+
+    @classmethod
+    def list_connectors(cls) -> Dict[str, Type[BaseSqlConnector]]:
+        """
+        List all registered connectors.
+
+        Returns:
+            Dictionary of connectors {db_type: connector_class}
+        """
+        return cls._connectors.copy()
+
+    @classmethod
+    def is_registered(cls, db_type: str) -> bool:
+        """
+        Check if a connector is registered.
+
+        Args:
+            db_type: Database type
+
+        Returns:
+            True if registered, False otherwise
+        """
+        return db_type.lower() in cls._connectors
 
 
 # Global instance

@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.2.1"
+version = "0.2.2"
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -27,7 +27,6 @@ dependencies = [
     "pandas==2.1.4",
     "sqlalchemy==2.0.23",
     "sqlglot>=26.12.0",
-    "snowflake-connector-python>=3.6.0",
     "pyyaml==6.0.1",
     "structlog>=23.1.0",
     "openai>=1.95.0",
@@ -49,13 +48,9 @@ dependencies = [
     "anthropic==0.51.0",
     "duckdb-engine>=0.17.0",
     "duckdb==1.3.0",
-    "snowflake-sqlalchemy>=1.7.3",
-    # Dependencies by snowflake-sqlalchemy
-    "opentelemetry-api>=1.33.1",
     # MCP (Model Context Protocol) support
     "mcp>=1.11.0",
     "anyio>=4.9.0",
-    "pymysql>=1.1.1",
     "json-repair>=0.47.6",
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
@@ -67,6 +62,9 @@ dependencies = [
     # Optional: install torch manually to enable reranker models.
 ]
 
+[project.optional-dependencies]
+# Database connectors have been moved to separate adapter packages
+# See https://github.com/Datus-ai/Datus-adapters for available adapters
 
 [project.urls]
 Homepage = "https://datus.ai/"

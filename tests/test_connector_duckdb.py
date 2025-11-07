@@ -2,13 +2,15 @@ import uuid
 
 import pytest
 
+from datus.tools.db_tools.config import DuckDBConfig
 from datus.tools.db_tools.duckdb_connector import DuckdbConnector
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
 @pytest.fixture
 def duckdb_connector() -> DuckdbConnector:
-    return DuckdbConnector(db_path="tests/duckdb-demo.duckdb")
+    config = DuckDBConfig(db_path="tests/duckdb-demo.duckdb")
+    return DuckdbConnector(config)
 
 
 @pytest.mark.acceptance

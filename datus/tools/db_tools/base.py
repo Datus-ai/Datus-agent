@@ -9,6 +9,7 @@ from pyarrow import Table as ArrowTable
 
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
+from datus.tools.db_tools.config import ConnectionConfig
 from datus.utils.constants import SQLType
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import metadata_identifier, parse_sql_type
@@ -17,9 +18,9 @@ logger = get_logger(__name__)
 
 
 class BaseSqlConnector(ABC):
-    def __init__(self, dialect: str, batch_size: int = 1024, timeout_seconds: int = 30):
-        self.batch_size = batch_size
-        self.timeout_seconds = timeout_seconds
+    def __init__(self, config: ConnectionConfig, dialect: str):
+        self.config = config
+        self.timeout_seconds = config.timeout_seconds
         self.connection: Any = None
         self.dialect = dialect
         self.catalog_name = ""
@@ -36,6 +37,56 @@ class BaseSqlConnector(ABC):
 
     def connect(self):
         return
+
+    # ==================== Context Manager Support ====================
+
+    def __enter__(self):
+        """Enter context: establish database connection.
+
+        Returns:
+            Self for use in with statement
+        """
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context: cleanup resources.
+
+        Args:
+            exc_type: Exception type if an exception occurred
+            exc_val: Exception value if an exception occurred
+            exc_tb: Exception traceback if an exception occurred
+
+        Returns:
+            False to not suppress exceptions
+        """
+        if exc_type:
+            # Try to rollback on exception
+            try:
+                self._safe_rollback()
+            except Exception as e:
+                logger.warning(f"Failed to rollback during cleanup: {e}")
+
+        # Always close connection
+        try:
+            self.close()
+        except Exception as e:
+            logger.warning(f"Failed to close connection during cleanup: {e}")
+
+        return False  # Don't suppress exceptions
+
+    def _safe_rollback(self):
+        """Safe rollback transaction (can be overridden by subclasses).
+
+        Default implementation attempts to rollback if connection has rollback method.
+        Subclasses can override this for database-specific rollback behavior.
+        """
+        if hasattr(self, "connection") and self.connection:
+            try:
+                if hasattr(self.connection, "rollback"):
+                    self.connection.rollback()
+            except Exception:
+                pass
 
     def execute(
         self, input_params: Any, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
@@ -176,38 +227,54 @@ class BaseSqlConnector(ABC):
     def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator[ArrowTable]:
         raise NotImplementedError()
 
-    def get_catalogs(self) -> List[str]:
-        return []
+    # ==================== Core Methods (Required) ====================
+    # Methods that all database connectors must implement
 
+    @abstractmethod
     def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> List[str]:
-        return []
+        """Get list of database names.
 
-    def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
-        return []
+        Args:
+            catalog_name: Optional catalog name (ignored if catalog not supported)
+            include_sys: Whether to include system databases
 
-    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
+        Returns:
+            List of database names
         """
-        Get all table names from the database.
-        Parameters contains catalog_name, database_name and schema_name
-        should be passed via kwargs and handled by subclasses as needed.
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
+        """Get all table names from the database.
+
+        Args:
+            catalog_name: Optional catalog name
+            database_name: Optional database name
+            schema_name: Optional schema name
+
+        Returns:
+            List of table names
         """
         raise NotImplementedError()
 
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        """
-        Get all view names from the database.
-        Parameters contains catalog_name, database_name and schema_name
+        """Get all view names from the database (optional, returns empty list by default).
+
+        Args:
+            catalog_name: Optional catalog name
+            database_name: Optional database name
+            schema_name: Optional schema name
+
+        Returns:
+            List of view names
         """
         return []
 
-    def get_materialized_views(
-        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
-    ) -> List[str]:
-        """
-        Get all materialized view names from the database.
-        Parameters contains catalog_name, database_name and schema_name
-        """
-        return []
+    # Note: The following methods have been moved to Mixin classes:
+    # - get_catalogs() -> CatalogSupportMixin
+    # - get_materialized_views() -> MaterializedViewSupportMixin
+    # - get_schemas() -> SchemaNamespaceMixin
+    # Use isinstance() to check if a connector supports these features
 
     def _sys_databases(self) -> Set[str]:
         return set()

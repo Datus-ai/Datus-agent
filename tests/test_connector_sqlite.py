@@ -4,6 +4,7 @@ import pytest
 import structlog
 from pandas import DataFrame
 
+from datus.tools.db_tools.config import SQLiteConfig
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 
 log = structlog.get_logger()
@@ -22,7 +23,8 @@ def db_path():
 @pytest.fixture
 def sqlite_connector(db_path):
     """Fixture to create a SQLiteConnector instance"""
-    connector = SQLiteConnector(db_path)
+    config = SQLiteConfig(db_path=db_path)
+    connector = SQLiteConnector(config)
     yield connector
     connector.close()
 
@@ -41,7 +43,8 @@ def test_connection(sqlite_connector: SQLiteConnector, db_path):
 
 def test_test_connection(tmp_path):
     db_path = tmp_path / "test.db"
-    connector = SQLiteConnector(str(db_path))
+    config = SQLiteConfig(db_path=str(db_path))
+    connector = SQLiteConnector(config)
     connector.connect()
 
     # Test connection validation

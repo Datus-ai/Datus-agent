@@ -11,6 +11,7 @@ from sqlalchemy.engine.url import URL, make_url
 
 from datus.configuration.agent_config import DbConfig
 from datus.tools.db_tools.base import BaseSqlConnector
+from datus.tools.db_tools.config import ConnectionConfig, DuckDBConfig, SQLiteConfig
 from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -318,8 +319,11 @@ class DBManager:
         Returns:
             Initialized connector instance
         """
+        # Convert DbConfig to ConnectionConfig
+        connection_config = self._db_config_to_connection_config(db_config)
+
         # Use registry to create connector
-        conn = connector_registry.create_connector(db_config.type, db_config)
+        conn = connector_registry.create_connector(db_config.type, connection_config)
 
         # Store connection
         if database_name:
@@ -328,6 +332,62 @@ class DBManager:
             self._conn_dict[namespace] = conn
 
         return conn
+
+    def _db_config_to_connection_config(self, db_config: DbConfig) -> Union[ConnectionConfig, dict]:
+        """Convert DbConfig to appropriate ConnectionConfig subclass or dict.
+
+        Args:
+            db_config: Database configuration from agent config
+
+        Returns:
+            ConnectionConfig instance for built-in databases or dict for adapters
+        """
+        db_type = _normalize_dialect_name(db_config.type)
+        timeout_seconds = 30  # Default timeout
+
+        if db_type == DBType.SQLITE:
+            # SQLite uses file path - prioritize uri over database field
+            db_path = db_config.uri or db_config.database
+            if db_path.startswith("sqlite:///"):
+                db_path = db_path.replace("sqlite:///", "")
+            return SQLiteConfig(
+                db_path=db_path,
+                timeout_seconds=timeout_seconds,
+                database_name=db_config.logic_name or None,
+            )
+
+        elif db_type == DBType.DUCKDB:
+            # DuckDB uses file path - prioritize uri over database field
+            db_path = db_config.uri or db_config.database
+            if db_path.startswith("duckdb:///"):
+                db_path = db_path.replace("duckdb:///", "")
+            return DuckDBConfig(
+                db_path=db_path,
+                timeout_seconds=timeout_seconds,
+                database_name=db_config.logic_name or None,
+            )
+
+        else:
+            # For adapters, convert DbConfig to dict and filter out empty values
+            # This allows adapters to receive all configuration parameters they need
+            config_dict = db_config.to_dict()
+
+            # Add standard connection parameters
+            config_dict["timeout_seconds"] = timeout_seconds
+
+            # Remove empty/None values and internal fields
+            filtered_config = {
+                k: v for k, v in config_dict.items() if v and k not in ["type", "path_pattern", "logic_name"]
+            }
+
+            # Convert port to int if present
+            if "port" in filtered_config:
+                try:
+                    filtered_config["port"] = int(filtered_config["port"])
+                except (ValueError, TypeError):
+                    pass
+
+            return filtered_config
 
     def close(self):
         """Close all database connections."""

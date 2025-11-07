@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `db_tools` module provides a unified interface for interacting with various SQL databases in the Datus agent system. It abstracts database-specific operations through a common connector pattern, supporting multiple database types including SQLite, MySQL, PostgreSQL, DuckDB, Snowflake, and StarRocks.
+The `db_tools` module provides a unified interface for interacting with SQL databases in the Datus agent system. It abstracts database-specific operations through a common connector pattern, with built-in support for SQLite and DuckDB. Additional database adapters (MySQL, PostgreSQL, Snowflake, StarRocks, etc.) are available as separate adapter packages.
 
 **Key Problems Solved:**
 - Provides a consistent API for different SQL database types
@@ -17,7 +17,7 @@ The `db_tools` module provides a unified interface for interacting with various 
 - **SQLAlchemy**: Provides ORM capabilities and database abstraction
 - **Apache Arrow**: Efficient columnar data format for large result sets
 - **Connection Pooling**: Automatic connection lifecycle management(Both alchemy and snowflake_connector have connection pooling capabilities)
-- **Context Managers**: Safe resource management with Single Instance or `with` statements 
+- **Context Managers**: Safe resource management with Single Instance or `with` statements
 
 ## File Structure & Capabilities
 
@@ -29,17 +29,14 @@ The `db_tools` module provides a unified interface for interacting with various 
 | `db_manager.py` | Central manager for database connections | `get_conn()`, `get_connections()`, connection lifecycle |
 | `db_tool.py` | Tool wrapper for database operations | `execute()` method for SQL execution |
 
-### Database Connectors
+### Built-in Database Adapters
 
 | File | Database Type | Features |
 |------|---------------|----------|
-| `sqlite_connector.py` | SQLite | File-based database, DDL extraction, table metadata |
-| `mysql_connector.py` | MySQL | MySQL protocol support, schema introspection |
-| `snowflake_connector.py` | Snowflake | Cloud data warehouse, Arrow format, warehouse management |
-| `sqlalchemy_connector.py` | Generic SQLAlchemy | Base for SQL databases, connection pooling, error handling |
-| `sqlite_connector.py` | SQLite | Lightweight file database, DDL extraction |
-| `starrocks_connector.py` | StarRocks | OLAP database, materialized views, catalog support |
+| `sqlite_connector.py` | SQLite | Lightweight file database, DDL extraction, table metadata |
 | `duckdb_connector.py` | DuckDB | Analytical database, read-only mode, schema introspection |
+
+**Note:** Other database adapters (MySQL, Snowflake, StarRocks, etc.) are available as separate adapter packages. Install them separately as needed, e.g., `pip install datus-mysql`.
 
 ### Entry Points and Public Interfaces
 
@@ -75,7 +72,7 @@ configs = {
 with DBManager(configs) as manager:
     # Get specific connection
     conn = manager.get_conn("analytics", "sqlite", "main_db")
-    
+
     # Execute query
     result = conn.execute({"sql_query": "SELECT * FROM users LIMIT 10"})
     print(f"Rows returned: {result.row_count}")
@@ -85,38 +82,28 @@ with DBManager(configs) as manager:
 ### Direct Connector Usage
 
 ```python
-from datus.tools.db_tools import SnowflakeConnector
+from datus.tools.db_tools import SQLiteConnector
 from datus.schemas.node_models import ExecuteSQLInput
 
 # Direct connector instantiation
-connector = SnowflakeConnector(
-    account="<your-account>",
-    user="<your_username>",
-    password="<your_password>",
-    warehouse="COMPUTE_WH_PARTICIPANT",
-    database="ANALYTICS"
+connector = SQLiteConnector(
+    database="/path/to/database.db"
 )
 
 # Execute with different formats
 result = connector.execute(
     ExecuteSQLInput(sql_query="SELECT * FROM sales WHERE date > '2024-01-01'"),
-    result_format="arrow"  # Options: "csv", "arrow", "list"
+    result_format="csv"  # Options: "csv", "arrow", "list"
 )
 ```
 
 ### Metadata Operations
 
 ```python
-from datus.tools.db_tools import MySQLConnector
+from datus.tools.db_tools import SQLiteConnector
 
 # Get database schema information
-conn = MySQLConnector(
-    host="localhost",
-    port=3306,
-    user="<your_username>",
-    password="<your_password>",
-    database="ecommerce"
-)
+conn = SQLiteConnector(database="/path/to/ecommerce.db")
 
 # List all tables
 tables = conn.get_tables()
@@ -133,24 +120,6 @@ samples = conn.get_sample_rows(tables=["users", "orders"], top_n=3)
 for sample in samples:
     print(f"Sample from {sample['table_name']}:")
     print(sample['sample_rows'])
-```
-
-### Context Switching
-
-```python
-from datus.tools.db_tools import SnowflakeConnector
-
-conn = SnowflakeConnector(...)
-
-# Switch between databases and schemas. It is also possible to switch only one layer.
-conn.switch_context(
-    catalog_name="PRODUCTION",
-    database_name="ANALYTICS", 
-    schema_name="PUBLIC"
-)
-
-# Execute in new context
-result = conn.execute({"sql_query": "SELECT * FROM events"})
 ```
 
 ## Environment Variables and Configuration
@@ -177,112 +146,80 @@ The module uses `DbConfig` objects with the following fields:
 ```yaml
 # agent.yml
 namespace:
-  analytics:
-    main_db:
-      type: "snowflake"
-      account: "<your-account>"
-      username: "${SNOWFLAKE_USER}"
-      password: "${SNOWFLAKE_PASSWORD}"
-      warehouse: "COMPUTE_WH"
-      database: "ANALYTICS"
-    
   local_data:
     sqlite_db:
       type: "sqlite"
       uri: "sqlite:///data/local.db"
-    
+
     duckdb_files:
       type: "duckdb"
       path_pattern: "data/*.duckdb"
 ```
 
-### Environment Variables
-
-For secure configuration, use environment variables:
-
-```bash
-# Snowflake
-export SNOWFLAKE_USER=your_username
-export SNOWFLAKE_PASSWORD=your_password
-export SNOWFLAKE_ACCOUNT=your_account
-
-# MySQL
-export MYSQL_USER=root
-export MYSQL_PASSWORD=secret
-
-# StarRocks
-export STARROCKS_USER=admin
-export STARROCKS_PASSWORD=secret
-```
-
 ## How to Contribute to This Module
 
-### Adding a New Database Connector
+### Adding a New Database Adapter
 
-1. **Create the connector file** in `datus/tools/db_tools/`:
+New database adapters should be created as separate adapter packages (e.g., `datus-newdb`). This keeps the core package lightweight while allowing users to install only the database adapters they need.
+
+See the [Datus-adapters](https://github.com/Datus-ai/Datus-adapters) repository for existing adapter implementations and contribution guidelines.
+
+1. **Create a new adapter package** following the structure in the Datus-adapters repository:
+
+```
+datus-newdb/
+├── datus_newdb/
+│   ├── __init__.py
+│   ├── connector.py
+│   └── README.md
+├── tests/
+│   └── test_connector.py
+└── pyproject.toml
+```
+
+2. **Implement the connector class** in `connector.py`:
 
 ```python
-from .base import BaseSqlConnector
+from datus.tools.db_tools.base import BaseSqlConnector
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
 
 class NewDatabaseConnector(BaseSqlConnector):
     def __init__(self, connection_params):
         super().__init__(dialect="newdb")
         # Initialize connection
-        
+
     def do_execute(self, input_params, result_format="csv"):
         # Implement query execution
         pass
-        
+
     def get_tables_with_ddl(self, ...):
         # Implement DDL extraction
         pass
 ```
 
-2. **Register the connector** in `__init__.py`:
+3. **Register the adapter** in the adapter's `__init__.py`:
 
 ```python
-from .newdb_connector import NewDatabaseConnector
+from datus.tools.db_tools import connector_registry
+from .connector import NewDatabaseConnector
 
-__all__ = [
-    # ... existing exports ...
-    "NewDatabaseConnector",
-]
+def register():
+    """Register this adapter with Datus"""
+    connector_registry.register("newdb", NewDatabaseConnector)
+
+__all__ = ["NewDatabaseConnector", "register"]
 ```
 
-3. **Add to DBManager** in `db_manager.py`:
+4. **Add entry point** in `pyproject.toml`:
 
-```python
-elif db_config.type == DBType.NEWDB:
-    conn = NewDatabaseConnector(
-        host=db_config.host,
-        port=int(db_config.port),
-        # ... other parameters
-    )
+```toml
+[project.entry-points."datus.adapters"]
+newdb = "datus_newdb:register"
 ```
 
-### Example: Adding PostgreSQL Support
+### Extending Built-in Adapters
 
-```python
-# postgresql_connector.py
-from datus.tools.db_tools.sqlalchemy_connector import SQLAlchemyConnector
-from datus.utils.constants import DBType
-
-class PostgreSQLConnector(SQLAlchemyConnector):
-    def __init__(self, host: str, port: int, user: str, password: str, database: str):
-        connection_string = f"postgresql://{user}:{password}@{host}:{port}/{database}"
-        super().__init__(connection_string, dialect=DBType.POSTGRESQL)
-    
-    def full_name(self, catalog_name="", database_name="", schema_name="", table_name=""):
-        # PostgreSQL-specific full name formatting
-        if schema_name:
-            return f'"{schema_name}"."{table_name}"'
-        return f'"{table_name}"'
-```
-
-### Adding New Features
-
-To extend existing connectors with new capabilities:
+To add features to the built-in SQLite and DuckDB adapters:
 
 1. **Add method to base class** in `base.py`:
 
@@ -293,7 +230,7 @@ def get_table_stats(self, table_name: str) -> Dict[str, Any]:
     raise NotImplementedError
 ```
 
-2. **Implement in specific connectors**:
+2. **Implement in specific adapter connector classes**:
 
 ```python
 @override
@@ -303,46 +240,9 @@ def get_table_stats(self, table_name: str) -> Dict[str, Any]:
     return {"row_count": result.iloc[0, 0]}
 ```
 
-3. **Update configuration handling** if new parameters are needed:
-
-```python
-# In db_manager.py _init_conn method
-elif db_config.type == DBType.NEWDB:
-    conn = NewDatabaseConnector(
-        host=db_config.host,
-        port=int(db_config.port),
-        user=db_config.username,
-        password=db_config.password,
-        database=db_config.database,
-        # Add new parameters here
-        ssl_mode=getattr(db_config, 'ssl_mode', 'require')
-    )
-```
-
-### Testing New Connectors
-
-```python
-# test_new_connector.py
-from datus.tools.db_tools import NewDatabaseConnector
-
-def test_connection():
-    conn = NewDatabaseConnector(**test_config)
-    assert conn.test_connection()
-    
-def test_query_execution():
-    conn = NewDatabaseConnector(**test_config)
-    result = conn.execute({"sql_query": "SELECT 1 as test"})
-    assert result.success
-    assert result.row_count == 1
-```
-
-### Configuration Schema Updates
-
-When adding a new database type, update the configuration schema in `datus/configuration/agent_config.py` if necessary to include the new database-specific fields.
-
 ## Error Handling and Best Practices
 
-- **Connection Errors**: All connectors implement proper connection lifecycle management
+- **Connection Errors**: All adapters implement proper connection lifecycle management
 - **Query Errors**: Standardized error codes and messages through `DatusException`
 - **Resource Management**: Use context managers (`with` statements) for automatic cleanup
 - **Thread Safety**: Each connection should be used in a single thread
@@ -350,7 +250,7 @@ When adding a new database type, update the configuration schema in `datus/confi
 
 ## Performance Considerations
 
-- **Connection Pooling**: SQLAlchemy-based connectors use connection pooling
+- **Connection Pooling**: SQLAlchemy-based adapters use connection pooling
 - **Streaming**: Use `execute_arrow_iterator()` for large result sets
 - **Batch Processing**: Configure `batch_size` parameter for optimal memory usage
-- **Read-Only Mode**: DuckDB connector uses read-only mode to prevent lock conflicts
+- **Read-Only Mode**: DuckDB adapter uses read-only mode to prevent lock conflicts
