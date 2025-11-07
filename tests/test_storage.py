@@ -1,16 +1,14 @@
-import json
 import os
 import tempfile
 from datetime import datetime
 
 import pytest
-from conftest import PROJECT_ROOT
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
-from datus.utils.benchmark_utils import load_bird_dev_tasks
+from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.loggings import configure_logging, get_logger
 from tests.conftest import load_acceptance_config
 
@@ -27,6 +25,12 @@ BIRD_DATABASE_NAMES = ["california_schools", "card_games"]
 @pytest.fixture
 def agent_config() -> AgentConfig:
     config = load_acceptance_config(namespace="snowflake")
+    from pathlib import Path
+
+    config.benchmark_configs["spider2"].benchmark_path = str(
+        Path("~/.datus/benchmark/spider2/spider2-snow").expanduser()
+    )
+    config.benchmark_configs["bird_dev"].benchmark_path = str(Path("~/.datus/benchmark/bird/dev_20240627").expanduser())
     return config
 
 
@@ -43,20 +47,18 @@ class TestSnowflake:
         print(len(all_values), all_values.num_rows)
 
     @pytest.mark.parametrize("task_id", SPIDER_INSTANCE_IDS)
-    def test_query_schema_by_spider2_task(self, task_id: str, rag_storage: SchemaWithValueRAG, top_n: int = 10):
-        with open(os.path.join(PROJECT_ROOT, "benchmark/spider2/spider2-snow/spider2-snow.jsonl"), "r") as f:
-            for line in f:
-                json_data = json.loads(line)
-                if json_data["instance_id"] != task_id:
-                    continue
-                query_txt = json_data["instruction"]
-                db_name = json_data["db_id"]
-                print(query_txt)
-                result, value_result = rag_storage.search_similar(
-                    query_text=query_txt, top_n=top_n, database_name=db_name
-                )
-                logger.info(f"TASK-{task_id} schema_len:{len(result)} value_len:{len(value_result)}")
-                break
+    def test_query_schema_by_spider2_task(
+        self, agent_config: AgentConfig, task_id: str, rag_storage: SchemaWithValueRAG, top_n: int = 10
+    ):
+        for task in load_benchmark_tasks(agent_config, "spider2"):
+            if task["instance_id"] != task_id:
+                continue
+            query_txt = task["instruction"]
+            db_name = task["db_id"]
+            print(query_txt)
+            result, value_result = rag_storage.search_similar(query_text=query_txt, top_n=top_n, database_name=db_name)
+            logger.info(f"TASK-{task_id} schema_len:{len(result)} value_len:{len(value_result)}")
+            break
 
 
 class TestBird:
@@ -74,8 +76,7 @@ class TestBird:
     @pytest.mark.parametrize("task_id", ["233"])
     # @pytest.mark.acceptance
     def test_task(self, rag_storage: SchemaWithValueRAG, agent_config: AgentConfig, task_id: str):
-        bird_path = agent_config.benchmark_path("bird_dev")
-        data = load_bird_dev_tasks(bird_path)
+        data = load_benchmark_tasks(agent_config, "bird_dev")
         for task in data:
             if str(task["question_id"]) != task_id:
                 continue
@@ -98,7 +99,7 @@ class TestBird:
         max_id = ""
         min_time = 100000
         min_id = ""
-        data = load_bird_dev_tasks(agent_config.benchmark_path("bird_dev"))
+        data = load_benchmark_tasks(agent_config, "bird_dev")
         for task in data:
             query_txt = task["question"]
             db_name = task["db_id"]

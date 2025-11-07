@@ -8,7 +8,7 @@ from pandas import DataFrame
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
-from datus.utils.benchmark_utils import load_bird_dev_tasks
+from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.constants import DBType
 from datus.utils.sql_utils import extract_table_names
 from tests.conftest import PROJECT_ROOT
@@ -45,9 +45,7 @@ def rag(agent_config: AgentConfig) -> SchemaWithValueRAG:
 
 @pytest.mark.parametrize("task_ids", [[0, 1, 2, 3, 4, 5, 6]])
 def test_recall(task_ids: List[str], rag: SchemaWithValueRAG, agent_config: AgentConfig):
-    benchmark_path = agent_config.benchmark_path("bird_dev")
-    dev_json_list = load_bird_dev_tasks(benchmark_path)
-    for task in dev_json_list:
+    for task in load_benchmark_tasks(agent_config, "bird_dev"):
         question_id = task["question_id"]
         if question_id not in task_ids:
             continue
@@ -129,11 +127,10 @@ def test_full_recall(top_n: int, rag: SchemaWithValueRAG, agent_config: AgentCon
     output_dir = os.path.join(PROJECT_ROOT, "tests/output/bird_dev/recall/")
     os.makedirs(output_dir, exist_ok=True)
     start_time = datetime.now()
-    benchmark_path = agent_config.benchmark_path("bird_dev")
     match_results = []
     total = 0
-    dev_json_list = load_bird_dev_tasks(benchmark_path)
-    for task in dev_json_list:
+
+    for task in load_benchmark_tasks(agent_config, "bird_dev"):
         result = _do_recall(rag, task, top_n)
         if result:
             match_results.append(result)

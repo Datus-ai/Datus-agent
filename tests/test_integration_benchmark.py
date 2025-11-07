@@ -7,7 +7,7 @@ import pytest
 from datus.agent.agent import Agent
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.utils.benchmark_utils import load_bird_dev_tasks
+from datus.utils.benchmark_utils import load_benchmark_tasks
 from tests.conftest import load_acceptance_config
 
 
@@ -23,7 +23,9 @@ def db_manager(agent_config: AgentConfig) -> DBManager:
 
 def test_benchmark_bird(agent_config: AgentConfig, db_manager: DBManager):
     # random some task_ids
-    tasks = load_bird_dev_tasks(agent_config.benchmark_path("bird_dev"))
+    tasks = []
+    for task in load_benchmark_tasks(agent_config, "bird_dev"):
+        tasks.append(task)
     task_ids = set(generate_unique_random_numbers(30, len(tasks)))
     target_task_ids = [str(item) for item in task_ids]
     args = argparse.Namespace(
@@ -43,7 +45,7 @@ def test_benchmark_bird(agent_config: AgentConfig, db_manager: DBManager):
             "layer2": "",
             "task_ext_knowledge": "",
             "current_date": None,
-            "output_file": None,
+            "output_file": "evaluation_details.json",
         }
     )
     agent = Agent(args=args, agent_config=agent_config, db_manager=db_manager)

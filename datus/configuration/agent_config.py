@@ -91,8 +91,8 @@ class NodeConfig:
 
 @dataclass
 class BenchmarkConfig:
-    benchmark_path: str  # benchmark files dir
-    question_file: str  # The corresponding task file can be csv/json/json
+    benchmark_path: str = ""  # benchmark files dir
+    question_file: str = ""  # The corresponding task file can be csv/json/json
     question_key: str = "question"  # The key corresponding to question
     question_id_key: str = "question_id"  # If empty, use the line number
     db_key: str | None = None  # The key corresponding to database name
@@ -498,6 +498,9 @@ class AgentConfig:
         config = self.benchmark_config(name)
         # Return fixed path: {agent.home}/benchmark/{name}
         from datus.utils.path_manager import get_path_manager
+
+        if os.path.isabs(config.benchmark_path):
+            return config.benchmark_path
 
         return str(get_path_manager().benchmark_dir / config.benchmark_path)
 

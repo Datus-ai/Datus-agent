@@ -1678,8 +1678,8 @@ def _ensure_question_file_path(base_path: Path, config: BenchmarkConfig) -> Path
     question_path = _resolve_optional_path(base_path, config.question_file)
     if question_path is None:
         raise DatusException(
-            code=ErrorCode.COMMON_FIELD_REQUIRED,
-            message_args={"field_name": "question_file"},
+            code=ErrorCode.COMMON_CONFIG_ERROR,
+            message="The `question_file` field of Benchmark configuration is required",
         )
     return question_path
 
@@ -2059,26 +2059,9 @@ def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
     logger.info(f'\n\n{"\n".join(report_lines)}')
 
 
-def load_bird_dev_tasks(benchmark_path: str) -> List[Dict[str, Any]]:
-    file_path = os.path.join(benchmark_path, "dev.json")
-    if not os.path.exists(file_path):
-        raise DatusException(
-            code=ErrorCode.COMMON_FILE_NOT_FOUND,
-            message_args={"file_name": file_path, "config_name": "Bird-dev benchmark"},
-        )
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error in file '{file_path}': {str(e)}")
-        raise DatusException(
-            ErrorCode.COMMON_JSON_PARSE_ERROR, message_args={"file_path": file_path, "error_detail": str(e)}
-        )
-
-
 def load_benchmark_tasks(agent_config: AgentConfig, benchmark_platform: str) -> Iterable[Dict[str, Any]]:
     benchmark_config = agent_config.benchmark_config(benchmark_platform)
-    benchmark_file = Path(agent_config.benchmark_path(benchmark_platform)) / benchmark_config.question_file
+    benchmark_file = _ensure_question_file_path(Path(agent_config.benchmark_path(benchmark_platform)), benchmark_config)
     if not benchmark_file.exists():
         raise DatusException(
             ErrorCode.COMMON_FILE_NOT_FOUND,
