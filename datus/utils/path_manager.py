@@ -102,11 +102,6 @@ class DatusPathManager:
         return self._datus_home / "save"
 
     @property
-    def metricflow_dir(self) -> Path:
-        """MetricFlow directory: ~/.datus/metricflow"""
-        return self._datus_home / "metricflow"
-
-    @property
     def workspace_dir(self) -> Path:
         """Workspace directory: ~/.datus/workspace"""
         return self._datus_home / "workspace"
@@ -137,7 +132,6 @@ class DatusPathManager:
         "run": "run_dir",
         "benchmark": "benchmark_dir",
         "save": "save_dir",
-        "metricflow": "metricflow_dir",
         "workspace": "workspace_dir",
         "trajectory": "trajectory_dir",
         "semantic_models": "semantic_models_dir",
@@ -157,10 +151,6 @@ class DatusPathManager:
     def auth_config_path(self) -> Path:
         """Authentication configuration file: ~/.datus/conf/auth_clients.yml"""
         return self.conf_dir / "auth_clients.yml"
-
-    def metricflow_config_path(self) -> Path:
-        """MetricFlow environment settings: ~/.datus/metricflow/env_settings.yml"""
-        return self.metricflow_dir / "env_settings.yml"
 
     def history_file_path(self) -> Path:
         """Command history file: ~/.datus/history"""
@@ -293,7 +283,7 @@ class DatusPathManager:
         Args:
             *dirs: Directory names to ensure. If empty, ensures all standard directories.
                    Valid names: conf, data, logs, sessions, template, sample, run,
-                   benchmark, save, metricflow, workspace, trajectory, semantic_models,
+                   benchmark, save, workspace, trajectory, semantic_models,
                    sql_summaries
 
         Raises:

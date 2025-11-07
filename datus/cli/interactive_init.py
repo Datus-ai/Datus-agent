@@ -39,8 +39,6 @@ class InteractiveInit:
         from datus.utils.path_manager import get_path_manager
 
         path_manager = get_path_manager()
-        self.datus_dir = path_manager.datus_home
-        self.data_dir = path_manager.data_dir
         self.conf_dir = path_manager.conf_dir
         self.template_dir = path_manager.template_dir
         self.sample_dir = path_manager.sample_dir
@@ -65,8 +63,10 @@ class InteractiveInit:
             }
 
     def _init_dirs(self):
-        for dir_name in (self.datus_dir, self.data_dir, self.conf_dir, self.template_dir, self.sample_dir):
-            dir_name.mkdir(parents=True, exist_ok=True)
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+        path_manager.ensure_dirs("conf", "data", "logs", "sessions", "template", "sample")
 
     def run(self) -> int:
         """Main entry point for the interactive initialization."""
@@ -353,24 +353,23 @@ class InteractiveInit:
             default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
             sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
 
-            if Path(sql_dir).exists():
-                console.print(f"→ Scanning {sql_dir} for SQL files...")
-                sql_count = self._initialize_reference_sql(sql_dir)
-                if sql_count > 0:
-                    console.print(f"✔ Imported {sql_count} SQL files into reference")
-                else:
-                    console.print("⚠️ No SQL files found in specified directory")
+            sql_path = Path(sql_dir)
+            if not sql_path.exists():
+                console.print(f"→ Directory {sql_dir} does not exist, creating it...")
+                sql_path.mkdir(parents=True, exist_ok=True)
+
+            console.print(f"→ Scanning {sql_dir} for SQL files...")
+            sql_count = self._initialize_reference_sql(sql_dir)
+            if sql_count > 0:
+                console.print(f"✔ Imported {sql_count} SQL files into reference")
             else:
-                console.print(f"❌ Directory {sql_dir} does not exist")
+                console.print("⚠️ No SQL files found in specified directory")
+                console.print(f"   You can add SQL files to {sql_dir} and regenerate SQL summary later")
 
         console.print()
 
     def _save_configuration(self) -> bool:
         """Save configuration to file."""
-        # Use ~/.datus/conf/agent.yml as the configuration path
-        self.conf_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save configuration
         try:
             config_path = self.conf_dir / "agent.yml"
             with open(config_path, "w", encoding="utf-8") as f:
