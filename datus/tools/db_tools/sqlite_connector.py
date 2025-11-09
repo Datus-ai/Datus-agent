@@ -70,6 +70,7 @@ class SQLiteConnector(BaseSqlConnector):
     @override
     def test_connection(self) -> bool:
         """Test the database connection."""
+        opened_here = self.connection is None
         try:
             self.connect()
             cursor = self.connection.cursor()
@@ -82,7 +83,8 @@ class SQLiteConnector(BaseSqlConnector):
                 message_args={"error_message": str(e)},
             ) from e
         finally:
-            self.close()
+            if opened_here:
+                self.close()
 
     def _handle_exception(self, e: Exception, sql: str = "") -> DatusException:
         """Handle SQLite exceptions and map to appropriate Datus ErrorCode."""

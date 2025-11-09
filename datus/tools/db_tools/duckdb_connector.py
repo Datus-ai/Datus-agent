@@ -99,6 +99,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
     @override
     def test_connection(self) -> bool:
         """Test the database connection."""
+        opened_here = self.connection is None
         try:
             self.connect()
             self.connection.execute("SELECT 1").fetchone()
@@ -109,7 +110,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
                 message_args={"error_message": str(e)},
             ) from e
         finally:
-            self.close()
+            if opened_here:
+                self.close()
 
     def _handle_exception(self, e: Exception, sql: str = "") -> DatusException:
         """Handle DuckDB exceptions and map to appropriate Datus ErrorCode."""
@@ -153,7 +155,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
             result = self.connection.execute(sql)
             # Check if result has a description (i.e., returns rows)
             if getattr(result, "description", None):
-                row_count = result.fetchone()[0] if result.fetchone() else 0
+                fetched = result.fetchone()
+                row_count = fetched[0] if fetched else 0
             else:
                 # For DML without result set, use rowcount
                 row_count = getattr(self.connection, "rowcount", 0) or 0
@@ -179,7 +182,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
             result = self.connection.execute(sql)
             # Check if result has a description (i.e., returns rows)
             if getattr(result, "description", None):
-                row_count = result.fetchone()[0] if result.fetchone() else 0
+                fetched = result.fetchone()
+                row_count = fetched[0] if fetched else 0
             else:
                 # For DML without result set, use rowcount
                 row_count = getattr(self.connection, "rowcount", 0) or 0
@@ -205,7 +209,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
             result = self.connection.execute(sql)
             # Check if result has a description (i.e., returns rows)
             if getattr(result, "description", None):
-                row_count = result.fetchone()[0] if result.fetchone() else 0
+                fetched = result.fetchone()
+                row_count = fetched[0] if fetched else 0
             else:
                 # For DML without result set, use rowcount
                 row_count = getattr(self.connection, "rowcount", 0) or 0
