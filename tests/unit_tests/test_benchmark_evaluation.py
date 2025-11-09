@@ -224,7 +224,7 @@ def _assert_report_structure(report: dict[str, object]) -> None:
 
     match_comparison = details["task-123"]["comparison_results"][0]["comparison"]
     assert match_comparison["match_rate"] == 1.0
-    assert match_comparison["un_matched_columns"] == []
+    assert match_comparison["missing_columns"] == []
     assert {tuple(pair) for pair in match_comparison["matched_columns"]} == {("name", "name"), ("total", "total")}
     actual_tables = [table.lower() for table in match_comparison["actual_tables"]]
     expected_tables = [table.lower() for table in match_comparison["expected_tables"]]
@@ -232,28 +232,28 @@ def _assert_report_structure(report: dict[str, object]) -> None:
     assert any("customers" in table for table in actual_tables)
     assert any("customers" in table for table in expected_tables)
     assert matched_tables and all("customers" in table for table in matched_tables)
-    artifacts_match = match_comparison["artifact_comparison"]
-    assert artifacts_match["file"]["match"] is True
-    assert any("task-123" in value for value in artifacts_match["file"]["matched_actual"])
+    artifacts_match = match_comparison["tools_comparison"]
+    assert artifacts_match["expected_file"]["match"] is True
+    assert any("task-123" in value for value in artifacts_match["expected_file"]["matched_actual"])
     assert artifacts_match["expected_sql"]["match"] is True
-    assert artifacts_match["semantic_model"]["match"] is True
+    assert artifacts_match["expected_semantic_model"]["match"] is True
     assert artifacts_match["expected_metrics"]["match"] is True
     assert not artifacts_match["expected_metrics"]["missing_expected"]
 
     mismatch_comparison = details["task-456"]["comparison_results"][0]["comparison"]
     assert mismatch_comparison["match_rate"] < 1.0
-    assert mismatch_comparison["un_matched_columns"] == ["total"]
+    assert mismatch_comparison["missing_columns"] == ["total"]
     assert {tuple(pair) for pair in mismatch_comparison["matched_columns"]} == {("name", "name")}
     mismatch_actual_tables = [table.lower() for table in mismatch_comparison["actual_tables"]]
     mismatch_expected_tables = [table.lower() for table in mismatch_comparison["expected_tables"]]
     assert any("other_table" in table for table in mismatch_actual_tables)
     assert any("customers" in table for table in mismatch_expected_tables)
     assert mismatch_comparison["matched_tables"] == []
-    artifacts_mismatch = mismatch_comparison["artifact_comparison"]
-    assert artifacts_mismatch["file"]["match"] is False
+    artifacts_mismatch = mismatch_comparison["tools_comparison"]
+    assert artifacts_mismatch["expected_file"]["match"] is False
     assert artifacts_mismatch["expected_sql"]["match"] is False
     assert artifacts_mismatch["expected_sql"]["matched_actual"] == []
-    assert artifacts_mismatch["semantic_model"]["match"] is False
+    assert artifacts_mismatch["expected_semantic_model"]["match"] is False
     assert artifacts_mismatch["expected_metrics"]["match"] is False
     assert artifacts_mismatch["expected_metrics"]["missing_expected"]
 
