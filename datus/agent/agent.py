@@ -844,15 +844,17 @@ class Agent:
         max_workers = getattr(self.args, "max_workers", 1) or 1
         logger.info(f"Loaded tasks from {benchmark_platform} benchmark")
         benchmark_config = self.global_config.benchmark_config(benchmark_platform)
+        task_id_key = benchmark_config.question_id_key or "_task_id"
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {}
-            for idx, task_item in enumerate(load_benchmark_tasks(self.global_config, benchmark_platform)):
-                raw_task_id = str(task_item.get(benchmark_config.question_id_key))
+            for task_item in load_benchmark_tasks(self.global_config, benchmark_platform):
+                raw_task_id = task_item.get(task_id_key)
                 if raw_task_id in (None, ""):
-                    task_id = str(idx + 1)
-                    task_item[benchmark_config.question_id_key] = task_id
+                    logger.warning(f"Task id {raw_task_id} was not found, please check your benchmark configuration.")
+                    continue
                 else:
                     task_id = str(raw_task_id)
+                task_item[task_id_key] = task_id
                 if not target_task_ids or task_id in target_task_ids:
                     f = executor.submit(run_single_task, task_id, benchmark_config, task_item)
                     future_to_task[f] = task_item
@@ -864,7 +866,7 @@ class Agent:
                     task_id, _ = future.result()
                     logger.debug(f"Task {task_id} completed successfully")
                 except Exception as exc:
-                    task_id = task_item.get(benchmark_config.question_id_key) or task_item.get("_task_id")
+                    task_id = task_item.get(task_id_key) or task_item.get("_task_id")
                     logger.error(f"Task {task_id} generated an exception: {exc}")
         logger.info("Benchmark execution completed.")
         return {"status": "success", "message": "Benchmark tasks executed successfully"}

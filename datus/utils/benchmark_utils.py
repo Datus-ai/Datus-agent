@@ -610,7 +610,10 @@ class SingleFileGoldProvider(ResultProvider):
                     return
 
                 for row in reader:
-                    task_id = str(row.get(self.task_id_key, "") or "").strip()
+                    task_id = row.get(self.task_id_key, "")
+                    if task_id is None:
+                        task_id = ""
+                    task_id = str(task_id).strip()
                     if not task_id:
                         continue
                     if self.allowed_task_ids and task_id not in self.allowed_task_ids:
@@ -654,7 +657,10 @@ class SingleFileGoldProvider(ResultProvider):
                                 self._record_row_from_mapping(item)
 
     def _record_row_from_mapping(self, record: Mapping[str, Any]) -> None:
-        task_id = str(record.get(self.task_id_key, "") or "").strip()
+        task_id = record.get(self.task_id_key, "")
+        if task_id is None:
+            task_id = ""
+        task_id = str(task_id).strip()
         if not task_id:
             return
         if self.allowed_task_ids and task_id not in self.allowed_task_ids:
@@ -693,7 +699,10 @@ class SingleFileGoldProvider(ResultProvider):
             with self.result_file.open("r", encoding="utf-8", newline="") as handle:
                 reader = csv.DictReader(handle)
                 for row in reader:
-                    current_id = str(row.get(self.task_id_key, "") or "").strip()
+                    current_id = row.get(self.task_id_key, "")
+                    if current_id is None:
+                        current_id = ""
+                    current_id = str(current_id).strip()
                     if current_id != task_id:
                         continue
                     self._record_row(task_id, row)
@@ -714,7 +723,11 @@ class SingleFileGoldProvider(ResultProvider):
         while stack:
             item = stack.pop()
             if isinstance(item, Mapping):
-                if str(item.get(self.task_id_key, "") or "").strip() == task_id:
+                current_id = item.get(self.task_id_key, "")
+                if current_id is None:
+                    current_id = ""
+
+                if str(current_id).strip() == task_id:
                     self._record_row(task_id, item)
                     return True
                 stack.extend(item.values())
@@ -735,8 +748,10 @@ class SingleFileGoldProvider(ResultProvider):
                         continue
                     if not isinstance(record, Mapping):
                         continue
-                    current_id = str(record.get(self.task_id_key, "") or "").strip()
-                    if current_id != task_id:
+                    current_id = record.get(self.task_id_key, "")
+                    if current_id is None:
+                        current_id = ""
+                    if str(current_id).strip() != task_id:
                         continue
                     self._record_row(task_id, record)
                     return True
@@ -1039,7 +1054,10 @@ class CsvColumnSqlProvider(SqlProvider):
                 for row in reader:
                     if not row:
                         continue
-                    task_id = str(row.get(self.task_id_key, "")).strip()
+                    task_id = row.get(self.task_id_key, "")
+                    if task_id is None:
+                        task_id = ""
+                    task_id = str(task_id).strip()
                     if not task_id or task_id in self._cache:
                         continue
                     sql_text = row.get(self.sql_key, "")
@@ -1221,6 +1239,7 @@ class EvaluationReportBuilder:
         matched_task_ids: set[str] = set()
         mismatched_task_ids: set[str] = set()
         empty_result_task_ids: set[str] = set()
+        comparison_error_task_ids: set[str] = set()
 
         for task_id, evaluation in evaluations.items():
             analysis = evaluation.analysis
@@ -1245,6 +1264,7 @@ class EvaluationReportBuilder:
                         empty_result_task_ids.add(task_id)
                     else:
                         comparison_error_count += 1
+                        comparison_error_task_ids.add(task_id)
                     continue
 
                 if outcome.match_rate == 1:
@@ -1268,6 +1288,7 @@ class EvaluationReportBuilder:
                 "match_count": match_count,
                 "mismatch_count": mismatches,
                 "comparison_error_count": comparison_error_count,
+                "comparison_error_task_ids": ",".join(map(str, sorted(comparison_error_task_ids))),
                 "empty_result_count": empty_result_count,
                 "match_rate": round(match_rate, 2),
             },
@@ -1695,7 +1716,7 @@ def _build_gold_sql_provider(
         return DirectorySqlProvider(str(sql_source), dialect=dialect)
 
     suffix = sql_source.suffix.lower()
-    task_id_key = config.question_id_key or "task_id"
+    task_id_key = config.question_id_key or "_task_id"
     sql_key = config.gold_sql_key or ""
 
     if suffix in {".json", ".jsonl"}:
@@ -1740,7 +1761,7 @@ def _build_gold_result_provider(
     if result_path and result_path.is_dir():
         return CsvPerTaskResultProvider(str(result_path))
 
-    task_id_key = config.question_id_key or "task_id"
+    task_id_key = config.question_id_key or "_task_id"
     sql_key = config.gold_sql_key or ""
     query_result_key = config.gold_result_key or ""
     db_key = config.db_key or ""
@@ -1800,12 +1821,12 @@ def evaluate_benchmark(
         logger.error(f"Failed to load benchmark configuration for {benchmark_platform}: {exc}")
         return {}
 
+    task_id_key = benchmark_config.question_id_key or "_task_id"
     if not target_task_ids:
-        question_id_key = benchmark_config.question_id_key
         target_task_ids = {
-            str(task.get(question_id_key))
+            str(task.get(task_id_key))
             for task in load_benchmark_tasks(agent_config, benchmark_platform)
-            if task.get(question_id_key) is not None
+            if task.get(task_id_key) is not None
         }
 
     benchmark_root = Path(agent_config.benchmark_path(benchmark_platform))
@@ -2059,6 +2080,21 @@ def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
     logger.info(f'\n\n{"\n".join(report_lines)}')
 
 
+def _ensure_task_identifier(task: Dict[str, Any], task_id_key: str, position: int) -> Dict[str, Any]:
+    """
+    Guarantee each benchmark task carries an identifier.
+
+    When the configured key is absent or empty we derive the task_id from the row order.
+    """
+    if not isinstance(task, MutableMapping):
+        return task
+
+    task_id_value = task.get(task_id_key)
+    if task_id_value in (None, ""):
+        task[task_id_key] = str(position)
+    return task  # type: ignore[return-value]
+
+
 def load_benchmark_tasks(agent_config: AgentConfig, benchmark_platform: str) -> Iterable[Dict[str, Any]]:
     benchmark_config = agent_config.benchmark_config(benchmark_platform)
     benchmark_file = _ensure_question_file_path(Path(agent_config.benchmark_path(benchmark_platform)), benchmark_config)
@@ -2068,23 +2104,39 @@ def load_benchmark_tasks(agent_config: AgentConfig, benchmark_platform: str) -> 
             message_args={"config_name": "Benchmarking Task File", "file_name": benchmark_file},
         )
 
-    if benchmark_file.suffix == ".json":
-        with benchmark_file.open(mode="r", encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, list):
-                raise DatusException(
-                    ErrorCode.COMMON_VALIDATION_FAILED, message="Only supports JSON task files in List format"
-                )
-            for item in data:
-                yield item
-        return
-    elif benchmark_file.suffix in (".csv", ".tsv"):
-        delimiter = "\t" if benchmark_file.suffix == ".tsv" else ","
-        with benchmark_file.open(mode="r", encoding="utf-8") as f:
-            csv_reader = csv.DictReader(f, delimiter=delimiter)
-            for row in csv_reader:
-                yield row
-    elif benchmark_file.suffix == ".jsonl":
-        with benchmark_file.open(mode="r", encoding="utf-8") as f:
-            for line in f:
-                yield json.loads(line)
+    task_id_key = benchmark_config.question_id_key or "_task_id"
+
+    def _task_iter():
+        if benchmark_file.suffix == ".json":
+            with benchmark_file.open(mode="r", encoding="utf-8") as f:
+                data = json.load(f)
+                if not isinstance(data, list):
+                    raise DatusException(
+                        ErrorCode.COMMON_VALIDATION_FAILED,
+                        message="Only supports JSON task files in List format",
+                    )
+                for item in data:
+                    yield item
+        elif benchmark_file.suffix in (".csv", ".tsv"):
+            delimiter = "\t" if benchmark_file.suffix == ".tsv" else ","
+            with benchmark_file.open(mode="r", encoding="utf-8") as f:
+                csv_reader = csv.DictReader(f, delimiter=delimiter)
+                for row in csv_reader:
+                    yield row
+        elif benchmark_file.suffix == ".jsonl":
+            with benchmark_file.open(mode="r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    yield json.loads(line)
+        else:
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Unsupported benchmark file format: {benchmark_file.suffix}",
+            )
+
+    for idx, task in enumerate(_task_iter(), start=1):
+        if isinstance(task, Mapping):
+            yield _ensure_task_identifier(dict(task), task_id_key, idx)  # ensure mutable copy
+        else:
+            yield task

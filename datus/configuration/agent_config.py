@@ -93,8 +93,8 @@ class NodeConfig:
 class BenchmarkConfig:
     benchmark_path: str = ""  # benchmark files dir
     question_file: str = ""  # The corresponding task file can be csv/json/json
-    question_key: str = "question"  # The key corresponding to question
-    question_id_key: str = "question_id"  # If empty, use the line number
+    question_key: str = ""  # The key corresponding to question
+    question_id_key: str = ""  # If empty, use the line number
     db_key: str | None = None  # The key corresponding to database name
     ext_knowledge_key: str | None = None  # The key corresponding to external knowledge
     use_tables_key: str | None = None  # The key corresponding to the table to be used
