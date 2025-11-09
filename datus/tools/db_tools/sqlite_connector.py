@@ -3,8 +3,9 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import sqlite3
-from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
+from typing import Any, Dict, Iterator, List, Literal, Optional, override
 
+import pyarrow as pa
 from pandas import DataFrame
 from pyarrow import Table
 
@@ -232,9 +233,10 @@ class SQLiteConnector(BaseSqlConnector):
 
             # Convert to list of dicts
             result_list = [dict(zip(columns, row)) for row in rows]
-            row_count = len(result_list)
+            row_count = len(rows)
 
-            df = DataFrame(result_list)
+            # Explicitly pass columns to preserve schema for empty results
+            df = DataFrame(result_list, columns=columns)
 
             if result_format == "csv":
                 result = df.to_csv(index=False)
@@ -271,18 +273,29 @@ class SQLiteConnector(BaseSqlConnector):
         return self.execute_query(sql, result_format="csv")
 
     @override
-    def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator[Tuple]:
-        """Execute query and return results as tuples in batches."""
+    def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator[Table]:
+        """Execute query and return results as Arrow tables in batches."""
         self.connect()
         cursor = self.connection.cursor()
         cursor.execute(sql)
+
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
 
         while True:
             batch = cursor.fetchmany(max_rows)
             if not batch:
                 break
-            for row in batch:
-                yield tuple(row)
+
+            # Convert batch to Arrow Table
+            if columns:
+                # Build column arrays from batch rows
+                column_data = {col: [row[i] for row in batch] for i, col in enumerate(columns)}
+                arrow_table = pa.table(column_data)
+            else:
+                # Empty schema case
+                arrow_table = pa.table({})
+
+            yield arrow_table
 
     @override
     def execute_queries(self, queries: List[str]) -> List[Any]:
