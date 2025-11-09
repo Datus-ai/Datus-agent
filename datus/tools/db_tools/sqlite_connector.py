@@ -232,13 +232,14 @@ class SQLiteConnector(BaseSqlConnector):
             result_list = [dict(zip(columns, row)) for row in rows]
             row_count = len(result_list)
 
+            df = DataFrame(result_list)
+
             if result_format == "csv":
-                df = DataFrame(result_list)
                 result = df.to_csv(index=False)
             elif result_format == "arrow":
-                result = Table.from_pylist(result_list)
+                result = Table.from_pandas(df)
             elif result_format == "pandas":
-                result = DataFrame(result_list)
+                result = df
             else:  # list
                 result = result_list
 

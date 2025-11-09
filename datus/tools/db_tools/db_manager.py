@@ -375,9 +375,13 @@ class DBManager:
             # Add standard connection parameters
             config_dict["timeout_seconds"] = timeout_seconds
 
-            # Remove empty/None values and internal fields
+            # Remove None and empty string values, and internal fields
+            # Keep False, 0, and empty containers to allow explicit configuration
             filtered_config = {
-                k: v for k, v in config_dict.items() if v and k not in ["type", "path_pattern", "logic_name"]
+                k: v
+                for k, v in config_dict.items()
+                if not (v is None or (isinstance(v, str) and v.strip() == ""))
+                and k not in ["type", "path_pattern", "logic_name"]
             }
 
             # Convert port to int if present

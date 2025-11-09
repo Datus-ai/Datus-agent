@@ -151,7 +151,12 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
         try:
             self.connect()
             result = self.connection.execute(sql)
-            row_count = result.fetchone()[0] if result else 0
+            # Check if result has a description (i.e., returns rows)
+            if getattr(result, "description", None):
+                row_count = result.fetchone()[0] if result.fetchone() else 0
+            else:
+                # For DML without result set, use rowcount
+                row_count = getattr(self.connection, "rowcount", 0) or 0
             return ExecuteSQLResult(
                 success=True,
                 sql_query=sql,
@@ -172,7 +177,12 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
         try:
             self.connect()
             result = self.connection.execute(sql)
-            row_count = result.fetchone()[0] if result else 0
+            # Check if result has a description (i.e., returns rows)
+            if getattr(result, "description", None):
+                row_count = result.fetchone()[0] if result.fetchone() else 0
+            else:
+                # For DML without result set, use rowcount
+                row_count = getattr(self.connection, "rowcount", 0) or 0
             return ExecuteSQLResult(
                 success=True,
                 sql_query=sql,
@@ -193,7 +203,12 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
         try:
             self.connect()
             result = self.connection.execute(sql)
-            row_count = result.fetchone()[0] if result else 0
+            # Check if result has a description (i.e., returns rows)
+            if getattr(result, "description", None):
+                row_count = result.fetchone()[0] if result.fetchone() else 0
+            else:
+                # For DML without result set, use rowcount
+                row_count = getattr(self.connection, "rowcount", 0) or 0
             return ExecuteSQLResult(
                 success=True,
                 sql_query=sql,

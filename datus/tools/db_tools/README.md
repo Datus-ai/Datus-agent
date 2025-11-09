@@ -83,12 +83,16 @@ with DBManager(configs) as manager:
 
 ```python
 from datus.tools.db_tools import SQLiteConnector
+from datus.tools.db_tools.config import SQLiteConfig
 from datus.schemas.node_models import ExecuteSQLInput
 
-# Direct connector instantiation
-connector = SQLiteConnector(
-    database="/path/to/database.db"
+# Create configuration
+config = SQLiteConfig(
+    db_path="/path/to/database.db"
 )
+
+# Direct connector instantiation
+connector = SQLiteConnector(config=config)
 
 # Execute with different formats
 result = connector.execute(
@@ -101,9 +105,15 @@ result = connector.execute(
 
 ```python
 from datus.tools.db_tools import SQLiteConnector
+from datus.tools.db_tools.config import SQLiteConfig
+
+# Create configuration
+config = SQLiteConfig(
+    db_path="/path/to/ecommerce.db"
+)
 
 # Get database schema information
-conn = SQLiteConnector(database="/path/to/ecommerce.db")
+conn = SQLiteConnector(config=config)
 
 # List all tables
 tables = conn.get_tables()
