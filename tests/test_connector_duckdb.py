@@ -58,7 +58,7 @@ def test_execute_query(duckdb_connector: DuckdbConnector):
 
     res = duckdb_connector.execute_query("select * from unexist_table")
     assert not res.success
-    assert ErrorCode.DB_EXECUTION_ERROR.code in res.error
+    assert ErrorCode.DB_TABLE_NOT_EXISTS.code in res.error
 
 
 @pytest.mark.acceptance

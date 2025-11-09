@@ -8,6 +8,7 @@ from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import ExecuteSQLInput, OutputInput
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.tools.db_tools.config import SQLiteConfig
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.output_tools.output import OutputTool
 from datus.utils.constants import DBType
@@ -62,7 +63,9 @@ class TestBirdDevOutput:
 
         tool = OutputTool()
         for db_name, tasks in task_group.items():
-            sql_connector = SQLiteConnector(db_path=f"{benchmark_path}/dev_databases/{db_name}/{db_name}.sqlite")
+            db_path = f"{benchmark_path}/dev_databases/{db_name}/{db_name}.sqlite"
+            config = SQLiteConfig(db_path=db_path)
+            sql_connector = SQLiteConnector(config)
             for task in tasks:
                 task_gen_sql = task["gen_sql"]
                 table_names = extract_table_names(task_gen_sql, dialect=DBType.SQLITE)
