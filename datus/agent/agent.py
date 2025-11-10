@@ -553,6 +553,8 @@ class Agent:
             return
         current_namespace = self.global_config.current_namespace
         for name, raw_config in agent_nodes.items():
+            if name in ("gen_semantic_model", "gen_metrics", "gen_sql_summary"):
+                continue
             try:
                 sub_config = SubAgentConfig.model_validate(raw_config)
             except ValidationError as exc:
