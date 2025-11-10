@@ -113,6 +113,20 @@ class BenchmarkConfig:
         valid_fields = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in kwargs.items() if k in valid_fields})
 
+    def validate(self):
+        if not self.question_key:
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_REQUIRED, message="question_key in benchmark configuration cannot be empty"
+            )
+        if not self.question_file:
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_REQUIRED, message="question_file in benchmark configuration cannot be empty"
+            )
+        if not self.question_id_key:
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_REQUIRED, message="question_id_key in benchmark configuration cannot be empty"
+            )
+
 
 logger = get_logger(__name__)
 
@@ -576,7 +590,10 @@ class AgentConfig:
                 code=ErrorCode.COMMON_UNSUPPORTED,
                 message_args={"field_name": "benchmark", "your_value": benchmark_platform},
             )
-        return self.benchmark_configs[benchmark_platform]
+        benchmark_config = self.benchmark_configs[benchmark_platform]
+        benchmark_config.validate()
+
+        return benchmark_config
 
 
 def rag_storage_path(namespace: str, rag_base_path: str = "data") -> str:
