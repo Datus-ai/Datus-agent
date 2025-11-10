@@ -32,20 +32,36 @@ class PromptManager:
         Falls back to built-in prompt_templates/ directory if user template not found.
         Configure agent.home in agent.yml to change the root directory.
         """
+        self.default_templates_dir = Path(__file__).parent / "prompt_templates"
+        self._env = None
+        self._last_templates_dir = None
+
+    @property
+    def user_templates_dir(self) -> Path:
+        """Get user templates directory from path_manager (dynamic)."""
         from datus.utils.path_manager import get_path_manager
 
-        self.user_templates_dir = get_path_manager().template_dir
-        self.default_templates_dir = Path(__file__).parent / "prompt_templates"
+        return get_path_manager().template_dir
 
+    @property
+    def templates_dir(self) -> Path:
+        """Get current templates directory (dynamic)."""
         # Use user template directory if it exists, otherwise use default
         if self.user_templates_dir.exists():
-            self.templates_dir = self.user_templates_dir
-            logger.info(f"Using user template directory: {self.user_templates_dir}")
+            return self.user_templates_dir
         else:
-            self.templates_dir = self.default_templates_dir
-            logger.info(f"Using default template directory: {self.default_templates_dir}")
+            return self.default_templates_dir
 
-        self._env = Environment(loader=FileSystemLoader(str(self.templates_dir)), trim_blocks=True, lstrip_blocks=True)
+    def _get_env(self) -> Environment:
+        """Get Jinja2 environment, creating or updating if needed."""
+        current_templates_dir = self.templates_dir
+        if self._env is None or self._last_templates_dir != current_templates_dir:
+            self._env = Environment(
+                loader=FileSystemLoader(str(current_templates_dir)), trim_blocks=True, lstrip_blocks=True
+            )
+            self._last_templates_dir = current_templates_dir
+            logger.debug(f"Using template directory: {current_templates_dir}")
+        return self._env
 
     def _get_template_path(self, template_name: str, version: Optional[str] = None) -> Path:
         """
@@ -71,22 +87,12 @@ class PromptManager:
         user_file_path = self.user_templates_dir / filename
 
         if user_file_path.exists():
-            # Update the environment to use user templates directory
-            self.templates_dir = self.user_templates_dir
-            self._env = Environment(
-                loader=FileSystemLoader(str(self.templates_dir)), trim_blocks=True, lstrip_blocks=True
-            )
             logger.debug(f"Loading template from user directory: {user_file_path}")
             return user_file_path
 
         # Fallback to default templates directory
         default_file_path = self.default_templates_dir / filename
         if default_file_path.exists():
-            # Update the environment to use default templates directory
-            self.templates_dir = self.default_templates_dir
-            self._env = Environment(
-                loader=FileSystemLoader(str(self.templates_dir)), trim_blocks=True, lstrip_blocks=True
-            )
             logger.debug(f"Loading template from default directory: {default_file_path}")
             return default_file_path
 
@@ -121,7 +127,7 @@ class PromptManager:
             Jinja2 Template object
         """
         filename = self._get_template_filename(template_name, version)
-        return self._env.get_template(filename)
+        return self._get_env().get_template(filename)
 
     def render_template(self, template_name: str, version: Optional[str] = None, **kwargs) -> str:
         """

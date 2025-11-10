@@ -80,7 +80,7 @@ def _write_trajectory(path: Path, task_id: str, tool_actions: Optional[list[dict
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(payload, handle)
+        yaml.safe_dump(payload, handle, allow_unicode=True)
 
 
 def _benchmark_root(agent_config: AgentConfig, relative_path: str) -> Path:

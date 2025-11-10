@@ -123,7 +123,7 @@ def function_tools(agent_config: AgentConfig) -> List[Tool]:
 def save_to_yaml(content: BaseModel, filename: str):
     """Save a Pydantic model instance to a YAML file"""
     with open(filename, "w") as f:
-        yaml.dump(content.to_dict(), f)
+        yaml.dump(content.to_dict(), f, allow_unicode=True)
 
 
 def init_metricflow_db() -> None:

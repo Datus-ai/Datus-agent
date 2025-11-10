@@ -455,7 +455,12 @@ class Workflow:
                 return obj
 
             yaml.safe_dump(
-                {"workflow": convert_pydantic(workflow_dict)}, f, default_flow_style=False, indent=2, sort_keys=False
+                {"workflow": convert_pydantic(workflow_dict)},
+                f,
+                default_flow_style=False,
+                indent=2,
+                sort_keys=False,
+                allow_unicode=True,
             )
 
     @classmethod
