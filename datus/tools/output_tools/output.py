@@ -37,6 +37,9 @@ class OutputTool(BaseTool):
         os.makedirs(target_dir, exist_ok=True)
         if input_data.finished and not input_data.error:
             final_sql_query, final_sql_result = self.check_sql(input_data, sql_connector, model)
+            if final_sql_query and not final_sql_result:
+                final_sql_result = input_data.sql_result
+                final_sql_query = input_data.gen_sql
 
             if input_data.file_type == "sql":
                 result_file = save_sql(
