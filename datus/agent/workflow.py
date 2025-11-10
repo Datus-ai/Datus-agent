@@ -439,11 +439,15 @@ class Workflow:
 
         with open(file_path, "w") as f:
             # Convert Pydantic models to dictionaries before YAML serialization
+            from enum import Enum
+
             def convert_pydantic(obj):
                 if hasattr(obj, "model_dump"):  # Pydantic v2
                     return obj.model_dump()
                 elif hasattr(obj, "dict"):  # Pydantic v1
                     return obj.dict()
+                elif isinstance(obj, Enum):  # Handle enum objects
+                    return obj.value
                 elif isinstance(obj, (list, tuple)):
                     return [convert_pydantic(item) for item in obj]
                 elif isinstance(obj, dict):

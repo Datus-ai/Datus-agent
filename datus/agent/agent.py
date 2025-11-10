@@ -132,6 +132,12 @@ class Agent:
             agent_config=self.global_config,
         )
 
+        # Store plan_mode in workflow metadata
+        if hasattr(self.args, "plan_mode"):
+            self.workflow.metadata["plan_mode"] = self.args.plan_mode
+            # Also store that this is from workflow/benchmark context (not CLI REPL)
+            self.workflow.metadata["auto_execute_plan"] = True
+
         # Display the initial workflow
         self.workflow.display()
         logger.info("Initial workflow generated")

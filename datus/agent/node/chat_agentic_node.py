@@ -113,6 +113,10 @@ class ChatAgenticNode(AgenticNode):
             )
             self._update_database_connection(task_database)
 
+        # Read plan_mode from workflow metadata
+        plan_mode = workflow.metadata.get("plan_mode", False)
+        auto_execute_plan = workflow.metadata.get("auto_execute_plan", False)
+
         # Create ChatNodeInput if not already set
         if not self.input:
             self.input = ChatNodeInput(
@@ -123,7 +127,8 @@ class ChatAgenticNode(AgenticNode):
                 schemas=workflow.context.table_schemas,
                 metrics=workflow.context.metrics,
                 reference_sql=None,
-                plan_mode=False,
+                plan_mode=plan_mode,
+                auto_execute_plan=auto_execute_plan,
             )
         else:
             # Update existing input with workflow data
@@ -303,7 +308,12 @@ class ChatAgenticNode(AgenticNode):
 
             console = Console()
             session = self._get_or_create_session()[0]
-            self.plan_hooks = PlanModeHooks(console=console, session=session)
+
+            # Workflow sets 'auto_execute_plan' in metadata, CLI REPL does not
+            auto_mode = getattr(user_input, "auto_execute_plan", False)
+            logger.info(f"Plan mode auto_mode: {auto_mode} (from input)")
+
+            self.plan_hooks = PlanModeHooks(console=console, session=session, auto_mode=auto_mode)
 
         # Create initial action
         action_type = "plan_mode_interaction" if is_plan_mode else "chat_interaction"

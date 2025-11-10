@@ -200,6 +200,11 @@ def create_parser() -> argparse.ArgumentParser:
         default="benchmark/semantic_layer/testing_set.csv",
         help="Full path to testing set file for semantic_layer benchmark",
     )
+    benchmark_parser.add_argument(
+        "--plan-mode",
+        action="store_true",
+        help="Enable plan mode for benchmark execution (generates plan then auto-executes without confirmation)",
+    )
 
     # generate-dataset command
     generate_dataset_parser = subparsers.add_parser(

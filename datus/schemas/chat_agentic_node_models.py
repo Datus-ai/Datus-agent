@@ -37,6 +37,9 @@ class ChatNodeInput(BaseInput):
         validation_alias=AliasChoices("reference_sql", "historical_sql"),
     )
     plan_mode: bool = Field(default=False, description="Whether this is a plan mode interaction")
+    auto_execute_plan: bool = Field(
+        default=False, description="Whether to auto-execute plan without user confirmation (for workflow/benchmark)"
+    )
 
     class Config:
         populate_by_name = True

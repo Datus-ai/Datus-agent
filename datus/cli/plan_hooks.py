@@ -29,14 +29,15 @@ class UserCancelledException(Exception):
 class PlanModeHooks(AgentHooks):
     """Plan Mode hooks for workflow management"""
 
-    def __init__(self, console: Console, session: SQLiteSession):
+    def __init__(self, console: Console, session: SQLiteSession, auto_mode: bool = False):
         self.console = console
         self.session = session
+        self.auto_mode = auto_mode
         from datus.tools.func_tool.plan_tools import SessionTodoStorage
 
         self.todo_storage = SessionTodoStorage(session)
         self.plan_phase = "generating"
-        self.execution_mode = "manual"
+        self.execution_mode = "auto" if auto_mode else "manual"
         self.replan_feedback = ""
         self._state_transitions = []
 
@@ -98,6 +99,14 @@ class PlanModeHooks(AgentHooks):
         for i, item in enumerate(todo_list.items, 1):
             self.console.print(f"  {i}. {item.content}")
 
+        # Auto mode: skip user confirmation
+        if self.auto_mode:
+            self.execution_mode = "auto"
+            self._transition_state("executing", {"mode": "auto"})
+            self.console.print("[green]Auto execution mode (workflow/benchmark context)[/]")
+            return
+
+        # Interactive mode: ask for user confirmation
         try:
             await self._get_user_confirmation()
         except PlanningPhaseException:
@@ -180,6 +189,11 @@ class PlanModeHooks(AgentHooks):
         import sys
 
         logger.info(f"PlanHooks: _handle_execution_step called with tool: {_tool_name}")
+
+        # Auto mode: skip all step confirmations
+        if self.auto_mode:
+            logger.info("Auto mode enabled, executing step without confirmation")
+            return
 
         todo_list = self.todo_storage.get_todo_list()
         logger.info(f"PlanHooks: Retrieved todo list with {len(todo_list.items) if todo_list else 0} items")
