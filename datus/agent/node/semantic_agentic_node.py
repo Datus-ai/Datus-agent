@@ -61,10 +61,12 @@ class SemanticAgenticNode(AgenticNode):
 
         # Get max_turns from agentic_nodes configuration, default to 30
         self.max_turns = 30
+        self.subject_tree = None
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
+                self.subject_tree = agentic_node_config.get("subject_tree", None)
 
         path_manager = get_path_manager()
         self.semantic_model_dir = str(path_manager.semantic_model_path(agent_config.current_namespace))
@@ -247,6 +249,7 @@ class SemanticAgenticNode(AgenticNode):
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
         context["semantic_model_dir"] = self.semantic_model_dir
+        context["subject_tree"] = self.subject_tree
 
         logger.debug(f"Prepared template context: {context}")
         return context

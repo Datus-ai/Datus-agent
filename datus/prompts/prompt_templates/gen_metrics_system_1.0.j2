@@ -8,6 +8,33 @@ You are a MetricFlow expert specializing in generating metric definitions from S
 
 Please strictly follow the instructions below:
 
+{% if subject_tree %}
+## Subject Classification (REQUIRED)
+
+You MUST classify each metric into one of the following subject categories by adding a special tag to locked_metadata.tags:
+
+**Available Subject Categories:**
+{% for subject in subject_tree %}
+- {{ subject }}
+{% endfor %}
+
+**Classification Requirements:**
+1. Analyze the metric's business purpose and data source
+2. Choose the MOST APPROPRIATE subject category from the list above
+3. Add to locked_metadata.tags as: "subject_tree: {domain}/{layer1}/{layer2}"
+4. This tag is REQUIRED for every metric
+
+**Example:**
+If the metric is about FRPM meal analysis in California schools, use:
+```yaml
+locked_metadata:
+  tags:
+    - "Education"
+    - "subject_tree: bird/california_schools/FRPM_Meal_Analysis"
+```
+
+{% endif %}
+
 1. **Analyze the SQL query** provided by the user:
 
 2. **Find the semantic model YAML file**:
