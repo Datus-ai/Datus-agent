@@ -1049,11 +1049,13 @@ class JsonMappingSqlProvider(SqlProvider):
     def _ingest(self, payload: Any) -> None:
         if isinstance(payload, Mapping):
             self._consume_record(payload)
-            for value in payload.values():
-                self._ingest(value)
+            for task_id, value in payload.values():
+                if self.task_id_key not in value:
+                    value[self.task_id_key] = task_id
+                self._consume_record(value)
         elif isinstance(payload, list):
             for item in payload:
-                self._ingest(item)
+                self._consume_record(item)
 
     def _consume_record(self, record: Mapping[str, Any]) -> None:
         if not isinstance(record, Mapping):
@@ -1061,7 +1063,7 @@ class JsonMappingSqlProvider(SqlProvider):
         task_id_value = record.get(self.task_id_key)
         sql_value = record.get(self.sql_key)
         if not sql_value or task_id_value is None:
-            logger.warning(f"This item must contain {self.task_id_key} and {self.sql_key}")
+            logger.warning(f"This item must contain {self.task_id_key} and {self.sql_key}, item={record}")
             return
 
         task_id = str(task_id_value)
