@@ -667,6 +667,19 @@ class GenerationHooks(AgentHooks):
                     "message": f"Reference SQL '{reference_sql_data.get('name', '')}' already exists, skipped",
                 }
 
+            # Parse subject_tree if available
+            subject_tree = reference_sql_data.get("subject_tree", "")
+            if subject_tree:
+                # Parse subject_tree format: "domain/layer1/layer2"
+                parts = subject_tree.split("/")
+                domain = parts[0].strip() if len(parts) > 0 else ""
+                layer1 = parts[1].strip() if len(parts) > 1 else ""
+                layer2 = parts[2].strip() if len(parts) > 2 else ""
+            else:
+                domain = ""
+                layer1 = ""
+                layer2 = ""
+
             # Ensure all required fields are present
             reference_sql_dict = {
                 "id": item_id,
@@ -675,9 +688,9 @@ class GenerationHooks(AgentHooks):
                 "comment": comment,
                 "summary": reference_sql_data.get("summary", ""),
                 "filepath": reference_sql_data.get("filepath", ""),
-                "domain": reference_sql_data.get("domain", ""),
-                "layer1": reference_sql_data.get("layer1", ""),
-                "layer2": reference_sql_data.get("layer2", ""),
+                "domain": domain,
+                "layer1": layer1,
+                "layer2": layer2,
                 "tags": reference_sql_data.get("tags", ""),
             }
 

@@ -182,6 +182,45 @@ class ReferenceSqlStorage(BaseEmbeddingStore):
 
         return taxonomy
 
+    def get_existing_subject_trees(self) -> List[str]:
+        """Get unique subject_tree values from stored reference SQL items.
+
+        Returns:
+            List of unique subject_tree strings in "domain/layer1/layer2" format
+        """
+        logger.info("Extracting existing subject_tree values from stored reference SQL")
+
+        # Ensure table is ready
+        self._ensure_table_ready()
+
+        # Get all existing domain/layer1/layer2 combinations
+        search_result = self._search_all(select_fields=["domain", "layer1", "layer2"])
+
+        if not search_result or search_result.num_rows <= 0:
+            logger.info("No existing subject_tree found in database")
+            return []
+
+        # Collect unique subject_tree combinations
+        subject_trees = set()
+        domain_column = search_result["domain"]
+        layer1_column = search_result["layer1"]
+        layer2_column = search_result["layer2"]
+
+        for i in range(search_result.num_rows):
+            domain = domain_column[i].as_py() or ""
+            layer1 = layer1_column[i].as_py() or ""
+            layer2 = layer2_column[i].as_py() or ""
+
+            # Only include complete subject_tree (all three parts present)
+            if domain and layer1 and layer2:
+                subject_tree = f"{domain}/{layer1}/{layer2}"
+                subject_trees.add(subject_tree)
+
+        result = sorted(subject_trees)
+        logger.info(f"Extracted {len(result)} unique subject_tree values")
+
+        return result
+
     def search_by_filepath(self, filepath_pattern: str) -> List[Dict[str, Any]]:
         """Search reference SQL by filepath pattern."""
         # Ensure table is ready before direct table access

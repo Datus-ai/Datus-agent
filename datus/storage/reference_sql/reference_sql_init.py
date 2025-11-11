@@ -17,59 +17,6 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def parse_subject_tree(subject_tree_str: str) -> Dict[str, Any]:
-    """
-    Parse subject_tree string into taxonomy structure.
-
-    Args:
-        subject_tree_str: Comma-separated string of domain/layer1/layer2 paths
-
-    Returns:
-        Dict containing taxonomy with domains, layer1_categories, layer2_categories
-    """
-    if not subject_tree_str:
-        return {}
-
-    domains_set = set()
-    layer1_set = set()
-    layer2_dict = {}
-
-    paths = [p.strip() for p in subject_tree_str.split(",")]
-
-    for path in paths:
-        parts = path.split("/")
-        if len(parts) != 3:
-            logger.warning(f"Skipping invalid subject_tree path (expected domain/layer1/layer2): {path}")
-            continue
-
-        domain, layer1, layer2 = parts
-        domains_set.add(domain)
-        layer1_set.add((layer1, domain))
-        layer2_dict[layer2] = layer1
-
-    taxonomy = {
-        "domains": [
-            {"name": domain, "description": f"{domain} domain", "examples": []} for domain in sorted(domains_set)
-        ],
-        "layer1_categories": [
-            {"name": layer1, "description": f"{layer1} category", "domain": domain, "examples": []}
-            for layer1, domain in sorted(layer1_set)
-        ],
-        "layer2_categories": [
-            {"name": layer2, "description": f"{layer2} subcategory", "layer1": layer1, "examples": []}
-            for layer2, layer1 in sorted(layer2_dict.items())
-        ],
-        "common_tags": [],
-    }
-
-    logger.info(
-        f"Parsed subject_tree into taxonomy: {len(taxonomy['domains'])} domains, "
-        f"{len(taxonomy['layer1_categories'])} layer1, {len(taxonomy['layer2_categories'])} layer2"
-    )
-
-    return taxonomy
-
-
 async def process_sql_item(
     item: dict,
     agent_config: AgentConfig,

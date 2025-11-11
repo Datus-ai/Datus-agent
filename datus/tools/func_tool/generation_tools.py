@@ -167,43 +167,38 @@ class GenerationTools:
             logger.error(f"Error checking metric existence: {e}")
             return FuncToolResult(success=0, error=f"Failed to check metric: {str(e)}")
 
-    def _get_reference_sql_taxonomy(self) -> FuncToolResult:
+    def _get_existing_subject_trees(self) -> FuncToolResult:
         """
-        Get existing reference SQL classification taxonomy.
+        Get existing subject_tree values from stored reference SQLs.
 
-        Use this tool to retrieve the current classification taxonomy used for reference SQLs.
+        Use this tool to retrieve existing subject_tree classifications.
         This helps maintain consistency when classifying new SQL queries.
 
         Returns:
-            dict: Taxonomy containing:
+            dict: Result containing:
                 - 'success' (int): 1 if successful, 0 if failed
                 - 'error' (str or None): Error message if failed
                 - 'result' (dict): Contains:
-                    - 'domains' (list): Available business domains
-                    - 'layer1_categories' (list): Primary categories with domain associations
-                    - 'layer2_categories' (list): Secondary categories with layer1 associations
-                    - 'common_tags' (list): Available tags
+                    - 'subject_tree_list' (list): List of unique subject_tree values
+                      in "domain/layer1/layer2" format
         """
         try:
             from datus.storage.reference_sql.store import ReferenceSqlRAG
 
             # Get SQL history storage
             storage = ReferenceSqlRAG(self.agent_config)
-            taxonomy = storage.reference_sql_storage.get_existing_taxonomy()
+            subject_trees = storage.reference_sql_storage.get_existing_subject_trees()
 
             return FuncToolResult(
                 result={
-                    "taxonomy": taxonomy,
-                    "message": f"Found {len(taxonomy.get('domains', []))} domains, "
-                    f"{len(taxonomy.get('layer1_categories', []))} layer1 categories, "
-                    f"{len(taxonomy.get('layer2_categories', []))} layer2 categories, "
-                    f"{len(taxonomy.get('common_tags', []))} tags",
+                    "subject_tree_list": subject_trees,
+                    "message": f"Found {len(subject_trees)} existing subject_tree values",
                 }
             )
 
         except Exception as e:
-            logger.error(f"Error getting reference SQL taxonomy: {e}")
-            return FuncToolResult(success=0, error=f"Failed to get taxonomy: {str(e)}")
+            logger.error(f"Error getting existing subject_trees: {e}")
+            return FuncToolResult(success=0, error=f"Failed to get subject_trees: {str(e)}")
 
     def _check_sql_name_exists(self, name: str) -> FuncToolResult:
         """
@@ -276,9 +271,9 @@ class GenerationTools:
 
     def _get_similar_reference_sqls(self, comment: str = "", summary: str = "", top_n: int = 5) -> FuncToolResult:
         """
-        Get similar SQL histories based on comment or summary.
+        Get similar reference SQLs based on comment or summary.
 
-        Use this tool to find similar existing SQL histories for reference when
+        Use this tool to find similar existing reference SQLs for reference when
         classifying new SQL queries.
 
         Args:
@@ -291,14 +286,14 @@ class GenerationTools:
                 - 'success' (int): 1 if successful, 0 if failed
                 - 'error' (str or None): Error message if failed
                 - 'result' (dict): Contains:
-                    - 'similar_items' (list): List of similar SQL histories with fields:
-                        name, domain, layer1, layer2, tags, comment, summary
+                    - 'similar_items' (list): List of similar reference SQLs with fields:
+                        name, subject_tree, tags, comment, summary
                     - 'count' (int): Number of results found
         """
         try:
             from datus.storage.reference_sql.store import ReferenceSqlRAG
 
-            # Get SQL history storage
+            # Get reference SQL storage
             storage = ReferenceSqlRAG(self.agent_config)
 
             # Use summary for vector search if available, otherwise use comment
@@ -319,12 +314,16 @@ class GenerationTools:
             # Extract relevant fields
             results = []
             for item in similar_items:
+                # Compose subject_tree from domain/layer1/layer2
+                domain = item.get("domain", "")
+                layer1 = item.get("layer1", "")
+                layer2 = item.get("layer2", "")
+                subject_tree = f"{domain}/{layer1}/{layer2}" if (domain and layer1 and layer2) else ""
+
                 results.append(
                     {
                         "name": item.get("name", ""),
-                        "domain": item.get("domain", ""),
-                        "layer1": item.get("layer1", ""),
-                        "layer2": item.get("layer2", ""),
+                        "subject_tree": subject_tree,
                         "tags": item.get("tags", ""),
                         "comment": item.get("comment", ""),
                         "summary": item.get("summary", ""),
@@ -335,7 +334,7 @@ class GenerationTools:
                 result={
                     "similar_items": results,
                     "count": len(results),
-                    "message": f"Found {len(results)} similar SQL histories",
+                    "message": f"Found {len(results)} similar reference SQLs",
                 }
             )
 
@@ -353,8 +352,8 @@ class GenerationTools:
         One-shot context preparation for SQL summary generation.
 
         This tool combines multiple preparatory steps into a single call:
-        1. Get existing taxonomy (domains, layers, tags) - uses predefined if available
-        2. Find similar SQL histories for reference
+        1. Get existing subject_tree values from storage
+        2. Find similar reference SQLs for reference
         3. Check name uniqueness (if suggested_name provided)
 
         Use this tool at the beginning of SQL summary workflow to get all necessary
@@ -370,12 +369,9 @@ class GenerationTools:
                 - 'success' (int): 1 if successful, 0 if failed
                 - 'error' (str or None): Error message if failed
                 - 'result' (dict): Contains:
-                    - 'taxonomy' (dict): Classification taxonomy wrapper with:
-                        - 'taxonomy' (dict): The actual taxonomy
-                          (domains, layer1_categories, layer2_categories, common_tags)
-                        - 'message' (str): Info message (empty for predefined, stats for storage)
-                        - 'source' (str): Source type ("predefined", "storage", or "none")
-                    - 'similar_items' (list): Similar SQL histories for reference
+                    - 'existing_subject_trees' (list): List of existing subject_tree values
+                      (empty if not in storage, will use predefined if configured)
+                    - 'similar_items' (list): Similar reference SQLs with subject_tree field
                     - 'name_check' (dict): Name uniqueness check result (if suggested_name provided)
                     - 'message' (str): Summary message
         """
@@ -383,36 +379,21 @@ class GenerationTools:
             result = {}
             messages = []
 
-            # 1. Get taxonomy (use predefined if available)
-            if self.predefined_taxonomy:
-                result["taxonomy"] = {
-                    "taxonomy": {
-                        "domains": self.predefined_taxonomy.get("domains", []),
-                        "layer1_categories": self.predefined_taxonomy.get("layer1_categories", []),
-                        "layer2_categories": self.predefined_taxonomy.get("layer2_categories", []),
-                        "common_tags": self.predefined_taxonomy.get("common_tags", []),
-                    },
-                    "message": "",
-                    "source": "predefined",
-                }
-                messages.append("Taxonomy: Using predefined subject_tree")
-            else:
-                taxonomy_result = self._get_reference_sql_taxonomy()
-                if taxonomy_result.success:
-                    result["taxonomy"] = {
-                        "taxonomy": taxonomy_result.result.get("taxonomy", taxonomy_result.result),
-                        "message": taxonomy_result.result.get("message", ""),
-                        "source": "storage",
-                    }
-                    taxonomy_info = taxonomy_result.result.get("message", "")
-                    messages.append(f"Taxonomy: {taxonomy_info}")
+            # 1. Get existing subject_trees from storage (not used if predefined_taxonomy exists)
+            # Predefined taxonomy is passed directly via template context
+            if not self.predefined_taxonomy:
+                subject_tree_result = self._get_existing_subject_trees()
+                if subject_tree_result.success:
+                    result["existing_subject_trees"] = subject_tree_result.result.get("subject_tree_list", [])
+                    subject_tree_info = subject_tree_result.result.get("message", "")
+                    messages.append(f"Subject trees: {subject_tree_info}")
                 else:
-                    logger.debug(f"Failed to get taxonomy: {taxonomy_result.error}")
-                    result["taxonomy"] = {
-                        "taxonomy": None,
-                        "message": str(taxonomy_result.error),
-                        "source": "none",
-                    }
+                    logger.debug(f"Failed to get subject_trees: {subject_tree_result.error}")
+                    result["existing_subject_trees"] = []
+            else:
+                # Predefined taxonomy available, no need to fetch from storage
+                result["existing_subject_trees"] = []
+                messages.append("Subject trees: Using predefined configuration")
 
             # 2. Find similar reference SQLs
             similar_result = self._get_similar_reference_sqls(

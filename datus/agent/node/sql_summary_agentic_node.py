@@ -61,19 +61,14 @@ class SqlSummaryAgenticNode(AgenticNode):
         # Get subject_tree and max_turns from agentic_nodes configuration
         self.max_turns = 30
         self.subject_tree = None
-        self.predefined_taxonomy = None
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
-                subject_tree_str = agentic_node_config.get("subject_tree")
-                if subject_tree_str:
-                    self.subject_tree = subject_tree_str
-                    # Parse subject_tree into taxonomy
-                    from datus.storage.reference_sql.reference_sql_init import parse_subject_tree
-
-                    self.predefined_taxonomy = parse_subject_tree(subject_tree_str)
-                    logger.info(f"Loaded predefined taxonomy from subject_tree: {subject_tree_str}")
+                subject_tree = agentic_node_config.get("subject_tree")
+                if subject_tree:
+                    self.subject_tree = subject_tree
+                    logger.info(f"Loaded subject_tree: {subject_tree}")
 
         path_manager = get_path_manager()
         self.sql_summary_dir = str(path_manager.sql_summary_path(agent_config.current_namespace))
@@ -185,12 +180,12 @@ class SqlSummaryAgenticNode(AgenticNode):
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["sql_summary_dir"] = self.sql_summary_dir
 
-        # Add predefined taxonomy if available
-        if self.predefined_taxonomy:
-            context["has_predefined_taxonomy"] = True
-            context["predefined_taxonomy"] = self.predefined_taxonomy
+        # Add subject_tree if available (for LLM to choose from)
+        if self.subject_tree:
+            context["has_subject_tree"] = True
+            context["subject_tree"] = self.subject_tree
         else:
-            context["has_predefined_taxonomy"] = False
+            context["has_subject_tree"] = False
 
         logger.debug(f"Prepared template context: {context}")
         return context
