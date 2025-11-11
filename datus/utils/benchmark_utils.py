@@ -1049,7 +1049,7 @@ class JsonMappingSqlProvider(SqlProvider):
     def _ingest(self, payload: Any) -> None:
         if isinstance(payload, Mapping):
             self._consume_record(payload)
-            for task_id, value in payload.values():
+            for task_id, value in payload.items():
                 if self.task_id_key not in value:
                     value[self.task_id_key] = task_id
                 self._consume_record(value)
