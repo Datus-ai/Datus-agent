@@ -92,6 +92,7 @@ class ChatAgenticNode(AgenticNode):
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.plan_mode_active = False
+        self.plan_hooks = None
 
         # Setup tools after initialization
         self.setup_tools()
@@ -696,6 +697,29 @@ class ChatAgenticNode(AgenticNode):
         """Get system instruction for normal mode."""
         _, conversation_summary = self._get_or_create_session()
         return self._get_system_prompt(conversation_summary, original_input.prompt_version)
+
+    def _build_plan_prompt(self, original_prompt: str) -> str:
+        """Build enhanced prompt for plan mode based on current phase."""
+        from datus.prompts.prompt_manager import prompt_manager
+
+        # Check current phase and replan feedback
+        current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
+        replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
+
+        # Load plan mode prompt from template
+        try:
+            plan_prompt_addition = prompt_manager.render_template(
+                template_name="plan_mode_system",
+                version=None,  # Use latest version
+                current_phase=current_phase,
+                replan_feedback=replan_feedback,
+            )
+        except FileNotFoundError:
+            # Fallback to inline prompt if template not found
+            logger.warning("plan_mode_system template not found, using inline prompt")
+            plan_prompt_addition = "\n\nPLAN MODE\nCheck todo_read to see current plan status and proceed accordingly."
+
+        return original_prompt + "\n\n" + plan_prompt_addition
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """

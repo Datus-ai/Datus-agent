@@ -1,0 +1,50 @@
+{# Plan Mode Prompt Template
+   Variables:
+   - current_phase: Current phase of plan mode ("generating", "executing", "confirming", etc.)
+   - replan_feedback: User feedback for replanning (optional)
+#}
+
+{# Execution prompt - reused across different phases #}
+{% set execution_prompt %}
+After the plan has been confirmed, execute the pending steps.
+
+Execution steps for each pending step:
+1. FIRST: call todo_update(todo_id, 'pending') to mark step as pending (triggers user confirmation)
+2. then execute the actual task (SQL queries, data processing, etc.)
+3. then call todo_update(todo_id, 'completed') to mark step as completed
+
+Start with the first pending step in the plan.
+{% endset %}
+
+{% if replan_feedback and current_phase == "generating" %}
+{# REPLAN MODE: Generate revised plan based on user feedback #}
+
+REPLAN MODE
+Revise the current plan based on USER FEEDBACK: {{ replan_feedback }}
+
+STEPS:
+1. FIRST: call todo_read to review the current plan, the completed and pending steps
+2. then call todo_write to generate revised plan following these rules:
+   - COMPLETED steps(if there are any): keep items as 'completed'
+   - PENDING steps that are no longer needed: DISCARD (don't include in new plan)
+   - PENDING steps that are still needed: keep as 'pending' or revise content
+   - NEW steps(if there are any): add as 'pending'
+3. Only include steps that are actually needed in the revised plan
+{{ execution_prompt }}
+
+{% elif current_phase == "generating" %}
+{# INITIAL PLANNING PHASE: Generate initial plan #}
+
+PLAN MODE - PLANNING PHASE
+Task: Break down user request into 3-8 steps.
+
+call todo_write to generate complete todo list (3-8 steps)
+Example: todo_write('[{"content": "Connect to database", "status": "pending"}, {"content": "Query data", "status": "pending"}]')
+{{ execution_prompt }}
+
+{% else %}
+{# Default fallback: Check current plan status #}
+
+PLAN MODE
+Check todo_read to see current plan status and proceed accordingly.
+{% endif %}
