@@ -65,7 +65,8 @@ class ChatExecutor:
                 """Collect all actions from the stream"""
                 nonlocal last_message
 
-                async for action in current_node.execute_stream(node_input, cli.actions):
+                current_node.input = node_input
+                async for action in current_node.execute_stream(cli.actions):
                     incremental_actions.append(action)
                     formatted = self.format_action_for_stream(action)
 
