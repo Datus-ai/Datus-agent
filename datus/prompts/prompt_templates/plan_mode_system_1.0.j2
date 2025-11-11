@@ -43,8 +43,10 @@ Example: todo_write('[{"content": "Connect to database", "status": "pending"}, {
 {{ execution_prompt }}
 
 {% else %}
-{# Default fallback: Check current plan status #}
+{# Default fallback: Check current plan status and execute if needed #}
 
 PLAN MODE
 Check todo_read to see current plan status and proceed accordingly.
+
+{{ execution_prompt }}
 {% endif %}
