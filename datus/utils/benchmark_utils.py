@@ -216,6 +216,50 @@ def _unique_preserve_order(items: Iterable[str]) -> list[str]:
     return result
 
 
+_TABLE_IDENTIFIER_STRIP_CHARS = "\"'`[]"
+
+
+def _clean_table_identifier_part(part: str) -> str:
+    cleaned = str(part).strip()
+    return cleaned.strip(_TABLE_IDENTIFIER_STRIP_CHARS)
+
+
+def _parse_table_identifier(table: str) -> Tuple[str, str, bool]:
+    """
+    Normalize SQL table identifiers and extract the terminal table name.
+
+    Returns a tuple of (normalized_identifier, base_table_name, is_simple_name).
+    """
+    if table is None:
+        return "", "", False
+
+    identifier = str(table).strip().lower()
+    if not identifier:
+        return "", "", False
+
+    identifier = identifier.lstrip(".")
+    if not identifier:
+        return "", "", False
+
+    parts = []
+    for raw_part in identifier.split("."):
+        cleaned = _clean_table_identifier_part(raw_part)
+        if cleaned:
+            parts.append(cleaned.lower())
+
+    if not parts:
+        return "", "", False
+
+    normalized_identifier = ".".join(parts)
+    base_name = parts[-1]
+    is_simple = len(parts) == 1
+
+    normalized_identifier = _normalize_field_name(normalized_identifier) or normalized_identifier
+    base_name = _normalize_field_name(base_name) or base_name
+
+    return normalized_identifier, base_name, is_simple
+
+
 def collect_sql_tables(sql_text: Optional[str], dialect: Optional[str] = None) -> list[str]:
     if not sql_text:
         return []
@@ -252,13 +296,38 @@ def collect_sql_tables(sql_text: Optional[str], dialect: Optional[str] = None) -
 
 
 def compute_table_matches(actual_tables: Iterable[str], expected_tables: Iterable[str]) -> list[str]:
-    normalized_actual = {_normalize_field_name(table): table for table in actual_tables if table}
+    normalized_actual: set[str] = set()
+    actual_simple_bases: set[str] = set()
+    actual_full_bases: set[str] = set()
+
+    for table in actual_tables:
+        normalized, base_name, is_simple = _parse_table_identifier(table)
+        if not normalized:
+            continue
+        normalized_actual.add(normalized)
+        if not base_name:
+            continue
+        if is_simple:
+            actual_simple_bases.add(base_name)
+        else:
+            actual_full_bases.add(base_name)
+
     matches: list[str] = []
     for table in expected_tables:
         if not table:
             continue
-        normalized = _normalize_field_name(table)
+        normalized, base_name, is_simple = _parse_table_identifier(table)
+        if not normalized:
+            continue
         if normalized in normalized_actual:
+            matches.append(table)
+            continue
+        if not base_name:
+            continue
+        if is_simple and base_name in actual_full_bases:
+            matches.append(table)
+            continue
+        if not is_simple and base_name in actual_simple_bases:
             matches.append(table)
     return _unique_preserve_order(matches)
 
