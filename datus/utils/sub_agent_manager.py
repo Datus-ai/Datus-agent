@@ -181,7 +181,7 @@ class SubAgentManager:
         except IOError as exc:
             logger.error("Failed to write prompt template for '%s': %s", config.system_prompt, exc)
             raise
-        return str(self._prompt_manager.templates_dir / file_name)
+        return str(self._prompt_manager.user_templates_dir / file_name)
 
     def _remove_prompt_template(self, agent_name: str, prompt_version: str):
         file_name = f"{agent_name}_system_{prompt_version}.j2"
