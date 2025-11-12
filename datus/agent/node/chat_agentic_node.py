@@ -17,10 +17,8 @@ from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
-from datus.schemas.node_models import TableSchema
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DateParsingTools, DBFuncTool, FilesystemFuncTool
-from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -126,6 +124,7 @@ class ChatAgenticNode(AgenticNode):
         if not self.input:
             self.input = ChatNodeInput(
                 user_message=workflow.task.task,
+                external_knowledge=workflow.task.external_knowledge,
                 catalog=workflow.task.catalog_name,
                 database=workflow.task.database_name,
                 db_schema=workflow.task.schema_name,
@@ -138,6 +137,7 @@ class ChatAgenticNode(AgenticNode):
         else:
             # Update existing input with workflow data
             self.input.user_message = workflow.task.task
+            self.input.external_knowledge = workflow.task.external_knowledge
             self.input.catalog = workflow.task.catalog_name
             self.input.database = workflow.task.database_name
             self.input.db_schema = workflow.task.schema_name
@@ -343,31 +343,19 @@ class ChatAgenticNode(AgenticNode):
             system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)
 
             # Add database context to user message if provided
-            enhanced_message = user_input.user_message
-            enhanced_parts = []
-            if user_input.catalog or user_input.database or user_input.db_schema:
-                context_parts = [f"dialect: {self.agent_config.db_type}"]
-                if user_input.catalog:
-                    context_parts.append(f"catalog: {user_input.catalog}")
-                if user_input.database:
-                    context_parts.append(f"database: {user_input.database}")
-                if user_input.db_schema:
-                    context_parts.append(f"schema: {user_input.db_schema}")
-                context_part_str = f'Context: {", ".join(context_parts)}'
-                enhanced_parts.append(context_part_str)
-            if user_input.schemas:
-                table_schemas_str = TableSchema.list_to_prompt(user_input.schemas, dialect=self.agent_config.db_type)
-                enhanced_parts.append(f"Table Schemas: \n{table_schemas_str}")
-            if user_input.metrics:
-                enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in user_input.metrics])}")
+            from datus.agent.node.gen_sql_agentic_node import build_enhanced_message
 
-            if user_input.reference_sql:
-                enhanced_parts.append(
-                    f"Reference SQL: \n{to_str([item.model_dump() for item in user_input.reference_sql])}"
-                )
-
-            if enhanced_parts:
-                enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {user_input.user_message}"
+            enhanced_message = build_enhanced_message(
+                user_message=user_input.user_message,
+                db_type=self.agent_config.db_type,
+                catalog=user_input.catalog,
+                database=user_input.database,
+                db_schema=user_input.db_schema,
+                external_knowledge=user_input.external_knowledge,
+                schemas=user_input.schemas,
+                metrics=user_input.metrics,
+                reference_sql=user_input.reference_sql,
+            )
 
             # Execute with streaming
             response_content = ""

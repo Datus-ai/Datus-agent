@@ -21,7 +21,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
-from datus.schemas.node_models import TableSchema
+from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
@@ -135,6 +135,7 @@ class GenSQLAgenticNode(AgenticNode):
         if not self.input or not isinstance(self.input, GenSQLNodeInput):
             self.input = GenSQLNodeInput(
                 user_message=workflow.task.task,
+                external_knowledge=workflow.task.external_knowledge,
                 catalog=workflow.task.catalog_name,
                 database=workflow.task.database_name,
                 db_schema=workflow.task.schema_name,
@@ -144,9 +145,12 @@ class GenSQLAgenticNode(AgenticNode):
         else:
             # Update existing input with workflow data
             self.input.user_message = workflow.task.task
+            self.input.external_knowledge = workflow.task.external_knowledge
             self.input.catalog = workflow.task.catalog_name
             self.input.database = workflow.task.database_name
             self.input.db_schema = workflow.task.schema_name
+            self.input.schemas = workflow.context.table_schemas
+            self.input.metrics = workflow.context.metrics
 
         return {"success": True, "message": "GenSQL input prepared from workflow"}
 
@@ -476,33 +480,17 @@ class GenSQLAgenticNode(AgenticNode):
             system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)
 
             # Add context to user message if provided
-            enhanced_message = user_input.user_message
-            enhanced_parts = []
-
-            if user_input.catalog or user_input.database or user_input.db_schema:
-                context_parts = []
-                if user_input.catalog:
-                    context_parts.append(f"catalog: {user_input.catalog}")
-                if user_input.database:
-                    context_parts.append(f"database: {user_input.database}")
-                if user_input.db_schema:
-                    context_parts.append(f"schema: {user_input.db_schema}")
-                context_part_str = f'Context: {", ".join(context_parts)}'
-                enhanced_parts.append(context_part_str)
-
-            if user_input.schemas:
-                table_schemas_str = TableSchema.list_to_prompt(user_input.schemas, dialect=self.agent_config.db_type)
-                enhanced_parts.append(f"Table Schemas: \n{table_schemas_str}")
-            if user_input.metrics:
-                enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in user_input.metrics])}")
-
-            if user_input.reference_sql:
-                enhanced_parts.append(
-                    f"Reference SQL: \n{to_str([item.model_dump() for item in user_input.reference_sql])}"
-                )
-
-            if enhanced_parts:
-                enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {user_input.user_message}"
+            enhanced_message = build_enhanced_message(
+                user_message=user_input.user_message,
+                db_type=self.agent_config.db_type,
+                catalog=user_input.catalog,
+                database=user_input.database,
+                db_schema=user_input.db_schema,
+                external_knowledge=user_input.external_knowledge,
+                schemas=user_input.schemas,
+                metrics=user_input.metrics,
+                reference_sql=user_input.reference_sql,
+            )
 
             # Execute with streaming
             response_content = ""
@@ -799,3 +787,44 @@ def prepare_template_context(
         context["workspace_root"] = workspace_root or agent_config.workspace_root
     logger.debug(f"Prepared template context: {context}")
     return context
+
+
+def build_enhanced_message(
+    user_message: str,
+    db_type: str,
+    catalog: str = "",
+    database: str = "",
+    db_schema: str = "",
+    external_knowledge: str = "",
+    schemas: Optional[list[TableSchema]] = None,
+    metrics: Optional[list[Metric]] = None,
+    reference_sql: Optional[list[ReferenceSql]] = None,
+) -> str:
+    enhanced_message = user_message
+    enhanced_parts = []
+    if external_knowledge:
+        enhanced_parts.append(f"### External knowledge / Evidence (AUTHORITATIVE)\n{external_knowledge}")
+
+    context_parts = [f"dialect: {db_type}"]
+    if catalog:
+        context_parts.append(f"catalog: {catalog}")
+    if database:
+        context_parts.append(f"database: {database}")
+    if db_schema:
+        context_parts.append(f"schema: {db_schema}")
+    context_part_str = f'Context: {", ".join(context_parts)}'
+    enhanced_parts.append(context_part_str)
+
+    if schemas:
+        table_schemas_str = TableSchema.list_to_prompt(schemas, dialect=db_type)
+        enhanced_parts.append(f"Table Schemas: \n{table_schemas_str}")
+    if metrics:
+        enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
+
+    if reference_sql:
+        enhanced_parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
+
+    if enhanced_parts:
+        enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {user_message}"
+
+    return enhanced_message
