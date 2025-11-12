@@ -108,7 +108,8 @@ async def process_sql_item(
         sql_summary_file = None
 
         # Execute and collect results
-        async for action in node.execute_stream(sql_input, action_history_manager):
+        node.input = sql_input
+        async for action in node.execute_stream(action_history_manager):
             if action.status == ActionStatus.SUCCESS and action.output:
                 output = action.output
                 if isinstance(output, dict):

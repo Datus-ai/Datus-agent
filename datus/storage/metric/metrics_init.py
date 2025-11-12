@@ -86,7 +86,8 @@ async def process_line(
     semantic_model_file = None
 
     try:
-        async for action in semantic_node.execute_stream(semantic_input, action_history_manager):
+        semantic_node.input = semantic_input
+        async for action in semantic_node.execute_stream(action_history_manager):
             if action.status == ActionStatus.SUCCESS and action.output:
                 output = action.output
                 if isinstance(output, dict):
@@ -124,7 +125,8 @@ async def process_line(
     action_history_manager = ActionHistoryManager()
 
     try:
-        async for action in metrics_node.execute_stream(metrics_input, action_history_manager):
+        metrics_node.input = metrics_input
+        async for action in metrics_node.execute_stream(action_history_manager):
             if action.status == ActionStatus.SUCCESS and action.output:
                 logger.debug(f"Metrics generation action: {action.messages}")
 

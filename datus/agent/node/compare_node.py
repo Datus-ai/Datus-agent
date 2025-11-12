@@ -128,7 +128,8 @@ class CompareNode(Node):
                 agent_config=self.agent_config,
             )
 
-            async for action in compare_agentic_node.execute_stream(self.input, action_history_manager):
+            compare_agentic_node.input = self.input
+            async for action in compare_agentic_node.execute_stream(action_history_manager):
                 yield action
 
         except Exception as e:
