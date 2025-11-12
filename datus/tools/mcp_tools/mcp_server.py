@@ -45,8 +45,24 @@ class SilentMCPServerStdio(MCPServerStdio):
             # Unix/Linux/macOS: Use sh with explicit env exports
             redirect_cmd = "sh"
 
+            # Filter out shell-specific and system internal variables that cause issues
+            # Keep user-configured variables (API keys, DB credentials, etc.) and essential system variables
+            excluded_prefixes = (
+                "BASH_",
+                "ZSH_",
+                "_",
+                "__CF",
+                "COMMAND_MODE",
+                "SSH_CLIENT",
+                "SSH_CONNECTION",
+                "SSH_TTY",
+            )
+            excluded_vars = ("SHLVL", "SHELLOPTS", "PS1", "PS2", "PS3", "PS4", "OLDPWD")
+
+            filtered_env = {k: v for k, v in env.items() if not (k.startswith(excluded_prefixes) or k in excluded_vars)}
+
             # Build environment variable exports
-            env_exports = " ".join(f"{k}={shlex.quote(str(v))}" for k, v in env.items())
+            env_exports = " ".join(f"{k}={shlex.quote(str(v))}" for k, v in filtered_env.items())
 
             # Quote command and args properly
             cmd_str = shlex.quote(original_command)
