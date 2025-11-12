@@ -254,26 +254,25 @@ class SqlSummaryAgenticNode(AgenticNode):
 
     async def execute_stream(
         self,
-        user_input: Optional[SqlSummaryNodeInput] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute the SQL summary node interaction with streaming support.
 
         Args:
-            user_input: Customized input containing user message and SQL context (optional, can use self.input)
             action_history_manager: Optional action history manager
 
         Yields:
             ActionHistory: Progress updates during execution
         """
-        # Support both direct parameter and self.input
-        if user_input is None:
-            if self.input is None:
-                raise ValueError("SQL summary input not set. Provide user_input parameter or set self.input.")
-            user_input = self.input
         if not action_history_manager:
             action_history_manager = ActionHistoryManager()
+
+        # Get input from self.input
+        if self.input is None:
+            raise ValueError("SQL summary input not set. Set self.input before calling execute_stream.")
+
+        user_input = self.input
 
         # Create initial action
         action = ActionHistory.create_action(

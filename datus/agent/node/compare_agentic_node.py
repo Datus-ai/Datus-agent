@@ -171,21 +171,25 @@ class CompareAgenticNode(AgenticNode):
     @optional_traceable()
     async def execute_stream(
         self,
-        user_input: CompareInput,
         action_history_manager: Optional[ActionHistoryManager] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
         Execute SQL comparison with streaming support and action history tracking.
 
         Args:
-            user_input: Compare input containing SQL task and expectation
             action_history_manager: Optional action history manager
 
         Yields:
             ActionHistory: Progress updates during execution
         """
-        if not isinstance(user_input, CompareInput):
+        # Get input from self.input
+        if self.input is None:
+            raise ValueError("Compare input not set. Set self.input before calling execute_stream.")
+
+        if not isinstance(self.input, CompareInput):
             raise ValueError("Input must be a CompareInput instance")
+
+        user_input = self.input
 
         if not self.model:
             raise ValueError("Model is not initialized for CompareAgenticNode")
