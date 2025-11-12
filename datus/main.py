@@ -367,10 +367,6 @@ def main():
         elif args.command == "delete":
             return 0 if NamespaceManager.delete(agent_config) else 1
 
-        # Placeholder for other namespace actions
-        print(f"Namespace action '{args.command}' not implemented yet.")
-        return 1
-
     # Initialize agent with both args and config
     agent = Agent(args, agent_config)
 
