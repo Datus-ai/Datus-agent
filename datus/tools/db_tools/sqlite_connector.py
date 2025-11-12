@@ -3,9 +3,8 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import sqlite3
-from typing import Any, Dict, Iterator, List, Literal, Optional, override
+from typing import Any, Dict, List, Literal, Optional, override
 
-import pyarrow as pa
 from pandas import DataFrame
 from pyarrow import Table
 
@@ -271,31 +270,6 @@ class SQLiteConnector(BaseSqlConnector):
     def execute_csv(self, sql: str) -> ExecuteSQLResult:
         """Execute query and return CSV format."""
         return self.execute_query(sql, result_format="csv")
-
-    @override
-    def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator[Table]:
-        """Execute query and return results as Arrow tables in batches."""
-        self.connect()
-        cursor = self.connection.cursor()
-        cursor.execute(sql)
-
-        columns = [desc[0] for desc in cursor.description] if cursor.description else []
-
-        while True:
-            batch = cursor.fetchmany(max_rows)
-            if not batch:
-                break
-
-            # Convert batch to Arrow Table
-            if columns:
-                # Build column arrays from batch rows
-                column_data = {col: [row[i] for row in batch] for i, col in enumerate(columns)}
-                arrow_table = pa.table(column_data)
-            else:
-                # Empty schema case
-                arrow_table = pa.table({})
-
-            yield arrow_table
 
     @override
     def execute_queries(self, queries: List[str]) -> List[Any]:

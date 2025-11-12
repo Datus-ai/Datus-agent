@@ -353,7 +353,7 @@ class DBManager:
             return SQLiteConfig(
                 db_path=db_path,
                 timeout_seconds=timeout_seconds,
-                database_name=db_config.logic_name or None,
+                database_name=None,  # Let connector extract from file path
             )
 
         elif db_type == DBType.DUCKDB:
@@ -364,7 +364,7 @@ class DBManager:
             return DuckDBConfig(
                 db_path=db_path,
                 timeout_seconds=timeout_seconds,
-                database_name=db_config.logic_name or None,
+                database_name=None,  # Let connector extract from file path
             )
 
         else:

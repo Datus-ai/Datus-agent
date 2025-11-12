@@ -5,8 +5,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterator, List, Literal, Optional, Set, Tuple
 
-from pyarrow import Table as ArrowTable
-
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
 from datus.tools.db_tools.config import ConnectionConfig
@@ -222,9 +220,6 @@ class BaseSqlConnector(ABC):
 
     @abstractmethod
     def execute_csv(self, sql: str) -> ExecuteSQLResult:
-        raise NotImplementedError()
-
-    def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator[ArrowTable]:
         raise NotImplementedError()
 
     # ==================== Core Methods (Required) ====================

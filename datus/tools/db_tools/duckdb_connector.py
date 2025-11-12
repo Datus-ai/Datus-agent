@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, Iterator, List, Literal, Optional, Set, override
+from typing import Any, Dict, List, Literal, Optional, Set, override
 
 import duckdb
 from pydantic import BaseModel, Field
@@ -312,30 +312,6 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
     def execute_csv(self, sql: str) -> ExecuteSQLResult:
         """Execute query and return CSV format."""
         return self.execute_query(sql, result_format="csv")
-
-    @override
-    def execute_arrow_iterator(self, sql: str, max_rows: int = 100) -> Iterator:
-        """Execute query and return results as Arrow tables in batches."""
-        self.connect()
-        result = self.connection.execute(sql)
-
-        while True:
-            batch = result.fetchmany(max_rows)
-            if not batch:
-                break
-
-            # Convert batch to Arrow Table using DuckDB's native support
-            columns = [desc[0] for desc in result.description]
-            column_data = {col: [row[i] for row in batch] for i, col in enumerate(columns)}
-
-            # Use pandas as intermediate for conversion to Arrow
-            import pandas as pd
-            import pyarrow as pa
-
-            df = pd.DataFrame(column_data)
-            arrow_table = pa.Table.from_pandas(df)
-
-            yield arrow_table
 
     @override
     def execute_queries(self, queries: List[str]) -> List[Any]:
