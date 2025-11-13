@@ -19,6 +19,8 @@ STATUS_GEN_SQL_FAILED = "Gen SQL Failed"
 STATUS_RESULT_MISMATCH = "Result Mismatch"
 STATUS_COLUMN_MISMATCH = "Column Mismatch"
 STATUS_NOT_EXECUTED = "Not Executed"
+TASK_SUCCESS_RATE_HEADER = "Matching success rate"
+SUMMARY_ROW_LABEL = "Summary of matching success rate"
 
 
 def parse_args() -> argparse.Namespace:
@@ -214,13 +216,41 @@ def export_summary_excel(
     integration_root: Path,
     workflow_slug: str,
 ) -> Path:
+    def normalize_statuses(statuses: List[str]) -> List[str]:
+        normalized: List[str] = []
+        for idx in range(round_count):
+            normalized.append(statuses[idx] if idx < len(statuses) else STATUS_NOT_EXECUTED)
+        return normalized
+
+    def format_percentage(rate: float) -> str:
+        return f"{rate * 100:.2f}%"
+
     rows: List[Dict[str, str]] = []
+    round_match_counts = [0] * round_count
     for task_id, statuses in matrix.items():
+        normalized_statuses = normalize_statuses(statuses)
         row = {"task_id": task_id}
         for idx in range(round_count):
             header = f"round_{idx}"
-            row[header] = statuses[idx] if idx < len(statuses) else STATUS_NOT_EXECUTED
+            status_value = normalized_statuses[idx]
+            row[header] = status_value
+            if status_value == STATUS_MATCHED:
+                round_match_counts[idx] += 1
+        success_count = sum(1 for status in normalized_statuses if status == STATUS_MATCHED)
+        denominator = round_count if round_count else 1
+        success_rate = success_count / denominator
+        row[TASK_SUCCESS_RATE_HEADER] = format_percentage(success_rate)
         rows.append(row)
+    total_tasks = len(matrix) if matrix else 0
+    summary_row: Dict[str, str] = {"task_id": SUMMARY_ROW_LABEL}
+    for idx in range(round_count):
+        denominator = total_tasks if total_tasks else 1
+        rate = round_match_counts[idx] / denominator
+        summary_row[f"round_{idx}"] = format_percentage(rate)
+    total_denominator = (total_tasks * round_count) if total_tasks and round_count else 1
+    total_success_rate = sum(round_match_counts) / total_denominator
+    summary_row[TASK_SUCCESS_RATE_HEADER] = format_percentage(total_success_rate)
+    rows.append(summary_row)
     df = pd.DataFrame(rows)
     excel_path = integration_root / f"{workflow_slug}_multi_round_summary.xlsx"
     df.to_excel(excel_path, index=False)
