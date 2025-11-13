@@ -394,6 +394,7 @@ class GenerationHooks(AgentHooks):
         """Check if YAML content is Reference SQL (contains reference_sql or has id+sql+summary fields)."""
         import yaml
 
+        logger.debug(f"Checking if YAML content is Reference SQL: {yaml_content}")
         try:
             doc = yaml.safe_load(yaml_content)
             if isinstance(doc, dict):
@@ -406,7 +407,8 @@ class GenerationHooks(AgentHooks):
                 has_summary = "summary" in doc or "comment" in doc
                 return has_sql and has_id and has_summary
             return False
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error checking if YAML content is Reference SQL: {e}", exc_info=True)
             return False
 
     @staticmethod

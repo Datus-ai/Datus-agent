@@ -264,19 +264,7 @@ agent:
     gen_metrics:
       model: anthropic
       max_turns: 40
-      # Optional: Predefined subject_tree for metric classification
-      # Format: List of "domain/layer1/layer2" paths
-      # subject_tree:
-      #   - "Sales/Reporting/Daily"
-      #   - "Sales/Analytics/Trends"
-      #   - "Marketing/Campaign/Email"
 
     gen_sql_summary:
       model: deepseek_v3
       max_turns: 30
-      # Optional: Predefined subject_tree for SQL classification
-      # Format: List of "domain/layer1/layer2" paths
-      # subject_tree:
-      #   - "Sales/Reporting/Daily"
-      #   - "Sales/Analytics/Trends"
-      #   - "Marketing/Campaign/Email"

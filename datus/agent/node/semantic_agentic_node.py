@@ -47,6 +47,7 @@ class SemanticAgenticNode(AgenticNode):
         node_name: str,
         agent_config: AgentConfig,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        subject_tree: Optional[list] = None,
     ):
         """
         Initialize the SemanticAgenticNode.
@@ -55,18 +56,18 @@ class SemanticAgenticNode(AgenticNode):
             node_name: Name of the node configuration in agent.yml (gen_semantic_model or gen_metrics)
             agent_config: Agent configuration
             execution_mode: Execution mode - "interactive" (default) or "workflow"
+            subject_tree: Optional predefined subject tree categories
         """
         self.configured_node_name = node_name
         self.execution_mode = execution_mode
+        self.subject_tree = subject_tree
 
         # Get max_turns from agentic_nodes configuration, default to 30
         self.max_turns = 30
-        self.subject_tree = None
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
-                self.subject_tree = agentic_node_config.get("subject_tree", None)
 
         path_manager = get_path_manager()
         self.semantic_model_dir = str(path_manager.semantic_model_path(agent_config.current_namespace))
@@ -92,6 +93,11 @@ class SemanticAgenticNode(AgenticNode):
         logger.debug(
             f"SemanticAgenticNode final mcp_servers: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
         )
+
+        # Initialize metrics storage for context queries (gen_metrics only)
+        from datus.storage.metric.store import SemanticMetricsRAG
+
+        self.metrics_rag = SemanticMetricsRAG(agent_config)
 
         # Setup tools based on hardcoded configuration
         self.db_func_tool: Optional[DBFuncTool] = None
@@ -233,6 +239,37 @@ class SemanticAgenticNode(AgenticNode):
 
         return mcp_servers
 
+    def _get_existing_subject_trees(self) -> list:
+        """
+        Query existing subject_tree values from metrics storage.
+
+        Returns:
+            List of unique subject_tree values in "domain/layer1/layer2" format
+        """
+        try:
+            # Get all metrics with domain/layer1/layer2 fields
+            all_metrics = self.metrics_rag.search_all_semantic_models(select_fields=["domain", "layer1", "layer2"])
+
+            # Extract unique subject_tree combinations
+            subject_trees_set = set()
+            for metric in all_metrics:
+                domain = metric.get("domain", "").strip()
+                layer1 = metric.get("layer1", "").strip()
+                layer2 = metric.get("layer2", "").strip()
+
+                # Only add if all three fields are non-empty
+                if domain and layer1 and layer2:
+                    subject_tree = f"{domain}/{layer1}/{layer2}"
+                    subject_trees_set.add(subject_tree)
+
+            subject_trees = sorted(list(subject_trees_set))
+            logger.debug(f"Found {len(subject_trees)} existing metric subject_trees")
+            return subject_trees
+
+        except Exception as e:
+            logger.error(f"Error getting existing metric subject_trees: {e}")
+            return []
+
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         """
         Prepare template context variables for the semantic model generation template.
@@ -249,7 +286,20 @@ class SemanticAgenticNode(AgenticNode):
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
         context["semantic_model_dir"] = self.semantic_model_dir
-        context["subject_tree"] = self.subject_tree
+
+        # Handle subject_tree context based on whether predefined or query from storage
+        if self.subject_tree:
+            # Predefined mode: use provided subject_tree
+            context["has_subject_tree"] = True
+            context["subject_tree"] = self.subject_tree
+        else:
+            # Learning mode: query existing subject_trees from LanceDB for gen_metrics
+            context["has_subject_tree"] = False
+            if self.configured_node_name == "gen_metrics":
+                existing_trees = self._get_existing_subject_trees()
+                context["existing_subject_trees"] = existing_trees
+                if existing_trees:
+                    logger.info(f"Found {len(existing_trees)} existing metric subject_trees for context")
 
         logger.debug(f"Prepared template context: {context}")
         return context

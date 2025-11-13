@@ -614,6 +614,14 @@ class Agent:
         benchmark_platform = self.args.benchmark
         pool_size = 4 if not self.args.pool_size else self.args.pool_size
         dir_path = self.global_config.rag_storage_path()
+
+        # Parse subject_tree from command line if provided
+        subject_tree = None
+        if hasattr(self.args, "subject_tree") and self.args.subject_tree:
+            # Parse comma-separated string into list
+            subject_tree = [s.strip() for s in self.args.subject_tree.split(",") if s.strip()]
+            logger.info(f"Using predefined subject_tree categories: {subject_tree}")
+
         for component in selected_components:
             # db_name = component_dirs[component]``
             # Initialize corresponding stores
@@ -716,7 +724,7 @@ class Agent:
                 if hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
                     init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
                 else:
-                    init_success_story_metrics(self.args, self.global_config)
+                    init_success_story_metrics(self.args, self.global_config, subject_tree)
 
                 # Create metrics_store for statistics
                 self.metrics_store = SemanticMetricsRAG(self.global_config)
@@ -772,6 +780,7 @@ class Agent:
                     self.global_config,
                     build_mode=kb_update_strategy,
                     pool_size=pool_size,
+                    subject_tree=subject_tree,
                 )
                 if isinstance(result, dict) and result.get("status") != "error":
                     self._refresh_scoped_agents("reference_sql", kb_update_strategy)

@@ -151,6 +151,13 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only process and validate SQL files, then exit (for reference_sql component)",
     )
+    bootstrap_parser.add_argument(
+        "--subject_tree",
+        type=str,
+        help='Comma-separated subject tree categories (e.g., "Sales/Reporting/Daily,Sales/Analytics/Trends"). '
+        "If provided, only these predefined categories can be used. "
+        "If not provided, existing categories from LanceDB will be reused or new ones created.",
+    )
 
     # benchmark command
     benchmark_parser = subparsers.add_parser(

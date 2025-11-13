@@ -44,6 +44,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         execution_mode: str = "interactive",
         build_mode: str = "incremental",
+        subject_tree: Optional[list] = None,
     ):
         """
         Initialize the SqlSummaryAgenticNode.
@@ -53,22 +54,19 @@ class SqlSummaryAgenticNode(AgenticNode):
             agent_config: Agent configuration
             execution_mode: Execution mode - "interactive" (default) or "workflow"
             build_mode: "overwrite" or "incremental" (default: "incremental")
+            subject_tree: Optional predefined subject tree categories
         """
         self.configured_node_name = node_name
         self.execution_mode = execution_mode
         self.build_mode = build_mode
+        self.subject_tree = subject_tree
 
-        # Get subject_tree and max_turns from agentic_nodes configuration
+        # Get max_turns from agentic_nodes configuration
         self.max_turns = 30
-        self.subject_tree = None
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
-                subject_tree = agentic_node_config.get("subject_tree")
-                if subject_tree:
-                    self.subject_tree = subject_tree
-                    logger.info(f"Loaded subject_tree: {subject_tree}")
 
         path_manager = get_path_manager()
         self.sql_summary_dir = str(path_manager.sql_summary_path(agent_config.current_namespace))
@@ -87,6 +85,11 @@ class SqlSummaryAgenticNode(AgenticNode):
             tools=[],
             mcp_servers={},
         )
+
+        # Initialize reference SQL storage for context queries
+        from datus.storage.reference_sql.store import ReferenceSqlRAG
+
+        self.reference_sql_rag = ReferenceSqlRAG(agent_config)
 
         # Setup tools based on hardcoded configuration
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
@@ -113,7 +116,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         self.tools = []
 
         # Hardcoded tool configuration: specific methods from generation_tools and filesystem_tools
-        # tools: generation_tools.prepare_sql_summary_context, generation_tools.generate_sql_summary_id,
+        # tools: generation_tools.generate_sql_summary_id,
         # filesystem_tools.read_file, filesystem_tools.read_multiple_files, filesystem_tools.write_file,
         # filesystem_tools.edit_file, filesystem_tools.list_directory
         self._setup_specific_generation_tools()
@@ -128,13 +131,11 @@ class SqlSummaryAgenticNode(AgenticNode):
             self._setup_hooks()
 
     def _setup_specific_generation_tools(self):
-        """Setup specific generation tools: prepare_sql_summary_context and generate_sql_summary_id."""
+        """Setup specific generation tools: generate_sql_summary_id."""
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            # Pass predefined_taxonomy to GenerationTools
-            self.generation_tools = GenerationTools(self.agent_config, predefined_taxonomy=self.predefined_taxonomy)
-            self.tools.append(trans_to_function_tool(self.generation_tools.prepare_sql_summary_context))
+            self.generation_tools = GenerationTools(self.agent_config)
             self.tools.append(trans_to_function_tool(self.generation_tools.generate_sql_summary_id))
         except Exception as e:
             logger.error(f"Failed to setup specific generation tools: {e}")
@@ -165,6 +166,65 @@ class SqlSummaryAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
 
+    def _get_existing_subject_trees(self) -> list:
+        """
+        Query existing subject_tree values from reference SQL storage.
+
+        Returns:
+            List of unique subject_tree values in "domain/layer1/layer2" format
+        """
+        try:
+            subject_trees = self.reference_sql_rag.reference_sql_storage.get_existing_subject_trees()
+            logger.debug(f"Found {len(subject_trees)} existing reference SQL subject_trees")
+            return subject_trees
+        except Exception as e:
+            logger.error(f"Error getting existing subject_trees: {e}")
+            return []
+
+    def _get_similar_sqls(self, query_text: str, top_n: int = 5) -> list:
+        """
+        Find similar reference SQLs based on query text.
+
+        Args:
+            query_text: Text to use for similarity search (comment or SQL)
+            top_n: Number of similar results to return
+
+        Returns:
+            List of similar reference SQLs with fields: name, subject_tree, tags, comment, summary
+        """
+        try:
+            if not query_text:
+                return []
+
+            # Search using vector similarity on summary field
+            similar_items = self.reference_sql_rag.search_reference_sql_by_summary(query_text=query_text, top_n=top_n)
+
+            # Extract relevant fields and format results
+            results = []
+            for item in similar_items:
+                # Compose subject_tree from domain/layer1/layer2
+                domain = item.get("domain", "")
+                layer1 = item.get("layer1", "")
+                layer2 = item.get("layer2", "")
+                subject_tree = f"{domain}/{layer1}/{layer2}" if (domain and layer1 and layer2) else ""
+
+                results.append(
+                    {
+                        "name": item.get("name", ""),
+                        "subject_tree": subject_tree,
+                        "tags": item.get("tags", ""),
+                        "comment": item.get("comment", ""),
+                        "summary": item.get("summary", ""),
+                    }
+                )
+
+            logger.debug(f"Found {len(results)} similar reference SQLs")
+            return results
+
+        except Exception as e:
+            logger.error(f"Error getting similar reference SQLs: {e}")
+            return []
+
     def _prepare_template_context(self, user_input: SqlSummaryNodeInput) -> dict:
         """
         Prepare template context variables for the SQL summary generation template.
@@ -180,12 +240,29 @@ class SqlSummaryAgenticNode(AgenticNode):
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["sql_summary_dir"] = self.sql_summary_dir
 
-        # Add subject_tree if available (for LLM to choose from)
+        # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:
+            # Predefined mode: use provided subject_tree
             context["has_subject_tree"] = True
             context["subject_tree"] = self.subject_tree
         else:
+            # Learning mode: query existing subject_trees from LanceDB
             context["has_subject_tree"] = False
+            existing_trees = self._get_existing_subject_trees()
+            context["existing_subject_trees"] = existing_trees
+            if existing_trees:
+                logger.info(f"Found {len(existing_trees)} existing reference SQL subject_trees for context")
+
+        # Query similar reference SQLs for classification reference
+        # Use comment as primary query text, fallback to first 200 chars of SQL
+        query_text = user_input.comment if user_input.comment else ""
+        if not query_text and user_input.sql_query:
+            query_text = user_input.sql_query[:200]
+
+        similar_items = self._get_similar_sqls(query_text, top_n=5)
+        context["similar_items"] = similar_items
+        if similar_items:
+            logger.info(f"Found {len(similar_items)} similar reference SQLs for context")
 
         logger.debug(f"Prepared template context: {context}")
         return context

@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from agents import Tool
 
@@ -23,11 +23,9 @@ class GenerationTools:
     completing the generation process.
     """
 
-    def __init__(self, agent_config: AgentConfig, predefined_taxonomy: Optional[Dict[str, Any]] = None):
+    def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
-        self.predefined_taxonomy = predefined_taxonomy
         self.metrics_rag = SemanticMetricsRAG(agent_config)
-        logger.debug(f"GenerationTools initialized with predefined_taxonomy: {predefined_taxonomy is not None}")
 
     def available_tools(self) -> List[Tool]:
         """
@@ -41,7 +39,6 @@ class GenerationTools:
             for func in (
                 self.check_semantic_model_exists,
                 self.check_metric_exists,
-                self.prepare_sql_summary_context,
                 self.generate_sql_summary_id,
                 self.end_generation,
             )
@@ -166,267 +163,6 @@ class GenerationTools:
         except Exception as e:
             logger.error(f"Error checking metric existence: {e}")
             return FuncToolResult(success=0, error=f"Failed to check metric: {str(e)}")
-
-    def _get_existing_subject_trees(self) -> FuncToolResult:
-        """
-        Get existing subject_tree values from stored reference SQLs.
-
-        Use this tool to retrieve existing subject_tree classifications.
-        This helps maintain consistency when classifying new SQL queries.
-
-        Returns:
-            dict: Result containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'subject_tree_list' (list): List of unique subject_tree values
-                      in "domain/layer1/layer2" format
-        """
-        try:
-            from datus.storage.reference_sql.store import ReferenceSqlRAG
-
-            # Get SQL history storage
-            storage = ReferenceSqlRAG(self.agent_config)
-            subject_trees = storage.reference_sql_storage.get_existing_subject_trees()
-
-            return FuncToolResult(
-                result={
-                    "subject_tree_list": subject_trees,
-                    "message": f"Found {len(subject_trees)} existing subject_tree values",
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Error getting existing subject_trees: {e}")
-            return FuncToolResult(success=0, error=f"Failed to get subject_trees: {str(e)}")
-
-    def _check_sql_name_exists(self, name: str) -> FuncToolResult:
-        """
-        Check if an SQL history name already exists.
-
-        Use this tool to avoid duplicate SQL history names.
-
-        Args:
-            name: SQL history name to check
-
-        Returns:
-            dict: Check results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'exists' (bool): Whether the name already exists
-                    - 'conflicting_names' (list): List of similar existing names
-                    - 'message' (str): Description message
-        """
-        try:
-            from datus.storage.reference_sql.store import ReferenceSqlRAG
-
-            # Get SQL history storage
-            storage = ReferenceSqlRAG(self.agent_config)
-
-            # Search for similar names using FTS
-            all_items = storage.search_all_reference_sql()
-
-            # Check for exact match and collect similar names
-            exact_match = False
-            similar_names = []
-
-            for item in all_items:
-                item_name = item.get("name", "").lower()
-                search_name = name.lower()
-
-                if item_name == search_name:
-                    exact_match = True
-                elif search_name in item_name or item_name in search_name:
-                    similar_names.append(item.get("name", ""))
-
-            if exact_match:
-                return FuncToolResult(
-                    result={
-                        "exists": True,
-                        "conflicting_names": [name] + similar_names[:5],
-                        "message": f"Name '{name}' already exists. Consider using a different name.",
-                    }
-                )
-            elif similar_names:
-                return FuncToolResult(
-                    result={
-                        "exists": False,
-                        "conflicting_names": similar_names[:10],
-                        "message": f"Name '{name}' is available, but {len(similar_names)} similar names exist.",
-                    }
-                )
-            else:
-                return FuncToolResult(
-                    result={
-                        "exists": False,
-                        "conflicting_names": [],
-                        "message": f"Name '{name}' is available and unique.",
-                    }
-                )
-
-        except Exception as e:
-            logger.error(f"Error checking SQL name existence: {e}")
-            return FuncToolResult(success=0, error=f"Failed to check SQL name: {str(e)}")
-
-    def _get_similar_reference_sqls(self, comment: str = "", summary: str = "", top_n: int = 5) -> FuncToolResult:
-        """
-        Get similar reference SQLs based on comment or summary.
-
-        Use this tool to find similar existing reference SQLs for reference when
-        classifying new SQL queries.
-
-        Args:
-            comment: SQL comment for similarity search
-            summary: SQL summary for similarity search (if available)
-            top_n: Number of similar results to return (default: 5)
-
-        Returns:
-            dict: Search results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'similar_items' (list): List of similar reference SQLs with fields:
-                        name, subject_tree, tags, comment, summary
-                    - 'count' (int): Number of results found
-        """
-        try:
-            from datus.storage.reference_sql.store import ReferenceSqlRAG
-
-            # Get reference SQL storage
-            storage = ReferenceSqlRAG(self.agent_config)
-
-            # Use summary for vector search if available, otherwise use comment
-            query_text = summary if summary else comment
-
-            if not query_text:
-                return FuncToolResult(
-                    result={
-                        "similar_items": [],
-                        "count": 0,
-                        "message": "No query text provided for similarity search",
-                    }
-                )
-
-            # Search using vector similarity on summary field
-            similar_items = storage.search_reference_sql_by_summary(query_text=query_text, top_n=top_n)
-
-            # Extract relevant fields
-            results = []
-            for item in similar_items:
-                # Compose subject_tree from domain/layer1/layer2
-                domain = item.get("domain", "")
-                layer1 = item.get("layer1", "")
-                layer2 = item.get("layer2", "")
-                subject_tree = f"{domain}/{layer1}/{layer2}" if (domain and layer1 and layer2) else ""
-
-                results.append(
-                    {
-                        "name": item.get("name", ""),
-                        "subject_tree": subject_tree,
-                        "tags": item.get("tags", ""),
-                        "comment": item.get("comment", ""),
-                        "summary": item.get("summary", ""),
-                    }
-                )
-
-            return FuncToolResult(
-                result={
-                    "similar_items": results,
-                    "count": len(results),
-                    "message": f"Found {len(results)} similar reference SQLs",
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Error getting similar SQL histories: {e}")
-            return FuncToolResult(success=0, error=f"Failed to get similar SQL histories: {str(e)}")
-
-    def prepare_sql_summary_context(
-        self,
-        sql: str,
-        comment: str = "",
-        suggested_name: str = "",
-    ) -> FuncToolResult:
-        """
-        One-shot context preparation for SQL summary generation.
-
-        This tool combines multiple preparatory steps into a single call:
-        1. Get existing subject_tree values from storage
-        2. Find similar reference SQLs for reference
-        3. Check name uniqueness (if suggested_name provided)
-
-        Use this tool at the beginning of SQL summary workflow to get all necessary
-        context in one efficient call.
-
-        Args:
-            sql: SQL query to analyze
-            comment: SQL comment for similarity search
-            suggested_name: Optional suggested name to check for uniqueness
-
-        Returns:
-            dict: Comprehensive context containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'existing_subject_trees' (list): List of existing subject_tree values
-                      (empty if not in storage, will use predefined if configured)
-                    - 'similar_items' (list): Similar reference SQLs with subject_tree field
-                    - 'name_check' (dict): Name uniqueness check result (if suggested_name provided)
-                    - 'message' (str): Summary message
-        """
-        try:
-            result = {}
-            messages = []
-
-            # 1. Get existing subject_trees from storage (not used if predefined_taxonomy exists)
-            # Predefined taxonomy is passed directly via template context
-            if not self.predefined_taxonomy:
-                subject_tree_result = self._get_existing_subject_trees()
-                if subject_tree_result.success:
-                    result["existing_subject_trees"] = subject_tree_result.result.get("subject_tree_list", [])
-                    subject_tree_info = subject_tree_result.result.get("message", "")
-                    messages.append(f"Subject trees: {subject_tree_info}")
-                else:
-                    logger.debug(f"Failed to get subject_trees: {subject_tree_result.error}")
-                    result["existing_subject_trees"] = []
-            else:
-                # Predefined taxonomy available, no need to fetch from storage
-                result["existing_subject_trees"] = []
-                messages.append("Subject trees: Using predefined configuration")
-
-            # 2. Find similar reference SQLs
-            similar_result = self._get_similar_reference_sqls(
-                comment=comment,
-                summary=sql[:200],  # Use first 200 chars of SQL as fallback
-                top_n=5,
-            )
-            if similar_result.success:
-                result["similar_items"] = similar_result.result.get("similar_items", [])
-                similar_count = similar_result.result.get("count", 0)
-                messages.append(f"Similar reference SQLs: {similar_count}")
-            else:
-                logger.debug(f"Failed to get similar reference SQLs: {similar_result.error}")
-                result["similar_items"] = []
-
-            # 3. Check name if provided
-            if suggested_name:
-                name_result = self._check_sql_name_exists(name=suggested_name)
-                if name_result.success:
-                    result["name_check"] = name_result.result
-                    name_status = name_result.result.get("message", "")
-                    messages.append(f"Name check: {name_status}")
-                else:
-                    logger.debug(f"Failed to check name: {name_result.error}")
-                    result["name_check"] = {"error": name_result.error}
-
-            result["message"] = " | ".join(messages)
-
-            return FuncToolResult(result=result)
-
-        except Exception as e:
-            logger.error(f"Error preparing SQL summary context: {e}")
-            return FuncToolResult(success=0, error=f"Failed to prepare context: {str(e)}")
 
     def end_generation(self, filepath: str) -> FuncToolResult:
         """

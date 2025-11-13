@@ -21,6 +21,7 @@ async def process_sql_item(
     item: dict,
     agent_config: AgentConfig,
     build_mode: str = "incremental",
+    subject_tree: Optional[list] = None,
 ) -> Optional[str]:
     """
     Process a single SQL item using SqlSummaryAgenticNode in workflow mode.
@@ -29,6 +30,7 @@ async def process_sql_item(
         item: Dict containing sql, comment, summary, filepath fields
         agent_config: Agent configuration
         build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
+        subject_tree: Optional predefined subject tree categories
 
     Returns:
         SQL summary file path if successful, None otherwise
@@ -49,6 +51,7 @@ async def process_sql_item(
             agent_config=agent_config,
             execution_mode="workflow",
             build_mode=build_mode,
+            subject_tree=subject_tree,
         )
 
         action_history_manager = ActionHistoryManager()
@@ -80,6 +83,7 @@ def init_reference_sql(
     global_config: AgentConfig,
     build_mode: str = "overwrite",
     pool_size: int = 1,
+    subject_tree: Optional[list] = None,
 ) -> Dict[str, Any]:
     """Initialize reference SQL from SQL files directory.
 
@@ -89,6 +93,7 @@ def init_reference_sql(
         global_config: Global agent configuration for LLM model creation
         build_mode: "overwrite" to replace all data, "incremental" to add new entries
         pool_size: Number of threads for parallel processing
+        subject_tree: Optional predefined subject tree categories
 
     Returns:
         Dict containing initialization results and statistics
@@ -160,7 +165,7 @@ def init_reference_sql(
 
             async def process_with_semaphore(item):
                 async with semaphore:
-                    return await process_sql_item(item, global_config, build_mode)
+                    return await process_sql_item(item, global_config, build_mode, subject_tree)
 
             # Process all items in parallel
             results = await asyncio.gather(
