@@ -9,7 +9,8 @@ from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.node_models import BaseResult, SqlTask
+from datus.schemas.base import BaseResult
+from datus.schemas.node_models import SqlTask
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 

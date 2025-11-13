@@ -114,7 +114,13 @@ def extract_table_names(sql, dialect=DBType.SNOWFLAKE, ignore_empty=False) -> Li
     """
     # Parse the SQL using sqlglot
     read_dialect = parse_read_dialect(dialect)
-    parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.IGNORE)
+    try:
+        parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.IGNORE)
+        if parsed is None:
+            return []
+    except Exception as e:
+        logger.warning(f"Error parsing SQL {sql}, error: {e}")
+        return []
     table_names = []
 
     # Get all CTE names

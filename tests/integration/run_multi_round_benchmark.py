@@ -33,8 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--debug", action="store_true", help="Debug mode.")
     parser.add_argument(
         "--group_name",
-        type=bool,
-        default=False,
+        type=str,
         help="The name of the integration test group. If it is empty, the name of the workflow will be used.",
     )
     parser.add_argument(
