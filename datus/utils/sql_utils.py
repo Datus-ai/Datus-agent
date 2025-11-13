@@ -139,7 +139,7 @@ def extract_table_names(sql, dialect=DBType.SNOWFLAKE, ignore_empty=False) -> Li
             continue
         full_name = []
 
-        if dialect in [DBType.MYSQL, DBType.ORACLE]:
+        if dialect in [DBType.MYSQL, DBType.ORACLE, DBType.POSTGRES, DBType.POSTGRESQL]:
             if not ignore_empty or schema:
                 full_name.append(schema)
         elif dialect not in (DBType.SQLITE,):
