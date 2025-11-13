@@ -19,8 +19,8 @@ STATUS_GEN_SQL_FAILED = "Gen SQL Failed"
 STATUS_RESULT_MISMATCH = "Result Mismatch"
 STATUS_COLUMN_MISMATCH = "Column Mismatch"
 STATUS_NOT_EXECUTED = "Not Executed"
-TASK_SUCCESS_RATE_HEADER = "Matching success rate"
-SUMMARY_ROW_LABEL = "Summary of matching success rate"
+TASK_SUCCESS_RATE_HEADER = "Matching Rate"
+SUMMARY_ROW_LABEL = "Summary of Matching Rate"
 
 
 def parse_args() -> argparse.Namespace:
@@ -252,7 +252,7 @@ def export_summary_excel(
     summary_row[TASK_SUCCESS_RATE_HEADER] = format_percentage(total_success_rate)
     rows.append(summary_row)
     df = pd.DataFrame(rows)
-    excel_path = integration_root / f"{workflow_slug}_multi_round_summary.xlsx"
+    excel_path = integration_root / f"{workflow_slug}_summary.xlsx"
     df.to_excel(excel_path, index=False)
     return excel_path
 
