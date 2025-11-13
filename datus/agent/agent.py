@@ -6,23 +6,19 @@ import argparse
 import csv
 import os
 import shutil
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, AsyncGenerator, Dict, Optional, Set
 
 from pydantic import ValidationError
 
-from datus.agent.evaluate import evaluate_result, setup_node_input
-from datus.agent.plan import generate_workflow
-from datus.agent.workflow import Workflow
+from datus.agent.workflow_runner import WorkflowRunner
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
-from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
 
 # Import model implementations
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.agent_models import SubAgentConfig
-from datus.schemas.node_models import BaseResult, SqlTask
+from datus.schemas.node_models import SqlTask
 from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
 from datus.storage.metric.metrics_init import init_semantic_yaml_metrics, init_success_story_metrics
@@ -38,7 +34,6 @@ from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -74,9 +69,6 @@ class Agent:
         self.storage_modules = {}
         self.metadata_store = None
         self.metrics_store = None
-        self.workflow = None
-        self.workflow_ready = False
-        # self._setup_database_conn()
         self._check_storage_modules()
 
     def _initialize_model(self) -> LLMBaseModel:
@@ -119,204 +111,16 @@ class Agent:
 
         logger.info(f"Storage modules initialized: {list(self.storage_modules.keys())}")
 
-    def initialize_workflow(self, sql_task: SqlTask):
+    def create_workflow_runner(self, check_db: bool = True) -> WorkflowRunner:
+        """Create a workflow runner that can safely execute in isolation."""
+        return WorkflowRunner(self.args, self.global_config, pre_run_callable=self.check_db if check_db else None)
+
+    def run(self, sql_task: Optional[SqlTask] = None, check_storage: bool = False, check_db: bool = True) -> dict:
         """
-        Generate an initial workflow using the planning module.
+        Execute a workflow synchronously via a dedicated runner.
         """
-        # Use workflow from args if provided, otherwise use config default
-        plan_type = getattr(self.args, "workflow", None) or self.global_config.workflow_plan
-
-        self.workflow = generate_workflow(
-            task=sql_task,
-            plan_type=plan_type,
-            agent_config=self.global_config,
-        )
-
-        # Store plan_mode in workflow metadata
-        if hasattr(self.args, "plan_mode"):
-            self.workflow.metadata["plan_mode"] = self.args.plan_mode
-            # Also store that this is from workflow/benchmark context (not CLI REPL)
-            self.workflow.metadata["auto_execute_plan"] = True
-
-        # Display the initial workflow
-        self.workflow.display()
-        logger.info("Initial workflow generated")
-
-    def resume_workflow(self, config: argparse.Namespace):
-        """
-        Resume workflow from YAML config file and continue execution
-        Args:
-            workflow_config: Path to YAML configuration file
-        """
-        logger.info(f"Resuming workflow from config: {config}")
-
-        try:
-            # Load workflow from YAML
-            self.workflow = Workflow.load(config.load_cp)
-            self.workflow.global_config = self.global_config
-            # self.workflow.metadata = {"args": config}
-
-            self.workflow.resume()
-
-            # Display the initial workflow
-            self.workflow.display()
-            logger.info("resume workflow from {workflow_config} successfully")
-        except Exception as e:
-            logger.error(f"Failed to resume workflow: {str(e)}")
-            return {"status": "error", "message": str(e)}
-
-    def is_complete(self):
-        """
-        Check if the workflow is complete.
-        Returns:
-            True if the workflow is none or complete, False otherwise
-        """
-        if self.workflow is None:
-            return True
-        return self.workflow.is_complete()
-
-    def init_or_load_workflow(self, sql_task: SqlTask):
-        """
-        Initialize the workflow
-        """
-        # load_cp will be used to resume a workflow from a checkpoint and generate sqltask
-        if self.args.load_cp:
-            self.workflow_ready = False
-            self.workflow = None
-            self.resume_workflow(self.args)
-        elif sql_task:
-            self.workflow_ready = False
-            self.workflow = None
-            self.initialize_workflow(sql_task)
-        elif self.workflow_ready:
-            # if workflow is ready, just skip the initialization and run the workflow
-            pass
-        else:
-            logger.error("Failed to initialize workflow. need a sql_task or to load from checkpoint.")
-            return None
-
-        if not self.workflow:
-            logger.error("Failed to initialize workflow. Exiting.")
-            return None
-        self.workflow_ready = True
-        return True
-
-    @optional_traceable(name="agent")
-    def run(self, sql_task: Optional[SqlTask] = None, check_storage: bool = False) -> dict:
-        """
-        Main execution loop for the agent.
-
-        Returnsfinish benchmark_ids with:
-            The final result of the workflow execution
-        """
-        if check_storage:
-            self.global_config.check_init_storage_config("database")
-        logger.info("Starting agent execution")
-
-        if not self.init_or_load_workflow(sql_task):
-            return {}
-        self.check_db()
-        # Main execution loop
-        step_count = 0
-
-        # Skip the first node (Start Node), and setup input for the next one
-        if self.workflow.current_node_index == 0:
-            self.workflow.get_current_node().complete(BaseResult(success=True))
-            next_node = self.workflow.advance_to_next_node()
-            setup_node_input(next_node, self.workflow)
-
-        while not self.workflow.is_complete() and step_count < self.args.max_steps:
-            # Get the next task
-            current_node = self.workflow.get_current_node()
-            if not current_node:
-                logger.warning("No more tasks to execute. Exiting.")
-                break
-
-            # Execute the task
-            logger.info(f"Executing task: {current_node.description}")
-            current_node.run()
-            if current_node.status == "failed":
-                if current_node.type == NodeType.TYPE_PARALLEL:
-                    try:
-                        has_any_success = False
-                        if current_node.result and hasattr(current_node.result, "child_results"):
-                            for v in current_node.result.child_results.values():
-                                ok = v.get("success", False) if isinstance(v, dict) else getattr(v, "success", False)
-                                if ok:
-                                    has_any_success = True
-                                    break
-                        if has_any_success:
-                            logger.warning("Parallel node partial failure, continue to selection")
-                        else:
-                            logger.warning(f"Parallel node all failed: {current_node.description}")
-                            break
-                    except Exception:
-                        logger.warning(f"Node failed: {current_node.description}")
-                        break
-                else:
-                    logger.warning(f"Node failed: {current_node.description}")
-                    break
-            # evaluate the task result, update the context and setup the next node input if needed
-            evaluation = evaluate_result(current_node, self.workflow)
-            logger.debug(f"Evaluation result for {current_node.type}: {evaluation}")
-            if not evaluation["success"]:
-                logger.error(f"Setting {current_node.type} status to failed due to evaluation failure")
-                current_node.status = "failed"
-                break
-
-            # Check for human intervention, use a new now to handle human feedback
-            # if self.args.human_in_loop:
-            #    human_feedback = handle_human_intervention(self.workflow)
-            #    if human_feedback["modified"]:
-            #        logger.info("Workflow modified by human intervention")
-
-            self.workflow.advance_to_next_node()
-            step_count += 1
-
-        # Log if max steps reached
-        if step_count >= self.args.max_steps:
-            logger.warning(f"Workflow execution stopped after reaching max steps: {self.args.max_steps}")
-
-        # Save trajectories and collect final results
-        self.workflow.display()
-        file_name = self.workflow.task.id
-        timestamp = int(time.time())
-        trajectory_dir = self.global_config.trajectory_dir
-
-        # Ensure trajectory directory exists
-        os.makedirs(trajectory_dir, exist_ok=True)
-
-        save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
-        self.workflow.save(save_path)
-        logger.info(f"Workflow saved to {save_path}")
-        final_result = self.workflow.get_final_result()
-        logger.info(f"Agent execution completed. Steps:{step_count}")
-
-        return final_result
-
-    def _create_action_history(
-        self, action_id: str, messages: str, action_type: str, input_data: dict = None
-    ) -> ActionHistory:
-        """Helper method to create ActionHistory objects with consistent structure."""
-        return ActionHistory(
-            action_id=action_id,
-            role=ActionRole.WORKFLOW,
-            messages=messages,
-            action_type=action_type,
-            input=input_data or {},
-            status=ActionStatus.PROCESSING,
-        )
-
-    def _update_action_status(self, action: ActionHistory, success: bool, output_data: dict = None, error: str = None):
-        """Helper method to update ActionHistory status consistently."""
-        if success:
-            action.status = ActionStatus.SUCCESS
-            action.output = output_data or {}
-        else:
-            action.status = ActionStatus.FAILED
-            action.output = {"error": error or "Unknown error"}
-            if output_data:
-                action.output.update(output_data)
+        runner = self.create_workflow_runner(check_db=check_db)
+        return runner.run(sql_task=sql_task, check_storage=check_storage)
 
     async def run_stream(
         self,
@@ -324,184 +128,14 @@ class Agent:
         check_storage: bool = False,
         action_history_manager: Optional[ActionHistoryManager] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
-        """
-        Main execution loop for the agent with streaming support.
-
-        Yields ActionHistory objects for each workflow step and node execution.
-
-        Args:
-            sql_task: SQL task to execute
-            check_storage: Whether to check storage configuration
-            action_history_manager: Manager for tracking action history
-
-        Yields:
-            ActionHistory: Progress updates throughout execution
-        """
-        if check_storage:
-            self.global_config.check_init_storage_config("database")
-
-        logger.info("Starting agent execution with streaming")
-
-        # Workflow initialization action
-        init_action = self._create_action_history(
-            action_id="workflow_initialization",
-            messages="Initializing workflow and checking prerequisites",
-            action_type="workflow_init",
-            input_data={
-                "has_sql_task": bool(sql_task),
-                "check_storage": check_storage,
-                "load_from_checkpoint": bool(self.args.load_cp),
-            },
-        )
-        yield init_action
-
-        try:
-            # Initialize workflow
-            if not self.init_or_load_workflow(sql_task):
-                self._update_action_status(init_action, success=False, error="Failed to initialize workflow")
-                return
-
-            self.check_db()
-
-            self._update_action_status(
-                init_action,
-                success=True,
-                output_data={
-                    "workflow_ready": True,
-                    "total_nodes": len(self.workflow.nodes) if self.workflow else 0,
-                    "current_node_index": self.workflow.current_node_index if self.workflow else 0,
-                },
-            )
-
-        except Exception as e:
-            self._update_action_status(init_action, success=False, error=str(e))
-            logger.error(f"Workflow initialization failed: {e}")
-            return
-
-        # Main execution loop with streaming
-        step_count = 0
-
-        # Skip the first node (Start Node), and setup input for the next one
-        if self.workflow.current_node_index == 0:
-            self.workflow.get_current_node().complete(BaseResult(success=True))
-            next_node = self.workflow.advance_to_next_node()
-            setup_node_input(next_node, self.workflow)
-
-        while not self.workflow.is_complete() and step_count < self.args.max_steps:
-            # Get the next task
-            current_node = self.workflow.get_current_node()
-            if not current_node:
-                logger.warning("No more tasks to execute. Exiting.")
-                break
-
-            # Node execution start action
-            node_start_action = self._create_action_history(
-                action_id=f"node_execution_{current_node.id}",
-                messages=f"Executing node: {current_node.description}",
-                action_type="node_execution",
-                input_data={
-                    "node_id": current_node.id,
-                    "node_type": current_node.type,
-                    "description": current_node.description,
-                    "step_count": step_count,
-                },
-            )
-            yield node_start_action
-
-            try:
-                logger.info(f"Executing task: {current_node.description}")
-
-                # Execute node with streaming support
-                async for node_action in current_node.run_stream(action_history_manager):
-                    yield node_action
-
-                if current_node.status == "failed":
-                    self._update_action_status(
-                        node_start_action, success=False, error=f"Node execution failed: {current_node.description}"
-                    )
-                    logger.warning(f"Node failed: {current_node.description}")
-                    break
-
-                self._update_action_status(
-                    node_start_action,
-                    success=True,
-                    output_data={
-                        "node_completed": True,
-                        "execution_successful": True,
-                    },
-                )
-
-            except Exception as e:
-                self._update_action_status(node_start_action, success=False, error=str(e))
-                logger.error(f"Node execution error: {e}")
-                break
-
-            try:
-                evaluation = evaluate_result(current_node, self.workflow)
-                logger.debug(f"Evaluation result: {evaluation}")
-
-                if not evaluation["success"]:
-                    current_node.status = "failed"
-                    break
-
-            except Exception as e:
-                logger.error(f"Evaluation error: {e}")
-                break
-
-            self.workflow.advance_to_next_node()
-            step_count += 1
-
-        # Workflow completion action
-        completion_action = self._create_action_history(
-            action_id="workflow_completion",
-            messages="Finalizing workflow execution and saving results",
-            action_type="workflow_completion",
-            input_data={
-                "steps_completed": step_count,
-                "max_steps_reached": step_count >= self.args.max_steps,
-                "workflow_complete": self.workflow.is_complete(),
-            },
-        )
-        yield completion_action
-
-        try:
-            # Save trajectories and collect final results
-            self.workflow.display()
-            file_name = self.workflow.task.id
-            timestamp = int(time.time())
-            trajectory_dir = self.global_config.trajectory_dir
-
-            # Ensure trajectory directory exists
-            os.makedirs(trajectory_dir, exist_ok=True)
-
-            save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
-            self.workflow.save(save_path)
-            logger.info(f"Workflow saved to {save_path}")
-
-            final_result = self.workflow.get_final_result()
-            logger.info(f"Agent execution completed. Steps:{step_count}")
-
-            self._update_action_status(
-                completion_action,
-                success=True,
-                output_data={
-                    "workflow_saved": True,
-                    "save_path": save_path,
-                    "steps_completed": step_count,
-                    "final_result_available": bool(final_result),
-                },
-            )
-
-        except Exception as e:
-            self._update_action_status(completion_action, success=False, error=str(e))
-            logger.error(f"Workflow completion error: {e}")
-
-        # Yield the updated completion action with final status
-        yield completion_action
-
-        # Log if max steps reached
-        if step_count >= self.args.max_steps:
-            logger.warning(f"Workflow execution stopped after reaching max steps: {self.args.max_steps}")
+        """Execute a workflow with streaming progress updates."""
+        runner = self.create_workflow_runner()
+        async for action in runner.run_stream(
+            sql_task=sql_task,
+            check_storage=check_storage,
+            action_history_manager=action_history_manager,
+        ):
+            yield action
 
     def check_db(self):
         """Validate database connectivity."""
@@ -794,7 +428,6 @@ class Agent:
     def benchmark(self):
         logger.info("Benchmarking begins")
         benchmark_platform = self.args.benchmark
-
         benchmark_path = self.global_config.benchmark_path(benchmark_platform)
 
         if not os.path.exists(benchmark_path):
@@ -815,6 +448,7 @@ class Agent:
         default_db_name, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
             self.global_config.current_namespace
         )
+        self.check_db()
 
         def run_single_task(task_id: str, benchmark_config: BenchmarkConfig, task_item: Dict[str, Any]):
             """Execute a single benchmark task"""
@@ -842,7 +476,8 @@ class Agent:
                     if not benchmark_config.ext_knowledge_key
                     else task_item.get(benchmark_config.ext_knowledge_key, ""),
                     schema_linking_type="full",
-                )
+                ),
+                check_db=False,
             )
             logger.info(
                 f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
@@ -975,7 +610,7 @@ class Agent:
     def benchmark_bird_critic(self):
         pass
 
-    def evaluation(self) -> Dict[str, Any]:
+    def evaluation(self, log_summary: bool = True) -> Dict[str, Any]:
         """Evaluate the benchmarking"""
         benchmark_platform = self.args.benchmark
         if benchmark_platform in ("semantic_layer", "bird_critic"):
@@ -991,11 +626,12 @@ class Agent:
             benchmark_platform=benchmark_platform,
             target_task_ids=self.args.task_ids,
             output_file=self.args.output_file,
+            log_summary=log_summary,
         )
         return {
             "status": evaluation_result.get("status"),
             "generated_time": evaluation_result.get("generated_time"),
-            "error": evaluation_result.get("error"),
+            "message": evaluation_result.get("error"),
         }
 
     def generate_dataset(self):

@@ -70,5 +70,5 @@ def evaluate_result(node: Node, workflow: Workflow) -> Dict:
         else:
             return {"success": True, "message": "Last node, finished"}
     except Exception as e:
-        logger.error(f"Failed to evaluate result: {str(e)}")
+        logger.error(f"Failed to evaluate result: {e}")
         return {"success": False, "message": f"Evaluation failed: {str(e)}"}

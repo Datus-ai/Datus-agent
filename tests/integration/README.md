@@ -4,9 +4,11 @@ This document outlines testing workflows and utilities for benchmarks.
 
 ## Automated Benchmark Testing
 
-The Bird, Spider2, and Semantic Layer benchmarks now have fully automated testing integrated into the main benchmark functions. Simply run:
+The Bird, Spider2, and Semantic Layer benchmarks now have fully automated testing integrated into the main benchmark
+functions. Simply run:
 
 ### Bird Benchmark
+
 ```shell
 # Basic usage
 python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev
@@ -19,6 +21,7 @@ python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --ma
 ```
 
 ### Spider2 Benchmark
+
 ```shell
 # Basic usage
 python -m datus.main benchmark --namespace snowflake --benchmark spider2
@@ -31,6 +34,7 @@ python -m datus.main benchmark --namespace snowflake --benchmark spider2 --max_w
 ```
 
 ### Semantic Layer Benchmark
+
 ```shell
 # Basic usage
 python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial
@@ -43,6 +47,7 @@ python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --m
 ```
 
 These commands will automatically:
+
 1. Generate gold standard results (Bird and Semantic Layer)
 2. Run benchmark tests (Bird/Spider2 support parallel execution)
 3. Evaluate accuracy and generate reports
@@ -50,10 +55,50 @@ These commands will automatically:
 ### Parallel Execution Options
 
 The `--max_workers` parameter controls the number of concurrent threads for **Bird and Spider2** benchmarks:
+
 - **Default**: `--max_workers 1` (single-threaded, safest)
 - **Recommended**: `--max_workers 2-3` for most systems
 - **Note**: Higher concurrency may cause API rate limits or resource contention
 - **Semantic Layer**: Does not support parallel execution (runs sequentially)
+
+## Multi-round Benchmark Automation
+
+Use `tests/integration/run_multi_round_benchmark.py` to execute repeated benchmark + evaluation cycles and compare the
+outcomes.
+
+```shell
+python tests/integration/run_multi_round_benchmark.py \
+  --namespace bird_sqlite \
+  --benchmark bird_dev \
+  --workflow chat_agentic \
+  --max-round 4 \
+  --task-limit 50 \
+  --max-workers 2
+```
+
+Key options:
+
+- `--workflow`: workflow/plan name passed directly to the agent.
+- `--max-round`: number of benchmark/evaluation loops (default 4).
+- `--task-ids`: explicit task id list (space or comma separated).
+- `--max-workers`: same as the regular benchmark flag to control concurrency.
+
+For each round the script rewrites the agent's output directories to `{agent.home}/integration/{workflow}_{round}/` so
+the following artifacts stay isolated:
+
+- `save/` – namespace CSV answers.
+- `trajectory/` – YAML workflow traces.
+- `evaluation_round_{round}.json` – raw evaluation report.
+
+After all rounds finish, the tool aggregates every task's status into
+`{agent.home}/integration/{workflow}_multi_round_summary.xlsx` with the schema:
+
+| task_id | round_0 | round_1         | ... |
+|---------|---------|-----------------|-----|
+| 0       | matched | Result Mismatch | ... |
+
+Statuses currently map to: `matched`, `Gen SQL Failed`, `Result Mismatch`, `Column Mismatch`, and `Not Executed` (round
+failure or skipped task).
 
 ## Multi-agent testing
 
@@ -72,9 +117,11 @@ python gen_multi_benchmark.py --namespace bird_sqlite --benchmark bird_dev --wor
 ```
 
 # Run the tests concurrently with 3 threads for each agent
+
 ```shell
 cat run_integration_agent{i}.sh | parallel -j 3
 ```
+
 If using the Claude model, you need to reduce the parallelism, or set the parallelism to only 1.
 
 # Select the best answer
@@ -84,6 +131,7 @@ python select_answer.py --workdir=${path to datus agent} --namespace bird_sqlite
 ```
 
 # Evaluate the agent1 answer
+
 ```shell
 python evaluation.py --gold-path=benchmark/bird/dev_20240627/gold --namespace bird_sqlite --workdir=${path to datus agent} --save-dir multi/agent1_save --result-dir multi/agent1_output --enable-comparison
 ```

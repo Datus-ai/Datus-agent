@@ -4,7 +4,7 @@ from datus.utils.sql_utils import (
     _first_statement,
     extract_table_names,
     parse_context_switch,
-    parse_metadata,
+    parse_metadata_from_ddl,
     parse_sql_type,
     parse_table_name_parts,
 )
@@ -54,7 +54,7 @@ SQL = """create or replace TABLE GT.GT2.VARIANTS (
 
 
 def test_parse_sql():
-    table_meta = parse_metadata(SQL, DBType.SNOWFLAKE)
+    table_meta = parse_metadata_from_ddl(SQL, DBType.SNOWFLAKE)
     print(table_meta)
     assert table_meta["table"]["name"] == "VARIANTS"
     assert table_meta["columns"][0]["name"] == "reference_name"
@@ -62,7 +62,7 @@ def test_parse_sql():
 
 
 def test_parse_oracle():
-    table_meta = parse_metadata(
+    table_meta = parse_metadata_from_ddl(
         """CREATE TABLE "attendance" (
     "link_to_event" NVARCHAR2(512) NOT NULL,
     "link_to_member" NVARCHAR2(512) NOT NULL,
@@ -76,7 +76,7 @@ def test_parse_oracle():
 
 
 def test_parse_mysql():
-    table_meta = parse_metadata(
+    table_meta = parse_metadata_from_ddl(
         """CREATE TABLE `connected` (
 `atom_id` varchar(256) NOT NULL,
 `atom_id2` varchar(256) NOT NULL,
@@ -94,7 +94,7 @@ def test_parse_mysql():
 
 
 def test_parse_postgresql():
-    table_meta = parse_metadata(
+    table_meta = parse_metadata_from_ddl(
         """CREATE TABLE "trans" (
 trans_id bigint NOT NULL DEFAULT '0'::bigint,
 account_id bigint NULL DEFAULT '0'::bigint,
@@ -117,7 +117,7 @@ account bigint NULL,
 
 
 def test_parse_sqlserver():
-    table_meta = parse_metadata(
+    table_meta = parse_metadata_from_ddl(
         """CREATE TABLE [schools] (
 [CDSCode] nvarchar(256) NOT NULL,
 [NCESDist] nvarchar(MAX) NULL,
@@ -397,7 +397,7 @@ def test_json_utils():
 
 
 def parse_and_print(select_sql, except_tables, dialect=DBType.SQLITE):
-    tables = extract_table_names(select_sql, dialect)
+    tables = extract_table_names(select_sql, dialect, ignore_empty=True)
     for table in tables:
         print(f"  - {table}")
     assert set(tables) == set(except_tables)
@@ -484,7 +484,7 @@ ORDER BY
 
 
 def test_parse_duckdb():
-    table_meta = parse_metadata(
+    table_meta = parse_metadata_from_ddl(
         """CREATE TABLE abc.test (
 id bigint primary key,
 account_id bigint null default '0',
@@ -496,7 +496,7 @@ type text null)""",
 
 
 def test_parse_sqlite():
-    table_meta = parse_metadata(
+    table_meta = parse_metadata_from_ddl(
         """CREATE TABLE date (
           d_datekey          INT,     -- identifier, unique id -- e.g. 19980327 (what we use)
           d_date             TEXT,  -- varchar(18), --fixed text, size 18, longest: december 22, 1998
@@ -536,6 +536,15 @@ def test_parse_sqlite_select():
     THEN NULL ELSE COUNT(atom_id) END) AS ratio, label FROM SubQuery GROUP BY label"""
     tables = extract_table_names(sql, dialect=DBType.SQLITE)
     assert set(tables) == {"atom", "molecule"}
+
+
+def test_extract_table_names():
+    assert set(extract_table_names("SELECT * FROM default_catalog.bar.baz")) == {"default_catalog.bar.baz"}
+    sql_three_part = "SELECT * FROM foo.bar.baz"
+    sql_two_part = "SELECT * FROM foo.bar"
+    assert set(extract_table_names(sql_three_part, dialect=DBType.SQLSERVER, ignore_empty=True)) == {"foo.bar.baz"}
+    for dialect in [DBType.SQLSERVER, DBType.POSTGRESQL, DBType.MYSQL, DBType.STARROCKS]:
+        assert set(extract_table_names(sql_two_part, dialect=dialect, ignore_empty=True)) == {"foo.bar"}
 
 
 def test_parse_full_tables():
@@ -596,10 +605,10 @@ FROM gold_vs_bitcoin"""
 
     assert parse_sql_type("SHOW CATALOGS", dialect="starrocks") == SQLType.METADATA_SHOW
 
-    assert parse_sql_type("USE test", dialect=DBType.DUCKDB) == SQLType.CONTENT_SET
-    assert parse_sql_type("USE test", dialect=DBType.MYSQL) == SQLType.CONTENT_SET
-    assert parse_sql_type("USE test", dialect=DBType.STARROCKS) == SQLType.CONTENT_SET
-    assert parse_sql_type(" USE test ", dialect=DBType.SNOWFLAKE) == SQLType.CONTENT_SET
+    assert parse_sql_type("USE test", dialect=DBType.DUCKDB) == SQLType.CONTEXT_SET
+    assert parse_sql_type("USE test", dialect=DBType.MYSQL) == SQLType.CONTEXT_SET
+    assert parse_sql_type("USE test", dialect=DBType.STARROCKS) == SQLType.CONTEXT_SET
+    assert parse_sql_type(" USE test ", dialect=DBType.SNOWFLAKE) == SQLType.CONTEXT_SET
 
 
 def test_parse_sql_type_with():
@@ -634,6 +643,90 @@ def test_parse_sql_type_with():
     FROM rolling_corr
     WHERE rolling_correlation_50 IS NOT NULL;"""
     sql_type = parse_sql_type(sql, dialect=DBType.DUCKDB)
+    assert sql_type == SQLType.SELECT
+
+    sql = """with round_user as (
+              select dtstatdate,
+                     case
+                         when mode in (401,402,403) then '第一人称'
+                         when mode =101 then '单排'
+                         when mode =102 then '双排'
+                         when mode in (103,603) then '四排'
+                         end modename,
+                     vplayerid,
+                     sum(roundcnt) roundcnt,
+                     sum(roundtime) roundtime
+              from dws_jordass_mode_roundrecord_di
+              where ((dtstatdate between '20240326' and '20240409')
+                  or (dtstatdate between '20240528' and '20240611'))
+                and mode in (401,402,403,101,102,103,603)
+              group by dtstatdate,
+                       case when mode in (401,402,403) then '第一人称'
+                            when mode =101 then '单排'
+                            when mode =102 then '双排'
+                            when mode in (103,603) then '四排'
+                           end,
+                       vplayerid
+          )
+
+          select
+              a.dtstatdate,
+              a.modename,
+              count(distinct a.vplayerid) iusernum,
+              sum(a.roundcnt) roundcnt,
+              sum(a.roundtime) roundtime,
+              count(distinct b1.vplayerid) stay2,
+              count(distinct b2.vplayerid) stay7,
+              count(distinct c1.vplayerid) playstay2,
+              count(distinct c2.vplayerid) playstay7
+          from (
+                   select * from round_user
+                   where((dtstatdate between '20240326' and '20240403')
+                       or (dtstatdate between '20240528' and '20240605'))
+               ) a
+                   left join (
+              select dtstatdate,vplayerid
+              from dws_jordass_login_di
+              where ((dtstatdate between '20240326' and '20240404')
+                  or (dtstatdate between '20240528' and '20240606'))
+                and platid =255
+              group by dtstatdate,vplayerid
+          ) b1
+                             on a.vplayerid = b1.vplayerid and date_add(a.dtstatdate,1) = b1.dtstatdate
+                   left join (
+              select dtstatdate,vplayerid
+              from dws_jordass_login_di
+              where ((dtstatdate between '20240326' and '20240409') or (dtstatdate between '20240528' and '20240611'))
+                and platid =255
+              group by dtstatdate,vplayerid
+          ) b2
+                             on a.vplayerid = b2.vplayerid and date_add(a.dtstatdate,6) = b2.dtstatdate
+                   left join round_user c1
+                             on a.vplayerid = c1.vplayerid and date_add(a.dtstatdate,1) = c1.dtstatdate
+                                 and a.modename= c1.modename
+                   left join round_user c2
+                             on a.vplayerid = c2.vplayerid and date_add(a.dtstatdate,6) = c2.dtstatdate
+                                 and a.modename= c2.modename
+          group by a.dtstatdate,a.modename
+    """
+    sql_type = parse_sql_type(sql, dialect=DBType.STARROCKS)
+    assert sql_type == SQLType.SELECT
+
+    sql_type = parse_sql_type(
+        """WITH action_films AS (
+        SELECT
+            f.title,
+            f.length
+        FROM
+            film f
+                INNER JOIN film_category fc USING (film_id)
+                INNER JOIN category c USING(category_id)
+        WHERE
+            c.name = 'Action'
+    )
+    SELECT * FROM action_films;""",
+        dialect=DBType.POSTGRESQL,
+    )
     assert sql_type == SQLType.SELECT
 
 

@@ -20,6 +20,7 @@ class DBType(str, Enum):
     SQLSERVER = "sqlserver"  # same as mssql
     MSSQL = "mssql"  # same as sqlserver
     ORACLE = "oracle"
+    HIVE = "hive"
 
     @classmethod
     def support_catalog(cls, db_type: str) -> bool:
@@ -93,5 +94,5 @@ class SQLType(str, Enum):
     DDL = "ddl"
     METADATA_SHOW = "metadata"
     EXPLAIN = "explain"
-    CONTENT_SET = "context_set"
+    CONTEXT_SET = "context_set"
     UNKNOWN = "unknown"

@@ -5,7 +5,7 @@
 from typing import Any, Dict, List
 
 from datus.utils.json_utils import to_str
-from datus.utils.sql_utils import parse_metadata
+from datus.utils.sql_utils import parse_metadata_from_ddl
 
 
 def table_metadata_struct(table_metadata: List[Dict[str, Any]]) -> str:
@@ -36,7 +36,7 @@ def table_metadata_struct(table_metadata: List[Dict[str, Any]]) -> str:
     """
     result = {}
     for table in table_metadata:
-        parsed_table_data = parse_metadata(table["schema_text"])
+        parsed_table_data = parse_metadata_from_ddl(table["schema_text"])
         table_name = f"{table['schema_name']}.{table['table_name']}"
         struct_table = {"columns": parsed_table_data["columns"]}
         if "comment" in parsed_table_data["table"]:
@@ -71,7 +71,7 @@ def table_metadata2markdown(table_metadata: List[Dict[str, Any]]) -> str:
     for table in table_metadata:
         # Add table header with name and description
         table_names = table["table_name"].split(".")
-        table_metadata = parse_metadata(table["schema_text"])
+        table_metadata = parse_metadata_from_ddl(table["schema_text"])
         table_header = f"**Table: `{table['schema_name']}.{table_names[-1]}`"
         # parse description, column, column_data_type, column_desc
         if "comment" in table_metadata["table"]:

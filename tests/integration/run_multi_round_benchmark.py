@@ -1,0 +1,272 @@
+import argparse
+import json
+import os
+import re
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+
+import pandas as pd
+
+from datus.agent.agent import Agent
+from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config_loader import load_agent_config
+from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.utils.benchmark_utils import load_benchmark_tasks
+
+STATUS_MATCHED = "matched"
+STATUS_GEN_SQL_FAILED = "Gen SQL Failed"
+STATUS_RESULT_MISMATCH = "Result Mismatch"
+STATUS_COLUMN_MISMATCH = "Column Mismatch"
+STATUS_NOT_EXECUTED = "Not Executed"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run multi-round benchmark + evaluation cycles.")
+    parser.add_argument("--config", default="", help="Path to agent config file.")
+    parser.add_argument("--namespace", required=True, help="Namespace to benchmark, e.g. bird_sqlite.")
+    parser.add_argument("--benchmark", required=True, help="Benchmark name, e.g. bird_dev.")
+    parser.add_argument("--workflow", default="reflection", help="Workflow plan to execute.")
+    parser.add_argument("--max-steps", type=int, default=20, help="Total number of steps to execute.")
+    parser.add_argument("--max-round", type=int, default=4, help="Total benchmark rounds to run.")
+    parser.add_argument("--max-turns", type=int, default=20, help="Max workflow steps per task.")
+    parser.add_argument("--debug", action="store_true", help="Debug mode.")
+    parser.add_argument(
+        "--group_name",
+        type=bool,
+        default=False,
+        help="The name of the integration test group. If it is empty, the name of the workflow will be used.",
+    )
+    parser.add_argument(
+        "--task-ids",
+        nargs="*",
+        default=None,
+        help="Explicit task ids to benchmark and evaluate (space/comma separated)",
+    )
+    parser.add_argument("--max-workers", type=int, default=1, help="Concurrent workers for benchmark execution.")
+    return parser.parse_args()
+
+
+def sanitize_group_name(workflow: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", workflow.strip())
+    return slug or "workflow"
+
+
+def resolve_task_ids(
+    agent_config: AgentConfig,
+    benchmark: str,
+    explicit_ids: Optional[Sequence[str]],
+) -> List[str]:
+    if explicit_ids:
+        task_ids: List[str] = []
+        for value in explicit_ids:
+            if not value:
+                continue
+            task_ids.extend([item.strip() for item in str(value).split(",") if item is not None])
+        if not task_ids:
+            raise ValueError("No valid task ids parsed from --task-ids.")
+        return task_ids
+
+    benchmark_config = agent_config.benchmark_config(benchmark)
+    task_id_key = benchmark_config.question_id_key or "_task_id"
+
+    ids: List[str] = []
+    for task in load_benchmark_tasks(agent_config, benchmark):
+        task_id = task.get(task_id_key)
+        if task_id is None:
+            continue
+        ids.append(str(task_id))
+
+    if not ids:
+        raise ValueError("Could not resolve any task ids from benchmark data.")
+    return ids
+
+
+def override_round_paths(agent_config: AgentConfig, round_dir: Path) -> None:
+    save_dir = round_dir / "save"
+    trajectory_dir = round_dir / "trajectory"
+    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(trajectory_dir, exist_ok=True)
+    agent_config._save_dir = str(save_dir)
+    agent_config._trajectory_dir = str(trajectory_dir)
+
+
+def build_agent_args(
+    cli_args: argparse.Namespace,
+    task_ids: Sequence[str],
+    round_dir: Path,
+    round_idx: int,
+) -> argparse.Namespace:
+    evaluation_file = round_dir / f"evaluation_round_{round_idx}.json"
+    target_task_ids = None if not task_ids else list(task_ids)
+    common_kwargs = {
+        # "components": ["metrics", "metadata", "table_lineage", "document"],
+        "load_cp": None,
+        "max_steps": cli_args.max_steps,
+        "benchmark": cli_args.benchmark,
+        "namespace": cli_args.namespace,
+        "benchmark_task_ids": target_task_ids,
+        "task_ids": target_task_ids,
+        "catalog": "",
+        "database": "",
+        "domain": "",
+        "layer1": "",
+        "layer2": "",
+        "current_date": None,
+        "workflow": cli_args.workflow,
+        "output_file": str(evaluation_file),
+        "max_workers": cli_args.max_workers,
+    }
+    return argparse.Namespace(**common_kwargs)
+
+
+def run_single_round(
+    agent_config: AgentConfig,
+    round_idx: int,
+    cli_args: argparse.Namespace,
+    base_home: str,
+    group_slug: str,
+    target_task_ids: Sequence[str],
+) -> Dict[str, Any]:
+    integration_root = Path(base_home) / "integration"
+    integration_root.mkdir(parents=True, exist_ok=True)
+    round_dir = integration_root / f"{group_slug}_{round_idx}"
+    if round_dir.exists():
+        shutil.rmtree(round_dir)
+    round_dir.mkdir(parents=True)
+
+    override_round_paths(agent_config, round_dir)
+
+    agent_args = build_agent_args(cli_args, target_task_ids, round_dir, round_idx)
+    db_manager = db_manager_instance(agent_config.namespaces)
+    agent = Agent(args=agent_args, agent_config=agent_config, db_manager=db_manager)
+
+    print(f"[Round {round_idx}] Starting benchmark -> {round_dir}")
+    benchmark_result = agent.benchmark()
+    print(f"[Round {round_idx}] Finished benchmark: {benchmark_result}")
+    print(f"[Round {round_idx}] Benchmark finished, running evaluation...")
+    evaluation_result = agent.evaluation(log_summary=False) or {}
+    if evaluation_result.get("status") == "success":
+        with open(agent_args.output_file, "r") as f:
+            return json.load(f)
+    else:
+        print(f"⚠️⚠️⚠️Failed evaluation: {evaluation_result['message']}")
+        return {}
+
+
+def classify_task_status(task_id: str, evaluation: Optional[Dict[str, object]]) -> str:
+    if not evaluation:
+        return STATUS_NOT_EXECUTED
+    details: Dict[str, object] = evaluation.get("details") or {}
+    detail = details.get(str(task_id))
+    if not isinstance(detail, dict):
+        return STATUS_NOT_EXECUTED
+
+    comparisons = detail.get("comparison_results") or []
+    if not comparisons:
+        if detail.get("errors") or detail.get("output_success_count", 0) == 0:
+            return STATUS_GEN_SQL_FAILED
+        return STATUS_RESULT_MISMATCH
+
+    for record in comparisons:
+        comparison = (record or {}).get("comparison") if isinstance(record, dict) else None
+        if not isinstance(comparison, dict):
+            continue
+        match_rate = comparison.get("match_rate")
+        try:
+            if match_rate is not None and float(match_rate) >= 0.999:
+                return STATUS_MATCHED
+        except (TypeError, ValueError):
+            pass
+    column_issue = False
+    for record in comparisons:
+        comparison = (record or {}).get("comparison") if isinstance(record, dict) else None
+        if not isinstance(comparison, dict):
+            continue
+        error_text = comparison.get("error")
+        if error_text:
+            if "No columns to parse" in error_text or "file not found" in error_text.lower():
+                return STATUS_GEN_SQL_FAILED
+            continue
+        if comparison.get("actual_sql_error") or comparison.get("sql_error"):
+            return STATUS_GEN_SQL_FAILED
+        missing = comparison.get("missing_columns") or []
+        extra = comparison.get("extra_columns") or []
+        if missing or extra:
+            column_issue = True
+    if column_issue:
+        return STATUS_COLUMN_MISMATCH
+    return STATUS_RESULT_MISMATCH
+
+
+def build_status_matrix(
+    reports: Sequence[Optional[Dict[str, object]]], task_ids: Sequence[str]
+) -> Dict[str, List[str]]:
+    matrix: Dict[str, List[str]] = {task_id: [] for task_id in task_ids}
+    for task_id in task_ids:
+        for report in reports:
+            matrix[task_id].append(classify_task_status(task_id, report))
+    return matrix
+
+
+def export_summary_excel(
+    matrix: Dict[str, List[str]],
+    round_count: int,
+    integration_root: Path,
+    workflow_slug: str,
+) -> Path:
+    rows: List[Dict[str, str]] = []
+    for task_id, statuses in matrix.items():
+        row = {"task_id": task_id}
+        for idx in range(round_count):
+            header = f"round_{idx}"
+            row[header] = statuses[idx] if idx < len(statuses) else STATUS_NOT_EXECUTED
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    excel_path = integration_root / f"{workflow_slug}_multi_round_summary.xlsx"
+    df.to_excel(excel_path, index=False)
+    return excel_path
+
+
+def main():
+    args = parse_args()
+    from datus.utils.loggings import configure_logging
+
+    configure_logging(args.debug)
+    initial_config = load_agent_config(**vars(args))
+    base_home = str(Path(initial_config.home if initial_config.home else "~/.datus").expanduser())
+    group_slug = sanitize_group_name(args.group_name or args.workflow)
+    integration_root = Path(base_home) / "integration"
+    integration_root.mkdir(parents=True, exist_ok=True)
+
+    target_task_ids = resolve_task_ids(
+        initial_config,
+        args.benchmark,
+        args.task_ids,
+    )
+    print(f"Benchmark task ids ({len(target_task_ids)}): {', '.join(target_task_ids)}")
+
+    reports: List[Optional[Dict[str, object]]] = []
+    for round_idx in range(args.max_round):
+        try:
+            report = run_single_round(
+                agent_config=initial_config,
+                round_idx=round_idx,
+                cli_args=args,
+                base_home=base_home,
+                group_slug=group_slug,
+                target_task_ids=target_task_ids,
+            )
+        except Exception as exc:  # pragma: no cover - surfaced for manual runs
+            print(f"[Round {round_idx}] Failed with error: {exc}")
+            reports.append(None)
+            continue
+        reports.append(report)
+
+    status_matrix = build_status_matrix(reports, target_task_ids)
+    summary_path = export_summary_excel(status_matrix, len(reports), integration_root, group_slug)
+    print(f"Multi-round summary exported to {summary_path}")
+
+
+if __name__ == "__main__":
+    main()
