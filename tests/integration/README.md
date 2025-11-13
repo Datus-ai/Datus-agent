@@ -72,7 +72,6 @@ python tests/integration/run_multi_round_benchmark.py \
   --benchmark bird_dev \
   --workflow chat_agentic \
   --max-round 4 \
-  --task-limit 50 \
   --max-workers 2
 ```
 
@@ -99,7 +98,8 @@ After all rounds finish, the tool aggregates every task's status into
 | 1                        | Colum Mismatch | Matched         | ... | 50%           |
 | Summary of Matching Rate | 50%            | 50%             | ... | 50%           |
 
-Statuses currently map to: `matched`, `Gen SQL Failed`, `Result Mismatch`, `Column Mismatch`, and `Not Executed` (round
+Statuses currently map to: `Matched`, `Gen SQL Failed`, `Gold SQL Failed`, `Table Mismatch`, `Result Mismatch`,
+`Match Failed`, `Column Mismatch`, and `Not Executed` (round
 failure or skipped task).
 
 ## Multi-agent testing
