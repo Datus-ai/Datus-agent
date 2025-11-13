@@ -1486,7 +1486,7 @@ class BenchmarkEvaluator:
         self,
         outcome: ComparisonOutcome,
         actual_sql: Optional[SqlData],
-        match_sql: Optional[SqlData],
+        gold_sql: Optional[SqlData],
         actual_artifacts: Optional[WorkflowArtifacts],
         expected_artifacts: Optional[GoldArtifacts],
     ) -> None:
@@ -1500,12 +1500,12 @@ class BenchmarkEvaluator:
             if actual_sql.error:
                 outcome.actual_sql_error = actual_sql.error
 
-        if match_sql:
-            if match_sql.tables:
-                expected_tables = _unique_preserve_order(match_sql.tables)
+        if gold_sql:
+            if gold_sql.tables:
+                expected_tables = _unique_preserve_order(gold_sql.tables)
                 outcome.expected_tables = expected_tables
-            if match_sql.error:
-                outcome.match_sql_error = match_sql.error
+            if gold_sql.error:
+                outcome.match_sql_error = gold_sql.error
 
         if not outcome.actual_tables and actual_tables:
             outcome.actual_tables = actual_tables

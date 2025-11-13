@@ -93,11 +93,11 @@ the following artifacts stay isolated:
 After all rounds finish, the tool aggregates every task's status into
 `{agent.home}/integration/{workflow}_summary.xlsx` with the schema:
 
-| task_id                  | round_0   | round_1           | ...   | Matching rate           |
-|--------------------------|-----------|-------------------|-------|-------------------------|
-| 0                        | matched   | Result Mismatch   | ...   | 60%                     |
-| ---------                | --------- | ----------------- | ----- | ----------------------- |
-| Summary of Matching Rate | --------- | ----------------- | ----- | ----------------------- |
+| task_id                  | round_0        | round_1         | ... | Matching Rate |
+|--------------------------|----------------|-----------------|-----|---------------|
+| 0                        | Matched        | Result Mismatch | ... | 50%           |
+| 1                        | Colum Mismatch | Matched         | ... | 50%           |
+| Summary of Matching Rate | 50%            | 50%             | ... | 50%           |
 
 Statuses currently map to: `matched`, `Gen SQL Failed`, `Result Mismatch`, `Column Mismatch`, and `Not Executed` (round
 failure or skipped task).

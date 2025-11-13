@@ -14,9 +14,12 @@ from datus.configuration.agent_config_loader import load_agent_config
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.benchmark_utils import load_benchmark_tasks
 
-STATUS_MATCHED = "matched"
+STATUS_MATCHED = "Matched"
 STATUS_GEN_SQL_FAILED = "Gen SQL Failed"
+STATUS_GOLD_SQL_FAILED = "Gold SQL Failed"
+STATUS_MATCH_FAILED = "Match Failed"
 STATUS_RESULT_MISMATCH = "Result Mismatch"
+STATUS_TABLE_MISMATCH = "Table Mismatch"
 STATUS_COLUMN_MISMATCH = "Column Mismatch"
 STATUS_NOT_EXECUTED = "Not Executed"
 TASK_SUCCESS_RATE_HEADER = "Matching Rate"
@@ -167,16 +170,24 @@ def classify_task_status(task_id: str, evaluation: Optional[Dict[str, object]]) 
     if not comparisons:
         if detail.get("errors") or detail.get("output_success_count", 0) == 0:
             return STATUS_GEN_SQL_FAILED
-        return STATUS_RESULT_MISMATCH
+        return STATUS_MATCH_FAILED
 
     for record in comparisons:
         comparison = (record or {}).get("comparison") if isinstance(record, dict) else None
         if not isinstance(comparison, dict):
             continue
+        matched_tables = comparison.get("matched_tables") or []
+        expected_tables = comparison.get("expected_tables") or []
+        if len(matched_tables) != len(expected_tables):
+            return STATUS_TABLE_MISMATCH
+
         match_rate = comparison.get("match_rate")
         try:
-            if match_rate is not None and float(match_rate) >= 0.999:
-                return STATUS_MATCHED
+            if match_rate is not None:
+                if float(match_rate) >= 0.999:
+                    return STATUS_MATCHED
+                if float(match_rate) <= 0.00001:
+                    return STATUS_RESULT_MISMATCH
         except (TypeError, ValueError):
             pass
     column_issue = False
@@ -189,15 +200,17 @@ def classify_task_status(task_id: str, evaluation: Optional[Dict[str, object]]) 
             if "No columns to parse" in error_text or "file not found" in error_text.lower():
                 return STATUS_GEN_SQL_FAILED
             continue
-        if comparison.get("actual_sql_error") or comparison.get("sql_error"):
+        if comparison.get("actual_sql_error"):
             return STATUS_GEN_SQL_FAILED
+        if comparison.get("sql_error"):
+            return STATUS_GOLD_SQL_FAILED
         missing = comparison.get("missing_columns") or []
         extra = comparison.get("extra_columns") or []
         if missing or extra:
             column_issue = True
     if column_issue:
         return STATUS_COLUMN_MISMATCH
-    return STATUS_RESULT_MISMATCH
+    return STATUS_TABLE_MISMATCH
 
 
 def build_status_matrix(
