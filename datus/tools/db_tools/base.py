@@ -109,7 +109,7 @@ class BaseSqlConnector(ABC):
                 result = self.execute_insert(sql_query)
             elif sql_type in (SQLType.UPDATE, SQLType.DELETE, SQLType.MERGE):
                 result = self.execute_update(sql_query)
-            elif sql_type == SQLType.CONTEXT_SET:
+            elif sql_type == SQLType.CONTENT_SET:
                 result = self.execute_content_set(sql_query)
             elif sql_type == SQLType.DDL:
                 result = self.execute_ddl(sql_query)

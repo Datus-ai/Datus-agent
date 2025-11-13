@@ -463,15 +463,15 @@ _KEYWORD_SQL_TYPE_MAP: Dict[str, SQLType] = {
     "DESC": SQLType.METADATA_SHOW,
     "PRAGMA": SQLType.METADATA_SHOW,
     "EXPLAIN": SQLType.EXPLAIN,
-    "USE": SQLType.CONTEXT_SET,
-    "SET": SQLType.CONTEXT_SET,
-    "CALL": SQLType.CONTEXT_SET,
-    "EXEC": SQLType.CONTEXT_SET,
-    "EXECUTE": SQLType.CONTEXT_SET,
-    "BEGIN": SQLType.CONTEXT_SET,
-    "START": SQLType.CONTEXT_SET,
-    "COMMIT": SQLType.CONTEXT_SET,
-    "ROLLBACK": SQLType.CONTEXT_SET,
+    "USE": SQLType.CONTENT_SET,
+    "SET": SQLType.CONTENT_SET,
+    "CALL": SQLType.CONTENT_SET,
+    "EXEC": SQLType.CONTENT_SET,
+    "EXECUTE": SQLType.CONTENT_SET,
+    "BEGIN": SQLType.CONTENT_SET,
+    "START": SQLType.CONTENT_SET,
+    "COMMIT": SQLType.CONTENT_SET,
+    "ROLLBACK": SQLType.CONTENT_SET,
 }
 
 _OPTIONAL_DDL_EXPRESSIONS: tuple[type[expressions.Expression], ...] = tuple(
@@ -591,8 +591,8 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
         if command_name == "REPLACE":
             return SQLType.INSERT
         if command_name in {"CALL", "EXEC", "EXECUTE"}:
-            return SQLType.CONTEXT_SET
-        return SQLType.CONTEXT_SET
+            return SQLType.CONTENT_SET
+        return SQLType.CONTENT_SET
     if isinstance(
         normalized_expression,
         (
@@ -603,7 +603,7 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
             expressions.Set,
         ),
     ):
-        return SQLType.CONTEXT_SET
+        return SQLType.CONTENT_SET
     if _OPTIONAL_DDL_EXPRESSIONS and isinstance(normalized_expression, _OPTIONAL_DDL_EXPRESSIONS):
         return SQLType.DDL
 

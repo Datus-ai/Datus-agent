@@ -94,5 +94,5 @@ class SQLType(str, Enum):
     DDL = "ddl"
     METADATA_SHOW = "metadata"
     EXPLAIN = "explain"
-    CONTEXT_SET = "context_set"
+    CONTENT_SET = "context_set"
     UNKNOWN = "unknown"
