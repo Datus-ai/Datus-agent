@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 
 def parse_read_dialect(dialect: str = DBType.SNOWFLAKE) -> str:
-    """Parse columns from SQL."""
+    """Map SQL dialect to the appropriate read dialect for sqlglot parsing."""
     db = (dialect or "").strip().lower()
     if db in (DBType.POSTGRES, DBType.POSTGRESQL, "redshift", "greenplum"):
         return DBType.POSTGRES
@@ -28,7 +28,7 @@ def parse_read_dialect(dialect: str = DBType.SNOWFLAKE) -> str:
 
 
 def parse_dialect(dialect: str = DBType.SNOWFLAKE) -> str:
-    """Parse columns from SQL."""
+    """Map SQL dialect to the dialect for sqlglot parsing."""
     db = (dialect or "").strip().lower()
     if db in (DBType.POSTGRES, DBType.POSTGRESQL):
         return DBType.POSTGRES

@@ -151,7 +151,7 @@ def run_single_round(
         with open(agent_args.output_file, "r") as f:
             return json.load(f)
     else:
-        print(f"⚠️⚠️⚠️Failed evaluation: {evaluation_result['message']}")
+        print(f"⚠️⚠️⚠️Failed evaluation for round {round_idx}: {evaluation_result.get('message')}")
         return {}
 
 
