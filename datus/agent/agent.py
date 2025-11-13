@@ -34,6 +34,7 @@ from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
+from datus.utils.time_utils import format_duration
 
 logger = get_logger(__name__)
 
@@ -435,14 +436,20 @@ class Agent:
 
         target_task_ids = getattr(self.args, "benchmark_task_ids", [])
         target_task_ids = set(target_task_ids) if target_task_ids else None
+        import time
 
+        start = time.perf_counter()
         if benchmark_platform == "semantic_layer":
             self.global_config.check_init_storage_config("metric")
-            return self.benchmark_semantic_layer(benchmark_path, target_task_ids)
+            result = self.benchmark_semantic_layer(benchmark_path, target_task_ids)
         else:
             self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metric")
-            return self.do_benchmark(benchmark_platform, target_task_ids)
+            result = self.do_benchmark(benchmark_platform, target_task_ids)
+        end = time.perf_counter()
+
+        result["time_spends"] = format_duration(end - start)
+        return result
 
     def do_benchmark(self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None):
         default_db_name, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
@@ -477,6 +484,7 @@ class Agent:
                     else task_item.get(benchmark_config.ext_knowledge_key, ""),
                     schema_linking_type="full",
                 ),
+                check_storage=False,
                 check_db=False,
             )
             logger.info(

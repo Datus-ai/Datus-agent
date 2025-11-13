@@ -568,7 +568,8 @@ class CsvPerTaskResultProvider(ResultProvider):
         try:
             dataframe = pd.read_csv(csv_path)
         except Exception as exc:  # pragma: no cover - logging side effect
-            return ResultData(task_id=task_id, source=source, error=f"Error loading CSV: {exc}")
+            logger.warning(f"Failed to read {csv_path}: {exc}")
+            return ResultData(task_id=task_id, source=source)
         return ResultData(task_id=task_id, source=source, dataframe=dataframe)
 
 

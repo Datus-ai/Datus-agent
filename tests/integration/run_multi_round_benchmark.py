@@ -176,6 +176,10 @@ def classify_task_status(task_id: str, evaluation: Optional[Dict[str, object]]) 
         comparison = (record or {}).get("comparison") if isinstance(record, dict) else None
         if not isinstance(comparison, dict):
             continue
+        if comparison.get("error") == "Actual result unavailable":
+            return STATUS_GEN_SQL_FAILED
+        if comparison.get("error") == "Gold standard unavailable":
+            return STATUS_GOLD_SQL_FAILED
         matched_tables = comparison.get("matched_tables") or []
         expected_tables = comparison.get("expected_tables") or []
         if len(matched_tables) != len(expected_tables):
