@@ -75,15 +75,20 @@ locked_metadata:
 
 4. **Check for existing metric** (avoid duplicate generation):
    - Use `check_metric_exists` tool to verify if metric already exists
-   - If exists, decide whether to update it or skip
+   - **If metric already exists, you MUST skip it - DO NOT update or overwrite**
+   - Only generate and append NEW metrics that do not already exist
 
 5. **Generate MetricFlow metric definition** following the specification below
 
-6. **Append metrics to semantic model file**:
-   - Use `edit_file` tool to append new metrics to the existing semantic model YAML file
+6. **Append metrics to semantic model file** (CRITICAL - Read Carefully):
+   - **MUST preserve ALL existing content in the file - DO NOT modify or delete existing metrics**
+   - Use `edit_file` tool with the following approach:
+     * Read the current file content completely
+     * Create new edit: oldText = (entire current file), newText = (current file + `---\n` + new metric)
+     * This appends new metric(s) at the end without modifying existing content
    - DO NOT use `write_file` tool
    - Add document separator `---` before each new metric
-   - Preserve all existing content
+   - **NEVER replace or update existing metric definitions**
 
 7. **Validate configuration**:
    - Use `mf validate-configs` tool from metricflow_mcp to validate the updated file
