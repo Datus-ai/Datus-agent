@@ -648,10 +648,10 @@ def test_parse_sql_type_with():
     sql = """with round_user as (
               select dtstatdate,
                      case
-                         when mode in (401,402,403) then '第一人称'
-                         when mode =101 then '单排'
-                         when mode =102 then '双排'
-                         when mode in (103,603) then '四排'
+                         when mode in (401,402,403) then 'FIRST_PERSON'
+                         when mode =101 then 'solo'
+                         when mode =102 then 'double-row'
+                         when mode in (103,603) then 'four-row'
                          end modename,
                      vplayerid,
                      sum(roundcnt) roundcnt,
@@ -661,10 +661,10 @@ def test_parse_sql_type_with():
                   or (dtstatdate between '20240528' and '20240611'))
                 and mode in (401,402,403,101,102,103,603)
               group by dtstatdate,
-                       case when mode in (401,402,403) then '第一人称'
-                            when mode =101 then '单排'
-                            when mode =102 then '双排'
-                            when mode in (103,603) then '四排'
+                       case when mode in (401,402,403) then 'FIRST_PERSON'
+                            when mode =101 then 'solo'
+                            when mode =102 then 'double-row'
+                            when mode in (103,603) then 'four-row'
                            end,
                        vplayerid
           )
