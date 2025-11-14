@@ -122,6 +122,15 @@ class OutputTool(BaseTool):
             final_sql = input_data.gen_sql
         else:
             final_sql = llm_result.get("revised_sql")
+        if not input_data.sql_result:
+            if final_sql == input_data.gen_sql:
+                return input_data.gen_sql, input_data.sql_result
+            else:
+                final_result = sql_connector.execute({"sql_query": final_sql})
+                if final_result.success:
+                    return final_sql, final_result.sql_return
+                logger.warning(f"Execute check_sql failed, sql={final_sql}, error={final_result.error}")
+                return input_data.gen_sql, input_data.sql_result
 
         try:
             if "final_columns" in llm_result and llm_result.get("final_columns") and input_data.sql_result:
@@ -138,7 +147,12 @@ class OutputTool(BaseTool):
                         f"{final_columns} is not subset of {src_columns}. "
                         "Execute the sql directly."
                     )
-                    final_result = sql_connector.execute({"sql_query": final_sql}).sql_return
+                    exe_result = sql_connector.execute({"sql_query": final_sql})
+                    if exe_result.success:
+                        final_result = exe_result.sql_return
+                    else:
+                        logger.warning(f"Execute check_sql failed, sql={final_sql}, error={exe_result.error}")
+                        return input_data.gen_sql, input_data.sql_result
             else:
                 logger.warning(f"No final columns in the result: {llm_result}. Execute the sql directly.")
                 final_result = sql_connector.execute({"sql_query": final_sql}).sql_return
