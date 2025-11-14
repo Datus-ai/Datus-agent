@@ -174,8 +174,10 @@ class DatusAPIService:
             # Create SQL task
             sql_task = self._create_sql_task(request, task_id, agent)
 
-            # Execute workflow synchronously
-            result = agent.run(sql_task)
+            # Execute workflow synchronously using isolated runner
+            runner = agent.create_workflow_runner()
+            result = runner.run(sql_task)
+            workflow = runner.workflow
             execution_time = time.time() - start_time
 
             if result and result.get("status") == "completed":
@@ -185,7 +187,6 @@ class DatusAPIService:
 
                 # Get the last SQL context from workflow using the correct method
                 try:
-                    workflow = agent.workflow
                     if workflow:
                         last_sql_context = workflow.get_last_sqlcontext()
                         sql_query = last_sql_context.sql_query

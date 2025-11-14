@@ -15,17 +15,29 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def parse_dialect(dialect: str = DBType.SNOWFLAKE) -> str:
-    """Parse columns from SQL."""
-    dialect = dialect.lower()
-    if dialect == DBType.POSTGRESQL:
-        dialect = DBType.POSTGRES
-    if dialect == DBType.SQLSERVER or dialect == DBType.MSSQL:
-        return DBType.MSSQL
+def parse_read_dialect(dialect: str = DBType.SNOWFLAKE) -> str:
+    """Map SQL dialect to the appropriate read dialect for sqlglot parsing."""
+    db = (dialect or "").strip().lower()
+    if db in (DBType.POSTGRES, DBType.POSTGRESQL, "redshift", "greenplum"):
+        return DBType.POSTGRES
+    if db in ("spark", "databricks", DBType.HIVE, DBType.STARROCKS):
+        return DBType.HIVE
+    if db in (DBType.MSSQL, DBType.SQLSERVER):
+        return "tsql"
     return dialect
 
 
-def parse_metadata(sql: str, dialect: str = DBType.SNOWFLAKE) -> Dict[str, Any]:
+def parse_dialect(dialect: str = DBType.SNOWFLAKE) -> str:
+    """Map SQL dialect to the dialect for sqlglot parsing."""
+    db = (dialect or "").strip().lower()
+    if db in (DBType.POSTGRES, DBType.POSTGRESQL):
+        return DBType.POSTGRES
+    if db in (DBType.MSSQL, DBType.SQLSERVER):
+        return "tsql"
+    return dialect
+
+
+def parse_metadata_from_ddl(sql: str, dialect: str = DBType.SNOWFLAKE) -> Dict[str, Any]:
     """
     Parse SQL CREATE TABLE statement and return structured table and column information.
 
@@ -50,8 +62,6 @@ def parse_metadata(sql: str, dialect: str = DBType.SNOWFLAKE) -> Dict[str, Any]:
         }
     """
     dialect = parse_dialect(dialect)
-    if dialect == DBType.MSSQL:
-        return parse_sqlserver_metadata(sql)
 
     try:
         result = {"table": {"name": "", "schema_name": "", "database_name": ""}, "columns": []}
@@ -96,54 +106,21 @@ def parse_metadata(sql: str, dialect: str = DBType.SNOWFLAKE) -> Dict[str, Any]:
         return {"table": {"name": ""}, "columns": []}
 
 
-def parse_sqlserver_metadata(sql: str) -> Dict[str, Any]:
-    """Parse SQL Server DDL and return structured table and column information."""
-    try:
-        result = {"table": {"name": ""}, "columns": []}
-
-        # Clean up the SQL
-        sql = sql.strip()
-
-        # Extract table name
-        table_pattern = r"CREATE\s+TABLE\s+(?:\[([^\]]+)\]|([^\s(]+))"
-        table_match = re.search(table_pattern, sql, re.IGNORECASE)
-        if table_match:
-            result["table"]["name"] = table_match.group(1) or table_match.group(2)
-
-        # Extract column definitions
-        column_pattern = r"\[([^\]]+)\]\s+([^\s,]+)(?:\s+NOT\s+NULL|\s+NULL)?(?:\s*,\s*|\)\s*$)"
-        column_matches = re.finditer(column_pattern, sql)
-
-        for match in column_matches:
-            col_name = match.group(1)
-            col_type = match.group(2)
-
-            col_dict = {"name": col_name, "type": col_type}
-
-            # Look for column comment
-            comment_pattern = rf"\[{re.escape(col_name)}\].*?--\s*([^\n]+)"
-            comment_match = re.search(comment_pattern, sql)
-            if comment_match:
-                col_dict["comment"] = comment_match.group(1).strip()
-
-            result["columns"].append(col_dict)
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Error parsing SQL Server SQL: {sql};;; {e}")
-        return {"table": {"name": ""}, "columns": []}
-
-
-def extract_table_names(sql, dialect=DBType.SNOWFLAKE) -> List[str]:
+def extract_table_names(sql, dialect=DBType.SNOWFLAKE, ignore_empty=False) -> List[str]:
     """
     Extract fully qualified table names (database.schema.table) from SQL.
     Returns a list of unique table names with original case preserved.
     Filters out CTE (Common Table Expression) tables.
     """
-    dialect = parse_dialect(dialect)
     # Parse the SQL using sqlglot
-    parsed = sqlglot.parse_one(sql, dialect=dialect)
+    read_dialect = parse_read_dialect(dialect)
+    try:
+        parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.IGNORE)
+        if parsed is None:
+            return []
+    except Exception as e:
+        logger.warning(f"Error parsing SQL {sql}, error: {e}")
+        return []
     table_names = []
 
     # Get all CTE names
@@ -160,13 +137,19 @@ def extract_table_names(sql, dialect=DBType.SNOWFLAKE) -> List[str]:
         # Skip if the table is a CTE
         if table_name.lower() in cte_names:
             continue
+        full_name = []
 
-        if dialect == DBType.SQLITE:
-            table_names.append(table_name)
-        elif dialect in [DBType.MYSQL, DBType.ORACLE, DBType.POSTGRES, DBType.MSSQL]:
-            table_names.append(table_name if not db else f"{db}.{table_name}")
-        else:
-            table_names.append(f"{db}.{schema}.{table_name}")
+        if dialect in [DBType.MYSQL, DBType.ORACLE, DBType.POSTGRES, DBType.POSTGRESQL]:
+            if not ignore_empty or schema:
+                full_name.append(schema)
+        elif dialect not in (DBType.SQLITE,):
+            if not ignore_empty or db:
+                full_name.append(db)
+            if not ignore_empty or schema:
+                full_name.append(schema)
+        full_name.append(table_name)
+
+        table_names.append(".".join(full_name))
 
     return list(set(table_names))  # Remove duplicates
 
@@ -455,7 +438,10 @@ def _first_statement(sql: str) -> str:
 
 _KEYWORD_SQL_TYPE_MAP: Dict[str, SQLType] = {
     "SELECT": SQLType.SELECT,
+    "VALUES": SQLType.SELECT,
+    "WITH": SQLType.SELECT,
     "INSERT": SQLType.INSERT,
+    "REPLACE": SQLType.INSERT,
     "UPDATE": SQLType.UPDATE,
     "DELETE": SQLType.DELETE,
     "MERGE": SQLType.MERGE,
@@ -470,9 +456,12 @@ _KEYWORD_SQL_TYPE_MAP: Dict[str, SQLType] = {
     "ANALYZE": SQLType.DDL,
     "VACUUM": SQLType.DDL,
     "OPTIMIZE": SQLType.DDL,
+    "COPY": SQLType.DDL,
+    "REFRESH": SQLType.DDL,
     "SHOW": SQLType.METADATA_SHOW,
     "DESCRIBE": SQLType.METADATA_SHOW,
     "DESC": SQLType.METADATA_SHOW,
+    "PRAGMA": SQLType.METADATA_SHOW,
     "EXPLAIN": SQLType.EXPLAIN,
     "USE": SQLType.CONTENT_SET,
     "SET": SQLType.CONTENT_SET,
@@ -551,10 +540,16 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
 
     first_statement = _first_statement(stripped_sql)
     dialect_name = parse_dialect(dialect)
-    parsed_expression = sqlglot.parse_one(first_statement, dialect=dialect_name, error_level=sqlglot.ErrorLevel.IGNORE)
-    if parsed_expression is None:
-        if dialect_name == DBType.STARROCKS.value and _metadata_pattern().match(first_statement):
-            return SQLType.METADATA_SHOW
+    try:
+        parsed_expression = sqlglot.parse_one(
+            first_statement, dialect=dialect_name, error_level=sqlglot.ErrorLevel.IGNORE
+        )
+        if parsed_expression is None:
+            if dialect_name == DBType.STARROCKS.value and _metadata_pattern().match(first_statement):
+                return SQLType.METADATA_SHOW
+            inferred = _fallback_sql_type(first_statement)
+            return inferred if inferred else SQLType.UNKNOWN
+    except Exception:
         inferred = _fallback_sql_type(first_statement)
         return inferred if inferred else SQLType.UNKNOWN
 

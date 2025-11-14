@@ -352,7 +352,7 @@ def main():
 
     # Initialize agent with both args and config
     agent = Agent(args, agent_config)
-
+    result = None
     # Execute different functions based on action
     if args.action == "check-db":
         result = agent.check_db()
@@ -390,7 +390,7 @@ def main():
         result = agent.generate_dataset()
     elif args.action in ("eval", "evaluation", "evaluate"):
         result = agent.evaluation()
-    if agent.is_complete():
+    if result:
         logger.info(f"\nFinal Result: {result}")
 
     return 0

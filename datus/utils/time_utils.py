@@ -20,3 +20,24 @@ def get_default_current_date(current_date: Optional[str]) -> str:
     if current_date:
         return current_date
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def format_duration_human(seconds: float) -> str:
+    """Format seconds into human readable (h/m/s) format."""
+    seconds = int(seconds)
+
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    if seconds > 0 or not parts:
+        parts.append(f"{seconds}s")
+
+    return "".join(parts)

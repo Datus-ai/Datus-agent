@@ -34,7 +34,7 @@ from datus.tools.db_tools.db_manager import db_manager_instance, get_connection
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.sql_utils import extract_table_names, metadata_identifier, parse_metadata
+from datus.utils.sql_utils import extract_table_names
 
 logger = get_logger(__name__)
 
@@ -260,33 +260,41 @@ def _parse_table_identifier(table: str) -> Tuple[str, str, bool]:
     return normalized_identifier, base_name, is_simple
 
 
+def _is_empty_table_identifier(table: Any) -> bool:
+    if table is None:
+        return True
+    text = str(table).strip()
+    return text == ""
+
+
+def _trim_trailing_non_empty_tables(tables: Sequence[Any]) -> list[Any]:
+    trimmed: list[Any] = []
+    for table in reversed(tables):
+        if _is_empty_table_identifier(table):
+            break
+        trimmed.append(table)
+    trimmed.reverse()
+    return trimmed
+
+
+def _tables_equivalent(left: Any, right: Any) -> bool:
+    left_normalized, left_base, _ = _parse_table_identifier(left)
+    right_normalized, right_base, _ = _parse_table_identifier(right)
+    if not left_normalized or not right_normalized:
+        return False
+    if left_normalized == right_normalized:
+        return True
+    return bool(left_base and right_base and left_base == right_base)
+
+
 def collect_sql_tables(sql_text: Optional[str], dialect: Optional[str] = None) -> list[str]:
     if not sql_text:
         return []
 
     dialect = dialect or DBType.SNOWFLAKE
     tables: list[str] = []
-
     try:
-        metadata = parse_metadata(sql_text, dialect=dialect)
-    except Exception:
-        metadata = None
-
-    if metadata:
-        table_info = metadata.get("table", {})
-        table_name = table_info.get("name")
-        if table_name:
-            identifier = metadata_identifier(
-                catalog_name=table_info.get("catalog_name", ""),
-                database_name=table_info.get("database_name", ""),
-                schema_name=table_info.get("schema_name", ""),
-                table_name=table_name,
-                dialect=dialect,
-            )
-            tables.append(identifier or table_name)
-
-    try:
-        extracted_tables = extract_table_names(sql_text, dialect=dialect)
+        extracted_tables = extract_table_names(sql_text, dialect=dialect, ignore_empty=True)
         tables.extend(extracted_tables)
     except Exception:
         # Ignore extraction errors; tables list may remain empty
@@ -296,40 +304,31 @@ def collect_sql_tables(sql_text: Optional[str], dialect: Optional[str] = None) -
 
 
 def compute_table_matches(actual_tables: Iterable[str], expected_tables: Iterable[str]) -> list[str]:
-    normalized_actual: set[str] = set()
-    actual_simple_bases: set[str] = set()
-    actual_full_bases: set[str] = set()
+    actual_list = list(actual_tables) if actual_tables is not None else []
+    expected_list = list(expected_tables) if expected_tables is not None else []
+    if not actual_list or not expected_list:
+        return []
 
-    for table in actual_tables:
-        normalized, base_name, is_simple = _parse_table_identifier(table)
-        if not normalized:
-            continue
-        normalized_actual.add(normalized)
-        if not base_name:
-            continue
-        if is_simple:
-            actual_simple_bases.add(base_name)
-        else:
-            actual_full_bases.add(base_name)
+    trailing_actual = _trim_trailing_non_empty_tables(actual_list)
+    trailing_expected = _trim_trailing_non_empty_tables(expected_list)
 
-    matches: list[str] = []
-    for table in expected_tables:
-        if not table:
-            continue
-        normalized, base_name, is_simple = _parse_table_identifier(table)
-        if not normalized:
-            continue
-        if normalized in normalized_actual:
-            matches.append(table)
-            continue
-        if not base_name:
-            continue
-        if is_simple and base_name in actual_full_bases:
-            matches.append(table)
-            continue
-        if not is_simple and base_name in actual_simple_bases:
-            matches.append(table)
-    return _unique_preserve_order(matches)
+    if not trailing_actual or not trailing_expected:
+        return []
+
+    compare_len = min(len(trailing_actual), len(trailing_expected))
+    if compare_len <= 0:
+        return []
+
+    actual_slice = trailing_actual[-compare_len:]
+    expected_slice = trailing_expected[-compare_len:]
+
+    backward_matches: list[str] = []
+    for actual_table, expected_table in zip(reversed(actual_slice), reversed(expected_slice)):
+        if _tables_equivalent(actual_table, expected_table):
+            backward_matches.append(expected_table)
+
+    backward_matches.reverse()
+    return _unique_preserve_order(backward_matches)
 
 
 def _normalize_text(value: str) -> str:
@@ -569,7 +568,8 @@ class CsvPerTaskResultProvider(ResultProvider):
         try:
             dataframe = pd.read_csv(csv_path)
         except Exception as exc:  # pragma: no cover - logging side effect
-            return ResultData(task_id=task_id, source=source, error=f"Error loading CSV: {exc}")
+            logger.warning(f"Failed to read {csv_path}: {exc}")
+            return ResultData(task_id=task_id, source=source)
         return ResultData(task_id=task_id, source=source, dataframe=dataframe)
 
 
@@ -1487,7 +1487,7 @@ class BenchmarkEvaluator:
         self,
         outcome: ComparisonOutcome,
         actual_sql: Optional[SqlData],
-        match_sql: Optional[SqlData],
+        gold_sql: Optional[SqlData],
         actual_artifacts: Optional[WorkflowArtifacts],
         expected_artifacts: Optional[GoldArtifacts],
     ) -> None:
@@ -1501,12 +1501,12 @@ class BenchmarkEvaluator:
             if actual_sql.error:
                 outcome.actual_sql_error = actual_sql.error
 
-        if match_sql:
-            if match_sql.tables:
-                expected_tables = _unique_preserve_order(match_sql.tables)
+        if gold_sql:
+            if gold_sql.tables:
+                expected_tables = _unique_preserve_order(gold_sql.tables)
                 outcome.expected_tables = expected_tables
-            if match_sql.error:
-                outcome.match_sql_error = match_sql.error
+            if gold_sql.error:
+                outcome.match_sql_error = gold_sql.error
 
         if not outcome.actual_tables and actual_tables:
             outcome.actual_tables = actual_tables
@@ -1945,6 +1945,7 @@ def evaluate_benchmark_and_report(
     benchmark_platform: str,
     target_task_ids: Optional[Iterable[str]] = None,
     output_file: Optional[str] = None,
+    log_summary: bool = True,
 ) -> Dict[str, Any]:
     accuracy_report = evaluate_benchmark(
         agent_config=agent_config,
@@ -1953,7 +1954,8 @@ def evaluate_benchmark_and_report(
     )
 
     if accuracy_report.get("status") == "success":
-        _log_accuracy_summary(accuracy_report)
+        if log_summary:
+            _log_accuracy_summary(accuracy_report)
         if output_file:
             with open(output_file, "w", encoding="utf-8") as handle:
                 json.dump(accuracy_report, handle, ensure_ascii=False, indent=2)

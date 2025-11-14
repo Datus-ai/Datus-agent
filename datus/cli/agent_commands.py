@@ -18,6 +18,7 @@ from rich.table import Table
 from datus.agent.evaluate import setup_node_input, update_context_from_node
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.agent.workflow_runner import WorkflowRunner
 from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.node_type import NodeType
@@ -52,6 +53,7 @@ class AgentCommands:
         self.darun_is_running = False
         # Only one interactive workflow is supported, the other one is the background workflow
         self.workflow = None
+        self.workflow_runner: WorkflowRunner | None = None
         self.agent_thread = None
         self._context_search_tools: ContextSearchTools | None = None
         self.output_tool: OutputTool | None = None
@@ -188,7 +190,7 @@ class AgentCommands:
             if not sql_task:
                 return
 
-            # Reset agent's workflow to ensure we create a new one
+            # Reset previous runner/thread state
             if self.agent_thread:
                 self.agent_thread.join(timeout=1)
                 if self.agent_thread.is_alive():
@@ -197,16 +199,17 @@ class AgentCommands:
                     )
                     self.agent_thread._stop()
                 self.agent_thread = None
-            self.agent.workflow = None
-            self.agent.workflow_ready = False
+            self.workflow_runner = self.agent.create_workflow_runner()
+            runner = self.workflow_runner
 
             agent_done = threading.Event()
             self.darun_is_running = True
+            result_holder: Dict[str, Any] = {"result": None}
 
             def run_agent(sql_task):
                 # nonlocal result, error
                 try:
-                    self.agent.run(sql_task)
+                    result_holder["result"] = runner.run(sql_task)
                 except Exception as e:
                     logger.error(f"Agent query error: {str(e)}")
                 finally:
@@ -217,22 +220,30 @@ class AgentCommands:
             thread.start()
             self.agent_thread = thread
 
-            while not hasattr(self.agent, "workflow") or not self.agent.workflow_ready:
+            while not runner.workflow_ready:
+                if agent_done.is_set():
+                    break
                 self.console.print("[bold yellow]Waiting for workflow to be initialized...[/]")
                 time.sleep(1)
 
+            if not runner.workflow_ready or not runner.workflow:
+                self.console.print("[bold red]Failed to initialize workflow[/]")
+                self.darun_is_running = False
+                return
+
             # Store the new workflow
-            self.workflow = self.agent.workflow
+            self.workflow = runner.workflow
             show_workflow_screen(self.workflow, run_new_loop=False)
 
             # If agent is still running, leave it and
 
             if agent_done.is_set():
                 self.darun_is_running = False
-                workflow = self.agent.workflow
+                workflow = runner.workflow
                 if workflow and workflow.is_complete():
                     self.console.print("[bold green]Query Result:[/]")
-                    self.console.print(workflow.get_final_result())
+                    final_result = result_holder["result"] or workflow.get_final_result()
+                    self.console.print(final_result)
                 else:
                     self.console.print(f"[bold red]Query is not complete: {workflow.status}[/]")
             else:
@@ -349,8 +360,8 @@ class AgentCommands:
             workflow.task = sql_task
             workflow.status = "running"
 
-            self.agent.workflow = workflow
             self.workflow = workflow
+            self.workflow_runner = None
             self.console.print(f"[bold green]Started new agent session (ID: {sql_task.id})[/]")
             # self.console.print(f"[dim]Next node: {workflow.get_current_node().type}[/]")
 
@@ -794,6 +805,7 @@ class AgentCommands:
             self.workflow.save(output_file)
             self.console.print(f"[green]Ending workflow session, save to {output_file}[/]")
             self.workflow = None
+            self.workflow_runner = None
         else:
             self.console.print("[yellow]No active workflow session to end.[/]")
 
