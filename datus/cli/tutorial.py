@@ -24,16 +24,20 @@ class BenchmarkTutorial:
             target_dir=self.benchmark_path / self.namespace_name,
         )
 
-    def _ensure_config(self):
+    def _ensure_config(self) -> bool:
         if not self.config_path:
             console.print(f" ❌Configuration file `{self.config_path}` not found, please run `datus-agent init` first.")
+            return False
         agent_config = load_agent_config(config=self.config_path)
-        if self.namespace_name not in agent_config.benchmark_configs or self.namespace_name in agent_config.namespaces:
+        if (
+            self.namespace_name not in agent_config.benchmark_configs
+            or self.namespace_name not in agent_config.namespaces
+        ):
             from datus.configuration.agent_config_loader import configuration_manager
 
             config_manager = configuration_manager()
             config_manager.update_item(
-                "namespaces",
+                "namespace",
                 {
                     "california_schools": {
                         "type": "sqlite",
@@ -61,24 +65,26 @@ class BenchmarkTutorial:
                 delete_old_key=False,
                 save=True,
             )
+        return True
 
     def run(self):
         console.print("[bold cyan] Welcome to Datus Tutorial 🎉[/bold cyan]")
         console.print(
-            "Let’s start learning how to prepare for benchmarking step by step using a dataset from California schools."
+            "Let's start learning how to prepare for benchmarking step by step using a dataset from California schools."
         )
         console.print("[bold yellow][1/4] Ensure data files and configuration[/bold yellow]")
         with console.status("Ensuring...") as status:
             self._ensure_files()
             console.print("Data files is ready.")
             status.update("Ensuring configuration...")
-            self._ensure_config()
+            if not self._ensure_config():
+                return 1
         console.print("Configuration is ready.")
         california_schools_path = self.benchmark_path / self.namespace_name
         from datus.cli.interactive_init import init_metadata_and_log_result, init_sql_and_log_result
 
         console.print("[bold yellow][2/4] Initialize Metadata [/bold yellow]")
-        init_metadata_and_log_result(namespace_name=self.namespace_name)
+        init_metadata_and_log_result(namespace_name=self.namespace_name, config_path=self.config_path)
 
         console.print("[bold yellow][3/4] Initialize Metrics [/bold yellow]")
 
@@ -95,8 +101,9 @@ class BenchmarkTutorial:
                 "bird/california_schools/SAT_Academic_Performance,"
                 "bird/debit_card_specializing,bird/student_club"
             ),
+            config_path=self.config_path,
         )
-        return 1
+        return 0
 
     def _init_metrics(self):
         """Initialize metrics using success stories."""
@@ -107,6 +114,7 @@ class BenchmarkTutorial:
                 components=["metrics"],
                 success_story=f"{self.benchmark_path}/{self.namespace_name}/success_story.csv",
                 validate_only=False,
+                config_path=self.config_path,
             )
             result = agent.bootstrap_kb()
             logger.info(f"Metrics bootstrap result: {result}")

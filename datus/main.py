@@ -348,9 +348,11 @@ def main():
 
     # Handle init command separately as it doesn't require existing configuration
     if args.action == "init":
+        configure_logging(args.debug, console_output=False)
         init = InteractiveInit()
         return init.run()
     if args.action == "tutorial":
+        configure_logging(args.debug, console_output=False)
         tutorial = BenchmarkTutorial(args.config or "~/.datus/conf/agent.yml")
         return tutorial.run()
 

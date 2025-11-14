@@ -20,7 +20,6 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import copy_data_file, read_data_file_text
 
@@ -137,7 +136,7 @@ class InteractiveInit:
                 return 1
 
             # Step 4: Optional Setup (after config is saved)
-            self._optional_setup()
+            self._optional_setup(str(config_path))
 
             # Step 5: Summary and save configuration first
             console.print("[bold yellow][5/5] Configuration Summary[/bold yellow]")
@@ -340,7 +339,7 @@ class InteractiveInit:
             console.print(f" ❌ Failed to create workspace directory: {e}\n")
             return False
 
-    def _optional_setup(self):
+    def _optional_setup(self, config_path: str):
         """Step 4: Optional setup for metadata and reference SQL."""
         console.print("[bold yellow][4/5] Optional Setup[/bold yellow]")
 
@@ -350,7 +349,7 @@ class InteractiveInit:
                 "→ Initializing metadata for "
                 f"{self.namespace_name} with path {self.config['agent']['storage']['base_path']}..."
             ):
-                if init_metadata_and_log_result(self.namespace_name):
+                if init_metadata_and_log_result(self.namespace_name, config_path):
                     console.print(" ✅ Metadata knowledge base initialized")
                 else:
                     console.print(" ❌ Metadata initialization failed")
@@ -359,7 +358,7 @@ class InteractiveInit:
         if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
             default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
             sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
-            init_sql_and_log_result(namespace_name=self.namespace_name, sql_dir=sql_dir)
+            init_sql_and_log_result(namespace_name=self.namespace_name, sql_dir=sql_dir, config_path=config_path)
 
         console.print()
 
@@ -546,7 +545,7 @@ class InteractiveInit:
         copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir)
 
 
-def create_agent(namespace_name: str, components: list, agent_config: Optional[AgentConfig] = None, **kwargs):
+def create_agent(namespace_name: str, components: list, config_path: str, **kwargs):
     import argparse
 
     default_args = {
@@ -561,7 +560,7 @@ def create_agent(namespace_name: str, components: list, agent_config: Optional[A
         "database_name": "",
         "benchmark_path": None,
         "pool_size": 4,
-        "config": None,
+        "config": config_path,
         "debug": False,
         "save_llm_trace": False,
     }
@@ -572,20 +571,18 @@ def create_agent(namespace_name: str, components: list, agent_config: Optional[A
     args = argparse.Namespace(**default_args)
 
     from datus.agent.agent import Agent
+    from datus.configuration.agent_config_loader import load_agent_config
 
-    if not agent_config:
-        from datus.configuration.agent_config_loader import load_agent_config
-
-        agent_config = load_agent_config(reload=True)
+    agent_config = load_agent_config(reload=True, config_path=config_path, **vars(args))
 
     agent_config.current_namespace = namespace_name
 
     return Agent(args, agent_config)
 
 
-def init_metadata_and_log_result(namespace_name: str, agent_config: Optional[AgentConfig] = None) -> bool:
+def init_metadata_and_log_result(namespace_name: str, config_path: str) -> bool:
     try:
-        agent = create_agent(namespace_name=namespace_name, components=["metadata"], agent_config=agent_config)
+        agent = create_agent(namespace_name=namespace_name, components=["metadata"], config_path=config_path)
         result = agent.bootstrap_kb()
         # Log detailed results
         if isinstance(result, dict) and "message" in result:
@@ -611,8 +608,8 @@ def init_metadata_and_log_result(namespace_name: str, agent_config: Optional[Age
 def init_sql_and_log_result(
     namespace_name: str,
     sql_dir: str,
+    config_path: str,
     subject_tree: Optional[str] = None,
-    agent_config: Optional[AgentConfig] = None,
 ):
     with console.status(f"→ Reference SQL initialization...{namespace_name}, dir:{sql_dir}"):
         try:
@@ -628,7 +625,7 @@ def init_sql_and_log_result(
                 sql_dir=sql_dir,
                 validate_only=False,
                 subject_tree=subject_tree,
-                agent_config=agent_config,
+                config_path=config_path,
             )
             result = agent.bootstrap_kb()
 

@@ -57,7 +57,7 @@ def copy_data_file(resource_path: str, target_dir: Union[str, Path], package: st
         src_candidate = src_path
     else:
         src_candidate = package_data_path(resource_path, package)
-        if not src_path.exists():
+        if src_candidate is None or not src_candidate.exists():
             return
     target_dir_path = (target_dir if isinstance(target_dir, Path) else Path(target_dir)).expanduser()
     do_copy_data_file(src_candidate, target_dir_path, replace=replace)
