@@ -151,7 +151,7 @@ class OutputTool(BaseTool):
                     if exe_result.success:
                         final_result = exe_result.sql_return
                     else:
-                        logger.warning(f"Execute check_sql failed, sql={final_sql}, error={final_result.error}")
+                        logger.warning(f"Execute check_sql failed, sql={final_sql}, error={exe_result.error}")
                         return input_data.gen_sql, input_data.sql_result
             else:
                 logger.warning(f"No final columns in the result: {llm_result}. Execute the sql directly.")
