@@ -431,7 +431,7 @@ class GenerationHooks(AgentHooks):
             if isinstance(tag, str) and tag.startswith("subject_tree:"):
                 # Extract the path after "subject_tree: "
                 path = tag.split("subject_tree:", 1)[1].strip()
-                parts = path.split("/")
+                parts = [part.strip() for part in path.split("/") if part.strip()]
                 if len(parts) == 3:
                     return parts[0], parts[1], parts[2]
                 else:
