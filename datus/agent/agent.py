@@ -451,7 +451,7 @@ class Agent:
         return result
 
     def do_benchmark(self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None):
-        default_db_name, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
+        _, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
             self.global_config.current_namespace
         )
         self.check_db()
