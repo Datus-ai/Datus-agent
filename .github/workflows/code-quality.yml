@@ -1,4 +1,4 @@
-name: "main"
+name: "Code Quality"
 
 on:
   pull_request_target:
@@ -6,20 +6,20 @@ on:
       - opened
       - synchronize
       - reopened
-      - labeled
-      - edited
+
+concurrency:
+  group: code-quality-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
   pull-requests: write
 
 jobs:
-  title-check:
-    uses: ./.github/workflows/pr-title-checker.yml
   format-check:
-    needs: title-check
     if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
     uses: ./.github/workflows/python-format-check.yml
+
   run-ut:
     needs: format-check
     if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
