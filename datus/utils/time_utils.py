@@ -22,7 +22,7 @@ def get_default_current_date(current_date: Optional[str]) -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def format_duration(seconds: float) -> str:
+def format_duration_human(seconds: float) -> str:
     """Format seconds into human readable (h/m/s) format."""
     seconds = int(seconds)
 

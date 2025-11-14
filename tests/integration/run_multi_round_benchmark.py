@@ -4,7 +4,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -13,6 +13,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.benchmark_utils import load_benchmark_tasks
+from datus.utils.time_utils import format_duration_human
 
 STATUS_MATCHED = "Matched"
 STATUS_GEN_SQL_FAILED = "Gen SQL Failed"
@@ -24,6 +25,7 @@ STATUS_COLUMN_MISMATCH = "Column Mismatch"
 STATUS_NOT_EXECUTED = "Not Executed"
 TASK_SUCCESS_RATE_HEADER = "Matching Rate"
 SUMMARY_ROW_LABEL = "Summary of Matching Rate"
+ROUND_DURATION_ROW_LABEL = "Round Duration"
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,9 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--namespace", required=True, help="Namespace to benchmark, e.g. bird_sqlite.")
     parser.add_argument("--benchmark", required=True, help="Benchmark name, e.g. bird_dev.")
     parser.add_argument("--workflow", default="reflection", help="Workflow plan to execute.")
-    parser.add_argument("--max-steps", type=int, default=20, help="Total number of steps to execute.")
-    parser.add_argument("--max-round", type=int, default=4, help="Total benchmark rounds to run.")
-    parser.add_argument("--max-turns", type=int, default=20, help="Max workflow steps per task.")
+    parser.add_argument("--max_steps", alias=[""], type=int, default=20, help="Total number of steps to execute.")
+    parser.add_argument("--max_round", type=int, default=4, help="Total benchmark rounds to run.")
     parser.add_argument("--debug", action="store_true", help="Debug mode.")
     parser.add_argument(
         "--group_name",
@@ -42,12 +43,12 @@ def parse_args() -> argparse.Namespace:
         help="The name of the integration test group. If it is empty, the name of the workflow will be used.",
     )
     parser.add_argument(
-        "--task-ids",
+        "--task_ids",
         nargs="*",
         default=None,
         help="Explicit task ids to benchmark and evaluate (space/comma separated)",
     )
-    parser.add_argument("--max-workers", type=int, default=1, help="Concurrent workers for benchmark execution.")
+    parser.add_argument("--max_workers", type=int, default=1, help="Concurrent workers for benchmark execution.")
     return parser.parse_args()
 
 
@@ -124,6 +125,15 @@ def build_agent_args(
     return argparse.Namespace(**common_kwargs)
 
 
+def _parse_duration_seconds(value: Optional[Any]) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def run_single_round(
     agent_config: AgentConfig,
     round_idx: int,
@@ -131,7 +141,7 @@ def run_single_round(
     base_home: str,
     group_slug: str,
     target_task_ids: Sequence[str],
-) -> Dict[str, Any]:
+) -> Tuple[Optional[Dict[str, Any]], Optional[float]]:
     integration_root = Path(base_home) / "integration"
     integration_root.mkdir(parents=True, exist_ok=True)
     round_dir = integration_root / f"{group_slug}_{round_idx}"
@@ -146,16 +156,17 @@ def run_single_round(
     agent = Agent(args=agent_args, agent_config=agent_config, db_manager=db_manager)
 
     print(f"[Round {round_idx}] Starting benchmark -> {round_dir}")
-    benchmark_result = agent.benchmark()
+    benchmark_result = agent.benchmark() or {}
+    benchmark_duration = _parse_duration_seconds(benchmark_result.get("time_spends_seconds"))
     print(f"[Round {round_idx}] Finished benchmark: {benchmark_result}")
     print(f"[Round {round_idx}] Benchmark finished, running evaluation...")
     evaluation_result = agent.evaluation(log_summary=False) or {}
     if evaluation_result.get("status") == "success":
         with open(agent_args.output_file, "r") as f:
-            return json.load(f)
+            return json.load(f), benchmark_duration
     else:
         print(f"⚠️⚠️⚠️Failed evaluation for round {round_idx}: {evaluation_result.get('message')}")
-        return {}
+        return {}, benchmark_duration
 
 
 def classify_task_status(task_id: str, evaluation: Optional[Dict[str, object]]) -> str:
@@ -232,6 +243,7 @@ def export_summary_excel(
     round_count: int,
     integration_root: Path,
     workflow_slug: str,
+    round_durations: Sequence[Optional[float]],
 ) -> Path:
     def normalize_statuses(statuses: List[str]) -> List[str]:
         normalized: List[str] = []
@@ -268,6 +280,15 @@ def export_summary_excel(
     total_success_rate = sum(round_match_counts) / total_denominator
     summary_row[TASK_SUCCESS_RATE_HEADER] = format_percentage(total_success_rate)
     rows.append(summary_row)
+    if round_durations:
+        duration_row: Dict[str, str] = {"task_id": ROUND_DURATION_ROW_LABEL}
+        for idx in range(round_count):
+            duration_value = round_durations[idx] if idx < len(round_durations) else None
+            duration_row[f"round_{idx}"] = (
+                format_duration_human(duration_value) if duration_value is not None else "N/A"
+            )
+        duration_row[TASK_SUCCESS_RATE_HEADER] = ""
+        rows.append(duration_row)
     df = pd.DataFrame(rows)
     excel_path = integration_root / f"{workflow_slug}_summary.xlsx"
     df.to_excel(excel_path, index=False)
@@ -293,9 +314,10 @@ def main():
     print(f"Benchmark task ids ({len(target_task_ids)}): {', '.join(target_task_ids)}")
 
     reports: List[Optional[Dict[str, object]]] = []
+    round_durations: List[Optional[float]] = []
     for round_idx in range(args.max_round):
         try:
-            report = run_single_round(
+            report, duration = run_single_round(
                 agent_config=initial_config,
                 round_idx=round_idx,
                 cli_args=args,
@@ -306,11 +328,13 @@ def main():
         except Exception as exc:  # pragma: no cover - surfaced for manual runs
             print(f"[Round {round_idx}] Failed with error: {exc}")
             reports.append(None)
+            round_durations.append(None)
             continue
         reports.append(report)
+        round_durations.append(duration)
 
     status_matrix = build_status_matrix(reports, target_task_ids)
-    summary_path = export_summary_excel(status_matrix, len(reports), integration_root, group_slug)
+    summary_path = export_summary_excel(status_matrix, len(reports), integration_root, group_slug, round_durations)
     print(f"Multi-round summary exported to {summary_path}")
 
 

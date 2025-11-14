@@ -71,16 +71,16 @@ python tests/integration/run_multi_round_benchmark.py \
   --namespace bird_sqlite \
   --benchmark bird_dev \
   --workflow chat_agentic \
-  --max-round 4 \
-  --max-workers 2
+  --max_round 4 \
+  --max_workers 2
 ```
 
 Key options:
 
 - `--workflow`: workflow/plan name passed directly to the agent.
-- `--max-round`: number of benchmark/evaluation loops (default 4).
-- `--task-ids`: explicit task id list (space or comma separated).
-- `--max-workers`: same as the regular benchmark flag to control concurrency.
+- `--max_round`: number of benchmark/evaluation loops (default 4).
+- `--task_ids`: explicit task id list (space or comma separated).
+- `--max_workers`: same as the regular benchmark flag to control concurrency.
 
 For each round the script rewrites the agent's output directories to `{agent.home}/integration/{workflow}_{round}/` so
 the following artifacts stay isolated:

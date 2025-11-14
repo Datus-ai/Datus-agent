@@ -34,7 +34,7 @@ from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
-from datus.utils.time_utils import format_duration
+from datus.utils.time_utils import format_duration_human
 
 logger = get_logger(__name__)
 
@@ -448,7 +448,9 @@ class Agent:
             result = self.do_benchmark(benchmark_platform, target_task_ids)
         end = time.perf_counter()
 
-        result["time_spends"] = format_duration(end - start)
+        time_spends = end - start
+        result["time_spends"] = format_duration_human(time_spends)
+        result["time_spends_seconds"] = str(time_spends)
         return result
 
     def do_benchmark(self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None):
