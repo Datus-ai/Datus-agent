@@ -1,0 +1,119 @@
+from datus.cli.interactive_init import console, create_agent
+from datus.configuration.agent_config_loader import load_agent_config
+from datus.utils.loggings import get_logger
+from datus.utils.path_manager import get_path_manager
+
+logger = get_logger(__name__)
+
+
+class BenchmarkTutorial:
+    def __init__(self, config_path: str) -> None:
+        self.config_path = config_path
+        self.namespace_name = "california_schools"
+        path_manager = get_path_manager()
+        self.benchmark_path = path_manager.benchmark_dir
+        path_manager.ensure_dirs("sample")
+
+    def _ensure_files(self):
+        if not self.benchmark_path.exists():
+            self.benchmark_path.mkdir(parents=True)
+        from datus.cli.interactive_init import copy_data_file
+
+        copy_data_file(
+            resource_path="sample_data/california_schools",
+            target_dir=self.benchmark_path / self.namespace_name,
+        )
+
+    def _ensure_config(self):
+        if not self.config_path:
+            console.print(f" ❌Configuration file `{self.config_path}` not found, please run `datus-agent init` first.")
+        agent_config = load_agent_config(config=self.config_path)
+        if self.namespace_name not in agent_config.benchmark_configs or self.namespace_name in agent_config.namespaces:
+            from datus.configuration.agent_config_loader import configuration_manager
+
+            config_manager = configuration_manager()
+            config_manager.update_item(
+                "namespaces",
+                {
+                    "california_schools": {
+                        "type": "sqlite",
+                        "name": "california_schools",
+                        "uri": "~/.datus/benchmark/california_schools/california_schools.sqlite",
+                    },
+                },
+                delete_old_key=False,
+                save=False,
+            )
+
+            config_manager.update_item(
+                "benchmark",
+                {
+                    self.namespace_name: {
+                        "question_file": "california_schools.csv",
+                        "question_id_key": "task_id",
+                        "question_key": "question",
+                        "ext_knowledge_key": "evidence",
+                        "gold_sql_path": "california_schools.csv",
+                        "gold_sql_key": "gold_sql",
+                        "gold_result_path": "california_schools.csv",
+                    },
+                },
+                delete_old_key=False,
+                save=True,
+            )
+
+    def run(self):
+        console.print("[bold cyan] Welcome to Datus Tutorial 🎉[/bold cyan]")
+        console.print(
+            "Let’s start learning how to prepare for benchmarking step by step using a dataset from California schools."
+        )
+        console.print("[bold yellow][1/4] Ensure data files and configuration[/bold yellow]")
+        with console.status("Ensuring...") as status:
+            self._ensure_files()
+            console.print("Data files is ready.")
+            status.update("Ensuring configuration...")
+            self._ensure_config()
+        console.print("Configuration is ready.")
+        california_schools_path = self.benchmark_path / self.namespace_name
+        from datus.cli.interactive_init import init_metadata_and_log_result, init_sql_and_log_result
+
+        console.print("[bold yellow][2/4] Initialize Metadata [/bold yellow]")
+        init_metadata_and_log_result(namespace_name=self.namespace_name)
+
+        console.print("[bold yellow][3/4] Initialize Metrics [/bold yellow]")
+
+        with console.status("Metrics initializing..."):
+            self._init_metrics()
+
+        console.print("[bold yellow][4/4] Initialize Reference SQL [/bold yellow]")
+        init_sql_and_log_result(
+            namespace_name=self.namespace_name,
+            sql_dir=str(california_schools_path / "reference_sql"),
+            subject_tree=(
+                "bird/california_schools/FRPM_Meal_Analysis,"
+                "bird/california_schools/Enrollment_Demographics,"
+                "bird/california_schools/SAT_Academic_Performance,"
+                "bird/debit_card_specializing,bird/student_club"
+            ),
+        )
+        return 1
+
+    def _init_metrics(self):
+        """Initialize metrics using success stories."""
+        logger.info(f"Metrics initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
+        try:
+            agent = create_agent(
+                namespace_name=self.namespace_name,
+                components=["metrics"],
+                success_story=f"{self.benchmark_path}/{self.namespace_name}/success_story.csv",
+                validate_only=False,
+            )
+            result = agent.bootstrap_kb()
+            logger.info(f"Metrics bootstrap result: {result}")
+            metrics_size = 0 if not agent.metrics_store else agent.metrics_store.get_metrics_size()
+            if metrics_size > 0:
+                console.print(f"  → Processed {metrics_size} metrics")
+            return True
+        except Exception as e:
+            logger.error(f"Metrics initialization failed: {e}")
+            return False

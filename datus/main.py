@@ -9,6 +9,7 @@ import os
 import sys
 from datetime import datetime
 
+from datus.cli.tutorial import BenchmarkTutorial
 from datus.utils.async_utils import setup_windows_policy
 
 # Add path fixing to ensure proper imports
@@ -288,6 +289,14 @@ def create_parser() -> argparse.ArgumentParser:
     evaluation_parser.add_argument("--task_ids", type=str, nargs="+", help="Specific benchmark task IDs to run")
     evaluation_parser.add_argument("--output_file", help="Output file name, if not set, the report file is not output")
 
+    # tutorial command
+    subparsers.add_parser(
+        "tutorial",
+        help="Benchmarking tutorial using a dataset from California schools",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
     # Node configuration group (available for run and benchmark)
     for p in [run_parser, benchmark_parser]:
         node_group = p.add_argument_group("Node Configuration")
@@ -337,13 +346,16 @@ def main():
         parser.print_help()
         return 1
 
-    configure_logging(args.debug)
-    setup_exception_handler()
-
     # Handle init command separately as it doesn't require existing configuration
     if args.action == "init":
         init = InteractiveInit()
         return init.run()
+    if args.action == "tutorial":
+        tutorial = BenchmarkTutorial(args.config or "~/.datus/conf/agent.yml")
+        return tutorial.run()
+
+    configure_logging(args.debug)
+    setup_exception_handler()
 
     # Load agent configuration
     agent_config = load_agent_config(**vars(args))

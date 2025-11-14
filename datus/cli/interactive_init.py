@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import copy_data_file, read_data_file_text
 
@@ -44,7 +45,6 @@ class InteractiveInit:
         self.sample_dir = path_manager.sample_dir
         self.benchmark_dir = path_manager.benchmark_dir
         # Whether the model can initialize the indicator
-        self._can_init_metrics = False
         try:
             text = read_data_file_text(resource_path="conf/agent.yml.qs", encoding="utf-8")
             self.config = yaml.safe_load(text)
@@ -229,27 +229,15 @@ class InteractiveInit:
         console.print("→ Testing LLM connectivity...")
         success, error_msg = self._test_llm_connectivity()
         if success:
-            console.print("✔ LLM model test successful\n")
-            self._can_init_metrics = providers[provider]["type"] in ("deepseek", "claude")
+            console.print(" ✅ LLM model test successful\n")
             return True
         else:
             console.print(f"❌ LLM connectivity test failed: {error_msg}\n")
-            self._can_init_metrics = False
             return False
 
     def _configure_namespace(self) -> bool:
         """Step 2: Configure namespace and database."""
         console.print("[bold yellow][2/5] Configure Namespace[/bold yellow]")
-        config_choice = Prompt.ask(
-            "Please choose the configuration method you want:\n"
-            " 1. Use Datus' built-in california_schools data copied from BIRD_DEV;\n"
-            " 2. Custom database configuration;",
-            choices=["1", "2"],
-            default="1",
-        )
-        if config_choice == "1":
-            self.namespace_name = "california_schools"
-            return True
 
         # Namespace name
         self.namespace_name = Prompt.ask("- Namespace name")
@@ -323,10 +311,10 @@ class InteractiveInit:
         console.print("→ Testing database connectivity...")
         success, error_msg = self._test_db_connectivity()
         if success:
-            console.print("✔ Database connection test successful\n")
+            console.print(" ✅ Database connection test successful\n")
             return True
         else:
-            console.print(f"❌ Database connectivity test failed: {error_msg}\n")
+            console.print(f" ❌ Database connectivity test failed: {error_msg}\n")
             # Remove failed database configuration
             if self.namespace_name in self.config["agent"]["namespace"]:
                 del self.config["agent"]["namespace"][self.namespace_name]
@@ -346,10 +334,10 @@ class InteractiveInit:
         # Create workspace directory
         try:
             Path(self.workspace_path).mkdir(parents=True, exist_ok=True)
-            console.print("✔ Workspace directory created\n")
+            console.print(" ✅ Workspace directory created\n")
             return True
         except Exception as e:
-            console.print(f"❌ Failed to create workspace directory: {e}\n")
+            console.print(f" ❌ Failed to create workspace directory: {e}\n")
             return False
 
     def _optional_setup(self):
@@ -358,54 +346,20 @@ class InteractiveInit:
 
         # Initialize metadata knowledge base
         if Confirm.ask("- Initialize vector DB for metadata?", default=False):
-            with console.status("→ Initializing metadata knowledge base..."):
-                if self._initialize_metadata():
-                    console.print("✔ Metadata knowledge base initialized")
+            with console.status(
+                "→ Initializing metadata for "
+                f"{self.namespace_name} with path {self.config['agent']['storage']['base_path']}..."
+            ):
+                if init_metadata_and_log_result(self.namespace_name):
+                    console.print(" ✅ Metadata knowledge base initialized")
                 else:
-                    console.print("❌ Metadata initialization failed")
+                    console.print(" ❌ Metadata initialization failed")
 
         # Initialize reference SQL
-        if self.namespace_name == "california_schools":
-            sql_dir = self.benchmark_dir / "california_schools" / "reference_sql"
-            if Confirm.ask("- Initialize reference SQL for California Schools?", default=False):
-                with console.status("Initializing reference SQL for California Schools..."):
-                    self._initialize_reference_sql(
-                        str(sql_dir),
-                        subject_tree="bird/california_schools/FRPM_Meal_Analysis,"
-                        "bird/california_schools/Enrollment_Demographics,"
-                        "bird/california_schools/SAT_Academic_Performance,"
-                        "bird/debit_card_specializing,bird/student_club",
-                    )
-                console.print(
-                    "🔔[bold cyan] You can also configure {agent.storage.workspace_root} to your sql file, "
-                    "and then use `bootstrap-kb --components reference_sql` to build Reference SQL[/]"
-                )
-        else:
-            if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
-                default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
-                sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
-                with console.status("Initializing reference SQL for from workspace..."):
-                    self._initialize_reference_sql(sql_dir)
-
-        if self.namespace_name == "california_schools" and self._can_init_metrics:
-            if Confirm.ask("- Initialize metrics using success stories?", default=False):
-                with console.status("Initializing metrics using success stories..."):
-                    if self._init_metrics():
-                        console.print("✔ Metrics initialized")
-                    else:
-                        console.print("❌ Metrics initialization failed")
-        console.print()
-
-    def _init_reference_sql(self, sql_dir: str):
-        if Path(sql_dir).exists():
-            with console.status(f"→ Scanning {sql_dir} for SQL files..."):
-                sql_count = self._initialize_reference_sql(sql_dir)
-                if sql_count > 0:
-                    console.print(f"✔ Imported {sql_count} SQL files into reference")
-                else:
-                    console.print("⚠️ No SQL files found in specified directory")
-        else:
-            console.print(f"❌ Directory {sql_dir} does not exist")
+        if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
+            default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
+            sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
+            init_sql_and_log_result(namespace_name=self.namespace_name, sql_dir=sql_dir)
 
         console.print()
 
@@ -416,10 +370,10 @@ class InteractiveInit:
             with open(config_path, "w", encoding="utf-8") as f:
                 yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True)
 
-            console.print(f"Configuration saved to {config_path} ✅")
+            console.print(f" ✅ Configuration saved to {config_path}")
             return True
         except Exception as e:
-            console.print(f"❌ Failed to save configuration: {e}")
+            console.print(f" ❌ Failed to save configuration: {e}")
             return False
 
     def _display_summary(self):
@@ -569,129 +523,15 @@ class InteractiveInit:
             logger.error(f"Database connectivity test failed: {error_msg}")
             return False, error_msg
 
-    def _create_bootstrap_args(self, components: list, **kwargs):
-        """Create common args namespace for bootstrap operations."""
-        import argparse
-
-        default_args = {
-            "action": "bootstrap-kb",
-            "namespace": self.namespace_name,
-            "components": components,
-            "kb_update_strategy": "overwrite",
-            "storage_path": None,
-            "benchmark": None,
-            "schema_linking_type": "full",
-            "catalog": "",
-            "database_name": "",
-            "benchmark_path": None,
-            "pool_size": 4,
-            "config": None,
-            "debug": False,
-            "save_llm_trace": False,
-        }
-
-        # Update with any additional kwargs
-        default_args.update(kwargs)
-
-        return argparse.Namespace(**default_args)
-
     def _create_agent_with_config(self, args):
         """Create agent instance with loaded configuration."""
         from datus.agent.agent import Agent
         from datus.configuration.agent_config_loader import load_agent_config
 
-        agent_config = load_agent_config()
+        agent_config = load_agent_config(reload=True)
         agent_config.current_namespace = self.namespace_name
 
         return Agent(args, agent_config)
-
-    def _initialize_metadata(self) -> bool:
-        """Initialize metadata knowledge base."""
-        try:
-            logger.info(
-                f"Metadata initialization...{self.namespace_name},  {self.config['agent']['storage']['base_path']}"
-            )
-            args = self._create_bootstrap_args(["metadata"])
-            agent = self._create_agent_with_config(args)
-            result = agent.bootstrap_kb()
-            # Log detailed results
-            if isinstance(result, dict) and "message" in result:
-                logger.info(f"Metadata bootstrap completed: {result['message']}")
-            else:
-                logger.info(f"Metadata bootstrap result: {result}")
-
-            # Try to get table counts after bootstrap
-            try:
-                if hasattr(agent, "metadata_store") and agent.metadata_store:
-                    schema_size = agent.metadata_store.get_schema_size()
-                    value_size = agent.metadata_store.get_value_size()
-                    logger.info(f"Bootstrap success: {schema_size} tables processed, {value_size} sample records")
-                    console.print(f"  → Processed {schema_size} tables with {value_size} sample records")
-            except Exception as count_e:
-                logger.debug(f"Could not get table counts: {count_e}")
-
-            return result is not False
-
-        except Exception as e:
-            logger.error(f"Metadata initialization failed: {e}")
-            return False
-
-    def _initialize_reference_sql(self, sql_dir: str, subject_tree: Optional[str] = None) -> int:
-        """Initialize reference SQL from specified directory."""
-        try:
-            logger.info(f"Reference SQL initialization...{self.namespace_name}, dir:{sql_dir}")
-            # Count SQL files first
-            sql_files = list(Path(sql_dir).rglob("*.sql"))
-            if not sql_files:
-                return 0
-
-            args = self._create_bootstrap_args(
-                ["reference_sql"], sql_dir=sql_dir, validate_only=False, subject_tree=subject_tree
-            )
-            agent = self._create_agent_with_config(args)
-            result = agent.bootstrap_kb()
-
-            # Log detailed results
-            if isinstance(result, dict):
-                if "message" in result:
-                    logger.info(f"Reference SQL bootstrap completed: {result['message']}")
-                if "processed_count" in result:
-                    logger.info(f"Bootstrap success: {result['processed_count']} SQL files processed")
-                elif "sql_count" in result:
-                    logger.info(f"Bootstrap success: {result['sql_count']} SQL files processed")
-            else:
-                logger.info(f"Reference SQL bootstrap result: {result}")
-
-            if result is not False:
-                return len(sql_files)
-            else:
-                return 0
-
-        except Exception as e:
-            logger.error(f"Reference SQL initialization failed: {e}")
-            return 0
-
-    def _init_metrics(self):
-        """Initialize metrics using success stories."""
-        logger.info(
-            f"Metrics initialization...{self.namespace_name}, {self.benchmark_dir}/california_schools/success_story.csv"
-        )
-        try:
-            args = self._create_bootstrap_args(
-                ["metrics"],
-                success_story=f"{self.benchmark_dir}/california_schools/success_story.csv",
-                validate_only=False,
-            )
-            agent = self._create_agent_with_config(args)
-            result = agent.bootstrap_kb()
-            logger.info(f"Metrics bootstrap result: {result}")
-            metrics_size = 0 if not agent.metrics_store else agent.metrics_store.get_metrics_size()
-            if metrics_size > 0:
-                console.print(f"  → Processed {metrics_size} metrics")
-            return True
-        except Exception as e:
-            logger.error(f"Metrics initialization failed: {e}")
-            return False
 
     def _copy_files(self):
         copy_data_file(
@@ -704,6 +544,119 @@ class InteractiveInit:
             target_dir=self.benchmark_dir / "california_schools",
         )
         copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir)
+
+
+def create_agent(namespace_name: str, components: list, agent_config: Optional[AgentConfig] = None, **kwargs):
+    import argparse
+
+    default_args = {
+        "action": "bootstrap-kb",
+        "namespace": namespace_name,
+        "components": components,
+        "kb_update_strategy": "overwrite",
+        "storage_path": None,
+        "benchmark": None,
+        "schema_linking_type": "full",
+        "catalog": "",
+        "database_name": "",
+        "benchmark_path": None,
+        "pool_size": 4,
+        "config": None,
+        "debug": False,
+        "save_llm_trace": False,
+    }
+
+    # Update with any additional kwargs
+    default_args.update(kwargs)
+
+    args = argparse.Namespace(**default_args)
+
+    from datus.agent.agent import Agent
+
+    if not agent_config:
+        from datus.configuration.agent_config_loader import load_agent_config
+
+        agent_config = load_agent_config(reload=True)
+
+    agent_config.current_namespace = namespace_name
+
+    return Agent(args, agent_config)
+
+
+def init_metadata_and_log_result(namespace_name: str, agent_config: Optional[AgentConfig] = None) -> bool:
+    try:
+        agent = create_agent(namespace_name=namespace_name, components=["metadata"], agent_config=agent_config)
+        result = agent.bootstrap_kb()
+        # Log detailed results
+        if isinstance(result, dict) and "message" in result:
+            logger.info(f"Metadata bootstrap completed: {result['message']}")
+        else:
+            logger.info(f"Metadata bootstrap result: {result}")
+
+        # Try to get table counts after bootstrap
+        try:
+            if hasattr(agent, "metadata_store") and agent.metadata_store:
+                schema_size = agent.metadata_store.get_schema_size()
+                value_size = agent.metadata_store.get_value_size()
+                logger.info(f"Bootstrap success: {schema_size} tables processed, {value_size} sample records")
+                console.print(f"  → Processed {schema_size} tables with {value_size} sample records")
+        except Exception as count_e:
+            logger.debug(f"Could not get table counts: {count_e}")
+        return result is not None
+    except Exception as e:
+        logger.error(f"Metadata initialization failed: {e}")
+        return False
+
+
+def init_sql_and_log_result(
+    namespace_name: str,
+    sql_dir: str,
+    subject_tree: Optional[str] = None,
+    agent_config: Optional[AgentConfig] = None,
+):
+    with console.status(f"→ Reference SQL initialization...{namespace_name}, dir:{sql_dir}"):
+        try:
+            # Count SQL files first
+            sql_files = list(Path(sql_dir).rglob("*.sql"))
+            if not sql_files:
+                console.print(f"No sql files found in {sql_dir}")
+                return
+
+            agent = create_agent(
+                namespace_name=namespace_name,
+                components=["reference_sql"],
+                sql_dir=sql_dir,
+                validate_only=False,
+                subject_tree=subject_tree,
+                agent_config=agent_config,
+            )
+            result = agent.bootstrap_kb()
+
+            # Log detailed results
+            if isinstance(result, dict):
+                if "message" in result:
+                    logger.info(f"Reference SQL bootstrap completed: {result['message']}")
+                processed_entries = result.get("processed_entries", 0)
+                valid_entries = result.get("valid_entries", 0)
+                invalid_entries = result.get("invalid_entries", 0)
+                if processed_entries == 0:
+                    console.print(f" ⚠️ No SQL files processed in the directory `{sql_dir}`")
+                else:
+                    if invalid_entries > 0:
+                        console.print(
+                            f" ✅ Processed {processed_entries} entries, {valid_entries} valid entries,"
+                            f" {invalid_entries} invalid entries"
+                        )
+                    else:
+                        console.print(f" ✅ Processed {processed_entries} entries successfully")
+                return
+            else:
+                logger.info(f"Reference SQL bootstrap result: {result}")
+                console.print(" ✅ Imported SQL files into reference completed.")
+
+        except Exception as e:
+            logger.error(f"Reference SQL initialization failed: {e}")
+            console.print(f" ❌Reference SQL initialization failed: {e}")
 
 
 def main():

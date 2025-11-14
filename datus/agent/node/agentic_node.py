@@ -333,7 +333,7 @@ class AgenticNode(Node):
 
         nodes_config = agent_config.agentic_nodes
         if node_name not in nodes_config:
-            logger.warning(f"Node configuration '{node_name}' not found in agent.yml")
+            logger.info(f" ⚠️ Node configuration '{node_name}' not found in agent.yml")
             return {}
 
         node_config = nodes_config[node_name]
