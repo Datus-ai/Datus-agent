@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--namespace", required=True, help="Namespace to benchmark, e.g. bird_sqlite.")
     parser.add_argument("--benchmark", required=True, help="Benchmark name, e.g. bird_dev.")
     parser.add_argument("--workflow", default="reflection", help="Workflow plan to execute.")
-    parser.add_argument("--max_steps", alias=[""], type=int, default=20, help="Total number of steps to execute.")
+    parser.add_argument("--max_steps", type=int, default=20, help="Total number of steps to execute.")
     parser.add_argument("--max_round", type=int, default=4, help="Total benchmark rounds to run.")
     parser.add_argument("--debug", action="store_true", help="Debug mode.")
     parser.add_argument(
@@ -69,7 +69,7 @@ def resolve_task_ids(
                 continue
             task_ids.extend([item.strip() for item in str(value).split(",") if item is not None])
         if not task_ids:
-            raise ValueError("No valid task ids parsed from --task-ids.")
+            raise ValueError("No valid task ids parsed from --task_ids.")
         return task_ids
 
     benchmark_config = agent_config.benchmark_config(benchmark)
