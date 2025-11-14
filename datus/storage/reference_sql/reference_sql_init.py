@@ -17,63 +17,11 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def parse_subject_tree(subject_tree_str: str) -> Dict[str, Any]:
-    """
-    Parse subject_tree string into taxonomy structure.
-
-    Args:
-        subject_tree_str: Comma-separated string of domain/layer1/layer2 paths
-
-    Returns:
-        Dict containing taxonomy with domains, layer1_categories, layer2_categories
-    """
-    if not subject_tree_str:
-        return {}
-
-    domains_set = set()
-    layer1_set = set()
-    layer2_dict = {}
-
-    paths = [p.strip() for p in subject_tree_str.split(",")]
-
-    for path in paths:
-        parts = path.split("/")
-        if len(parts) != 3:
-            logger.warning(f"Skipping invalid subject_tree path (expected domain/layer1/layer2): {path}")
-            continue
-
-        domain, layer1, layer2 = parts
-        domains_set.add(domain)
-        layer1_set.add((layer1, domain))
-        layer2_dict[layer2] = layer1
-
-    taxonomy = {
-        "domains": [
-            {"name": domain, "description": f"{domain} domain", "examples": []} for domain in sorted(domains_set)
-        ],
-        "layer1_categories": [
-            {"name": layer1, "description": f"{layer1} category", "domain": domain, "examples": []}
-            for layer1, domain in sorted(layer1_set)
-        ],
-        "layer2_categories": [
-            {"name": layer2, "description": f"{layer2} subcategory", "layer1": layer1, "examples": []}
-            for layer2, layer1 in sorted(layer2_dict.items())
-        ],
-        "common_tags": [],
-    }
-
-    logger.info(
-        f"Parsed subject_tree into taxonomy: {len(taxonomy['domains'])} domains, "
-        f"{len(taxonomy['layer1_categories'])} layer1, {len(taxonomy['layer2_categories'])} layer2"
-    )
-
-    return taxonomy
-
-
 async def process_sql_item(
     item: dict,
     agent_config: AgentConfig,
     build_mode: str = "incremental",
+    subject_tree: Optional[list] = None,
 ) -> Optional[str]:
     """
     Process a single SQL item using SqlSummaryAgenticNode in workflow mode.
@@ -82,6 +30,7 @@ async def process_sql_item(
         item: Dict containing sql, comment, summary, filepath fields
         agent_config: Agent configuration
         build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
+        subject_tree: Optional predefined subject tree categories
 
     Returns:
         SQL summary file path if successful, None otherwise
@@ -102,6 +51,7 @@ async def process_sql_item(
             agent_config=agent_config,
             execution_mode="workflow",
             build_mode=build_mode,
+            subject_tree=subject_tree,
         )
 
         action_history_manager = ActionHistoryManager()
@@ -133,6 +83,7 @@ def init_reference_sql(
     global_config: AgentConfig,
     build_mode: str = "overwrite",
     pool_size: int = 1,
+    subject_tree: Optional[list] = None,
 ) -> Dict[str, Any]:
     """Initialize reference SQL from SQL files directory.
 
@@ -142,6 +93,7 @@ def init_reference_sql(
         global_config: Global agent configuration for LLM model creation
         build_mode: "overwrite" to replace all data, "incremental" to add new entries
         pool_size: Number of threads for parallel processing
+        subject_tree: Optional predefined subject tree categories
 
     Returns:
         Dict containing initialization results and statistics
@@ -213,7 +165,7 @@ def init_reference_sql(
 
             async def process_with_semaphore(item):
                 async with semaphore:
-                    return await process_sql_item(item, global_config, build_mode)
+                    return await process_sql_item(item, global_config, build_mode, subject_tree)
 
             # Process all items in parallel
             results = await asyncio.gather(

@@ -147,14 +147,16 @@ def create_parser() -> argparse.ArgumentParser:
         "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"
     )
     bootstrap_parser.add_argument(
-        "--subject_tree",
-        type=str,
-        help="Predefined taxonomy structure for reference_sql classification (e.g., 'domain/layer1/layer2')",
-    )
-    bootstrap_parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Only process and validate SQL files, then exit (for reference_sql component)",
+    )
+    bootstrap_parser.add_argument(
+        "--subject_tree",
+        type=str,
+        help='Comma-separated subject tree categories (e.g., "Sales/Reporting/Daily,Sales/Analytics/Trends"). '
+        "If provided, only these predefined categories can be used. "
+        "If not provided, existing categories from LanceDB will be reused or new ones created.",
     )
 
     # benchmark command

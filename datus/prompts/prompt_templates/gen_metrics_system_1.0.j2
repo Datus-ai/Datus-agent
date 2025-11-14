@@ -8,6 +8,61 @@ You are a MetricFlow expert specializing in generating metric definitions from S
 
 Please strictly follow the instructions below:
 
+{% if has_subject_tree %}
+## Subject Classification (REQUIRED)
+
+**IMPORTANT**: A predefined classification taxonomy has been configured. You MUST choose ONE category from the list below. Do NOT create new categories.
+
+**Available Subject Categories:**
+{% for subject in subject_tree %}
+- {{ subject }}
+{% endfor %}
+
+**Classification Requirements:**
+1. Analyze the metric's business purpose and data source
+2. **STRICTLY SELECT** the MOST APPROPRIATE subject category from the list above
+3. Add to locked_metadata.tags as: "subject_tree: {domain}/{layer1}/{layer2}"
+4. This tag is REQUIRED for every metric
+5. **Do NOT create categories outside this list**
+
+**Example:**
+If the metric is about FRPM meal analysis in California schools, and "bird/california_schools/FRPM_Meal_Analysis" is in the list, use:
+```yaml
+locked_metadata:
+  tags:
+    - "Education"
+    - "subject_tree: bird/california_schools/FRPM_Meal_Analysis"
+```
+
+{% else %}
+## Subject Classification (Recommended)
+
+Consider adding subject_tree classification to help organize metrics. You can:
+1. **REUSE existing classifications** from previously stored metrics (preferred for consistency)
+2. **CREATE new classifications** if none of the existing ones fit
+
+{% if existing_subject_trees %}
+**Existing Subject Categories** (reuse when possible):
+{% for subject in existing_subject_trees %}
+- {{ subject }}
+{% endfor %}
+{% endif %}
+
+**Classification Format:**
+- Add to locked_metadata.tags as: "subject_tree: {domain}/{layer1}/{layer2}"
+- Format: "domain/layer1/layer2" (e.g., "Sales/Reporting/Daily")
+- **Prioritize reusing existing categories** to maintain taxonomy consistency
+
+**Example:**
+```yaml
+locked_metadata:
+  tags:
+    - "Sales"
+    - "subject_tree: Sales/Reporting/Daily"
+```
+
+{% endif %}
+
 1. **Analyze the SQL query** provided by the user:
 
 2. **Find the semantic model YAML file**:

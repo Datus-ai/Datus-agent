@@ -5,6 +5,7 @@
 import argparse
 import asyncio
 import os
+from typing import Optional
 
 import pandas as pd
 
@@ -22,6 +23,7 @@ logger = get_logger(__name__)
 def init_success_story_metrics(
     args: argparse.Namespace,
     agent_config: AgentConfig,
+    subject_tree: Optional[list] = None,
 ):
     """
     Initialize metrics from success story CSV file using SemanticAgenticNode in workflow mode.
@@ -29,6 +31,7 @@ def init_success_story_metrics(
     Args:
         args: Command line arguments
         agent_config: Agent configuration
+        subject_tree: Optional predefined subject tree categories
     """
     df = pd.read_csv(args.success_story)
 
@@ -36,7 +39,7 @@ def init_success_story_metrics(
         for idx, row in df.iterrows():
             logger.info(f"Processing row {idx + 1}/{len(df)}")
             try:
-                await process_line(row.to_dict(), agent_config)
+                await process_line(row.to_dict(), agent_config, subject_tree)
             except Exception as e:
                 logger.error(f"Error processing row {idx + 1}: {e}")
 
@@ -47,6 +50,7 @@ def init_success_story_metrics(
 async def process_line(
     row: dict,
     agent_config: AgentConfig,
+    subject_tree: Optional[list] = None,
 ):
     """
     Process a single line from the CSV using SemanticAgenticNode in workflow mode.
@@ -54,6 +58,7 @@ async def process_line(
     Args:
         row: CSV row data containing question and sql
         agent_config: Agent configuration
+        subject_tree: Optional predefined subject tree categories
     """
     logger.info(f"processing line: {row}")
 
@@ -80,6 +85,7 @@ async def process_line(
         node_name="gen_semantic_model",
         agent_config=agent_config,
         execution_mode="workflow",
+        subject_tree=subject_tree,
     )
 
     action_history_manager = ActionHistoryManager()
@@ -120,6 +126,7 @@ async def process_line(
         node_name="gen_metrics",
         agent_config=agent_config,
         execution_mode="workflow",
+        subject_tree=subject_tree,
     )
 
     action_history_manager = ActionHistoryManager()

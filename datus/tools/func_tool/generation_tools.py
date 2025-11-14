@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from agents import Tool
 
@@ -23,11 +23,9 @@ class GenerationTools:
     completing the generation process.
     """
 
-    def __init__(self, agent_config: AgentConfig, predefined_taxonomy: Optional[Dict[str, Any]] = None):
+    def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
-        self.predefined_taxonomy = predefined_taxonomy
         self.metrics_rag = SemanticMetricsRAG(agent_config)
-        logger.debug(f"GenerationTools initialized with predefined_taxonomy: {predefined_taxonomy is not None}")
 
     def available_tools(self) -> List[Tool]:
         """
@@ -41,7 +39,6 @@ class GenerationTools:
             for func in (
                 self.check_semantic_model_exists,
                 self.check_metric_exists,
-                self.prepare_sql_summary_context,
                 self.generate_sql_summary_id,
                 self.end_generation,
             )
@@ -166,286 +163,6 @@ class GenerationTools:
         except Exception as e:
             logger.error(f"Error checking metric existence: {e}")
             return FuncToolResult(success=0, error=f"Failed to check metric: {str(e)}")
-
-    def _get_reference_sql_taxonomy(self) -> FuncToolResult:
-        """
-        Get existing reference SQL classification taxonomy.
-
-        Use this tool to retrieve the current classification taxonomy used for reference SQLs.
-        This helps maintain consistency when classifying new SQL queries.
-
-        Returns:
-            dict: Taxonomy containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'domains' (list): Available business domains
-                    - 'layer1_categories' (list): Primary categories with domain associations
-                    - 'layer2_categories' (list): Secondary categories with layer1 associations
-                    - 'common_tags' (list): Available tags
-        """
-        try:
-            from datus.storage.reference_sql.store import ReferenceSqlRAG
-
-            # Get SQL history storage
-            storage = ReferenceSqlRAG(self.agent_config)
-            taxonomy = storage.reference_sql_storage.get_existing_taxonomy()
-
-            return FuncToolResult(
-                result={
-                    "taxonomy": taxonomy,
-                    "message": f"Found {len(taxonomy.get('domains', []))} domains, "
-                    f"{len(taxonomy.get('layer1_categories', []))} layer1 categories, "
-                    f"{len(taxonomy.get('layer2_categories', []))} layer2 categories, "
-                    f"{len(taxonomy.get('common_tags', []))} tags",
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Error getting reference SQL taxonomy: {e}")
-            return FuncToolResult(success=0, error=f"Failed to get taxonomy: {str(e)}")
-
-    def _check_sql_name_exists(self, name: str) -> FuncToolResult:
-        """
-        Check if an SQL history name already exists.
-
-        Use this tool to avoid duplicate SQL history names.
-
-        Args:
-            name: SQL history name to check
-
-        Returns:
-            dict: Check results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'exists' (bool): Whether the name already exists
-                    - 'conflicting_names' (list): List of similar existing names
-                    - 'message' (str): Description message
-        """
-        try:
-            from datus.storage.reference_sql.store import ReferenceSqlRAG
-
-            # Get SQL history storage
-            storage = ReferenceSqlRAG(self.agent_config)
-
-            # Search for similar names using FTS
-            all_items = storage.search_all_reference_sql()
-
-            # Check for exact match and collect similar names
-            exact_match = False
-            similar_names = []
-
-            for item in all_items:
-                item_name = item.get("name", "").lower()
-                search_name = name.lower()
-
-                if item_name == search_name:
-                    exact_match = True
-                elif search_name in item_name or item_name in search_name:
-                    similar_names.append(item.get("name", ""))
-
-            if exact_match:
-                return FuncToolResult(
-                    result={
-                        "exists": True,
-                        "conflicting_names": [name] + similar_names[:5],
-                        "message": f"Name '{name}' already exists. Consider using a different name.",
-                    }
-                )
-            elif similar_names:
-                return FuncToolResult(
-                    result={
-                        "exists": False,
-                        "conflicting_names": similar_names[:10],
-                        "message": f"Name '{name}' is available, but {len(similar_names)} similar names exist.",
-                    }
-                )
-            else:
-                return FuncToolResult(
-                    result={
-                        "exists": False,
-                        "conflicting_names": [],
-                        "message": f"Name '{name}' is available and unique.",
-                    }
-                )
-
-        except Exception as e:
-            logger.error(f"Error checking SQL name existence: {e}")
-            return FuncToolResult(success=0, error=f"Failed to check SQL name: {str(e)}")
-
-    def _get_similar_reference_sqls(self, comment: str = "", summary: str = "", top_n: int = 5) -> FuncToolResult:
-        """
-        Get similar SQL histories based on comment or summary.
-
-        Use this tool to find similar existing SQL histories for reference when
-        classifying new SQL queries.
-
-        Args:
-            comment: SQL comment for similarity search
-            summary: SQL summary for similarity search (if available)
-            top_n: Number of similar results to return (default: 5)
-
-        Returns:
-            dict: Search results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'similar_items' (list): List of similar SQL histories with fields:
-                        name, domain, layer1, layer2, tags, comment, summary
-                    - 'count' (int): Number of results found
-        """
-        try:
-            from datus.storage.reference_sql.store import ReferenceSqlRAG
-
-            # Get SQL history storage
-            storage = ReferenceSqlRAG(self.agent_config)
-
-            # Use summary for vector search if available, otherwise use comment
-            query_text = summary if summary else comment
-
-            if not query_text:
-                return FuncToolResult(
-                    result={
-                        "similar_items": [],
-                        "count": 0,
-                        "message": "No query text provided for similarity search",
-                    }
-                )
-
-            # Search using vector similarity on summary field
-            similar_items = storage.search_reference_sql_by_summary(query_text=query_text, top_n=top_n)
-
-            # Extract relevant fields
-            results = []
-            for item in similar_items:
-                results.append(
-                    {
-                        "name": item.get("name", ""),
-                        "domain": item.get("domain", ""),
-                        "layer1": item.get("layer1", ""),
-                        "layer2": item.get("layer2", ""),
-                        "tags": item.get("tags", ""),
-                        "comment": item.get("comment", ""),
-                        "summary": item.get("summary", ""),
-                    }
-                )
-
-            return FuncToolResult(
-                result={
-                    "similar_items": results,
-                    "count": len(results),
-                    "message": f"Found {len(results)} similar SQL histories",
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Error getting similar SQL histories: {e}")
-            return FuncToolResult(success=0, error=f"Failed to get similar SQL histories: {str(e)}")
-
-    def prepare_sql_summary_context(
-        self,
-        sql: str,
-        comment: str = "",
-        suggested_name: str = "",
-    ) -> FuncToolResult:
-        """
-        One-shot context preparation for SQL summary generation.
-
-        This tool combines multiple preparatory steps into a single call:
-        1. Get existing taxonomy (domains, layers, tags) - uses predefined if available
-        2. Find similar SQL histories for reference
-        3. Check name uniqueness (if suggested_name provided)
-
-        Use this tool at the beginning of SQL summary workflow to get all necessary
-        context in one efficient call.
-
-        Args:
-            sql: SQL query to analyze
-            comment: SQL comment for similarity search
-            suggested_name: Optional suggested name to check for uniqueness
-
-        Returns:
-            dict: Comprehensive context containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'taxonomy' (dict): Classification taxonomy wrapper with:
-                        - 'taxonomy' (dict): The actual taxonomy
-                          (domains, layer1_categories, layer2_categories, common_tags)
-                        - 'message' (str): Info message (empty for predefined, stats for storage)
-                        - 'source' (str): Source type ("predefined", "storage", or "none")
-                    - 'similar_items' (list): Similar SQL histories for reference
-                    - 'name_check' (dict): Name uniqueness check result (if suggested_name provided)
-                    - 'message' (str): Summary message
-        """
-        try:
-            result = {}
-            messages = []
-
-            # 1. Get taxonomy (use predefined if available)
-            if self.predefined_taxonomy:
-                result["taxonomy"] = {
-                    "taxonomy": {
-                        "domains": self.predefined_taxonomy.get("domains", []),
-                        "layer1_categories": self.predefined_taxonomy.get("layer1_categories", []),
-                        "layer2_categories": self.predefined_taxonomy.get("layer2_categories", []),
-                        "common_tags": self.predefined_taxonomy.get("common_tags", []),
-                    },
-                    "message": "",
-                    "source": "predefined",
-                }
-                messages.append("Taxonomy: Using predefined subject_tree")
-            else:
-                taxonomy_result = self._get_reference_sql_taxonomy()
-                if taxonomy_result.success:
-                    result["taxonomy"] = {
-                        "taxonomy": taxonomy_result.result.get("taxonomy", taxonomy_result.result),
-                        "message": taxonomy_result.result.get("message", ""),
-                        "source": "storage",
-                    }
-                    taxonomy_info = taxonomy_result.result.get("message", "")
-                    messages.append(f"Taxonomy: {taxonomy_info}")
-                else:
-                    logger.debug(f"Failed to get taxonomy: {taxonomy_result.error}")
-                    result["taxonomy"] = {
-                        "taxonomy": None,
-                        "message": str(taxonomy_result.error),
-                        "source": "none",
-                    }
-
-            # 2. Find similar reference SQLs
-            similar_result = self._get_similar_reference_sqls(
-                comment=comment,
-                summary=sql[:200],  # Use first 200 chars of SQL as fallback
-                top_n=5,
-            )
-            if similar_result.success:
-                result["similar_items"] = similar_result.result.get("similar_items", [])
-                similar_count = similar_result.result.get("count", 0)
-                messages.append(f"Similar reference SQLs: {similar_count}")
-            else:
-                logger.debug(f"Failed to get similar reference SQLs: {similar_result.error}")
-                result["similar_items"] = []
-
-            # 3. Check name if provided
-            if suggested_name:
-                name_result = self._check_sql_name_exists(name=suggested_name)
-                if name_result.success:
-                    result["name_check"] = name_result.result
-                    name_status = name_result.result.get("message", "")
-                    messages.append(f"Name check: {name_status}")
-                else:
-                    logger.debug(f"Failed to check name: {name_result.error}")
-                    result["name_check"] = {"error": name_result.error}
-
-            result["message"] = " | ".join(messages)
-
-            return FuncToolResult(result=result)
-
-        except Exception as e:
-            logger.error(f"Error preparing SQL summary context: {e}")
-            return FuncToolResult(success=0, error=f"Failed to prepare context: {str(e)}")
 
     def end_generation(self, filepath: str) -> FuncToolResult:
         """

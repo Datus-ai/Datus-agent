@@ -7,6 +7,7 @@
 
 import asyncio
 import os
+from typing import Optional
 
 from agents.lifecycle import AgentHooks
 from rich.console import Console
@@ -393,6 +394,7 @@ class GenerationHooks(AgentHooks):
         """Check if YAML content is Reference SQL (contains reference_sql or has id+sql+summary fields)."""
         import yaml
 
+        logger.debug(f"Checking if YAML content is Reference SQL: {yaml_content}")
         try:
             doc = yaml.safe_load(yaml_content)
             if isinstance(doc, dict):
@@ -405,8 +407,37 @@ class GenerationHooks(AgentHooks):
                 has_summary = "summary" in doc or "comment" in doc
                 return has_sql and has_id and has_summary
             return False
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error checking if YAML content is Reference SQL: {e}", exc_info=True)
             return False
+
+    @staticmethod
+    def _parse_subject_tree_from_tags(tags_list) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """
+        Parse domain/layer1/layer2 from metric tags.
+
+        Looks for tag format: "subject_tree: domain/layer1/layer2"
+
+        Args:
+            tags_list: List of tags from locked_metadata.tags
+
+        Returns:
+            tuple: (domain, layer1, layer2) or (None, None, None) if not found
+        """
+        if not tags_list or not isinstance(tags_list, list):
+            return None, None, None
+
+        for tag in tags_list:
+            if isinstance(tag, str) and tag.startswith("subject_tree:"):
+                # Extract the path after "subject_tree: "
+                path = tag.split("subject_tree:", 1)[1].strip()
+                parts = [part.strip() for part in path.split("/") if part.strip()]
+                if len(parts) == 3:
+                    return parts[0], parts[1], parts[2]
+                else:
+                    logger.warning(f"Invalid subject_tree format: {tag}, expected 'subject_tree: domain/layer1/layer2'")
+
+        return None, None, None
 
     @staticmethod
     def _sync_semantic_to_db(file_path: str, agent_config: AgentConfig) -> dict:
@@ -520,7 +551,32 @@ class GenerationHooks(AgentHooks):
             semantic_model_name = data_source.get("name", "") if data_source else ""
             for metric_doc in metrics_list:
                 metric_name = metric_doc.get("name", "")
-                metric_id = gen_metric_id(domain, layer1, layer2, semantic_model_name, metric_name)
+
+                # Try to extract domain/layer1/layer2 from locked_metadata tags first
+                metric_domain = None
+                metric_layer1 = None
+                metric_layer2 = None
+
+                if "locked_metadata" in metric_doc:
+                    locked_meta = metric_doc["locked_metadata"]
+                    if isinstance(locked_meta, dict) and "tags" in locked_meta:
+                        metric_domain, metric_layer1, metric_layer2 = GenerationHooks._parse_subject_tree_from_tags(
+                            locked_meta["tags"]
+                        )
+
+                # Fallback to global metric_meta if not found in tags
+                if not metric_domain:
+                    metric_domain = domain
+                    metric_layer1 = layer1
+                    metric_layer2 = layer2
+                    logger.debug(f"Using global metric_meta for {metric_name}: {domain}/{layer1}/{layer2}")
+                else:
+                    logger.info(
+                        f"Using subject_tree from tags for {metric_name}: "
+                        f"{metric_domain}/{metric_layer1}/{metric_layer2}"
+                    )
+
+                metric_id = gen_metric_id(metric_domain, metric_layer1, metric_layer2, semantic_model_name, metric_name)
 
                 # Check if metric already exists
                 if metric_id not in existing_metrics:
@@ -530,9 +586,9 @@ class GenerationHooks(AgentHooks):
                     metric_dict = {
                         "id": metric_id,
                         "semantic_model_name": semantic_model_name,
-                        "domain": domain,
-                        "layer1": layer1,
-                        "layer2": layer2,
+                        "domain": metric_domain,
+                        "layer1": metric_layer1,
+                        "layer2": metric_layer2,
                         "name": metric_name,
                         "llm_text": llm_text,
                         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -613,6 +669,19 @@ class GenerationHooks(AgentHooks):
                     "message": f"Reference SQL '{reference_sql_data.get('name', '')}' already exists, skipped",
                 }
 
+            # Parse subject_tree if available
+            subject_tree = reference_sql_data.get("subject_tree", "")
+            if subject_tree:
+                # Parse subject_tree format: "domain/layer1/layer2"
+                parts = subject_tree.split("/")
+                domain = parts[0].strip() if len(parts) > 0 else ""
+                layer1 = parts[1].strip() if len(parts) > 1 else ""
+                layer2 = parts[2].strip() if len(parts) > 2 else ""
+            else:
+                domain = ""
+                layer1 = ""
+                layer2 = ""
+
             # Ensure all required fields are present
             reference_sql_dict = {
                 "id": item_id,
@@ -621,9 +690,9 @@ class GenerationHooks(AgentHooks):
                 "comment": comment,
                 "summary": reference_sql_data.get("summary", ""),
                 "filepath": reference_sql_data.get("filepath", ""),
-                "domain": reference_sql_data.get("domain", ""),
-                "layer1": reference_sql_data.get("layer1", ""),
-                "layer2": reference_sql_data.get("layer2", ""),
+                "domain": domain,
+                "layer1": layer1,
+                "layer2": layer2,
                 "tags": reference_sql_data.get("tags", ""),
             }
 
