@@ -149,11 +149,8 @@ class Agent:
                 return {"status": "error", "message": f"No connections found for {namespace}"}
             if isinstance(connections, dict):
                 for name, conn in connections.items():
-                    try:
-                        conn.test_connection()
-                        logger.info(f"Database connection test successful for {name}")
-                    except Exception as e:
-                        logger.error(f"Database connection test failed for {name}: {str(e)}", exc_info=False)
+                    conn.test_connection()
+                    logger.info(f"Database connection test successful for {name}")
             else:
                 connections.test_connection()
                 logger.info(f"Database connection test successful {namespace}")
