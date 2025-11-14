@@ -145,8 +145,8 @@ class GenerationHooks(AgentHooks):
             self.console.print(syntax)
             await asyncio.sleep(0.2)
 
-            # Get user confirmation to sync
-            await self._get_sync_confirmation(yaml_content, file_path)
+            # Get user confirmation to sync (end_generation is for semantic models/metrics)
+            await self._get_sync_confirmation(yaml_content, file_path, "semantic")
 
         except GenerationCancelledException:
             self.console.print("[yellow]Generation workflow cancelled[/]")
@@ -236,8 +236,8 @@ class GenerationHooks(AgentHooks):
             self.console.print(syntax)
             await asyncio.sleep(0.2)
 
-            # Get user confirmation to sync
-            await self._get_sync_confirmation(yaml_content, file_path)
+            # Get user confirmation to sync (this is for SQL summary)
+            await self._get_sync_confirmation(yaml_content, file_path, "sql_summary")
 
         except GenerationCancelledException:
             raise
@@ -245,13 +245,14 @@ class GenerationHooks(AgentHooks):
             logger.error(f"Error handling write_file_reference_sql result: {e}", exc_info=True)
             self.console.print(f"[red]Error: {e}[/]")
 
-    async def _get_sync_confirmation(self, yaml_content: str, file_path: str):
+    async def _get_sync_confirmation(self, yaml_content: str, file_path: str, yaml_type: str):
         """
         Get user confirmation to sync to Knowledge Base.
 
         Args:
             yaml_content: Generated YAML content
             file_path: Path where YAML was saved
+            yaml_type: YAML type - "semantic" or "sql_summary"
         """
         try:
             # Stop the live display if active
@@ -271,14 +272,14 @@ class GenerationHooks(AgentHooks):
                 if choice == "1":
                     # Sync to Knowledge Base
                     self.console.print("[bold green]✓ Syncing to Knowledge Base...[/]")
-                    await self._sync_to_storage(yaml_content, file_path)
+                    await self._sync_to_storage(file_path, yaml_type)
                 elif choice == "2":
                     # Keep file only
                     self.console.print(f"[yellow]✓ YAML saved to file only: {file_path}[/]")
                 else:
                     self.console.print("[red]✗ Invalid choice. Please enter 1 or 2.[/]")
                     self.console.print("[dim]Please try again...[/]\n")
-                    await self._get_sync_confirmation(yaml_content, file_path)
+                    await self._get_sync_confirmation(yaml_content, file_path, yaml_type)
 
             # Print completion separator to prevent action stream from overwriting
             self.console.print("\n" + "=" * 80)
@@ -298,13 +299,13 @@ class GenerationHooks(AgentHooks):
             raise e
 
     @optional_traceable(name="_sync_to_storage", run_type="chain")
-    async def _sync_to_storage(self, yaml_content: str, file_path: str):
+    async def _sync_to_storage(self, file_path: str, yaml_type: str):
         """
-        Sync YAML content to RAG storage based on file type.
+        Sync YAML file to RAG storage based on file type.
 
         Args:
-            yaml_content: YAML content to sync
-            file_path: File path
+            file_path: File path to sync
+            yaml_type: YAML type - "semantic" or "sql_summary"
         """
         if not self.agent_config:
             self.console.print("[red]Agent configuration not available, cannot sync to RAG[/]")
@@ -312,21 +313,21 @@ class GenerationHooks(AgentHooks):
             return
 
         try:
-            # Determine file type based on path and call appropriate sync method
+            # Sync based on yaml_type
             loop = asyncio.get_event_loop()
 
-            if self._is_semantic_yaml(yaml_content):
+            if yaml_type == "semantic":
                 result = await loop.run_in_executor(
                     None, GenerationHooks._sync_semantic_to_db, file_path, self.agent_config
                 )
                 item_type = "semantic model and metrics"
-            elif self._is_reference_sql_yaml(yaml_content):
+            elif yaml_type == "sql_summary":
                 result = await loop.run_in_executor(
                     None, GenerationHooks._sync_reference_sql_to_db, file_path, self.agent_config
                 )
                 item_type = "reference SQL"
             else:
-                self.console.print("[yellow]Unknown YAML type, cannot determine sync method[/]")
+                self.console.print(f"[red]Invalid yaml_type: {yaml_type}. Expected 'semantic' or 'sql_summary'[/]")
                 self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
                 return
 
@@ -376,39 +377,6 @@ class GenerationHooks(AgentHooks):
 
         except Exception as e:
             logger.debug(f"Error checking tool arguments: {e}")
-            return False
-
-    def _is_semantic_yaml(self, yaml_content: str) -> bool:
-        """Check if YAML content contains semantic model (data_source) or metrics."""
-        import yaml
-
-        try:
-            docs = list(yaml.safe_load_all(yaml_content))
-            has_data_source = any("data_source" in doc for doc in docs if doc)
-            has_metric = any("metric" in doc for doc in docs if doc)
-            return has_data_source or has_metric
-        except Exception:
-            return False
-
-    def _is_reference_sql_yaml(self, yaml_content: str) -> bool:
-        """Check if YAML content is Reference SQL (contains reference_sql or has id+sql+summary fields)."""
-        import yaml
-
-        logger.debug(f"Checking if YAML content is Reference SQL: {yaml_content}")
-        try:
-            doc = yaml.safe_load(yaml_content)
-            if isinstance(doc, dict):
-                # Check for explicit reference_sql key
-                if "reference_sql" in doc:
-                    return True
-                # Check for characteristic fields of reference SQL
-                has_sql = "sql" in doc
-                has_id = "id" in doc
-                has_summary = "summary" in doc or "comment" in doc
-                return has_sql and has_id and has_summary
-            return False
-        except Exception as e:
-            logger.error(f"Error checking if YAML content is Reference SQL: {e}", exc_info=True)
             return False
 
     @staticmethod
