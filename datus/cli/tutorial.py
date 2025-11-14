@@ -19,9 +19,12 @@ class BenchmarkTutorial:
             self.benchmark_path.mkdir(parents=True)
         from datus.cli.interactive_init import copy_data_file
 
+        sub_benchmark_path = self.benchmark_path / self.namespace_name
+        if not sub_benchmark_path.exists():
+            sub_benchmark_path.mkdir(parents=True)
         copy_data_file(
             resource_path="sample_data/california_schools",
-            target_dir=self.benchmark_path / self.namespace_name,
+            target_dir=sub_benchmark_path,
         )
 
     def _ensure_config(self) -> bool:

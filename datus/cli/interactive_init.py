@@ -345,14 +345,7 @@ class InteractiveInit:
 
         # Initialize metadata knowledge base
         if Confirm.ask("- Initialize vector DB for metadata?", default=False):
-            with console.status(
-                "→ Initializing metadata for "
-                f"{self.namespace_name} with path {self.config['agent']['storage']['base_path']}..."
-            ):
-                if init_metadata_and_log_result(self.namespace_name, config_path):
-                    console.print(" ✅ Metadata knowledge base initialized")
-                else:
-                    console.print(" ❌ Metadata initialization failed")
+            init_metadata_and_log_result(self.namespace_name, config_path)
 
         # Initialize reference SQL
         if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
@@ -580,29 +573,37 @@ def create_agent(namespace_name: str, components: list, config_path: str, **kwar
     return Agent(args, agent_config)
 
 
-def init_metadata_and_log_result(namespace_name: str, config_path: str) -> bool:
-    try:
-        agent = create_agent(namespace_name=namespace_name, components=["metadata"], config_path=config_path)
-        result = agent.bootstrap_kb()
-        # Log detailed results
-        if isinstance(result, dict) and "message" in result:
-            logger.info(f"Metadata bootstrap completed: {result['message']}")
-        else:
-            logger.info(f"Metadata bootstrap result: {result}")
-
-        # Try to get table counts after bootstrap
+def init_metadata_and_log_result(namespace_name: str, config_path: str):
+    agent = create_agent(namespace_name=namespace_name, components=["metadata"], config_path=config_path)
+    with console.status(
+        "→ Initializing metadata for " f"{namespace_name} with path `{agent.global_config.rag_storage_path()}`..."
+    ):
         try:
-            if hasattr(agent, "metadata_store") and agent.metadata_store:
-                schema_size = agent.metadata_store.get_schema_size()
-                value_size = agent.metadata_store.get_value_size()
-                logger.info(f"Bootstrap success: {schema_size} tables processed, {value_size} sample records")
-                console.print(f"  → Processed {schema_size} tables with {value_size} sample records")
-        except Exception as count_e:
-            logger.debug(f"Could not get table counts: {count_e}")
-        return result is not None
-    except Exception as e:
-        logger.error(f"Metadata initialization failed: {e}")
-        return False
+            result = agent.bootstrap_kb()
+            # Log detailed results
+            if isinstance(result, dict) and "message" in result:
+                logger.info(f"Metadata bootstrap completed: {result['message']}")
+            else:
+                logger.info(f"Metadata bootstrap result: {result}")
+
+            # Try to get table counts after bootstrap
+            try:
+                if hasattr(agent, "metadata_store") and agent.metadata_store:
+                    schema_size = agent.metadata_store.get_schema_size()
+                    value_size = agent.metadata_store.get_value_size()
+                    logger.info(f"Bootstrap success: {schema_size} tables processed, {value_size} sample records")
+                    console.print(f"  → Processed {schema_size} tables with {value_size} sample records")
+            except Exception as count_e:
+                logger.debug(f"Could not get table counts: {count_e}")
+            flag = bool(result)
+        except Exception as e:
+            logger.error(f"Metadata initialization failed: {e}")
+            flag = False
+
+        if flag:
+            console.print(" ✅ Metadata knowledge base initialized")
+        else:
+            console.print(" ❌ Metadata initialization failed")
 
 
 def init_sql_and_log_result(
@@ -611,7 +612,7 @@ def init_sql_and_log_result(
     config_path: str,
     subject_tree: Optional[str] = None,
 ):
-    with console.status(f"→ Reference SQL initialization...{namespace_name}, dir:{sql_dir}"):
+    with console.status(f"Reference SQL initialization...{namespace_name}, dir:{sql_dir}"):
         try:
             # Count SQL files first
             sql_files = list(Path(sql_dir).rglob("*.sql"))
@@ -641,11 +642,11 @@ def init_sql_and_log_result(
                 else:
                     if invalid_entries > 0:
                         console.print(
-                            f" ✅ Processed {processed_entries} entries, {valid_entries} valid entries,"
+                            f"  → Processed {processed_entries} entries, {valid_entries} valid entries,"
                             f" {invalid_entries} invalid entries"
                         )
                     else:
-                        console.print(f" ✅ Processed {processed_entries} entries successfully")
+                        console.print(f"  → Processed {processed_entries} entries successfully")
                 return
             else:
                 logger.info(f"Reference SQL bootstrap result: {result}")
