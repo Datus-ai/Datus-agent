@@ -642,15 +642,14 @@ def init_sql_and_log_result(
                 else:
                     if invalid_entries > 0:
                         console.print(
-                            f"  → Processed {processed_entries} entries, {valid_entries} valid entries,"
-                            f" {invalid_entries} invalid entries"
+                            f"  → Processed {processed_entries} SQL, {valid_entries} valid SQL,"
+                            f" {invalid_entries} invalid SQL"
                         )
                     else:
-                        console.print(f"  → Processed {processed_entries} entries successfully")
-                return
+                        console.print(f"  → Processed {processed_entries} SQL successfully")
             else:
                 logger.info(f"Reference SQL bootstrap result: {result}")
-                console.print(" ✅ Imported SQL files into reference completed.")
+            console.print(" ✅ Imported SQL files into reference completed.")
 
         except Exception as e:
             logger.error(f"Reference SQL initialization failed: {e}")
