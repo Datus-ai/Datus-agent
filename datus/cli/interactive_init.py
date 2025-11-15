@@ -42,10 +42,13 @@ class InteractiveInit:
         self.conf_dir = path_manager.conf_dir
         self.template_dir = path_manager.template_dir
         self.sample_dir = path_manager.sample_dir
+        self.benchmark_dir = path_manager.benchmark_dir
+        # Whether the model can initialize the indicator
         try:
             text = read_data_file_text(resource_path="conf/agent.yml.qs", encoding="utf-8")
             self.config = yaml.safe_load(text)
-        except Exception:
+        except Exception as e:
+            logger.error(f"Loading sample configuration failed: {e}")
             console.print("[yellow]Unable to load sample configuration file, using default configuration[/]")
             self.config = {
                 "agent": {
@@ -133,7 +136,7 @@ class InteractiveInit:
                 return 1
 
             # Step 4: Optional Setup (after config is saved)
-            self._optional_setup()
+            self._optional_setup(str(config_path))
 
             # Step 5: Summary and save configuration first
             console.print("[bold yellow][5/5] Configuration Summary[/bold yellow]")
@@ -225,7 +228,7 @@ class InteractiveInit:
         console.print("→ Testing LLM connectivity...")
         success, error_msg = self._test_llm_connectivity()
         if success:
-            console.print("✔ LLM model test successful\n")
+            console.print(" ✅ LLM model test successful\n")
             return True
         else:
             console.print(f"❌ LLM connectivity test failed: {error_msg}\n")
@@ -307,10 +310,10 @@ class InteractiveInit:
         console.print("→ Testing database connectivity...")
         success, error_msg = self._test_db_connectivity()
         if success:
-            console.print("✔ Database connection test successful\n")
+            console.print(" ✅ Database connection test successful\n")
             return True
         else:
-            console.print(f"❌ Database connectivity test failed: {error_msg}\n")
+            console.print(f" ❌ Database connectivity test failed: {error_msg}\n")
             # Remove failed database configuration
             if self.namespace_name in self.config["agent"]["namespace"]:
                 del self.config["agent"]["namespace"][self.namespace_name]
@@ -330,41 +333,25 @@ class InteractiveInit:
         # Create workspace directory
         try:
             Path(self.workspace_path).mkdir(parents=True, exist_ok=True)
-            console.print("✔ Workspace directory created\n")
+            console.print(" ✅ Workspace directory created\n")
             return True
         except Exception as e:
-            console.print(f"❌ Failed to create workspace directory: {e}\n")
+            console.print(f" ❌ Failed to create workspace directory: {e}\n")
             return False
 
-    def _optional_setup(self):
+    def _optional_setup(self, config_path: str):
         """Step 4: Optional setup for metadata and reference SQL."""
         console.print("[bold yellow][4/5] Optional Setup[/bold yellow]")
 
         # Initialize metadata knowledge base
         if Confirm.ask("- Initialize vector DB for metadata?", default=False):
-            console.print("→ Initializing metadata knowledge base...")
-            if self._initialize_metadata():
-                console.print("✔ Metadata knowledge base initialized")
-            else:
-                console.print("❌ Metadata initialization failed")
+            init_metadata_and_log_result(self.namespace_name, config_path)
 
         # Initialize reference SQL
         if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
             default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
             sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
-
-            sql_path = Path(sql_dir)
-            if not sql_path.exists():
-                console.print(f"→ Directory {sql_dir} does not exist, creating it...")
-                sql_path.mkdir(parents=True, exist_ok=True)
-
-            console.print(f"→ Scanning {sql_dir} for SQL files...")
-            sql_count = self._initialize_reference_sql(sql_dir)
-            if sql_count > 0:
-                console.print(f"✔ Imported {sql_count} SQL files into reference")
-            else:
-                console.print("⚠️ No SQL files found in specified directory")
-                console.print(f"   You can add SQL files to {sql_dir} and regenerate SQL summary later")
+            init_sql_and_log_result(namespace_name=self.namespace_name, sql_dir=sql_dir, config_path=config_path)
 
         console.print()
 
@@ -375,10 +362,10 @@ class InteractiveInit:
             with open(config_path, "w", encoding="utf-8") as f:
                 yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True)
 
-            console.print(f"Configuration saved to {config_path} ✅")
+            console.print(f" ✅ Configuration saved to {config_path}")
             return True
         except Exception as e:
-            console.print(f"❌ Failed to save configuration: {e}")
+            console.print(f" ❌ Failed to save configuration: {e}")
             return False
 
     def _display_summary(self):
@@ -528,50 +515,70 @@ class InteractiveInit:
             logger.error(f"Database connectivity test failed: {error_msg}")
             return False, error_msg
 
-    def _create_bootstrap_args(self, components: list, **kwargs):
-        """Create common args namespace for bootstrap operations."""
-        import argparse
-
-        default_args = {
-            "action": "bootstrap-kb",
-            "namespace": self.namespace_name,
-            "components": components,
-            "kb_update_strategy": "overwrite",
-            "storage_path": None,
-            "benchmark": None,
-            "schema_linking_type": "full",
-            "catalog": "",
-            "database_name": "",
-            "benchmark_path": None,
-            "pool_size": 4,
-            "config": None,
-            "debug": False,
-            "save_llm_trace": False,
-        }
-
-        # Update with any additional kwargs
-        default_args.update(kwargs)
-
-        return argparse.Namespace(**default_args)
-
     def _create_agent_with_config(self, args):
         """Create agent instance with loaded configuration."""
         from datus.agent.agent import Agent
         from datus.configuration.agent_config_loader import load_agent_config
 
-        agent_config = load_agent_config()
+        agent_config = load_agent_config(reload=True)
         agent_config.current_namespace = self.namespace_name
 
         return Agent(args, agent_config)
 
-    def _initialize_metadata(self) -> bool:
-        """Initialize metadata knowledge base."""
+    def _copy_files(self):
+        copy_data_file(
+            resource_path="sample_data/duckdb-demo.duckdb",
+            target_dir=self.sample_dir,
+        )
+
+        copy_data_file(
+            resource_path="sample_data/california_schools",
+            target_dir=self.benchmark_dir / "california_schools",
+        )
+        copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir)
+
+
+def create_agent(namespace_name: str, components: list, config_path: str, **kwargs):
+    import argparse
+
+    default_args = {
+        "action": "bootstrap-kb",
+        "namespace": namespace_name,
+        "components": components,
+        "kb_update_strategy": "overwrite",
+        "storage_path": None,
+        "benchmark": None,
+        "schema_linking_type": "full",
+        "catalog": "",
+        "database_name": "",
+        "benchmark_path": None,
+        "pool_size": 4,
+        "config": config_path,
+        "debug": False,
+        "save_llm_trace": False,
+    }
+
+    # Update with any additional kwargs
+    default_args.update(kwargs)
+
+    args = argparse.Namespace(**default_args)
+
+    from datus.agent.agent import Agent
+    from datus.configuration.agent_config_loader import load_agent_config
+
+    agent_config = load_agent_config(reload=True, config_path=config_path, **vars(args))
+
+    agent_config.current_namespace = namespace_name
+
+    return Agent(args, agent_config)
+
+
+def init_metadata_and_log_result(namespace_name: str, config_path: str):
+    agent = create_agent(namespace_name=namespace_name, components=["metadata"], config_path=config_path)
+    with console.status(
+        "→ Initializing metadata for " f"{namespace_name} with path `{agent.global_config.rag_storage_path()}`..."
+    ):
         try:
-            logger.info(
-                f"Metadata initialization...{self.namespace_name},  {self.config['agent']['storage']['base_path']}"
-            )
-            args = self._create_bootstrap_args(["metadata"])
-            agent = self._create_agent_with_config(args)
             result = agent.bootstrap_kb()
             # Log detailed results
             if isinstance(result, dict) and "message" in result:
@@ -588,53 +595,65 @@ class InteractiveInit:
                     console.print(f"  → Processed {schema_size} tables with {value_size} sample records")
             except Exception as count_e:
                 logger.debug(f"Could not get table counts: {count_e}")
-
-            return result is not False
-
+            flag = bool(result)
         except Exception as e:
             logger.error(f"Metadata initialization failed: {e}")
-            return False
+            flag = False
 
-    def _initialize_reference_sql(self, sql_dir: str) -> int:
-        """Initialize reference SQL from specified directory."""
+        if flag:
+            console.print(" ✅ Metadata knowledge base initialized")
+        else:
+            console.print(" ❌ Metadata initialization failed")
+
+
+def init_sql_and_log_result(
+    namespace_name: str,
+    sql_dir: str,
+    config_path: str,
+    subject_tree: Optional[str] = None,
+):
+    with console.status(f"Reference SQL initialization...{namespace_name}, dir:{sql_dir}"):
         try:
-            logger.info(f"Reference SQL initialization...{self.namespace_name}, dir:{sql_dir}")
             # Count SQL files first
             sql_files = list(Path(sql_dir).rglob("*.sql"))
             if not sql_files:
-                return 0
+                console.print(f"No sql files found in {sql_dir}")
+                return
 
-            args = self._create_bootstrap_args(["reference_sql"], sql_dir=sql_dir, validate_only=False)
-            agent = self._create_agent_with_config(args)
+            agent = create_agent(
+                namespace_name=namespace_name,
+                components=["reference_sql"],
+                sql_dir=sql_dir,
+                validate_only=False,
+                subject_tree=subject_tree,
+                config_path=config_path,
+            )
             result = agent.bootstrap_kb()
 
             # Log detailed results
             if isinstance(result, dict):
                 if "message" in result:
                     logger.info(f"Reference SQL bootstrap completed: {result['message']}")
-                if "processed_count" in result:
-                    logger.info(f"Bootstrap success: {result['processed_count']} SQL files processed")
-                elif "sql_count" in result:
-                    logger.info(f"Bootstrap success: {result['sql_count']} SQL files processed")
+                processed_entries = result.get("processed_entries", 0)
+                valid_entries = result.get("valid_entries", 0)
+                invalid_entries = result.get("invalid_entries", 0)
+                if processed_entries == 0:
+                    console.print(f" ⚠️ No SQL files processed in the directory `{sql_dir}`")
+                else:
+                    if invalid_entries > 0:
+                        console.print(
+                            f"  → Processed {processed_entries} SQL, {valid_entries} valid SQL,"
+                            f" {invalid_entries} invalid SQL"
+                        )
+                    else:
+                        console.print(f"  → Processed {processed_entries} SQL successfully")
             else:
                 logger.info(f"Reference SQL bootstrap result: {result}")
-
-            if result is not False:
-                return len(sql_files)
-            else:
-                return 0
+            console.print(" ✅ Imported SQL files into reference completed.")
 
         except Exception as e:
             logger.error(f"Reference SQL initialization failed: {e}")
-            return 0
-
-    def _copy_files(self):
-        copy_data_file(
-            resource_path="tests/duckdb-demo.duckdb",
-            target_dir=self.sample_dir,
-        )
-
-        copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir)
+            console.print(f" ❌Reference SQL initialization failed: {e}")
 
 
 def main():
