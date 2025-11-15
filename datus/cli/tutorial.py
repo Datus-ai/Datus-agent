@@ -116,6 +116,9 @@ class BenchmarkTutorial:
             f"--components metrics --kb_update_strategy overwrite --success_story {success_path}"
             f" [/]"
         )
+        console.print(
+            "[bold cyan]This step needs to be done using DeepSeek or Claude, otherwise you will get an error[/]"
+        )
         with console.status("Metrics initializing..."):
             self._init_metrics(success_path)
 
