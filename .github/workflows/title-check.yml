@@ -1,0 +1,18 @@
+name: "Title Check"
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+
+concurrency:
+  group: title-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+
+jobs:
+  title-check:
+    uses: ./.github/workflows/pr-title-checker.yml
