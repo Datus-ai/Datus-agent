@@ -61,47 +61,6 @@ The `--max_workers` parameter controls the number of concurrent threads for **Bi
 - **Note**: Higher concurrency may cause API rate limits or resource contention
 - **Semantic Layer**: Does not support parallel execution (runs sequentially)
 
-## Multi-round Benchmark Automation
-
-Use `tests/integration/run_multi_round_benchmark.py` to execute repeated benchmark + evaluation cycles and compare the
-outcomes.
-
-```shell
-python tests/integration/run_multi_round_benchmark.py \
-  --namespace bird_sqlite \
-  --benchmark bird_dev \
-  --workflow chat_agentic \
-  --max_round 4 \
-  --max_workers 2
-```
-
-Key options:
-
-- `--workflow`: workflow/plan name passed directly to the agent.
-- `--max_round`: number of benchmark/evaluation loops (default 4).
-- `--task_ids`: explicit task id list (space or comma separated).
-- `--max_workers`: same as the regular benchmark flag to control concurrency.
-
-For each round the script rewrites the agent's output directories to `{agent.home}/integration/{workflow}_{round}/` so
-the following artifacts stay isolated:
-
-- `save/` – namespace CSV answers.
-- `trajectory/` – YAML workflow traces.
-- `evaluation_round_{round}.json` – raw evaluation report.
-
-After all rounds finish, the tool aggregates every task's status into
-`{agent.home}/integration/{workflow}_summary.xlsx` with the schema:
-
-| task_id                  | round_0        | round_1         | ... | Matching Rate |
-|--------------------------|----------------|-----------------|-----|---------------|
-| 0                        | Matched        | Result Mismatch | ... | 50%           |
-| 1                        | Colum Mismatch | Matched         | ... | 50%           |
-| Summary of Matching Rate | 50%            | 50%             | ... | 50%           |
-
-Statuses currently map to: `Matched`, `Gen SQL Failed`, `Gold SQL Failed`, `Table Mismatch`, `Result Mismatch`,
-`Match Failed`, `Column Mismatch`, and `Not Executed` (round
-failure or skipped task).
-
 ## Multi-agent testing
 
 Create a folder named `multi` under the `conf` directory and prepare `agent{i}.yml` files. For example:
