@@ -31,8 +31,11 @@ class BenchmarkTutorial:
         )
 
     def _ensure_config(self) -> bool:
-        if not self.config_path:
-            console.print(f" ❌Configuration file `{self.config_path}` not found, please run `datus-agent init` first.")
+        if not self.config_path or not Path(self.config_path).exists():
+            console.print(
+                f" ❌Configuration file `{self.config_path}` not found, "
+                "please check it or run `datus-agent init` first."
+            )
             return False
         agent_config = load_agent_config(config=self.config_path)
         if (
@@ -124,7 +127,7 @@ class BenchmarkTutorial:
 
         console.print("[bold yellow][4/4] Initialize Reference SQL using command: [/bold yellow]")
         console.print(
-            "    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
+            f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
             "--namespace california_schools --components reference_sql --kb_update_strategy overwrite "
             f"--sql_dir {str(california_schools_path / 'reference_sql')} "
             f'--subject_tree "'
@@ -166,6 +169,7 @@ class BenchmarkTutorial:
                 console.print(" ✅ Metrics initialized")
             else:
                 console.print(" ⚠️No metrics initialized")
+            return True
         except Exception as e:
             logger.error(f"Metrics initialization failed: {e}")
             return False
