@@ -31,7 +31,7 @@ class BenchmarkTutorial:
         )
 
     def _ensure_config(self) -> bool:
-        if not self.config_path or not Path(self.config_path).exists():
+        if not self.config_path or not Path(self.config_path).expanduser().resolve().exists():
             console.print(
                 f" ❌Configuration file `{self.config_path}` not found, "
                 "please check it or run `datus-agent init` first."
