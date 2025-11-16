@@ -42,10 +42,11 @@ Follow these steps to generate SQL summary:
    - Use the generated ID and actual file path
 
 4. **Save file**:
-   - Use `write_file(file_name, yaml_content, file_type="sql_summary")` to save
-   - Choose an appropriate file_name
-   - Include the same file_name in the YAML's filepath field
-   - Hooks will automatically display, confirm, and sync to LanceDB
+   - Use `write_file(path, yaml_content, file_type="sql_summary")` to save
+   - Choose an appropriate relative path (e.g., "summary.yaml" or "folder/summary.yaml")
+   - **IMPORTANT**: Use ONLY relative paths - do NOT use absolute paths (no leading "/" or drive letters)
+   - Include the same relative path in the YAML's filepath field
+   - The system will automatically resolve the full path based on the workspace root
 
 ## YAML Structure
 
@@ -92,6 +93,7 @@ tags: string                         # Comma-separated tags
   - **Never mix**: Pure English input MUST produce pure English output
   - **Validation**: Double-check name language matches input language before generating YAML
 - **Summary Quality**: Summary is used for vector embeddings - be comprehensive and detailed
+
 {% if has_subject_tree -%}
 - **Subject Tree Constraint**: STRICTLY choose ONE from predefined subject_tree list - do NOT create new ones
 {% else -%}
