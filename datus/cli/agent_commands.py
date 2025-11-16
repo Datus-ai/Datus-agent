@@ -751,53 +751,6 @@ class AgentCommands:
         # For now, redirect to normal reason - streaming can be added later
         self.cmd_reason(args)
 
-    def cmd_gen_metrics(self, args: str):
-        """Generate metrics from SQL queries and tables."""
-        # Create input for generate metrics node
-        input_data = self.create_node_input(NodeType.TYPE_GENERATE_METRICS, args)
-        if not input_data:
-            return
-
-        # Run standalone node
-        result = self.run_standalone_node(NodeType.TYPE_GENERATE_METRICS, input_data)
-
-        if result and result.success:
-            self.console.print("[green]Metrics generation completed[/]")
-            # Store generated metrics in CLI context if available
-            if hasattr(result, "metrics") and result.metrics:
-                self.cli_context.add_metrics(result.metrics)
-                self.console.print(f"[blue]Generated {len(result.metrics)} metrics[/]")
-        else:
-            self.console.print("[bold red]Metrics generation failed[/]")
-
-    def cmd_gen_metrics_stream(self, args: str):
-        """Generate metrics with streaming output and action history."""
-        # For now, redirect to normal gen_metrics - streaming can be added later
-        self.cmd_gen_metrics(args)
-
-    def cmd_gen_semantic_model(self, args: str):
-        """Generate semantic model for data modeling."""
-        # Create input for generate semantic model node
-        input_data = self.create_node_input(NodeType.TYPE_GENERATE_SEMANTIC_MODEL, args)
-        if not input_data:
-            return
-
-        # Run standalone node
-        result = self.run_standalone_node(NodeType.TYPE_GENERATE_SEMANTIC_MODEL, input_data)
-
-        if result and result.success:
-            self.console.print("[green]Semantic model generation completed[/]")
-            # Display result if available
-            if hasattr(result, "semantic_model_path"):
-                self.console.print(f"[blue]Semantic model saved to:[/] {result.semantic_model_path}")
-        else:
-            self.console.print("[bold red]Semantic model generation failed[/]")
-
-    def cmd_gen_semantic_model_stream(self, args: str):
-        """Generate semantic model with streaming output and action history."""
-        # For now, redirect to normal gen_semantic_model - streaming can be added later
-        self.cmd_gen_semantic_model(args)
-
     def cmd_daend(self, args: str):
         """End the current agent session."""
         if self.workflow:

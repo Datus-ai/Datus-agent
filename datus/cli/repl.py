@@ -137,8 +137,6 @@ class DatusCLI:
             # to be deprecated when sub agent is read
             "!reason": self.agent_commands.cmd_reason_stream,
             "!compare": self.agent_commands.cmd_compare_stream,
-            "!gen_metrics": self.agent_commands.cmd_gen_metrics_stream,
-            "!gen_semantic_model": self.agent_commands.cmd_gen_semantic_model_stream,
             # catalog commands
             "@catalog": self.context_commands.cmd_catalog,
             "@subject": self.context_commands.cmd_subject,
@@ -858,8 +856,6 @@ class DatusCLI:
             ("!sq/!search_sql", "Use natural language to search for reference SQL"),
             ("!gen", "Generate SQL, optionally with table constraints"),
             ("!fix <description>", "Fix the last SQL query"),
-            ("!gen_metrics", "Generate metrics with streaming output"),
-            ("!gen_semantic_model", "Generate semantic model with streaming output"),
             ("!save", "Save the last result to a file"),
             ("!bash <command>", "Execute a bash command (limited to safe commands)"),
             # remove this when sub agent is ready
