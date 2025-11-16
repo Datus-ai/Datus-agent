@@ -29,6 +29,10 @@ agent:
       gold_result_path: california_schools.csv
 
   namespace:
+    local_duckdb:
+      type: duckdb
+      name: duckdb-demo
+      uri: ~/.datus/sample/duckdb-demo.duckdb
     california_schools:
       type: sqlite
       name: california_schools
