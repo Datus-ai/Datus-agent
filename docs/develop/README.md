@@ -1,9 +1,11 @@
 # Datus-agent
 
 ---
+
 # Deployment
 
 ## Pulling submodule code locally
+
 ```bash
 git submodule update --init
 ```
@@ -77,7 +79,7 @@ agent:
   namespace: # namespace is a set of database connections
     local_duckdb:
       type: duckdb
-      uri: ./tests/duckdb-demo.duckdb
+      uri: ./sample_data/duckdb-demo.duckdb
     spider-snow:
       type: snowflake
       warehouse: ${SNOWFLAKE_WAREHOUSE}
@@ -106,7 +108,7 @@ agent:
       model_name: intfloat/multilingual-e5-large-instruct
       dim_size: 1024
     metric:
-      model_name:  all-MiniLM-L6-v2
+      model_name: all-MiniLM-L6-v2
       dim_size: 384
 ```
 
@@ -136,6 +138,7 @@ python -m datus.main probe-llm
 ```
 
 Example Output:
+
 ```
 LLM model test successful
 Final Result: {"status": "success", "message": "LLM model test successful", "response": "Yes, I can 'hear' you! 😊 How can I assist you today?"}
@@ -225,6 +228,7 @@ SQL Task created: 49856268
 Database: snowflake - GOOGLE_TRENDS
 
 ```
+
 ---
 
 # Bird Benchmark
@@ -239,7 +243,7 @@ Update Configuration:
 namespace:
   bird_sqlite:
     type: sqlite
-    path_pattern: {agent.home}/benchmark/bird/dev_databases/**/*.sqlite
+    path_pattern: { agent.home }/benchmark/bird/dev_databases/**/*.sqlite
 ```
 
 ### Download and Extract Bird Dev
@@ -327,6 +331,7 @@ metrics:
 ```
 
 Export Environment Variables:
+
 ```bash
 export MF_PATH=</path/to/metricflow>/.venv/bin/mf
 export MF_VERBOSE=true
