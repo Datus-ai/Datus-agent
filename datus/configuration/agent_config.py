@@ -453,7 +453,7 @@ class AgentConfig:
             self.search_metrics_rate = kwargs["search_metrics_rate"]
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]
-        if kwargs.get("action", "") not in ["probe-llm", "generate-dataset"]:
+        if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "namespace"]:
             self.current_namespace = kwargs.get("namespace", "")
         if database_name := kwargs.get("database", ""):
             self.current_database = database_name

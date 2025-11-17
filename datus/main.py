@@ -9,6 +9,7 @@ import os
 import sys
 from datetime import datetime
 
+from datus.cli.namespace_manager import NamespaceManager
 from datus.cli.tutorial import BenchmarkTutorial
 from datus.utils.async_utils import setup_windows_policy
 
@@ -59,6 +60,15 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+
+    # namespace command
+    namespace_parser = subparsers.add_parser(
+        "namespace",
+        help="Manage namespaces",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    namespace_parser.add_argument("command", help="namespace manage command", choices=["list", "add", "delete"])
 
     # probe-llm command
     probe_parser = subparsers.add_parser(
@@ -363,6 +373,15 @@ def main():
 
     # Load agent configuration
     agent_config = load_agent_config(**vars(args))
+
+    # Handle namespace commands
+    if args.action == "namespace":
+        if args.command == "list":
+            return NamespaceManager.list(agent_config)
+        elif args.command == "add":
+            return 0 if NamespaceManager.add(agent_config) else 1
+        elif args.command == "delete":
+            return 0 if NamespaceManager.delete(agent_config) else 1
 
     # Initialize agent with both args and config
     agent = Agent(args, agent_config)
