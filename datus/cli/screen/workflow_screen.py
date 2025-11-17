@@ -78,6 +78,7 @@ class WorkflowScreen(Screen):
         """
         super().__init__()
         self.workflow = workflow
+        print("$$$", workflow)
         self.exit_callback = exit_callback
         self.update_task = None
         self.selected_zone = "node-list"  # node-list, node-details, context
@@ -216,11 +217,7 @@ class WorkflowScreen(Screen):
             # Check final table - don't auto-select current node
             file_logger.info(f"Final table row count: {node_table.row_count}")
         except Exception as e:
-            import traceback
-
-            with open("workflow_error.log", "a") as f:
-                f.write(f"Error in update_node_list: {str(e)}\n")
-                f.write(traceback.format_exc())
+            logger.error(f"Error in update_node_list: {e}")
 
     def update_node_details(self):
         """Update the node details panel with selected node information."""
@@ -506,11 +503,7 @@ class WorkflowScreen(Screen):
                 # Update the node details panel
                 self.update_node_details()
         except Exception as e:
-            import traceback
-
-            with open("workflow_error.log", "a") as f:
-                f.write(f"Error in action_select_node: {str(e)}\n")
-                f.write(traceback.format_exc())
+            logger.error(f"Error in action_select_node: {e}")
 
 
 class WorkflowApp(BaseApp):

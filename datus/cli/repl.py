@@ -23,6 +23,7 @@ from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.console import Console
 from rich.table import Table
 
+from datus.agent.workflow_runner import WorkflowRunner
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
 from datus.cli.chat_commands import ChatCommands
@@ -72,6 +73,8 @@ class DatusCLI:
         self.agent = None
         self.agent_initializing = False
         self.agent_ready = False
+        self._workflow = None
+        self._workflow_runner: WorkflowRunner | None = None
 
         # Plan mode support
         self.plan_mode_active = False
@@ -163,6 +166,12 @@ class DatusCLI:
         # Start agent initialization in background
         self._async_init_agent()
         self._init_connection()
+
+    @property
+    def workflow_runner(self) -> WorkflowRunner:
+        if not self._workflow_runner:
+            self._workflow_runner = self.agent.create_workflow_runner()
+        return self._workflow_runner
 
     def _create_custom_key_bindings(self):
         """Create custom key bindings for the REPL."""
@@ -374,6 +383,8 @@ class DatusCLI:
 
             self.agent_commands.update_agent_reference()
             self._pre_load_storage()
+            self._workflow_runner = self.agent.create_workflow_runner()
+            self._workflow = self._workflow_runner.workflow
             # self.console.print("[dim]Agent initialized successfully in background[/]")
         except Exception as e:
             self.console.print(f"[bold red]Error:[/]Failed to initialize agent in background: {str(e)}")
@@ -720,14 +731,14 @@ class DatusCLI:
                     messages=f"SQL executed successfully: {row_count} rows in {exec_time:.2f}s",
                 )
 
-                if not system and self.agent and self.agent.workflow:  # Add to sql context if not system command
+                if not system and self._workflow:  # Add to sql context if not system command
                     new_record = SQLContext(
                         sql_query=sql,
                         sql_return=str(result.sql_return),
                         row_count=row_count,
                         explanation=f"Manual sql: Returned {row_count} rows in {exec_time:.2f} seconds",
                     )
-                    self.agent.workflow.context.sql_contexts.append(new_record)
+                    self.agent.context.sql_contexts.append(new_record)
 
             else:
                 error_msg = result.error or "Unknown SQL error"
@@ -741,14 +752,14 @@ class DatusCLI:
                     messages=f"SQL error: {error_msg}",
                 )
 
-                if not system and self.agent and self.agent.workflow:  # Add to sql context if not system command
+                if not system and self._workflow:  # Add to sql context if not system command
                     new_record = SQLContext(
                         sql_query=sql,
                         sql_return=str(result.error) if result.error else "Unknown error",
                         row_count=0,
                         explanation="Manual sql",
                     )
-                    self.agent.workflow.context.sql_contexts.append(new_record)
+                    self._workflow.context.sql_contexts.append(new_record)
         except Exception as e:
             logger.error(f"SQL execution error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
