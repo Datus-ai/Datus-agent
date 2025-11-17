@@ -18,11 +18,8 @@ from rich.table import Table
 from datus.agent.evaluate import setup_node_input, update_context_from_node
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
-from datus.agent.workflow_runner import WorkflowRunner
-from datus.cli.action_history_display import ActionHistoryDisplay
 from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.node_type import NodeType
-from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.base import BaseInput
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
@@ -51,9 +48,6 @@ class AgentCommands:
         self.console = cli_instance.console
         self.agent = cli_instance.agent
         self.darun_is_running = False
-        # Only one interactive workflow is supported, the other one is the background workflow
-        self.workflow = None
-        self.workflow_runner: WorkflowRunner | None = None
         self.agent_thread = None
         self._context_search_tools: ContextSearchTools | None = None
         self.output_tool: OutputTool | None = None
@@ -67,7 +61,6 @@ class AgentCommands:
     def update_agent_reference(self):
         """Update the agent reference if it has changed in the CLI."""
         self.agent = self.cli.agent
-        # self.workflow = self.cli.workflow
 
     def create_node_input(self, node_type: str, task_text: str = None) -> BaseInput:
         """Create input for a specific node type with console prompts."""
@@ -93,7 +86,9 @@ class AgentCommands:
             )
             return SchemaLinkingInput(
                 input_text=task_text,
-                sql_task=sql_task,
+                catalog_name=sql_task.catalog_name,
+                database_name=sql_task.database,
+                schema_name=sql_task.schema,
                 database_type=sql_task.database_type,
                 top_n=int(top_n.strip()),
                 matching_rate=matching_rate.strip(),
@@ -199,8 +194,11 @@ class AgentCommands:
                     )
                     self.agent_thread._stop()
                 self.agent_thread = None
-            self.workflow_runner = self.agent.create_workflow_runner()
-            runner = self.workflow_runner
+
+            if not self.cli.check_agent_available():
+                self.console.print("[bold red]Error:[/] Agent not available")
+                return
+            runner = self.cli.workflow_runner
 
             agent_done = threading.Event()
             self.darun_is_running = True
@@ -232,20 +230,19 @@ class AgentCommands:
                 return
 
             # Store the new workflow
-            self.workflow = runner.workflow
-            show_workflow_screen(self.workflow, run_new_loop=False)
+
+            show_workflow_screen(runner.workflow, run_new_loop=False)
 
             # If agent is still running, leave it and
 
             if agent_done.is_set():
                 self.darun_is_running = False
-                workflow = runner.workflow
-                if workflow and workflow.is_complete():
+                if runner.is_complete():
                     self.console.print("[bold green]Query Result:[/]")
-                    final_result = result_holder["result"] or workflow.get_final_result()
+                    final_result = result_holder["result"] or runner.workflow.get_final_result()
                     self.console.print(final_result)
                 else:
-                    self.console.print(f"[bold red]Query is not complete: {workflow.status}[/]")
+                    self.console.print(f"[bold red]Query is not complete: {runner.workflow.status}[/]")
             else:
                 self.console.print("[bold yellow]Agent is still running...[/]")
                 # thread.join()
@@ -360,8 +357,6 @@ class AgentCommands:
             workflow.task = sql_task
             workflow.status = "running"
 
-            self.workflow = workflow
-            self.workflow_runner = None
             self.console.print(f"[bold green]Started new agent session (ID: {sql_task.id})[/]")
             # self.console.print(f"[dim]Next node: {workflow.get_current_node().type}[/]")
 
@@ -636,22 +631,23 @@ class AgentCommands:
         elif isinstance(input, ReasoningInput):
             pass
         elif isinstance(input, OutputInput):
-            if self.workflow.context.sql_contexts:
+            workflow = self.cli.workflow_runner.workflow
+            if workflow and workflow.context and workflow.context.sql_contexts:
                 self.console.print("[bold blue]SQL Contexts:[/]")
-                for i, sql_context in enumerate(self.workflow.context.sql_contexts):
+                for i, sql_context in enumerate(workflow.context.sql_contexts):
                     self.console.print(f"\n[bold]Context {i + 1}:[/]")
                     self.console.print(sql_context.to_dict())
 
                 sql_context_id = self.cli.prompt_input(
-                    "Enter SQL context ID", default=str(len(self.workflow.context.sql_contexts))
+                    "Enter SQL context ID", default=str(len(workflow.context.sql_contexts))
                 )
                 try:
                     context_id = int(sql_context_id.strip())
-                    if context_id < 1 or context_id > len(self.workflow.context.sql_contexts):
+                    if context_id < 1 or context_id > len(workflow.context.sql_contexts):
                         self.console.print("[bold red]Error:[/] Invalid SQL context ID")
                         return
-                    input.sql_result = self.workflow.context.sql_contexts[context_id - 1].sql_return
-                    input.row_count = self.workflow.context.sql_contexts[context_id - 1].row_count
+                    input.sql_result = workflow.context.sql_contexts[context_id - 1].sql_return
+                    input.row_count = workflow.context.sql_contexts[context_id - 1].row_count
                 except ValueError:
                     self.console.print("[bold red]Error:[/] Invalid SQL context ID")
                     return
@@ -753,12 +749,11 @@ class AgentCommands:
 
     def cmd_daend(self, args: str):
         """End the current agent session."""
-        if self.workflow:
-            output_file = f"{self.workflow.task.output_dir}/{self.workflow.name}.yaml"
-            self.workflow.save(output_file)
+        if self.cli.workflow_runner:
+            runner = self.cli.workflow_runner
+            output_file = f"{runner.workflow.task.output_dir}/{runner.workflow.name}.yaml"
+            runner.workflow.save(output_file)
             self.console.print(f"[green]Ending workflow session, save to {output_file}[/]")
-            self.workflow = None
-            self.workflow_runner = None
         else:
             self.console.print("[yellow]No active workflow session to end.[/]")
 
@@ -777,12 +772,15 @@ class AgentCommands:
             self.console.print("[bold red]Error:[/] Agent not available")
             return {"success": False, "error": "Agent not available"}
 
-        if not self.workflow:
+        if not self.cli.workflow_runner:
             self.console.print("[bold red]Error:[/] No active workflow")
             return {"success": False, "error": "No active workflow"}
 
         try:
-            workflow = self.workflow
+            if not self.cli.workflow_runner.workflow_ready:
+                self.console.print("[bold red]Error:[/] Workflow not initialized")
+                return {"success": False, "error": "Workflow not initialized"}
+            workflow = self.cli.workflow_runner.workflow
 
             # 1. Create a new node
             node_id = f"{node_type.lower()}_{str(uuid.uuid1())[:8]}"
@@ -931,157 +929,6 @@ class AgentCommands:
         """Compare SQL with streaming output and action history."""
         # For now, redirect to normal compare - streaming can be added later
         self.cmd_compare(args)
-
-    def _run_node_stream(self, node_type: str, node_args: str):
-        """Run a node with streaming output and action history display."""
-        try:
-            workflow = self.workflow
-
-            # Create a new node
-            node_id = f"{node_type.lower()}_{str(uuid.uuid1())[:8]}"
-            description = f"Execute {node_type} operation with streaming"
-            next_node = Node.new_instance(
-                node_id=node_id,
-                description=description,
-                node_type=node_type.lower(),
-                input_data=node_args,
-                agent_config=self.cli.agent_config,
-                tools=workflow.tools,
-            )
-
-            # Setup input for the node
-            setup_result = setup_node_input(node=next_node, workflow=workflow)
-            workflow.add_node(next_node)
-
-            if not setup_result.get("success", False):
-                self.console.print(
-                    "[bold red]Error:[/] Failed to setup node input: " f"{setup_result.get('message', 'Unknown error')}"
-                )
-                return {"success": False, "error": "Failed to setup node input"}
-
-            # Interactive input modification
-            if isinstance(next_node.input, BaseInput):
-                edit_mode = self._modify_input(next_node.input)
-                if edit_mode == "cancel":
-                    return {"success": False, "error": "Operation cancelled by user"}
-
-            # Initialize action history
-            action_history_manager = ActionHistoryManager()
-            action_display = ActionHistoryDisplay(self.console)
-
-            # Start streaming execution
-            self.console.print(f"[bold green]Executing {node_type} node with streaming...[/]")
-
-            # Initialize the node first to set up the model
-            next_node._initialize()
-
-            # Run the streaming method
-            streaming_method = None
-            if hasattr(next_node, "_generate_semantic_model_stream"):
-                streaming_method = next_node._generate_semantic_model_stream
-            elif hasattr(next_node, "_generate_metrics_stream"):
-                streaming_method = next_node._generate_metrics_stream
-            elif hasattr(next_node, "_reason_sql_stream"):
-                streaming_method = next_node._reason_sql_stream
-            elif hasattr(next_node, "_compare_sql_stream"):
-                streaming_method = next_node._compare_sql_stream
-
-            if streaming_method:
-                actions = []
-
-                # Create a live display
-                with action_display.display_streaming_actions(actions):
-                    # Run the async streaming method
-                    async def run_stream():
-                        async for action in streaming_method(action_history_manager):
-                            actions.append(action)
-                            # Longer delay to make the streaming visible and avoid caching
-                            await asyncio.sleep(0.5)
-
-                    # Execute the streaming
-                    asyncio.run(run_stream())
-
-                # Skip interactive prompt in Streamlit mode
-                if hasattr(self.cli, "streamlit_mode") and self.cli.streamlit_mode:
-                    show_details = "n"  # Auto-skip in Streamlit mode
-                else:
-                    show_details = self.cli.prompt_input("Show Full Action History? (y/N)", default="n").strip().lower()
-
-                if show_details == "y":
-                    self.console.print("\n[bold blue]Full Action History:[/]")
-                    action_display.display_final_action_history(actions)
-
-                # Extract result from final action
-                if actions:
-                    final_action = actions[-1]
-                    if final_action.output and isinstance(final_action.output, dict):
-                        success = final_action.output.get("success", False)
-                        if success:
-                            self.console.print("[bold green]Streaming execution completed successfully![/]")
-
-                            # For _reason_sql_stream, extract SQL from the final action and add to workflow context
-                            if node_type == NodeType.TYPE_REASONING and hasattr(next_node, "_reason_sql_stream"):
-                                logger.debug("Detected _reason_sql_stream node, calling SQL extraction...")
-                                self._extract_sql_from_streaming_actions(actions, workflow, next_node)
-                            else:
-                                has_method = hasattr(next_node, "_reason_sql_stream") if next_node else False
-                                logger.debug(f"Not a _reason_sql_stream node (type: {node_type}, method: {has_method})")
-
-                            return {"success": True, "actions": actions}
-                        else:
-                            error_msg = final_action.output.get("error", "Unknown error")
-                            self.console.print(f"[bold red]Streaming execution failed:[/] {error_msg}")
-                            return {"success": False, "error": error_msg, "actions": actions}
-
-                return {"success": True, "actions": actions}
-            else:
-                self.console.print("[bold red]Error:[/] Node does not support streaming")
-                return {"success": False, "error": "Node does not support streaming"}
-
-        except Exception as e:
-            logger.error(f"Streaming node execution error: {str(e)}")
-
-            # Import DatusException for proper error handling
-            from datus.utils.exceptions import DatusException, ErrorCode
-
-            # Handle DatusException with structured error codes
-            if isinstance(e, DatusException):
-                error_code = e.code
-
-                if error_code in [ErrorCode.MODEL_OVERLOADED, ErrorCode.MODEL_RATE_LIMIT]:
-                    self.console.print(f"[bold red]API Error:[/] {error_code.desc}")
-                    self.console.print(
-                        "[yellow]Suggestion:[/] Please wait a moment and try again with the same command."
-                    )
-                    self.console.print(f"[dim]Error code: {error_code.code}[/]")
-                elif error_code == ErrorCode.MODEL_CONNECTION_ERROR:
-                    self.console.print(f"[bold red]Connection Error:[/] {error_code.desc}")
-                    self.console.print("[yellow]Suggestion:[/] Check your internet connection and try again.")
-                    self.console.print(f"[dim]Error code: {error_code.code}[/]")
-                elif error_code == ErrorCode.MODEL_AUTHENTICATION_ERROR:
-                    self.console.print(f"[bold red]Authentication Error:[/] {error_code.desc}")
-                    self.console.print("[yellow]Suggestion:[/] Check your API key configuration.")
-                    self.console.print(f"[dim]Error code: {error_code.code}[/]")
-                else:
-                    self.console.print(f"[bold red]Error:[/] {error_code.desc}")
-                    self.console.print(f"[dim]Error code: {error_code.code}[/]")
-            else:
-                # Fallback for non-DatusException errors
-                error_msg = str(e).lower()
-                if any(indicator in error_msg for indicator in ["overloaded", "rate limit", "timeout"]):
-                    self.console.print("[bold red]API Error:[/] The API is temporarily overloaded or rate limited.")
-                    self.console.print(
-                        "[yellow]Suggestion:[/] Please wait a moment and try again with the same command."
-                    )
-                    self.console.print(f"[dim]Original error: {str(e)}[/]")
-                elif any(indicator in error_msg for indicator in ["connection", "network"]):
-                    self.console.print("[bold red]Connection Error:[/] Unable to connect to the API.")
-                    self.console.print("[yellow]Suggestion:[/] Check your internet connection and try again.")
-                    self.console.print(f"[dim]Original error: {str(e)}[/]")
-                else:
-                    self.console.print(f"[bold red]Error:[/] {str(e)}")
-
-            return {"success": False, "error": str(e)}
 
     def _extract_sql_from_streaming_actions(self, actions, workflow, node):
         """

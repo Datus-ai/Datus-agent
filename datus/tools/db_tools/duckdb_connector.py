@@ -379,6 +379,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get all view names."""
         self.connect()
+        database_name = database_name or self.database_name
+        schema_name = schema_name or self.schema_name
         sql = "SELECT view_name FROM duckdb_views() WHERE database_name != 'system'"
         if database_name:
             sql += f" AND database_name = '{database_name}'"
@@ -394,7 +396,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
         self.connect()
         sql = "SELECT database_name FROM duckdb_databases()"
         if not include_sys:
-            sql += " WHERE database_name != 'system'"
+            sql += " WHERE database_name not in ('system', 'temp')"
 
         result = self.connection.execute(sql)
         return [row[0] for row in result.fetchall()]
@@ -414,7 +416,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
         self.connect()
         sql = "SELECT schema_name FROM duckdb_schemas()"
         has_where = False
-
+        database_name = database_name or self.database_name
         if database_name:
             sql += f" WHERE database_name='{database_name}'"
             has_where = True
@@ -431,7 +433,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
 
     @override
     def _sys_schemas(self) -> Set[str]:
-        return {"system", "temp"}
+        return {"system", "temp", "information_schema"}
 
     @override
     def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
@@ -469,6 +471,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
             f"SELECT database_name, schema_name, {metadata_names.name_field}{sql_field}"
             f" FROM {metadata_names.info_table}() WHERE database_name != 'system'"
         )
+        database_name = database_name or self.database_name
+        schema_name = schema_name or self.schema_name
         if database_name:
             query_sql += f" AND database_name = '{database_name}'"
         if schema_name:
