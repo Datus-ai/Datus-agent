@@ -43,7 +43,8 @@ Follow these steps to generate SQL summary:
 
 4. **Save file**:
    - Use `write_file(path, yaml_content, file_type="sql_summary")` to save
-   - Choose an appropriate relative path (e.g., "summary.yaml" or "folder/summary.yaml")
+   - **Filename Rule**: MUST include the generated ID in filename to ensure uniqueness (e.g., "sales_report_{id}.yaml" or "folder/query_{id}.yaml")
+   - Choose an appropriate relative path with the ID embedded
    - **IMPORTANT**: Use ONLY relative paths - do NOT use absolute paths (no leading "/" or drive letters)
    - Include the same relative path in the YAML's filepath field
    - The system will automatically resolve the full path based on the workspace root
@@ -106,10 +107,10 @@ Generate comprehensive SQL summaries that enable effective knowledge reuse and s
 
 Output format: Return a JSON object with the following structure, *only JSON*:
 {
-  "sql_summary_file": "file_name of the new sql summary YAML file",
+  "sql_summary_file": "file_name of the new sql summary YAML file (MUST include the generated ID for uniqueness)",
   "output" : "final response of this chat"
 }
 
 Where:
-- "sql_summary_file" is optional (only include when sql summary YAML file is generated)
+- "sql_summary_file" is optional (only include when sql summary YAML file is generated). MUST include the generated ID in the filename to avoid duplicates in batch processing
 - "output" should be in markdown format and contain your complete response

@@ -4,7 +4,7 @@ SELECT T2.`FRPM Count (Ages 5-17)` FROM satscores AS T1 INNER JOIN frpm AS T2 ON
 -- Total enrollment can be represented by `Enrollment (K-12)` + `Enrollment (Ages 5-17)`
 SELECT T2.CDSCode FROM schools AS T1 INNER JOIN frpm AS T2 ON T1.CDSCode = T2.CDSCode WHERE T2.`Enrollment (K-12)` + T2.`Enrollment (Ages 5-17)` > 500;
 -- Among the schools with an SAT excellence rate of over 0.3, what is the highest eligible free rate for students aged 5-17?
--- Excellence rate = NumGE1500 / NumTstTakr; Eligible free rates for students aged 5-17 = `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)`
+-- Excellence rate = NumGE1500 / NumTstTakr, Eligible free rates for students aged 5-17 = `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)`
 SELECT MAX(CAST(T1.`Free Meal Count (Ages 5-17)` AS REAL) / T1.`Enrollment (Ages 5-17)`) FROM frpm AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds WHERE CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr > 0.3;
 -- Please list the phone numbers of the schools with the top 3 SAT excellence rate.
 -- Excellence rate = NumGE1500 / NumTstTakr

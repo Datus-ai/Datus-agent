@@ -35,7 +35,7 @@ async def process_sql_item(
     Returns:
         SQL summary file path if successful, None otherwise
     """
-    logger.debug(f"Processing SQL item: {item.get('filepath', '')}")
+    logger.debug(f"Processing SQL item: {item.get('filepath', '')}, {item.get('sql', '')}, {item.get('comment', '')}")
 
     try:
         # Create input for SqlSummaryAgenticNode
@@ -66,7 +66,10 @@ async def process_sql_item(
                     sql_summary_file = output.get("sql_summary_file")
 
         if not sql_summary_file:
-            logger.error(f"Failed to generate SQL summary for {item.get('filepath', '')}")
+            logger.error(
+                f"Failed to generate SQL summary for {item.get('filepath', '')},"
+                f"sql: {item.get('sql', '')}, comment: {item.get('comment', '')}"
+            )
             return None
 
         logger.info(f"Generated SQL summary: {sql_summary_file}")
