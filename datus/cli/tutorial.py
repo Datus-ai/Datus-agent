@@ -95,7 +95,7 @@ class BenchmarkTutorial:
         console.print("[bold yellow][1/4] Ensure data files and configuration[/bold yellow]")
         with console.status("Ensuring...") as status:
             self._ensure_files()
-            console.print("Data files is ready.")
+            console.print("Data files are ready.")
             status.update("Ensuring configuration...")
             if not self._ensure_config():
                 return 1
