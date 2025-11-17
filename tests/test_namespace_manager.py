@@ -22,7 +22,7 @@ def mock_console():
 @pytest.fixture
 def mock_detect_db_connectivity():
     """Mock the database connectivity test."""
-    with patch("datus.cli.init_util.detect_db_connectivity") as mock_test:
+    with patch("datus.cli.namespace_manager.detect_db_connectivity") as mock_test:
         mock_test.return_value = (True, "")
         yield mock_test
 

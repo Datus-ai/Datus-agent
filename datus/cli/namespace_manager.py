@@ -10,7 +10,6 @@ This module provides an interactive CLI for setting up the namespace configurati
 without requiring users to manually write conf/agent.yml files.
 """
 
-import os
 from getpass import getpass
 from pathlib import Path
 
@@ -225,11 +224,7 @@ class NamespaceManager:
                 if len(db_configs_list) == 1:
                     db_config = db_configs_list[0]
                     if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
-                        if not db_config.uri.startswith(db_config.type):
-                            uri = f"{db_config.type}:///{os.path.expanduser(db_config.uri)}"
-                            namespace_dict["uri"] = uri
-                        else:
-                            namespace_dict["uri"] = db_config.uri
+                        namespace_dict["uri"] = db_config.uri
                         namespace_dict["type"] = db_config.type
                         namespace_dict["name"] = db_config.logic_name
                     else:
@@ -240,11 +235,7 @@ class NamespaceManager:
                     for db_config in db_configs_list:
                         _db_config = {}
                         _db_config["name"] = db_config.logic_name
-                        if not db_config.uri.startswith(db_config.type):
-                            uri = f"{db_config.type}:///{os.path.expanduser(db_config.uri)}"
-                            _db_config["uri"] = uri
-                        else:
-                            _db_config["uri"] = db_config.uri
+                        _db_config["uri"] = db_config.uri
                         namespace_dict["dbs"].append(_db_config)
 
                 namespace_section[ns_name] = namespace_dict
