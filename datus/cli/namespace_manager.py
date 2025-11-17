@@ -191,7 +191,8 @@ class NamespaceManager:
 
         # Confirm deletion
         confirm = Confirm.ask(
-            f"Are you sure you want to delete namespace '{namespace_name}'? This action cannot be undone."
+            f"Are you sure you want to delete namespace '{namespace_name}'? This action cannot be undone.",
+            default=False,
         )
         if not confirm:
             console.print("❌ Namespace deletion cancelled")
