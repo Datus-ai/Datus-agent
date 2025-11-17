@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 console = Console()
 
 
-def test_db_connectivity(namespace_name, db_config_data) -> tuple[bool, str]:
+def detect_db_connectivity(namespace_name, db_config_data) -> tuple[bool, str]:
     """Test database connectivity."""
     try:
         # Test database connectivity using connector's built-in method

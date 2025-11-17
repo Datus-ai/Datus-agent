@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from datus.cli.init_util import test_db_connectivity
+from datus.cli.init_util import detect_db_connectivity
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import copy_data_file, read_data_file_text
 
@@ -308,7 +308,7 @@ class InteractiveInit:
             }
         # Test database connectivity
         console.print("→ Testing database connectivity...")
-        success, error_msg = test_db_connectivity(
+        success, error_msg = detect_db_connectivity(
             self.namespace_name, self.config["agent"]["namespace"][self.namespace_name]
         )
         if success:

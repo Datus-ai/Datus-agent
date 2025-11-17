@@ -17,7 +17,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from datus.cli.init_util import test_db_connectivity
+from datus.cli.init_util import detect_db_connectivity
 from datus.configuration.agent_config import AgentConfig, DBType
 from datus.utils.loggings import get_logger
 
@@ -138,7 +138,7 @@ class NamespaceManager:
         # Test database connectivity
         console.print("→ Testing database connectivity...")
 
-        success, error_msg = test_db_connectivity(namespace_name, config_data)
+        success, error_msg = detect_db_connectivity(namespace_name, config_data)
 
         if success:
             console.print("✔ Database connection test successful\n")

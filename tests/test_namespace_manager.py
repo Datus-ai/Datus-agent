@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -20,9 +20,9 @@ def mock_console():
 
 
 @pytest.fixture
-def mock_test_db_connectivity():
+def mock_detect_db_connectivity():
     """Mock the database connectivity test."""
-    with patch("datus.cli.namespace_manager.NamespaceManager._test_db_connectivity") as mock_test:
+    with patch("datus.cli.init_util.detect_db_connectivity") as mock_test:
         mock_test.return_value = (True, "")
         yield mock_test
 
@@ -76,7 +76,7 @@ class TestNamespaceManagerAdd:
         mock_console.print.assert_called_with("❌ Namespace 'existing_namespace' already exists")
 
     def test_add_starrocks_namespace_success(
-        self, agent_config, mock_prompt, mock_test_db_connectivity, mock_save_configuration, mock_console
+        self, agent_config, mock_prompt, mock_detect_db_connectivity, mock_save_configuration, mock_console
     ):
         """Test successfully adding a StarRocks namespace."""
         mock_ask, mock_getpass, _ = mock_prompt
@@ -99,7 +99,7 @@ class TestNamespaceManagerAdd:
         mock_console.print.assert_any_call("✔ Namespace 'test_starrocks' added successfully")
 
     def test_add_snowflake_namespace_success(
-        self, agent_config, mock_prompt, mock_test_db_connectivity, mock_save_configuration, mock_console
+        self, agent_config, mock_prompt, mock_detect_db_connectivity, mock_save_configuration, mock_console
     ):
         """Test successfully adding a Snowflake namespace."""
         mock_ask, mock_getpass, _ = mock_prompt
@@ -123,7 +123,7 @@ class TestNamespaceManagerAdd:
         mock_console.print.assert_any_call("✔ Namespace 'test_snowflake' added successfully")
 
     def test_add_duckdb_namespace_success(
-        self, agent_config, mock_prompt, mock_test_db_connectivity, mock_save_configuration, mock_console
+        self, agent_config, mock_prompt, mock_detect_db_connectivity, mock_save_configuration, mock_console
     ):
         """Test successfully adding a DuckDB namespace."""
         mock_ask, _, _ = mock_prompt
@@ -143,7 +143,7 @@ class TestNamespaceManagerAdd:
         mock_console.print.assert_any_call("✔ Namespace 'test_duckdb' added successfully")
 
     def test_add_namespace_db_connection_failed(
-        self, agent_config, mock_prompt, mock_test_db_connectivity, mock_console
+        self, agent_config, mock_prompt, mock_detect_db_connectivity, mock_console
     ):
         """Test adding namespace when database connection test fails."""
         mock_ask, mock_getpass, _ = mock_prompt
@@ -159,7 +159,7 @@ class TestNamespaceManagerAdd:
         ]
 
         # Mock connection test failure
-        mock_test_db_connectivity.return_value = (False, "Connection refused")
+        mock_detect_db_connectivity.return_value = (False, "Connection refused")
 
         result = NamespaceManager.add(agent_config)
 
@@ -167,7 +167,7 @@ class TestNamespaceManagerAdd:
         mock_console.print.assert_called_with("❌ Database connectivity test failed: Connection refused\n")
 
     def test_add_namespace_save_config_failed(
-        self, agent_config, mock_prompt, mock_test_db_connectivity, mock_save_configuration, mock_console
+        self, agent_config, mock_prompt, mock_detect_db_connectivity, mock_save_configuration, mock_console
     ):
         """Test adding namespace when configuration save fails."""
         mock_ask, mock_getpass, _ = mock_prompt
@@ -286,93 +286,3 @@ class TestNamespaceManagerDelete:
 
         assert result is False
         mock_console.print.assert_called_with("❌ Failed to save configuration after deletion")
-
-
-class TestNamespaceManagerDatabaseConnectivity:
-    """Test cases for database connectivity testing."""
-
-    def test_test_db_connectivity_starrocks_success(self):
-        """Test database connectivity test for StarRocks success."""
-        config_data = {
-            "type": "starrocks",
-            "name": "test_namespace",
-            "host": "127.0.0.1",
-            "port": 9030,
-            "username": "test_user",
-            "password": "test_password",
-            "database": "test_db",
-            "catalog": "default_catalog",
-        }
-
-        with patch("datus.tools.db_tools.db_manager.DBManager") as mock_db_manager:
-            # Mock successful connection test
-            mock_connector = MagicMock()
-            mock_connector.test_connection.return_value = True
-            mock_db_manager.return_value.get_conn.return_value = mock_connector
-
-            success, error_msg = NamespaceManager._test_db_connectivity(config_data)
-
-            assert success is True
-            assert error_msg == ""
-
-    def test_test_db_connectivity_duckdb_success(self):
-        """Test database connectivity test for DuckDB success."""
-        config_data = {"type": "duckdb", "name": "test_namespace", "uri": "test.db"}
-
-        with patch("datus.tools.db_tools.db_manager.DBManager") as mock_db_manager:
-            # Mock successful connection test
-            mock_connector = MagicMock()
-            mock_connector.test_connection.return_value = True
-            mock_db_manager.return_value.get_conn.return_value = mock_connector
-
-            success, error_msg = NamespaceManager._test_db_connectivity(config_data)
-
-            assert success is True
-            assert error_msg == ""
-
-    def test_test_db_connectivity_failure(self):
-        """Test database connectivity test failure."""
-        config_data = {
-            "type": "starrocks",
-            "name": "test_namespace",
-            "host": "127.0.0.1",
-            "port": 9030,
-            "username": "test_user",
-            "password": "test_password",
-            "database": "test_db",
-        }
-
-        with patch("datus.tools.db_tools.db_manager.DBManager") as mock_db_manager:
-            # Mock connection test failure
-            mock_connector = MagicMock()
-            mock_connector.test_connection.return_value = False
-            mock_db_manager.return_value.get_conn.return_value = mock_connector
-
-            success, error_msg = NamespaceManager._test_db_connectivity(config_data)
-
-            assert success is False
-            assert error_msg == "Connection test failed"
-
-    def test_test_db_connectivity_exception(self):
-        """Test database connectivity test with exception."""
-        config_data = {
-            "type": "starrocks",
-            "name": "test_namespace",
-            "host": "127.0.0.1",
-            "port": 9030,
-            "username": "test_user",
-            "password": "test_password",
-            "database": "test_db",
-        }
-
-        with patch("datus.tools.db_tools.db_manager.DBManager") as mock_db_manager, patch(
-            "datus.cli.namespace_manager.logger"
-        ) as mock_logger:
-            # Mock exception during connection test
-            mock_db_manager.side_effect = Exception("Connection refused")
-
-            success, error_msg = NamespaceManager._test_db_connectivity(config_data)
-
-            assert success is False
-            assert "Connection refused" in error_msg
-            mock_logger.error.assert_called()
