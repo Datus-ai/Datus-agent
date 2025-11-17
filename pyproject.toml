@@ -60,6 +60,7 @@ dependencies = [
     "wcmatch>=10.0",
     "fastembed==0.4.2",
     # Optional: install torch manually to enable reranker models.
+    "uv>=0.9.9",
 ]
 
 [project.optional-dependencies]
@@ -77,13 +78,13 @@ datus-agent = "datus.main:main"
 datus-cli = "datus.cli.main:main"
 datus = "datus.cli.main:main"
 
-[build-system]
-requires = ["setuptools>=80.9.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [[tool.uv.index]]
 url = "http://mirrors.aliyun.com/pypi/simple"
 default = true
+
+[build-system]
+requires = ["setuptools>=80.9.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -108,7 +109,7 @@ exclude = ["benchmark*", "docs*"]
     "sample_data/california_schools/california_schools.sqlite"
 ]
 "datus/sample_data/california_schools/reference_sql" = [
-    "tests/data/california_schools/reference_sql/*.sql"
+    "sample_data/california_schools/reference_sql/*.sql",
 ]
 
 [tool.uv.pip]
