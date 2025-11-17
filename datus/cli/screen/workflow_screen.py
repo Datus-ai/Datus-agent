@@ -78,7 +78,6 @@ class WorkflowScreen(Screen):
         """
         super().__init__()
         self.workflow = workflow
-        print("$$$", workflow)
         self.exit_callback = exit_callback
         self.update_task = None
         self.selected_zone = "node-list"  # node-list, node-details, context

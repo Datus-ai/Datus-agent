@@ -195,6 +195,9 @@ class AgentCommands:
                     self.agent_thread._stop()
                 self.agent_thread = None
 
+            if not self.cli.check_agent_available():
+                self.console.print("[bold red]Error:[/] Agent not available")
+                return
             runner = self.cli.workflow_runner
 
             agent_done = threading.Event()
@@ -629,7 +632,7 @@ class AgentCommands:
             pass
         elif isinstance(input, OutputInput):
             workflow = self.cli.workflow_runner.workflow
-            if workflow.context.sql_contexts:
+            if workflow and workflow.context and workflow.context.sql_contexts:
                 self.console.print("[bold blue]SQL Contexts:[/]")
                 for i, sql_context in enumerate(workflow.context.sql_contexts):
                     self.console.print(f"\n[bold]Context {i + 1}:[/]")
@@ -774,6 +777,9 @@ class AgentCommands:
             return {"success": False, "error": "No active workflow"}
 
         try:
+            if not self.cli.workflow_runner.workflow_ready:
+                self.console.print("[bold red]Error:[/] Workflow not initialized")
+                return {"success": False, "error": "Workflow not initialized"}
             workflow = self.cli.workflow_runner.workflow
 
             # 1. Create a new node
