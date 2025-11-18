@@ -124,7 +124,7 @@ class DatusCLI:
 
         # Dictionary of available commands - created after handlers are initialized
         self.commands = {
-            "!run": self.agent_commands.cmd_darun_screen,
+            # "!run": self.agent_commands.cmd_darun_screen,
             "!sl": self.agent_commands.cmd_schema_linking,
             "!schema_linking": self.agent_commands.cmd_schema_linking,
             "!sm": self.agent_commands.cmd_search_metrics,
@@ -132,13 +132,13 @@ class DatusCLI:
             "!sq": self.agent_commands.cmd_search_reference_sql,
             "!search_sql": self.agent_commands.cmd_search_reference_sql,
             # "!doc_search": self.agent_commands.cmd_doc_search,
-            "!gen": self.agent_commands.cmd_gen,
-            "!fix": self.agent_commands.cmd_fix,
+            # "!gen": self.agent_commands.cmd_gen,
+            # "!fix": self.agent_commands.cmd_fix,
             "!save": self.agent_commands.cmd_save,
             "!bash": self._cmd_bash,
             # to be deprecated when sub agent is read
-            "!reason": self.agent_commands.cmd_reason_stream,
-            "!compare": self.agent_commands.cmd_compare_stream,
+            # "!reason": self.agent_commands.cmd_reason_stream,
+            # "!compare": self.agent_commands.cmd_compare_stream,
             # catalog commands
             "@catalog": self.context_commands.cmd_catalog,
             "@subject": self.context_commands.cmd_subject,
@@ -861,12 +861,12 @@ class DatusCLI:
 
         lines.append("[bold]Tool Commands (! prefix):[/]")
         tool_cmds = [
-            ("!run <query>", "Run a natural language query with live workflow status display"),
+            # ("!run <query>", "Run a natural language query with live workflow status display"),
             ("!sl/!schema_linking", "Schema linking: show list of recommended tables and values"),
             ("!sm/!search_metrics", "Use natural language to search for corresponding metrics"),
             ("!sq/!search_sql", "Use natural language to search for reference SQL"),
-            ("!gen", "Generate SQL, optionally with table constraints"),
-            ("!fix <description>", "Fix the last SQL query"),
+            # ("!gen", "Generate SQL, optionally with table constraints"),
+            # ("!fix <description>", "Fix the last SQL query"),
             ("!save", "Save the last result to a file"),
             ("!bash <command>", "Execute a bash command (limited to safe commands)"),
             # remove this when sub agent is ready

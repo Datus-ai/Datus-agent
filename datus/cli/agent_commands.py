@@ -698,6 +698,8 @@ class AgentCommands:
                 for sql_context in result.sql_contexts:
                     self.cli_context.add_sql_context(sql_context)
                     self.console.print(f"[green]Generated SQL:[/] {sql_context.sql_query}")
+            elif hasattr(result, "sql_query") and result.sql_query:
+                self.console.print(f"[green]SQL generation completed:[/] {result.sql_query}")
             else:
                 self.console.print("[green]SQL generation completed[/]")
         else:

@@ -1,4 +1,3 @@
-import uuid
 from argparse import Namespace
 from pathlib import Path
 from typing import Any, Dict, List
@@ -131,27 +130,6 @@ def test_search_metrics(mock_args, capsys, schema_linking_input: List[Dict[str, 
     assert "Error searching metrics" not in stdout
 
 
-def test_run_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
-    input_data = gen_sql_input[0]["input"]
-    sql_task = input_data["sql_task"]
-    with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
-        mock_prompt.side_effect = ["!run", EOFError]
-        with patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt, patch(
-            "datus.cli.screen.show_workflow_screen"
-        ) as mock_workflow_screen:
-            mock_internal_prompt.side_effect = [
-                str(uuid.uuid1())[:8],
-                sql_task["task"],
-                sql_task["database_name"],
-                "external_knowledge",
-                "",
-            ]
-            cli = DatusCLI(args=mock_args)
-            cli.run()
-
-            mock_workflow_screen.assert_called_once()
-
-
 @pytest.mark.acceptance
 def test_bash_command_allowed(mock_args, capsys):
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt, patch("subprocess.run") as mock_run:
@@ -265,3 +243,40 @@ def test_chat_info(mock_args, capsys):
 
     # Check for "Tool cal" responses
     assert stdout.strip().endswith("No active session.")
+
+
+def test_save_command(mock_args, capsys):
+    """
+    Tests the '!save' command with successful file save.
+    """
+    from datus.schemas.node_models import SQLContext
+
+    # Create mock SQL context
+    mock_sql_context = SQLContext(
+        sql_query="SELECT * FROM schools", sql_return="[{'id': 1, 'name': 'School A'}]", row_count=1
+    )
+
+    with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
+        mock_prompt.side_effect = ["!save", EOFError]
+
+        with (
+            patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt,
+            patch("datus.cli.cli_context.CliContext.get_last_sql_context") as mock_context,
+            patch("datus.cli.agent_commands.OutputTool.execute") as mock_output,
+        ):
+            mock_internal_prompt.side_effect = [
+                "json",  # file_type
+                "/tmp",  # target_dir
+                "test_output",  # file_name
+            ]
+            mock_context.return_value = mock_sql_context
+            mock_output.return_value = type("MockResult", (), {"output": "/tmp/test_output.json"})()
+
+            cli = DatusCLI(args=mock_args)
+            cli.run()
+
+    captured = capsys.readouterr()
+    stdout = captured.out
+
+    assert "Save Output" in stdout
+    assert "saved to" in stdout or "test_output" in stdout
