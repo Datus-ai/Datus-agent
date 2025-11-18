@@ -83,6 +83,10 @@ class EmbeddingProvider(str, Enum):
     HUGGINGFACE = "huggingface"
 
 
+# System sub-agents that are built-in and not user-configurable
+SYS_SUB_AGENTS = {"gen_semantic_model", "gen_metrics", "gen_sql_summary"}
+
+
 class SQLType(str, Enum):
     """SQL statement types."""
 

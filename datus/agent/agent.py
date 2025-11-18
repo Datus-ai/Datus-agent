@@ -31,6 +31,7 @@ from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS as SUB_AGE
 from datus.storage.sub_agent_kb_bootstrap import SubAgentBootstrapper
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.benchmark_utils import load_benchmark_tasks
+from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
@@ -191,7 +192,7 @@ class Agent:
             return
         current_namespace = self.global_config.current_namespace
         for name, raw_config in agent_nodes.items():
-            if name in ("gen_semantic_model", "gen_metrics", "gen_sql_summary"):
+            if name in SYS_SUB_AGENTS:
                 continue
             try:
                 sub_config = SubAgentConfig.model_validate(raw_config)

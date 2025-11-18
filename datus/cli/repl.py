@@ -35,7 +35,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.utils.constants import DBType, SQLType
+from datus.utils.constants import SYS_SUB_AGENTS, DBType, SQLType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_sql_type
@@ -110,10 +110,10 @@ class DatusCLI:
         )
         self.db_manager = db_manager_instance(self.agent_config.namespaces)
 
-        # Initialize available subagents from agentic_nodes (excluding 'chat')
-        self.available_subagents = set()
+        # Initialize available subagents from agentic_nodes (excluding 'chat') and include built-in subagents
+        self.available_subagents = set(SYS_SUB_AGENTS)
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
-            self.available_subagents = {name for name in self.agent_config.agentic_nodes.keys() if name != "chat"}
+            self.available_subagents.update(name for name in self.agent_config.agentic_nodes.keys() if name != "chat")
 
         # Initialize command handlers after cli_context is created
         self.agent_commands = AgentCommands(self, self.cli_context)

@@ -11,9 +11,10 @@ from rich.table import Table
 from datus.cli.sub_agent_wizard import run_wizard
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS
+from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.json_utils import to_pretty_str
 from datus.utils.loggings import get_logger
-from datus.utils.sub_agent_manager import SYS_SUB_AGENTS, SubAgentManager
+from datus.utils.sub_agent_manager import SubAgentManager
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
