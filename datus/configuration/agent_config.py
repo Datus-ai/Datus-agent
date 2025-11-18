@@ -4,7 +4,7 @@
 
 import os
 from dataclasses import asdict, dataclass, field, fields
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput
@@ -32,6 +32,14 @@ class DbConfig:
     warehouse: str = field(default="", init=True)
     catalog: str = field(default="", init=True)
     logic_name: str = field(default="", init=True)  # Logical name defined in namespace, used to switch databases
+    # ClickZetta specific fields
+    service: str = field(default="", init=True)
+    instance: str = field(default="", init=True)
+    workspace: str = field(default="", init=True)
+    vcluster: str = field(default="", init=True)
+    secure: bool = field(default=False, init=True)
+    hints: Optional[Dict] = field(default=None, init=True)
+    extra: Optional[Dict] = field(default=None, init=True)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
