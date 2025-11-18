@@ -34,10 +34,9 @@ from datus.cli.autocomplete import TableCompleter
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.mcp_tools import MCPTool
-from datus.utils.constants import DBType
+from datus.utils.constants import SYS_SUB_AGENTS, DBType
 from datus.utils.loggings import get_logger
 from datus.utils.reference_paths import normalize_reference_path
-from datus.utils.sub_agent_manager import SYS_SUB_AGENTS
 
 logger = get_logger(__name__)
 
