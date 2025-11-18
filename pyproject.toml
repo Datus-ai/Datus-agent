@@ -105,6 +105,7 @@ exclude = ["benchmark*", "docs*"]
 "datus/conf" = ["conf/*.yml.*"]
 "datus/sample_data" = ["sample_data/duckdb-demo.duckdb"]
 "datus/sample_data/california_schools" = [
+    "sample_data/california_schools/california_schools.csv",
     "sample_data/california_schools/success_story.csv",
     "sample_data/california_schools/california_schools.sqlite"
 ]
