@@ -4,7 +4,7 @@
 
 import os
 from dataclasses import asdict, dataclass, field, fields
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput

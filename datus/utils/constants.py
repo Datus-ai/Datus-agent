@@ -21,6 +21,7 @@ class DBType(str, Enum):
     MSSQL = "mssql"  # same as sqlserver
     ORACLE = "oracle"
     HIVE = "hive"
+    CLICKZETTA = "clickzetta"
 
     @classmethod
     def support_catalog(cls, db_type: str) -> bool:
@@ -48,6 +49,7 @@ SUPPORT_DATABASE_DIALECTS = {
     DBType.POSTGRES,
     DBType.POSTGRESQL,
     DBType.DUCKDB,
+    DBType.CLICKZETTA,
 }
 SUPPORT_SCHEMA_DIALECTS = {
     DBType.SNOWFLAKE,
@@ -58,6 +60,7 @@ SUPPORT_SCHEMA_DIALECTS = {
     DBType.DUCKDB,
     DBType.POSTGRES,
     DBType.POSTGRESQL,
+    DBType.CLICKZETTA,
 }
 
 
