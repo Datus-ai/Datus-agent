@@ -377,11 +377,16 @@ class DBManager:
 
             # Remove None and empty string values, and internal fields
             # Keep False, 0, and empty containers to allow explicit configuration
+            # Also exclude ClickZetta-specific fields for other database types
+            clickzetta_specific_fields = ["service", "instance", "workspace", "vcluster", "secure"]
+            excluded_fields = ["type", "path_pattern", "logic_name"]
+            if db_type != DBType.CLICKZETTA:
+                excluded_fields.extend(clickzetta_specific_fields)
+
             filtered_config = {
                 k: v
                 for k, v in config_dict.items()
-                if not (v is None or (isinstance(v, str) and v.strip() == ""))
-                and k not in ["type", "path_pattern", "logic_name"]
+                if not (v is None or (isinstance(v, str) and v.strip() == "")) and k not in excluded_fields
             }
 
             # Convert port to int if present

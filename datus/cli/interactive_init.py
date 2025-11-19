@@ -294,7 +294,7 @@ class InteractiveInit:
                 "schema": schema,
             }
         else:
-            # For other database types (sqlite, duckdb, postgresql), use connection string
+            # For other database types (sqlite, duckdb), use connection string
             if db_type == "duckdb":
                 default_conn_string = str(self.sample_dir / "duckdb-demo.duckdb")
                 conn_string = Prompt.ask("- Connection string", default=default_conn_string)
