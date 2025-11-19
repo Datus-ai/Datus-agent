@@ -150,7 +150,7 @@ class InteractiveInit:
             console.print("\n❌ Initialization cancelled by user")
             return 1
         except Exception as e:
-            print_rich_exception(console, e, "Initialization failed")
+            print_rich_exception(console, e, "Initialization failed", logger)
             return 1
         finally:
             # Restore original logging configuration
@@ -573,6 +573,7 @@ def init_sql_and_log_result(
                     )
                 if processed_entries == 0:
                     console.print(f" ⚠️ Processed failed with validation SQL. Details: \n    {process_errors}. ")
+                    return
                 elif process_errors:
                     console.print(
                         f"  → Processed {processed_entries} SQL successfully, "
