@@ -204,9 +204,9 @@ def init_reference_sql(
             return success_count, errors
 
         # Run the async function
-        processed_count, process_errors = asyncio.run(process_all())
+        processed_count, errors = asyncio.run(process_all())
         if process_errors:
-            process_errors.extend(process_errors)
+            process_errors.extend(errors)
         logger.info(f"Processed {processed_count} reference SQL entries")
     else:
         logger.info("No new items to process in incremental mode")
