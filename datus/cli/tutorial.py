@@ -89,7 +89,7 @@ class BenchmarkTutorial:
 
     def run(self):
         try:
-            console.print("[bold cyan] Welcome to Datus benchmark data preparation tutorial 🎉[/bold cyan]")
+            console.print("[bold cyan]Welcome to Datus benchmark data preparation tutorial 🎉[/bold cyan]")
             console.print(
                 "Let's start learning how to prepare for benchmarking step by step using a dataset "
                 "from California schools."

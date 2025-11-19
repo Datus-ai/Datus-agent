@@ -569,15 +569,15 @@ def init_sql_and_log_result(
                 if invalid_entries > 0:
                     console.print(
                         f"  → Processed {processed_entries} SQL, {valid_entries} valid SQL,"
-                        f" {invalid_entries} invalid SQL. Details: \n    {validation_errors}",
+                        f" {invalid_entries} invalid SQL. Details: \n\n{validation_errors}",
                     )
                 if processed_entries == 0:
-                    console.print(f" ⚠️ Processed failed with validation SQL. Details: \n    {process_errors}. ")
+                    console.print(f" ⚠️ Processed failed with validation SQL. Details: \n\n{process_errors}. ")
                     return
                 elif process_errors:
                     console.print(
                         f"  → Processed {processed_entries} SQL successfully, "
-                        f"but there are still some SQL processing failures. Details: \n    {process_errors}",
+                        f"but there are still some SQL processing failures. Details: \n\n{process_errors}",
                     )
                 else:
                     console.print(f"  → Processed {processed_entries} SQL successfully")

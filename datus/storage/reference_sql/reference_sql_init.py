@@ -13,6 +13,7 @@ from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_ref
 from datus.storage.reference_sql.sql_file_processor import process_sql_files
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import normalize_sql
 
 logger = get_logger(__name__)
 
@@ -188,24 +189,25 @@ def init_reference_sql(
             results = await asyncio.gather(
                 *[process_with_semaphore(item) for item in items_to_process], return_exceptions=True
             )
-            errors = []
+            _errors = []
             # Count successful results
             success_count = 0
             for i, result in enumerate(results):
                 item = items_to_process[i]
+                sql = normalize_sql(item["sql"])
                 if isinstance(result, Exception):
-                    logger.error(f"SQL processing failed with exception `{result}`. SQL: {item['sql']};")
+                    logger.error(f"SQL processing failed with exception `{result}`. SQL: {sql};")
 
-                    errors.append(f"SQL processing failed with exception `{str(result)}`. SQL: {item['sql']};")
+                    _errors.append(f"SQL processing failed with exception `{str(result)}`. SQL: {sql};")
                 elif result:
                     success_count += 1
 
             logger.info(f"Completed processing: {success_count}/{len(items_to_process)} successful")
-            return success_count, errors
+            return success_count, _errors
 
         # Run the async function
         processed_count, errors = asyncio.run(process_all())
-        if process_errors:
+        if errors:
             process_errors.extend(errors)
         logger.info(f"Processed {processed_count} reference SQL entries")
     else:
@@ -222,5 +224,5 @@ def init_reference_sql(
         "invalid_entries": len(invalid_items) if invalid_items else 0,
         "total_stored_entries": storage.get_reference_sql_size(),
         "validation_errors": "\n".join(validate_errors) if validate_errors else None,
-        "process_error": "\n".join(process_errors) if process_errors else None,
+        "process_errors": "\n".join(process_errors) if process_errors else None,
     }
