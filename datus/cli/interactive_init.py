@@ -20,7 +20,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from datus.cli.init_util import detect_db_connectivity
-from datus.utils.loggings import get_logger
+from datus.utils.loggings import configure_logging, get_logger, print_rich_exception
 from datus.utils.resource_utils import copy_data_file, read_data_file_text
 
 logger = get_logger(__name__)
@@ -150,8 +150,7 @@ class InteractiveInit:
             console.print("\n❌ Initialization cancelled by user")
             return 1
         except Exception as e:
-            console.print(f"\n❌ Initialization failed: {e}")
-            logger.error(f"Initialization failed: {e}")
+            print_rich_exception(console, e, "Initialization failed")
             return 1
         finally:
             # Restore original logging configuration
@@ -338,7 +337,7 @@ class InteractiveInit:
             console.print(" ✅ Workspace directory created\n")
             return True
         except Exception as e:
-            console.print(f" ❌ Failed to create workspace directory: {e}\n")
+            print_rich_exception(console, e, "Failed to create workspace directory", logger)
             return False
 
     def _optional_setup(self, config_path: str):
@@ -523,15 +522,9 @@ def init_metadata_and_log_result(namespace_name: str, config_path: str):
                     console.print(f"  → Processed {schema_size} tables with {value_size} sample records")
             except Exception as count_e:
                 logger.debug(f"Could not get table counts: {count_e}")
-            flag = bool(result)
-        except Exception as e:
-            logger.error(f"Metadata initialization failed: {e}")
-            flag = False
-
-        if flag:
             console.print(" ✅ Metadata knowledge base initialized")
-        else:
-            console.print(" ❌ Metadata initialization failed")
+        except Exception as e:
+            print_rich_exception(console, e, "Metadata initialization failed", logger)
 
 
 def init_sql_and_log_result(
@@ -560,39 +553,47 @@ def init_sql_and_log_result(
 
             # Log detailed results
             if isinstance(result, dict):
-                if "message" in result:
+                if result.get("message"):
                     logger.info(f"Reference SQL bootstrap completed: {result['message']}")
+
                 processed_entries = result.get("processed_entries", 0)
                 valid_entries = result.get("valid_entries", 0)
                 invalid_entries = result.get("invalid_entries", 0)
+                validation_errors = result.get("validation_errors")
+                process_errors = result.get("process_errors")
+                if valid_entries == 0:
+                    console.print(f" ⚠️ No SQL files processed in the directory `{sql_dir}`. ")
+                    if validation_errors:
+                        console.print(f"    Reason: {validation_errors}")
+                    return
+                if invalid_entries > 0:
+                    console.print(
+                        f"  → Processed {processed_entries} SQL, {valid_entries} valid SQL,"
+                        f" {invalid_entries} invalid SQL. Details: \n    {validation_errors}",
+                    )
                 if processed_entries == 0:
-                    console.print(f" ⚠️ No SQL files processed in the directory `{sql_dir}`")
+                    console.print(f" ⚠️ Processed failed with validation SQL. Details: \n    {process_errors}. ")
+                elif process_errors:
+                    console.print(
+                        f"  → Processed {processed_entries} SQL successfully, "
+                        f"but there are still some SQL processing failures. Details: \n    {process_errors}",
+                    )
                 else:
-                    if invalid_entries > 0:
-                        console.print(
-                            f"  → Processed {processed_entries} SQL, {valid_entries} valid SQL,"
-                            f" {invalid_entries} invalid SQL"
-                        )
-                    else:
-                        console.print(f"  → Processed {processed_entries} SQL successfully")
+                    console.print(f"  → Processed {processed_entries} SQL successfully")
+                console.print(" ✅ Imported SQL files into reference completed")
+
             else:
                 logger.info(f"Reference SQL bootstrap result: {result}")
-            console.print(" ✅ Imported SQL files into reference completed.")
 
         except Exception as e:
-            logger.error(f"Reference SQL initialization failed: {e}")
-            console.print(f" ❌Reference SQL initialization failed: {e}")
+            print_rich_exception(console, e, "Reference SQL initialization failed", logger)
 
 
 def main():
     """Entry point for the interactive init command."""
-    try:
-        init = InteractiveInit()
-        return init.run()
-    except Exception as e:
-        console.print(f"\n❌ Unexpected error: {e}")
-        logger.error(f"Unexpected error during interactive initialization: {e}")
-        return 1
+    configure_logging(console_output=False)
+    init = InteractiveInit()
+    return init.run()
 
 
 if __name__ == "__main__":

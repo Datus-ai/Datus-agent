@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 from datus.cli.interactive_init import console, create_agent
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.utils.loggings import get_logger
+from datus.utils.loggings import get_logger, print_rich_exception
 from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
@@ -88,67 +88,71 @@ class BenchmarkTutorial:
         return True
 
     def run(self):
-        console.print("[bold cyan] Welcome to Datus benchmark data preparation tutorial 🎉[/bold cyan]")
-        console.print(
-            "Let's start learning how to prepare for benchmarking step by step using a dataset from California schools."
-        )
-        console.print("[bold yellow][1/4] Ensure data files and configuration[/bold yellow]")
-        with console.status("Ensuring...") as status:
-            self._ensure_files()
-            console.print("Data files are ready.")
-            status.update("Ensuring configuration...")
-            if not self._ensure_config():
-                return 1
-        console.print("Configuration is ready.")
-        california_schools_path = self.benchmark_path / self.namespace_name
-        from datus.cli.interactive_init import init_metadata_and_log_result, init_sql_and_log_result
+        try:
+            console.print("[bold cyan] Welcome to Datus benchmark data preparation tutorial 🎉[/bold cyan]")
+            console.print(
+                "Let's start learning how to prepare for benchmarking step by step using a dataset "
+                "from California schools."
+            )
+            console.print("[bold yellow][1/4] Ensure data files and configuration[/bold yellow]")
+            with console.status("Ensuring...") as status:
+                self._ensure_files()
+                console.print("Data files are ready.")
+                status.update("Ensuring configuration...")
+                if not self._ensure_config():
+                    return 1
+            console.print("Configuration is ready.")
+            california_schools_path = self.benchmark_path / self.namespace_name
+            from datus.cli.interactive_init import init_metadata_and_log_result, init_sql_and_log_result
 
-        console.print("[bold yellow][2/4] Initialize Metadata using command: [/bold yellow]")
-        console.print(
-            f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
-            "--namespace california_schools "
-            "--components metadata --kb_update_strategy overwrite[/]"
-        )
-        init_metadata_and_log_result(namespace_name=self.namespace_name, config_path=self.config_path)
+            console.print("[bold yellow][2/4] Initialize Metadata using command: [/bold yellow]")
+            console.print(
+                f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
+                "--namespace california_schools "
+                "--components metadata --kb_update_strategy overwrite[/]"
+            )
+            init_metadata_and_log_result(namespace_name=self.namespace_name, config_path=self.config_path)
 
-        console.print("[bold yellow][3/4] Initialize Metrics using command: [/bold yellow]")
-        success_path = self.benchmark_path / self.namespace_name / "success_story.csv"
-        console.print(
-            f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
-            f"--namespace california_schools "
-            f"--components metrics --kb_update_strategy overwrite --success_story {success_path}"
-            f" [/]"
-        )
-        console.print(
-            "[bold cyan]This step needs to be done using DeepSeek or Claude, otherwise you will get an error[/]"
-        )
-        with console.status("Metrics initializing..."):
-            self._init_metrics(success_path)
+            console.print("[bold yellow][3/4] Initialize Metrics using command: [/bold yellow]")
+            success_path = self.benchmark_path / self.namespace_name / "success_story.csv"
+            console.print(
+                f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
+                f"--namespace california_schools "
+                f"--components metrics --kb_update_strategy overwrite --success_story {success_path}"
+                f" [/]"
+            )
+            console.print(
+                "[bold cyan]This step needs to be done using DeepSeek or Claude, otherwise you may generate failures[/]"
+            )
+            with console.status("Metrics initializing..."):
+                self._init_metrics(success_path)
 
-        console.print("[bold yellow][4/4] Initialize Reference SQL using command: [/bold yellow]")
-        console.print(
-            f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
-            "--namespace california_schools --components reference_sql --kb_update_strategy overwrite "
-            f"--sql_dir {str(california_schools_path / 'reference_sql')} "
-            f'--subject_tree "'
-            "bird/california_schools/FRPM_Meal_Analysis,"
-            "bird/california_schools/Enrollment_Demographics,"
-            "bird/california_schools/SAT_Academic_Performance,"
-            'bird/debit_card_specializing,bird/student_club"'
-            " [/]"
-        )
-        init_sql_and_log_result(
-            namespace_name=self.namespace_name,
-            sql_dir=str(california_schools_path / "reference_sql"),
-            subject_tree=(
+            console.print("[bold yellow][4/4] Initialize Reference SQL using command: [/bold yellow]")
+            console.print(
+                f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
+                "--namespace california_schools --components reference_sql --kb_update_strategy overwrite "
+                f"--sql_dir {str(california_schools_path / 'reference_sql')} "
+                f'--subject_tree "'
                 "bird/california_schools/FRPM_Meal_Analysis,"
                 "bird/california_schools/Enrollment_Demographics,"
-                "bird/california_schools/SAT_Academic_Performance,"
-                "bird/debit_card_specializing,bird/student_club"
-            ),
-            config_path=self.config_path,
-        )
-        return 0
+                'bird/california_schools/SAT_Academic_Performance"'
+                " [/]"
+            )
+            init_sql_and_log_result(
+                namespace_name=self.namespace_name,
+                sql_dir=str(california_schools_path / "reference_sql"),
+                subject_tree=(
+                    "bird/california_schools/FRPM_Meal_Analysis,"
+                    "bird/california_schools/Enrollment_Demographics,"
+                    "bird/california_schools/SAT_Academic_Performance"
+                ),
+                config_path=self.config_path,
+            )
+            console.print(" 🎉 [bold green]Now you can start with the benchmarking section of the guidance document[/]")
+            return 0
+        except Exception as e:
+            print_rich_exception(console, e, "Tutorial failed", logger)
+            return 1
 
     def _init_metrics(self, success_path: Path):
         """Initialize metrics using success stories."""
@@ -162,16 +166,27 @@ class BenchmarkTutorial:
                 config_path=self.config_path,
             )
             result = agent.bootstrap_kb()
-            logger.info(f"Metrics bootstrap result: {result}")
-            metrics_size = 0 if not agent.metrics_store else agent.metrics_store.get_metrics_size()
-            if metrics_size > 0:
-                console.print(f"  → Processed {metrics_size} metrics")
-                console.print(" ✅ Metrics initialized")
+            if result.get("status") == "success":
+                metrics_size = 0 if not agent.metrics_store else agent.metrics_store.get_metrics_size()
+                if metrics_size > 0:
+                    console.print(f"  → Processed {metrics_size} metrics")
+                    if err := result.get("error"):
+                        console.print(" ⚠️ [bold]The metrics has not been fully initialised successfully: [/]")
+                        console.print(f"    {err}")
+                    else:
+                        console.print(" ✅ Metrics initialized")
+                else:
+                    if err := result.get("error"):
+                        console.print(" ❌[bold]There are some errors in the processing:[/]")
+                        console.print(f"    {err}")
+                    else:
+                        console.print(" ⚠️No metrics initialized")
             else:
-                console.print(" ⚠️No metrics initialized")
+                console.print(" ❌[bold]Metrics initialization failed:[/]")
+                console.print(f"    {result.get('message')}")
             return True
         except Exception as e:
-            logger.error(f"Metrics initialization failed: {e}")
+            print_rich_exception(console, e, "Metrics initialization failed", logger)
             return False
 
 
