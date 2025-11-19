@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import yaml
-from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool
+from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool, set_tracing_disabled
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
@@ -29,6 +29,9 @@ from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import create_openai_client, optional_traceable
 
 logger = get_logger(__name__)
+
+# Disable OpenAI Agents SDK tracing to prevent sending traces to OpenAI
+set_tracing_disabled(True)
 
 # Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue in openai-agents 0.3.2
 try:

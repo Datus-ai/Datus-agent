@@ -246,6 +246,7 @@ class FilesystemFuncTool:
 
             try:
                 content = target_path.read_text(encoding="utf-8")
+                edits_applied = 0
 
                 for edit in edits:
                     # Handle both EditOperation objects and dictionaries
@@ -255,10 +256,26 @@ class FilesystemFuncTool:
                     else:
                         old_text = edit.oldText
                         new_text = edit.newText
-                    content = content.replace(old_text, new_text)
+
+                    # Check if old_text exists in content before replacing
+                    if old_text and old_text in content:
+                        content = content.replace(old_text, new_text)
+                        edits_applied += 1
+                    elif old_text:
+                        # old_text not found in file
+                        preview = old_text[:100] + "..." if len(old_text) > 100 else old_text
+                        return FuncToolResult(
+                            success=0,
+                            error=f"Text not found in file, cannot apply edit. Looking for: {preview}",
+                        )
+
+                if edits_applied == 0:
+                    return FuncToolResult(success=0, error="No edits were applied")
 
                 target_path.write_text(content, encoding="utf-8")
-                return FuncToolResult(result=f"File edited successfully: {str(target_path)}")
+                return FuncToolResult(
+                    result=f"File edited successfully: {str(target_path)} ({edits_applied} edit(s) applied)"
+                )
             except UnicodeDecodeError:
                 return FuncToolResult(success=0, error=f"Cannot edit binary file: {path}")
             except PermissionError:

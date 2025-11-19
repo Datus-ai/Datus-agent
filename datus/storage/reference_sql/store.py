@@ -287,7 +287,7 @@ class ReferenceSqlRAG:
 
         if search_results:
             result_list = search_results.select(
-                ["name", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags"]
+                ["name", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags", "_distance"]
             ).to_pylist()
             logger.info(f"Found {len(result_list)} reference SQL results for query: {query_text}")
             return result_list

@@ -607,10 +607,7 @@ class GenerationHooks(AgentHooks):
             with open(file_path, "r", encoding="utf-8") as f:
                 doc = yaml.safe_load(f)
 
-            # Extract reference_sql data
-            if "reference_sql" in doc:
-                reference_sql_data = doc["reference_sql"]
-            elif isinstance(doc, dict) and "sql" in doc:
+            if isinstance(doc, dict) and "sql" in doc:
                 # Direct format without reference_sql wrapper
                 reference_sql_data = doc
             else:
@@ -657,7 +654,7 @@ class GenerationHooks(AgentHooks):
                 "sql": sql_query,
                 "comment": comment,
                 "summary": reference_sql_data.get("summary", ""),
-                "filepath": reference_sql_data.get("filepath", ""),
+                "filepath": file_path,
                 "domain": domain,
                 "layer1": layer1,
                 "layer2": layer2,

@@ -544,7 +544,7 @@ class AgentCommands:
             table.add_column("Domain", style="yellow")
             table.add_column("Layer1", style="yellow")
             table.add_column("Layer2", style="yellow")
-            table.add_column("File Path", style="dim")
+            table.add_column("File Path", style="dim", overflow="fold")
             table.add_column("Distance", style="dim")
             #
             for item in history:
