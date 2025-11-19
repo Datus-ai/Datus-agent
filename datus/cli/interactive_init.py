@@ -245,7 +245,7 @@ class InteractiveInit:
             return False
 
         # Database type selection
-        db_types = ["sqlite", "duckdb", "snowflake", "mysql", "postgresql", "starrocks"]
+        db_types = ["sqlite", "duckdb", "snowflake", "mysql", "starrocks"]
         db_type = Prompt.ask("- Database type", choices=db_types, default="duckdb")
 
         # Connection configuration based on database type

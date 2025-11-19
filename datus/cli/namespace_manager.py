@@ -11,76 +11,136 @@ without requiring users to manually write conf/agent.yml files.
 """
 
 from getpass import getpass
-from pathlib import Path
 
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
 from datus.cli.init_util import detect_db_connectivity
-from datus.configuration.agent_config import AgentConfig, DBType
+from datus.configuration.agent_config import DbConfig, file_stem_from_uri
+from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
+from datus.utils.constants import DBType
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 console = Console()
 
 
+def _validate_namespace_name(name: str) -> tuple[bool, str]:
+    """Validate namespace name format."""
+    if not name.strip():
+        return False, "Namespace name cannot be empty"
+    # Check for invalid characters that could cause issues in YAML/paths
+    invalid_chars = ["/", "\\", ":", "*", "?", '"', "<", ">", "|", " ", "\t", "\n"]
+    for char in invalid_chars:
+        if char in name:
+            return False, f"Namespace name cannot contain '{char}'"
+    return True, ""
+
+
+def _validate_port(port_str: str) -> tuple[bool, str]:
+    """Validate port number."""
+    try:
+        port = int(port_str)
+        if port < 1 or port > 65535:
+            return False, "Port must be between 1 and 65535"
+        return True, ""
+    except ValueError:
+        return False, "Port must be a valid number"
+
+
 class NamespaceManager:
-    @staticmethod
-    def list(agent_config: AgentConfig):
-        if not agent_config.namespaces:
-            print("No namespace configured.")
+    def __init__(self, config_path: str):
+        try:
+            self.agent_config = load_agent_config(config=config_path, action="namespace")
+        except DatusException as e:
+            if e.code == ErrorCode.COMMON_FILE_NOT_FOUND:
+                console.print("❌ Configuration file not found.")
+                console.print("Please run 'datus-agent init' first to create the configuration.")
+                console.print("Or specify a config file with --config <path>")
+            else:
+                console.print(f"❌ {e.message}")
+            self.agent_config = None
+        except Exception as e:
+            console.print(f"❌ Failed to load configuration: {e}")
+            self.agent_config = None
+
+    def run(self, command: str) -> int:
+        """Run the specified namespace command."""
+        if self.agent_config is None:
+            return 1
+
+        if command == "list":
+            return self.list()
+        elif command == "add":
+            return self.add()
+        elif command == "delete":
+            return self.delete()
+        else:
+            console.print(f"❌ Unknown command: {command}")
+            return 1
+
+    def list(self) -> int:
+        if not self.agent_config.namespaces:
+            console.print("No namespace configured.")
             return 0
 
         console.print("[bold yellow]Configured namespaces:[/bold yellow]")
-        for namespace_name, db_configs in agent_config.namespaces.items():
-            print(f"\nNamespace: {namespace_name}")
+        for namespace_name, db_configs in self.agent_config.namespaces.items():
+            console.print(f"\nNamespace: {namespace_name}")
             for db_name, db_config in db_configs.items():
-                print(f"  Database: {db_name}")
-                print(f"    Type: {db_config.type}")
+                console.print(f"  Database: {db_name}")
+                console.print(f"    Type: {db_config.type}")
                 if db_config.host:
-                    print(f"    Host: {db_config.host}:{db_config.port}")
+                    console.print(f"    Host: {db_config.host}:{db_config.port}")
                 if db_config.uri:
-                    print(f"    URI: {db_config.uri}")
+                    console.print(f"    URI: {db_config.uri}")
                 if db_config.database:
-                    print(f"    Database: {db_config.database}")
+                    console.print(f"    Database: {db_config.database}")
                 if db_config.schema:
-                    print(f"    Schema: {db_config.schema}")
+                    console.print(f"    Schema: {db_config.schema}")
                 if db_config.account:
-                    print(f"    Account: {db_config.account}")
+                    console.print(f"    Account: {db_config.account}")
                 if db_config.warehouse:
-                    print(f"    Warehouse: {db_config.warehouse}")
+                    console.print(f"    Warehouse: {db_config.warehouse}")
                 if db_config.catalog:
-                    print(f"    Catalog: {db_config.catalog}")
+                    console.print(f"    Catalog: {db_config.catalog}")
                 if db_config.username:
-                    print(f"    Username: {db_config.username}")
-                print()
+                    console.print(f"    Username: {db_config.username}")
+                console.print()
         return 0
 
-    @staticmethod
-    def add(agent_config: AgentConfig):
+    def add(self) -> int:
         """Interactive method to add a new namespace configuration."""
         console.print("[bold yellow]Add New Namespace[/bold yellow]")
 
         # Namespace name
         namespace_name = Prompt.ask("- Namespace name")
-        if not namespace_name.strip():
-            console.print("❌ Namespace name cannot be empty")
-            return False
+        valid, error_msg = _validate_namespace_name(namespace_name)
+        if not valid:
+            console.print(f"❌ {error_msg}")
+            return 1
 
         # Check if namespace already exists
-        if namespace_name in agent_config.namespaces:
+        if namespace_name in self.agent_config.namespaces:
             console.print(f"❌ Namespace '{namespace_name}' already exists")
-            return False
+            return 1
 
         # Database type selection
-        db_types = ["sqlite", "duckdb", "snowflake", "mysql", "postgresql", "starrocks"]
+        db_types = ["sqlite", "duckdb", "snowflake", "mysql", "starrocks"]
         db_type = Prompt.ask("- Database type", choices=db_types, default="duckdb")
 
         # Connection configuration based on database type
         if db_type in ["starrocks", "mysql"]:
             # Host-based database configuration (StarRocks/MySQL)
             host = Prompt.ask("- Host", default="127.0.0.1")
-            port = Prompt.ask("- Port", default="9030" if db_type == "starrocks" else "3306")
+            default_port = "9030" if db_type == "starrocks" else "3306"
+            port = Prompt.ask("- Port", default=default_port)
+            valid, error_msg = _validate_port(port)
+            if not valid:
+                console.print(f"❌ {error_msg}")
+                return 1
             username = Prompt.ask("- Username")
             password = getpass("- Password: ")
             database = Prompt.ask("- Database")
@@ -88,7 +148,7 @@ class NamespaceManager:
             # Store configuration
             config_data = {
                 "type": db_type,
-                "name": namespace_name,
+                "name": database,  # Use database name as logical name
                 "host": host,
                 "port": int(port),
                 "username": username,
@@ -110,9 +170,11 @@ class NamespaceManager:
             schema = Prompt.ask("- Schema", default="")
 
             # Store Snowflake-specific configuration
+            # Use database name as logical name, or namespace_name if database is empty
+            logical_name = database if database else namespace_name
             config_data = {
                 "type": db_type,
-                "name": namespace_name,
+                "name": logical_name,
                 "account": account,
                 "username": username,
                 "password": password,
@@ -121,16 +183,18 @@ class NamespaceManager:
                 "schema": schema,
             }
         else:
-            # For other database types (sqlite, duckdb, postgresql), use connection string
+            # For file-based databases (sqlite, duckdb), use connection string
             if db_type == "duckdb":
-                default_conn_string = str(Path.home() / ".datus" / "sample" / "duckdb-demo.duckdb")
+                default_conn_string = str(get_path_manager().sample_dir / "duckdb-demo.duckdb")
                 conn_string = Prompt.ask("- Connection string", default=default_conn_string)
             else:
                 conn_string = Prompt.ask("- Connection string")
 
+            # Use file stem as logical name for file-based databases
+            logical_name = file_stem_from_uri(conn_string)
             config_data = {
                 "type": db_type,
-                "name": namespace_name,
+                "name": logical_name,
                 "uri": conn_string,
             }
 
@@ -142,52 +206,48 @@ class NamespaceManager:
         if success:
             console.print("✔ Database connection test successful\n")
 
-            # Add to agent configuration
-            if namespace_name not in agent_config.namespaces:
-                agent_config.namespaces[namespace_name] = {}
+            # Add to agent configuration (namespace is guaranteed to not exist from earlier check)
+            self.agent_config.namespaces[namespace_name] = {}
 
             # Create DbConfig object and add to namespace
-            from datus.configuration.agent_config import DbConfig
-
             db_config = DbConfig.filter_kwargs(DbConfig, config_data)
-            agent_config.namespaces[namespace_name][config_data["name"]] = db_config
+            self.agent_config.namespaces[namespace_name][config_data["name"]] = db_config
 
             # Save configuration
-            if NamespaceManager._save_configuration(agent_config):
+            if self._save_configuration():
                 console.print(f"✔ Namespace '{namespace_name}' added successfully")
-                return True
+                return 0
             else:
                 console.print("❌ Failed to save configuration")
-                return False
+                return 1
         else:
             console.print(f"❌ Database connectivity test failed: {error_msg}\n")
-            return False
+            return 1
 
-    @staticmethod
-    def delete(agent_config: AgentConfig):
+    def delete(self) -> int:
         """Interactive method to delete a namespace configuration."""
         console.print("[bold yellow]Delete Namespace[/bold yellow]")
 
         # Check if there are any namespaces to delete
-        if not agent_config.namespaces:
+        if not self.agent_config.namespaces:
             console.print("❌ No namespaces configured to delete")
-            return False
+            return 1
 
         # List available namespaces
         console.print("Available namespaces:")
-        for namespace_name in agent_config.namespaces.keys():
+        for namespace_name in self.agent_config.namespaces.keys():
             console.print(f"  - {namespace_name}")
 
         # Get namespace name to delete
         namespace_name = Prompt.ask("- Namespace name to delete")
         if not namespace_name.strip():
             console.print("❌ Namespace name cannot be empty")
-            return False
+            return 1
 
         # Check if namespace exists
-        if namespace_name not in agent_config.namespaces:
+        if namespace_name not in self.agent_config.namespaces:
             console.print(f"❌ Namespace '{namespace_name}' does not exist")
-            return False
+            return 1
 
         # Confirm deletion
         confirm = Confirm.ask(
@@ -196,29 +256,26 @@ class NamespaceManager:
         )
         if not confirm:
             console.print("❌ Namespace deletion cancelled")
-            return False
+            return 1
 
         # Delete namespace from configuration
-        del agent_config.namespaces[namespace_name]
+        del self.agent_config.namespaces[namespace_name]
 
         # Save configuration
-        if NamespaceManager._save_configuration(agent_config):
+        if self._save_configuration():
             console.print(f"✔ Namespace '{namespace_name}' deleted successfully")
-            return True
+            return 0
         else:
             console.print("❌ Failed to save configuration after deletion")
-            return False
+            return 1
 
-    @staticmethod
-    def _save_configuration(agent_config: AgentConfig) -> bool:
+    def _save_configuration(self) -> bool:
         """Save configuration to agent.yml file."""
         try:
-            from datus.configuration.agent_config_loader import configuration_manager
-
             configure_manager = configuration_manager()
             namespace_section = {}
 
-            for ns_name, db_configs in agent_config.namespaces.items():
+            for ns_name, db_configs in self.agent_config.namespaces.items():
                 namespace_dict = {}
                 db_configs_list = list(db_configs.values())
 
@@ -229,7 +286,8 @@ class NamespaceManager:
                         namespace_dict["type"] = db_config.type
                         namespace_dict["name"] = db_config.logic_name
                     else:
-                        namespace_dict = db_config.to_dict()
+                        # Filter out empty fields from to_dict()
+                        namespace_dict = {k: v for k, v in db_config.to_dict().items() if v}
                 else:
                     namespace_dict["type"] = db_configs_list[0].type
                     namespace_dict["dbs"] = []

@@ -363,25 +363,22 @@ def main():
         configure_logging(args.debug, console_output=False)
         init = InteractiveInit()
         return init.run()
+
     if args.action == "tutorial":
         configure_logging(args.debug, console_output=False)
         tutorial = BenchmarkTutorial(args.config or "~/.datus/conf/agent.yml")
         return tutorial.run()
+
+    if args.action == "namespace":
+        configure_logging(args.debug, console_output=False)
+        namespace_manager = NamespaceManager(args.config or "")
+        return namespace_manager.run(args.command)
 
     configure_logging(args.debug)
     setup_exception_handler()
 
     # Load agent configuration
     agent_config = load_agent_config(**vars(args))
-
-    # Handle namespace commands
-    if args.action == "namespace":
-        if args.command == "list":
-            return NamespaceManager.list(agent_config)
-        elif args.command == "add":
-            return 0 if NamespaceManager.add(agent_config) else 1
-        elif args.command == "delete":
-            return 0 if NamespaceManager.delete(agent_config) else 1
 
     # Initialize agent with both args and config
     agent = Agent(args, agent_config)

@@ -26,12 +26,11 @@ def detect_db_connectivity(namespace_name, db_config_data) -> tuple[bool, str]:
         db_type = db_config_data["type"]
 
         # Create DbConfig object with appropriate fields based on database type
-        if db_type in ["starrocks", "mysql", "snowflake"]:
-            # For connectors that need specific parameters
-
+        if db_type in ["starrocks", "mysql"]:
+            # For host-based connectors (StarRocks/MySQL)
             port = db_config_data.get("port")
             if not port:
-                default_ports = {"starrocks": 9030, "mysql": 3306, "snowflake": 443}
+                default_ports = {"starrocks": 9030, "mysql": 3306}
                 port = default_ports.get(db_type, 0)
 
             db_config = DbConfig(
@@ -43,9 +42,16 @@ def detect_db_connectivity(namespace_name, db_config_data) -> tuple[bool, str]:
                 database=db_config_data.get("database", ""),
                 # StarRocks specific
                 catalog=db_config_data.get("catalog", "default_catalog"),
-                # Snowflake specific
+            )
+        elif db_type == "snowflake":
+            # For Snowflake connector
+            db_config = DbConfig(
+                type=db_type,
                 account=db_config_data.get("account", ""),
+                username=db_config_data.get("username", ""),
+                password=db_config_data.get("password", ""),
                 warehouse=db_config_data.get("warehouse", ""),
+                database=db_config_data.get("database", ""),
                 schema=db_config_data.get("schema", ""),
             )
         else:
