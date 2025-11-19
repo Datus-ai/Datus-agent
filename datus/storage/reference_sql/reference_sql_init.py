@@ -194,7 +194,7 @@ def init_reference_sql(
             for i, result in enumerate(results):
                 item = items_to_process[i]
                 if isinstance(result, Exception):
-                    logger.error(f"Item {i+1} failed with exception: {result}")
+                    logger.error(f"SQL processing failed with exception `{result}`. SQL: {item['sql']};")
 
                     errors.append(f"SQL processing failed with exception `{str(result)}`. SQL: {item['sql']};")
                 elif result:
