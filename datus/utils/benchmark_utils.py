@@ -1668,25 +1668,25 @@ def parse_trajectory_filename(filename: str) -> tuple[Optional[str], Optional[fl
         return None, None
 
 
-def compare_pandas_tables(pred_df: pd.DataFrame, gold_df: pd.DataFrame) -> Dict[str, Any]:
-    if len(pred_df) != len(gold_df):
+def compare_pandas_tables(actual_df: pd.DataFrame, gold_df: pd.DataFrame) -> Dict[str, Any]:
+    if len(actual_df) != len(gold_df):
         return {
             "match_rate": 0.0,
             "matched_columns": [],
-            "missing_columns": list(gold_df.columns),
-            "extra_columns": list(pred_df.columns),
+            "missing_columns": [],
+            "extra_columns": [],
         }
 
     matches: list[tuple[str, str]] = []
     matched_pred_cols: set[str] = set()
     unmatched_gold_cols: set[str] = set(gold_df.columns)
 
-    for pred_col in pred_df.columns:
+    for pred_col in actual_df.columns:
         if pred_col in matched_pred_cols:
             continue
         for gold_col in list(unmatched_gold_cols):
             try:
-                if columns_match(pred_df[pred_col], gold_df[gold_col]):
+                if columns_match(actual_df[pred_col], gold_df[gold_col]):
                     matches.append((pred_col, gold_col))
                     matched_pred_cols.add(pred_col)
                     unmatched_gold_cols.discard(gold_col)
@@ -1695,7 +1695,7 @@ def compare_pandas_tables(pred_df: pd.DataFrame, gold_df: pd.DataFrame) -> Dict[
                 continue
 
     un_matches = list(unmatched_gold_cols)
-    extra_columns = [col for col in pred_df.columns if col not in matched_pred_cols]
+    extra_columns = [col for col in actual_df.columns if col not in matched_pred_cols]
 
     total_gold_cols = len(gold_df.columns)
     match_rate = (len(matches) / total_gold_cols) if total_gold_cols > 0 else 1.0

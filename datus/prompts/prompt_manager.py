@@ -293,14 +293,21 @@ class PromptManager:
             "total_versions": len(versions),
         }
 
-    def copy_to(self, src_name: str, target_name: str, target_version: str = "1.0") -> str:
+    def copy_to(
+        self,
+        src_name: str,
+        target_name: str,
+        target_version: str = "1.0",
+        overwrite: bool = False,
+    ) -> str:
         if not self.user_templates_dir.exists():
             self.user_templates_dir.mkdir(parents=True)
 
-        target_path = str(self.user_templates_dir / f"{target_name}_{target_version}.j2")
-        src_path = self._get_template_path(src_name)
-        shutil.copy2(src_path, target_path)
-        return target_path
+        target_path = self.user_templates_dir / f"{target_name}_{target_version}.j2"
+        if overwrite or not target_path.exists():
+            src_path = self._get_template_path(src_name)
+            shutil.copy2(src_path, target_path)
+        return str(target_path)
 
 
 # Global instance for easy access
