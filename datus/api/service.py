@@ -56,7 +56,7 @@ class DatusAPIService:
         """Initialize the service with default configurations."""
         try:
             # Load default agent configuration
-            self.agent_config = load_agent_config()
+            self.agent_config = load_agent_config(**vars(self.args))
             logger.info("Agent configuration loaded successfully")
 
             # Initialize task store

@@ -9,9 +9,11 @@ import threading
 import traceback
 from contextlib import contextmanager
 from logging.handlers import TimedRotatingFileHandler
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Optional
 
 import structlog
+from rich.console import Console
 
 fileno = False
 
@@ -314,4 +316,49 @@ if not structlog.is_configured():
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
+    )
+
+
+def _get_current_log_file() -> Path | None:
+    """Try to locate the current agent log file.
+
+    Checks the active log manager first and falls back to the latest
+    agent log in the logs directory.
+    """
+    try:
+        manager = get_log_manager()
+        handler = getattr(manager, "file_handler", None)
+        if handler and getattr(handler, "baseFilename", None):
+            return Path(handler.baseFilename).expanduser().resolve()
+    except Exception:
+        # Fall through to the log-dir search
+        pass
+
+    try:
+        from datus.utils.path_manager import get_path_manager
+
+        log_dir = get_path_manager().logs_dir
+        if not log_dir.exists():
+            return None
+        log_files = sorted(log_dir.glob("agent.*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return log_files[0].resolve() if log_files else None
+    except Exception:
+        return None
+
+
+def print_rich_exception(
+    console: Console,
+    ex: Exception,
+    error_description: str = "Processed failed",
+    file_logger: Optional[structlog.BoundLogger] = None,
+) -> None:
+    if not file_logger:
+        file_logger = get_logger(__name__)
+    """Print a concise, user-friendly error with a log file hint."""
+
+    file_logger.error(f"{error_description}, Reason: {ex}")
+    log_file = _get_current_log_file()
+
+    console.print(
+        f" ❌ [bold][red]{error_description}[/], Reason: {str(ex)}. See error details in [cyan]{log_file}[/][/]"
     )

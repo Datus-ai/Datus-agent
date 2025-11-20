@@ -13,6 +13,7 @@ from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_ref
 from datus.storage.reference_sql.sql_file_processor import process_sql_files
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import normalize_sql
 
 logger = get_logger(__name__)
 
@@ -116,13 +117,22 @@ def init_reference_sql(
 
     # Process and validate SQL files
     valid_items, invalid_items = process_sql_files(args.sql_dir)
-
+    validate_errors = (
+        []
+        if not invalid_items
+        else [
+            f"Failed to validate SQL item at {i['filepath']}:{i['line_number']} with error `{i['error']}`. "
+            "Please check that the SQL meets expectations (e.g., valid syntax, tables exist, comment field non-empty)."
+            for i in invalid_items
+        ]
+    )
     # If validate-only mode, exit after processing files
     if hasattr(args, "validate_only") and args.validate_only:
         logger.info(
             f"Validate-only mode: Processed {len(valid_items)} valid items and "
             f"{len(invalid_items) if invalid_items else 0} invalid items"
         )
+
         return {
             "status": "success",
             "message": "SQL files processing completed (validate-only mode)",
@@ -130,17 +140,21 @@ def init_reference_sql(
             "processed_entries": 0,
             "invalid_entries": len(invalid_items) if invalid_items else 0,
             "total_stored_entries": 0,
+            "validation_errors": "\n".join(validate_errors),
         }
 
     if not valid_items:
         logger.info("No valid SQL items found to process")
         return {
             "status": "success",
-            "message": f"reference_sql bootstrap completed ({build_mode} mode) - no valid items",
+            "message": (
+                f"No valid SQL items found in directory: {args.sql_dir}. Please ensure the directory is correct."
+            ),
             "valid_entries": 0,
             "processed_entries": 0,
             "invalid_entries": len(invalid_items) if invalid_items else 0,
             "total_stored_entries": storage.get_reference_sql_size(),
+            "validation_errors": "\n".join(validate_errors),
         }
 
     # Filter out existing items in incremental mode
@@ -160,6 +174,7 @@ def init_reference_sql(
         items_to_process = valid_items
 
     processed_count = 0
+    process_errors = []
     if items_to_process:
         # Use SqlSummaryAgenticNode with parallel processing (unified approach)
         async def process_all():
@@ -174,20 +189,26 @@ def init_reference_sql(
             results = await asyncio.gather(
                 *[process_with_semaphore(item) for item in items_to_process], return_exceptions=True
             )
-
+            _errors = []
             # Count successful results
             success_count = 0
             for i, result in enumerate(results):
+                item = items_to_process[i]
+                sql = normalize_sql(item["sql"])
                 if isinstance(result, Exception):
-                    logger.error(f"Item {i+1} failed with exception: {result}")
+                    logger.error(f"SQL processing failed with exception `{result}`. SQL: {sql};")
+
+                    _errors.append(f"SQL processing failed with exception `{str(result)}`. SQL: {sql};")
                 elif result:
                     success_count += 1
 
             logger.info(f"Completed processing: {success_count}/{len(items_to_process)} successful")
-            return success_count
+            return success_count, _errors
 
         # Run the async function
-        processed_count = asyncio.run(process_all())
+        processed_count, errors = asyncio.run(process_all())
+        if errors:
+            process_errors.extend(errors)
         logger.info(f"Processed {processed_count} reference SQL entries")
     else:
         logger.info("No new items to process in incremental mode")
@@ -202,4 +223,6 @@ def init_reference_sql(
         "processed_entries": processed_count,
         "invalid_entries": len(invalid_items) if invalid_items else 0,
         "total_stored_entries": storage.get_reference_sql_size(),
+        "validation_errors": "\n".join(validate_errors) if validate_errors else None,
+        "process_errors": "\n".join(process_errors) if process_errors else None,
     }

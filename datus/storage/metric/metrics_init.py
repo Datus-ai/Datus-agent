@@ -5,7 +5,7 @@
 import argparse
 import asyncio
 import os
-from typing import Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -35,23 +35,34 @@ def init_success_story_metrics(
     """
     df = pd.read_csv(args.success_story)
 
-    async def process_all():
+    async def process_all() -> tuple[bool, List[str]]:
+        errors: List[str] = []
         for idx, row in df.iterrows():
-            logger.info(f"Processing row {idx + 1}/{len(df)}")
+            row_idx = idx + 1
+            logger.info(f"Processing row {row_idx}/{len(df)}")
             try:
-                await process_line(row.to_dict(), agent_config, subject_tree)
+                result = await process_line(row.to_dict(), agent_config, subject_tree)
+                if not result.get("successful"):
+                    errors.append(f"Error processing row {row_idx}: {result.get('error')}")
             except Exception as e:
-                logger.error(f"Error processing row {idx + 1}: {e}")
+                errors.append(f"Error processing row {row_idx}: {e}")
+                logger.error(f"Error processing row {row_idx}: {e}")
+        return (len(df) - len(errors)) > 0, errors
 
     # Run the async function
-    asyncio.run(process_all())
+    successful, errors = asyncio.run(process_all())
+    if errors:
+        error_message = "\n    ".join(errors)
+    else:
+        error_message = ""
+    return successful, error_message
 
 
 async def process_line(
     row: dict,
     agent_config: AgentConfig,
     subject_tree: Optional[list] = None,
-):
+) -> Dict[str, any]:
     """
     Process a single line from the CSV using SemanticAgenticNode in workflow mode.
 
@@ -70,7 +81,10 @@ async def process_line(
 
     if not table_name:
         logger.error(f"No table name found in SQL query: {row['sql']}")
-        return
+        return {
+            "successful": False,
+            "error": "No table name found in SQL query",
+        }
 
     # Step 1: Generate semantic model using SemanticAgenticNode
     semantic_user_message = f"Generate semantic model for table: {table_name}\nQuestion context: {row['question']}"
@@ -101,13 +115,19 @@ async def process_line(
 
         if not semantic_model_file:
             logger.error(f"Failed to generate semantic model for {row['question']}")
-            return
+            return {
+                "successful": False,
+                "error": "Failed to generate semantic model",
+            }
 
         logger.info(f"Generated semantic model: {semantic_model_file}")
 
     except Exception as e:
         logger.error(f"Error generating semantic model for {row['question']}: {e}")
-        return
+        return {
+            "successful": False,
+            "error": f"Error generating semantic model for this question, reason: {str(e)}",
+        }
 
     # Step 2: Generate metrics using SemanticAgenticNode
     metrics_user_message = (
@@ -138,16 +158,22 @@ async def process_line(
                 logger.debug(f"Metrics generation action: {action.messages}")
 
         logger.info(f"Generated metrics for {row['question']}")
-
+        return {
+            "successful": True,
+            "error": "",
+        }
     except Exception as e:
         logger.error(f"Error generating metrics for {row['question']}: {e}")
-        return
+        return {
+            "successful": False,
+            "error": f"Error generating metrics for this question, reason: {str(e)}",
+        }
 
 
 def init_semantic_yaml_metrics(
     yaml_file_path: str,
     agent_config: AgentConfig,
-):
+) -> tuple[bool, str]:
     """
     Initialize metrics from semantic YAML file by syncing directly to LanceDB.
 
@@ -157,21 +183,25 @@ def init_semantic_yaml_metrics(
     """
     if not os.path.exists(yaml_file_path):
         logger.error(f"Semantic YAML file {yaml_file_path} not found")
-        return
+        return False, f"Semantic YAML file {yaml_file_path} not found"
 
-    process_semantic_yaml_file(yaml_file_path, agent_config)
+    return process_semantic_yaml_file(yaml_file_path, agent_config)
 
 
 def process_semantic_yaml_file(
     yaml_file_path: str,
     agent_config: AgentConfig,
-):
+) -> tuple[bool, str]:
     """
     Process semantic YAML file by directly syncing to LanceDB using GenerationHooks.
 
     Args:
         yaml_file_path: Path to semantic YAML file
         agent_config: Agent configuration
+    Returns:
+        - Whether the execution was successful
+        - Failed reason
+
     """
     logger.info(f"Processing semantic YAML file: {yaml_file_path}")
 
@@ -180,6 +210,8 @@ def process_semantic_yaml_file(
 
     if result.get("success"):
         logger.info(f"Successfully synced semantic YAML to LanceDB: {result.get('message')}")
+        return True, ""
     else:
         error = result.get("error", "Unknown error")
         logger.error(f"Failed to sync semantic YAML to LanceDB: {error}")
+        return False, error

@@ -355,19 +355,26 @@ class Agent:
                     self.global_config.check_init_storage_config("metric")
                 # Initialize metrics using unified SemanticAgenticNode approach
                 if hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
-                    init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
+                    successful, error_message = init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
                 else:
-                    init_success_story_metrics(self.args, self.global_config, subject_tree)
+                    successful, error_message = init_success_story_metrics(self.args, self.global_config, subject_tree)
 
                 # Create metrics_store for statistics
-                self.metrics_store = SemanticMetricsRAG(self.global_config)
-                result = {
-                    "status": "success",
-                    "message": f"metrics bootstrap completed, "
-                    f"semantic_model_size={self.metrics_store.get_semantic_model_size()}, "
-                    f"metrics_size={self.metrics_store.get_metrics_size()}",
-                }
-                self._refresh_scoped_agents("metrics", kb_update_strategy)
+                if successful:
+                    self.metrics_store = SemanticMetricsRAG(self.global_config)
+                    result = {
+                        "status": "success",
+                        "message": f"metrics bootstrap completed,"
+                        f"semantic_model_size={self.metrics_store.get_semantic_model_size()}, "
+                        f"metrics_size={self.metrics_store.get_metrics_size()}",
+                        "error": error_message,
+                    }
+                    self._refresh_scoped_agents("metrics", kb_update_strategy)
+                else:
+                    result = {
+                        "status": "failed",
+                        "message": error_message,
+                    }
                 return result
             elif component == "document":
                 from datus.storage.document.store import document_store

@@ -812,3 +812,13 @@ def parse_context_switch(sql: str, dialect: str) -> Optional[Dict[str, Any]]:
             return result
 
     return None
+
+
+def normalize_sql(sql: str) -> str:
+    # 1) Replace all line breaks and tabs with a space
+    s = re.sub(r"[\r\n\t]+", " ", sql)
+    # 2) Shrink multiple spaces into a single space
+    s = re.sub(r" +", " ", s)
+    # 3) Remove the spaces at both ends
+    s = s.strip()
+    return s
