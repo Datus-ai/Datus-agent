@@ -408,7 +408,7 @@ class GenSQLAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
 
-        version = prompt_version or self.node_config.get("prompt_version", "")
+        version = prompt_version or str(self.node_config.get("prompt_version", ""))
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
         template_name = f"{system_prompt_name}_system"
