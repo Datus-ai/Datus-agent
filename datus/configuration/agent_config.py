@@ -433,8 +433,10 @@ class AgentConfig:
             ),
             "semantic_layer": BenchmarkConfig(
                 benchmark_path="semantic_layer",
-                question_file="question",
-                gold_sql_key="gold",
+                question_file="testing_set.csv",
+                question_key="question",
+                question_id_key="question_id",
+                gold_sql_key="sql",
             ),
         }
         for k, v in self._benchmark_config_dict.items():

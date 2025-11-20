@@ -248,8 +248,8 @@ class SemanticAgenticNode(AgenticNode):
         """
         try:
             # Get all metrics with domain/layer1/layer2 fields
-            all_metrics = self.metrics_rag.search_all_semantic_models(
-                database_name=self.agent_config.current_database or "", select_fields=["domain", "layer1", "layer2"]
+            all_metrics = self.metrics_rag.search_all_metrics(
+                semantic_model_name="", select_fields=["domain", "layer1", "layer2"]
             )
 
             # Extract unique subject_tree combinations
