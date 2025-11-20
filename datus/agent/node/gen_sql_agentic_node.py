@@ -26,6 +26,7 @@ from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.mcp_tools.mcp_server import MCPServer
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 
@@ -412,24 +413,19 @@ class GenSQLAgenticNode(AgenticNode):
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
         template_name = f"{system_prompt_name}_system"
 
-        try:
-            # Use prompt manager to render the template
-            from datus.prompts.prompt_manager import prompt_manager
+        # Use prompt manager to render the template
+        from datus.prompts.prompt_manager import prompt_manager
 
+        try:
             return prompt_manager.render_template(template_name=template_name, version=version, **context)
 
-        except FileNotFoundError as e:
+        except FileNotFoundError:
             # Template not found - throw DatusException
-            from datus.utils.exceptions import DatusException, ErrorCode
-
-            raise DatusException(
-                code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
-                message_args={"template_name": template_name, "version": version or "latest"},
-            ) from e
+            logger.warning(f"Failed to render system prompt '{system_prompt_name}',use the default template instead")
+            return prompt_manager.render_template(template_name="sql_system", version=version, **context)
         except Exception as e:
             # Other template errors - wrap in DatusException
             logger.error(f"Template loading error for '{template_name}': {e}")
-            from datus.utils.exceptions import DatusException, ErrorCode
 
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,

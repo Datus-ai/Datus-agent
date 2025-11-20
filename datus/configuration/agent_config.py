@@ -201,6 +201,11 @@ class AgentConfig:
         self._current_database = ""
         self.nodes = nodes
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
+
+        for name, raw_config in self.agentic_nodes.items():
+            if not raw_config.get("system_prompt"):
+                raw_config["system_prompt"] = name
+
         self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
         self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
