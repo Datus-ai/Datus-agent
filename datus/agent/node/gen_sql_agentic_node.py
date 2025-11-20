@@ -399,7 +399,7 @@ class GenSQLAgenticNode(AgenticNode):
         context = prepare_template_context(
             node_config=self.node_config,
             has_db_tools=bool(self.db_func_tool),
-            has_mcp_filesystem="filesystem" in self.mcp_servers,
+            has_mcp_filesystem="filesystem_mcp" in self.mcp_servers,
             has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
             has_context_search_tools=bool(self.context_search_tools),
             has_parsing_tools=bool(self.date_parsing_tools),
