@@ -26,6 +26,7 @@ from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.mcp_tools.mcp_server import MCPServer
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 
@@ -398,7 +399,7 @@ class GenSQLAgenticNode(AgenticNode):
         context = prepare_template_context(
             node_config=self.node_config,
             has_db_tools=bool(self.db_func_tool),
-            has_mcp_filesystem="filesystem" in self.mcp_servers,
+            has_mcp_filesystem="filesystem_mcp" in self.mcp_servers,
             has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
             has_context_search_tools=bool(self.context_search_tools),
             has_parsing_tools=bool(self.date_parsing_tools),
@@ -407,29 +408,25 @@ class GenSQLAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
 
-        version = prompt_version or self.node_config.get("prompt_version", "")
+        raw_version = prompt_version if prompt_version is not None else self.node_config.get("prompt_version")
+        version = None if raw_version in (None, "") else str(raw_version)
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
         template_name = f"{system_prompt_name}_system"
 
-        try:
-            # Use prompt manager to render the template
-            from datus.prompts.prompt_manager import prompt_manager
+        # Use prompt manager to render the template
+        from datus.prompts.prompt_manager import prompt_manager
 
+        try:
             return prompt_manager.render_template(template_name=template_name, version=version, **context)
 
-        except FileNotFoundError as e:
+        except FileNotFoundError:
             # Template not found - throw DatusException
-            from datus.utils.exceptions import DatusException, ErrorCode
-
-            raise DatusException(
-                code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
-                message_args={"template_name": template_name, "version": version or "latest"},
-            ) from e
+            logger.warning(f"Failed to render system prompt '{system_prompt_name}', using the default template instead")
+            return prompt_manager.render_template(template_name="sql_system", version=version, **context)
         except Exception as e:
             # Other template errors - wrap in DatusException
             logger.error(f"Template loading error for '{template_name}': {e}")
-            from datus.utils.exceptions import DatusException, ErrorCode
 
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,

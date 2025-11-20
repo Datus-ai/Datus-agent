@@ -35,8 +35,11 @@ class SubAgentManager:
         return self._configuration_manager.config_path
 
     def list_agents(self) -> Dict[str, Dict[str, Any]]:
-        agents = self._configuration_manager.get("agentic_nodes", {})
-        return agents if isinstance(agents, dict) else {}
+        agents = self._configuration_manager.get("agentic_nodes") or {}
+        for name, raw_config in agents.items():
+            if not raw_config.get("system_prompt"):
+                raw_config["system_prompt"] = name
+        return agents
 
     def get_agent(self, agent_name: str) -> Optional[Dict[str, Any]]:
         agents = self.list_agents()

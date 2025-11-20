@@ -1837,6 +1837,7 @@ class SubAgentWizard:
             "context_search_tools": [
                 str(item.name) for item in ContextSearchTools(self.cli_instance.agent_config).available_tools()
             ],
+            "date_parsing_tools": ["parse_temporal_expressions", "get_current_date"],
         }
 
 

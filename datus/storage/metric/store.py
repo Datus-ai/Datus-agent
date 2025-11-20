@@ -251,7 +251,7 @@ class SemanticMetricsRAG:
             logger.info("Metric search returned no results")
             return []
         try:
-            return metric_search_results.select(["name", "llm_text"]).to_pylist()
+            return metric_search_results.select(["name", "llm_text", "_distance"]).to_pylist()
         except Exception as e:
             logger.warning(f"Failed to extract metric results, exception: {str(e)}")
             return []

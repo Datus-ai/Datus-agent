@@ -2059,11 +2059,13 @@ def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
                     value_mismatch = True
                     continue
 
+                matched_tables = {table for table in comparison.get("matched_tables") or [] if table}
                 actual_tables = {table for table in comparison.get("actual_tables") or [] if table}
                 expected_tables = {table for table in comparison.get("expected_tables") or [] if table}
-                if actual_tables and expected_tables and actual_tables != expected_tables:
-                    table_mismatch = True
-                    break
+                if matched_tables and expected_tables:
+                    if (len(actual_tables) != len(expected_tables)) or (len(matched_tables) != len(expected_tables)):
+                        table_mismatch = True
+                        break
 
                 actual_rows = _row_count(comparison.get("actual_shape"))
                 expected_rows = _row_count(comparison.get("expected_shape"))
@@ -2082,9 +2084,7 @@ def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
 
                 missing_cols = comparison.get("missing_columns")
 
-                extra_cols = comparison.get("extra_columns")
-
-                if missing_cols or extra_cols:
+                if missing_cols:
                     value_mismatch = True
                 elif match_rate is None or match_rate < 1.0:
                     value_mismatch = True

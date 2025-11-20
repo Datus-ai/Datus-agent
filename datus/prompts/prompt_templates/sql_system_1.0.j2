@@ -25,6 +25,10 @@ You have access to:
     - The ability to search metrics or reference SQL
 {% endif -%}
 
+{% if has_parsing_tools -%}
+    - The ability to parse temporal expressions in text
+{% endif -%}
+
 Current context:
 {% if namespace -%}
     - Database namespace: {{ namespace }}
