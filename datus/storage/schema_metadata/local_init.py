@@ -529,15 +529,7 @@ def store_tables(
             new_tables.append(table)
             if identifier in exists_values:
                 continue
-            sample_rows = connector.get_sample_rows(
-                tables=[table["table_name"]],
-                top_n=5,
-                catalog_name=table["catalog_name"],
-                database_name=table["database_name"],
-                schema_name=table["schema_name"],
-            )
-            if sample_rows:
-                new_values.extend(sample_rows)
+            _fill_sample_rows(new_values=new_values, identifier=identifier, table_data=table, connector=connector)
 
         elif exists_tables[identifier] != table["definition"]:
             # update table and value
@@ -550,26 +542,13 @@ def store_tables(
                 table_type=table_type,
             )
             new_tables.append(table)
-            sample_rows = connector.get_sample_rows(
-                tables=[table["table_name"]],
-                top_n=5,
-                catalog_name=table["catalog_name"],
-                database_name=table["database_name"],
-                schema_name=table["schema_name"],
-            )
-            if sample_rows:
-                new_values.extend(sample_rows)
+
+            _fill_sample_rows(new_values=new_values, identifier=identifier, table_data=table, connector=connector)
+
         elif identifier not in exists_values:
             logger.debug(f"Just add sample rows for {identifier}")
-            sample_rows = connector.get_sample_rows(
-                tables=[table["table_name"]],
-                top_n=5,
-                catalog_name=table["catalog_name"],
-                database_name=table["database_name"],
-                schema_name=table["schema_name"],
-            )
-            if sample_rows:
-                new_values.extend(sample_rows)
+
+            _fill_sample_rows(new_values=new_values, identifier=identifier, table_data=table, connector=connector)
 
     if new_tables or new_values:
         for item in new_values:
@@ -578,3 +557,20 @@ def store_tables(
         logger.info(f"Stored {len(new_tables)} {table_type}s and {len(new_values)} values for {database_name}")
     else:
         logger.info(f"No new {table_type}s or values to store for {database_name}")
+
+
+def _fill_sample_rows(
+    new_values: List[Dict[str, Any]], identifier: str, table_data: Dict[str, Any], connector: BaseSqlConnector
+):
+    sample_rows = connector.get_sample_rows(
+        tables=[table_data["table_name"]],
+        top_n=5,
+        catalog_name=table_data["catalog_name"],
+        database_name=table_data["database_name"],
+        schema_name=table_data["schema_name"],
+    )
+    if sample_rows:
+        for row in sample_rows:
+            if not row.get("identifier"):
+                row["identifier"] = identifier
+        new_values.extend(sample_rows)
