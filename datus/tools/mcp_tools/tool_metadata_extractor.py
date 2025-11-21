@@ -88,16 +88,14 @@ class ToolMetadataExtractor:
         try:
             # First, get the list of all tools to find detailed information
             success, result, tools = await self.mcp_manager.call_tool(
-                server_name=mcp_server,
-                tool_name="list_tools",
-                arguments={}
+                server_name=mcp_server, tool_name="list_tools", arguments={}
             )
 
             if success and tools:
                 # Find the specific tool in the list
                 for tool in tools:
                     if isinstance(tool, dict):
-                        if tool.get('name') == tool_name:
+                        if tool.get("name") == tool_name:
                             return self._extract_metadata_from_tool_dict(tool)
                     elif isinstance(tool, str) and tool == tool_name:
                         # If only tool name is available, try to get more info
@@ -126,9 +124,7 @@ class ToolMetadataExtractor:
         try:
             # Attempt to call the tool with no arguments to get parameter info
             success, result, data = await self.mcp_manager.call_tool(
-                server_name=mcp_server,
-                tool_name=tool_name,
-                arguments={}
+                server_name=mcp_server, tool_name=tool_name, arguments={}
             )
 
             metadata = self._get_default_metadata(tool_name)
@@ -162,7 +158,7 @@ class ToolMetadataExtractor:
             "schema": tool_dict.get("inputSchema", {}),
             "category": self._infer_tool_category(tool_dict),
             "complexity": self._assess_tool_complexity(tool_dict),
-            "source": "mcp_server"
+            "source": "mcp_server",
         }
 
         # Extract additional fields if available
@@ -196,7 +192,7 @@ class ToolMetadataExtractor:
             "schema": {},
             "category": category,
             "complexity": "unknown",
-            "source": "inferred"
+            "source": "inferred",
         }
 
     def _infer_description_from_name(self, tool_name: str) -> str:
@@ -221,7 +217,7 @@ class ToolMetadataExtractor:
             "monitor": "Monitors system state",
             "create": "Creates new items",
             "generate": "Generates content",
-            "execute": "Executes operations"
+            "execute": "Executes operations",
         }
 
         tool_lower = tool_name.lower()
@@ -367,9 +363,7 @@ class ToolMetadataExtractor:
         try:
             # Get list of all tools
             success, result, tools = await self.mcp_manager.call_tool(
-                server_name=mcp_server,
-                tool_name="list_tools",
-                arguments={}
+                server_name=mcp_server, tool_name="list_tools", arguments={}
             )
 
             if not success or not tools:
@@ -409,10 +403,7 @@ class ToolMetadataExtractor:
         """
         all_metadata = self.get_all_tools_metadata(mcp_server)
 
-        return [
-            tool_name for tool_name, metadata in all_metadata.items()
-            if metadata.get("category") == category
-        ]
+        return [tool_name for tool_name, metadata in all_metadata.items() if metadata.get("category") == category]
 
     def clear_cache(self) -> None:
         """Clear all caches."""
@@ -431,11 +422,11 @@ class ToolMetadataExtractor:
             "metadata_cache": {
                 "size": len(self.metadata_cache),
                 "maxsize": self.metadata_cache.maxsize,
-                "currsize": self.metadata_cache.currsize
+                "currsize": self.metadata_cache.currsize,
             },
             "tool_list_cache": {
                 "size": len(self.tool_list_cache),
                 "maxsize": self.tool_list_cache.maxsize,
-                "currsize": self.tool_list_cache.currsize
-            }
+                "currsize": self.tool_list_cache.currsize,
+            },
         }

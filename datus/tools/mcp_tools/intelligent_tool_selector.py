@@ -49,30 +49,12 @@ class IntelligentToolSelector:
                 "discover_table_relationships",
                 "analyze_schema_statistics",
                 "get_table_lineage",
-                "analyze_data_distribution"
+                "analyze_data_distribution",
             ],
-            "exploration": [
-                "list_tables",
-                "describe_table",
-                "list_schemas",
-                "get_table_sample"
-            ],
-            "management": [
-                "switch_instance",
-                "get_job_history",
-                "check_system_status",
-                "get_instance_info"
-            ],
-            "generation": [
-                "generate_sql",
-                "create_semantic_model",
-                "build_dashboard"
-            ],
-            "monitoring": [
-                "get_performance_metrics",
-                "check_job_status",
-                "monitor_system_health"
-            ]
+            "exploration": ["list_tables", "describe_table", "list_schemas", "get_table_sample"],
+            "management": ["switch_instance", "get_job_history", "check_system_status", "get_instance_info"],
+            "generation": ["generate_sql", "create_semantic_model", "build_dashboard"],
+            "monitoring": ["get_performance_metrics", "check_job_status", "monitor_system_health"],
         }
 
         # Keyword-to-tool mappings for fast lookup
@@ -84,40 +66,32 @@ class IntelligentToolSelector:
             "foreign key": ["discover_table_relationships"],
             "primary key": ["discover_table_relationships"],
             "join": ["discover_table_relationships", "get_table_lineage"],
-
             # Schema analysis keywords
             "schema": ["list_schemas", "describe_table", "analyze_schema_statistics"],
             "table": ["list_tables", "describe_table", "get_table_sample"],
             "column": ["describe_table", "analyze_schema_statistics"],
             "structure": ["describe_table", "list_tables"],
-
             # Data analysis keywords
             "analysis": ["analyze_schema_statistics", "analyze_data_distribution"],
             "statistics": ["analyze_schema_statistics", "get_performance_metrics"],
             "distribution": ["analyze_data_distribution"],
             "sample": ["get_table_sample"],
-
             # Management keywords
             "instance": ["switch_instance", "get_instance_info"],
             "job": ["get_job_history", "check_job_status"],
             "history": ["get_job_history"],
             "status": ["check_system_status", "check_job_status"],
-
             # Chinese keywords
             "分析": ["analyze_schema_statistics", "analyze_data_distribution"],
             "表": ["list_tables", "describe_table"],
             "模式": ["list_schemas"],
-            "结构": ["describe_table"]
+            "结构": ["describe_table"],
         }
 
         logger.info("Initialized Intelligent Tool Selector")
 
     def get_tool_recommendations(
-        self,
-        category: str,
-        user_message: str,
-        mcp_server: str = "clickzetta_mcp_sse",
-        max_recommendations: int = 5
+        self, category: str, user_message: str, mcp_server: str = "clickzetta_mcp_sse", max_recommendations: int = 5
     ) -> List[str]:
         """
         Get intelligent tool recommendations based on category and user message.
@@ -151,7 +125,7 @@ class IntelligentToolSelector:
                 category=category,
                 user_message=user_message,
                 available_tools=available_tools,
-                max_recommendations=max_recommendations
+                max_recommendations=max_recommendations,
             )
 
             # Cache the results
@@ -176,9 +150,7 @@ class IntelligentToolSelector:
         """
         try:
             success, result, tools = await self.mcp_manager.call_tool(
-                server_name=mcp_server,
-                tool_name="list_tools",
-                arguments={}
+                server_name=mcp_server, tool_name="list_tools", arguments={}
             )
 
             if success and tools:
@@ -192,11 +164,7 @@ class IntelligentToolSelector:
             return []
 
     def _generate_recommendations(
-        self,
-        category: str,
-        user_message: str,
-        available_tools: List[Dict],
-        max_recommendations: int
+        self, category: str, user_message: str, available_tools: List[Dict], max_recommendations: int
     ) -> List[str]:
         """
         Generate tool recommendations using multiple strategies.
@@ -213,8 +181,8 @@ class IntelligentToolSelector:
         # Extract tool names from available tools
         available_tool_names = set()
         for tool in available_tools:
-            if isinstance(tool, dict) and 'name' in tool:
-                available_tool_names.add(tool['name'])
+            if isinstance(tool, dict) and "name" in tool:
+                available_tool_names.add(tool["name"])
             elif isinstance(tool, str):
                 available_tool_names.add(tool)
 
@@ -232,7 +200,7 @@ class IntelligentToolSelector:
             category_recs=category_recommendations,
             keyword_recs=keyword_recommendations,
             semantic_recs=semantic_recommendations,
-            max_recommendations=max_recommendations
+            max_recommendations=max_recommendations,
         )
 
         return final_recommendations
@@ -264,8 +232,8 @@ class IntelligentToolSelector:
 
         for tool in available_tools:
             if isinstance(tool, dict):
-                tool_name = tool.get('name', '')
-                tool_description = tool.get('description', '').lower()
+                tool_name = tool.get("name", "")
+                tool_description = tool.get("description", "").lower()
 
                 # Calculate simple word overlap score
                 description_words = set(tool_description.split())
@@ -279,11 +247,7 @@ class IntelligentToolSelector:
         return [tool_name for tool_name, _ in recommendations]
 
     def _combine_and_rank_recommendations(
-        self,
-        category_recs: List[str],
-        keyword_recs: List[str],
-        semantic_recs: List[str],
-        max_recommendations: int
+        self, category_recs: List[str], keyword_recs: List[str], semantic_recs: List[str], max_recommendations: int
     ) -> List[str]:
         """
         Combine recommendations from different strategies and rank them.

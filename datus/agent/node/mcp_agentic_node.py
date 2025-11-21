@@ -60,9 +60,9 @@ class MCPAgenticNode(AgenticNode):
         self.metadata_extractor = ToolMetadataExtractor()
 
         # Get MCP server name from node configuration
-        if node_name and agent_config and hasattr(agent_config, 'agentic_nodes'):
+        if node_name and agent_config and hasattr(agent_config, "agentic_nodes"):
             node_config = agent_config.agentic_nodes.get(node_name)
-            if node_config and hasattr(node_config, 'mcp'):
+            if node_config and hasattr(node_config, "mcp"):
                 self.mcp_server_name = node_config.mcp
             else:
                 self.mcp_server_name = "clickzetta_mcp_sse"  # fallback
@@ -109,9 +109,7 @@ class MCPAgenticNode(AgenticNode):
         try:
             # Use the intelligent tool selector to get recommendations
             recommendations = self.tool_selector.get_tool_recommendations(
-                category=category,
-                user_message=user_message,
-                mcp_server=self.mcp_server_name
+                category=category, user_message=user_message, mcp_server=self.mcp_server_name
             )
 
             logger.debug(f"Tool recommendations for category '{category}': {recommendations}")
@@ -140,7 +138,7 @@ class MCPAgenticNode(AgenticNode):
         for tool_name in recommended_tools:
             # Get tool metadata for better descriptions
             metadata = self.metadata_extractor.get_tool_metadata(tool_name, self.mcp_server_name)
-            description = metadata.get('description', 'No description available')
+            description = metadata.get("description", "No description available")
 
             tools_section += f"- **{tool_name}**: {description}\n"
 
@@ -162,9 +160,7 @@ class MCPAgenticNode(AgenticNode):
         try:
             # Execute the tool
             success, result, data = await self.mcp_manager.call_tool(
-                server_name=self.mcp_server_name,
-                tool_name=tool_name,
-                arguments=tool_args
+                server_name=self.mcp_server_name, tool_name=tool_name, arguments=tool_args
             )
 
             if success:
@@ -183,10 +179,7 @@ class MCPAgenticNode(AgenticNode):
         context = super().update_context(workflow)
 
         # Add MCP server information
-        context.update({
-            "mcp_server": self.mcp_server_name,
-            "mcp_capabilities": "intelligent_tool_orchestration"
-        })
+        context.update({"mcp_server": self.mcp_server_name, "mcp_capabilities": "intelligent_tool_orchestration"})
 
         return context
 
@@ -195,7 +188,7 @@ class MCPAgenticNode(AgenticNode):
         input_dict = super().setup_input(workflow)
 
         # Get user message from input
-        user_message = getattr(self.input, 'user_message', '')
+        user_message = getattr(self.input, "user_message", "")
 
         if user_message:
             # Detect user intent and category
@@ -208,12 +201,14 @@ class MCPAgenticNode(AgenticNode):
             recommended_tools_prompt = self._get_recommended_tools_prompt(recommended_tools)
 
             # Update input with enhanced context
-            input_dict.update({
-                "user_intent": intent,
-                "request_category": category,
-                "recommended_tools": recommended_tools,
-                "tools_prompt_section": recommended_tools_prompt
-            })
+            input_dict.update(
+                {
+                    "user_intent": intent,
+                    "request_category": category,
+                    "recommended_tools": recommended_tools,
+                    "tools_prompt_section": recommended_tools_prompt,
+                }
+            )
 
             logger.info(f"Enhanced MCP input for category: {category}, tools: {recommended_tools}")
 
@@ -234,11 +229,11 @@ class MCPAgenticNode(AgenticNode):
                 yield ActionHistory(
                     action="mcp_orchestration_start",
                     description="Starting intelligent MCP tool orchestration",
-                    status="running"
+                    status="running",
                 )
 
             # Get user message
-            user_message = getattr(self.input, 'user_message', '')
+            user_message = getattr(self.input, "user_message", "")
 
             if user_message:
                 # Step 1: Intent detection and categorization
@@ -248,7 +243,7 @@ class MCPAgenticNode(AgenticNode):
                     yield ActionHistory(
                         action="intent_detection",
                         description=f"Detected intent category: {category}",
-                        status="completed"
+                        status="completed",
                     )
 
                 # Step 2: Tool recommendation
@@ -258,7 +253,7 @@ class MCPAgenticNode(AgenticNode):
                     yield ActionHistory(
                         action="tool_recommendation",
                         description=f"Recommended tools: {', '.join(recommended_tools) if recommended_tools else 'none'}",
-                        status="completed"
+                        status="completed",
                     )
 
             # Execute the main agentic workflow with enhanced context
@@ -270,16 +265,14 @@ class MCPAgenticNode(AgenticNode):
                 yield ActionHistory(
                     action="mcp_orchestration_complete",
                     description="MCP tool orchestration completed successfully",
-                    status="completed"
+                    status="completed",
                 )
 
         except Exception as e:
             logger.error(f"Error in MCP node streaming execution: {e}")
             if action_history_manager:
                 yield ActionHistory(
-                    action="mcp_orchestration_error",
-                    description=f"MCP orchestration failed: {str(e)}",
-                    status="failed"
+                    action="mcp_orchestration_error", description=f"MCP orchestration failed: {str(e)}", status="failed"
                 )
             raise
 
@@ -287,11 +280,11 @@ class MCPAgenticNode(AgenticNode):
         """Execute MCP node with intelligent tool orchestration."""
         try:
             # Setup enhanced context
-            if hasattr(self, 'workflow') and self.workflow:
+            if hasattr(self, "workflow") and self.workflow:
                 enhanced_input = self.setup_input(self.workflow)
 
                 # Add enhanced context to the model if available
-                if hasattr(self.model, 'add_context'):
+                if hasattr(self.model, "add_context"):
                     self.model.add_context(enhanced_input)
 
             # Execute the main agentic workflow

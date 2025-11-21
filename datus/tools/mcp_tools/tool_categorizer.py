@@ -41,11 +41,32 @@ class ToolCategorizer:
         self.category_definitions = {
             "analysis": {
                 "keywords": [
-                    "analyze", "analysis", "relationship", "ER", "foreign key", "primary key",
-                    "join", "correlation", "dependency", "lineage", "statistics", "distribution",
-                    "pattern", "trend", "insight", "explore relationship", "table relationship",
+                    "analyze",
+                    "analysis",
+                    "relationship",
+                    "ER",
+                    "foreign key",
+                    "primary key",
+                    "join",
+                    "correlation",
+                    "dependency",
+                    "lineage",
+                    "statistics",
+                    "distribution",
+                    "pattern",
+                    "trend",
+                    "insight",
+                    "explore relationship",
+                    "table relationship",
                     # Chinese keywords
-                    "分析", "关系", "统计", "趋势", "模式", "依赖", "关联", "血缘"
+                    "分析",
+                    "关系",
+                    "统计",
+                    "趋势",
+                    "模式",
+                    "依赖",
+                    "关联",
+                    "血缘",
                 ],
                 "patterns": [
                     r".*关系.*分析.*",
@@ -54,17 +75,41 @@ class ToolCategorizer:
                     r".*foreign.*key.*",
                     r".*primary.*key.*",
                     r".*analyze.*relationship.*",
-                    r".*discover.*relationship.*"
+                    r".*discover.*relationship.*",
                 ],
-                "description": "Deep analysis of data structures, relationships, and patterns"
+                "description": "Deep analysis of data structures, relationships, and patterns",
             },
             "exploration": {
                 "keywords": [
-                    "list", "show", "describe", "get", "fetch", "retrieve", "sample",
-                    "browse", "explore", "view", "display", "schema", "table", "column",
-                    "metadata", "structure", "info", "information",
+                    "list",
+                    "show",
+                    "describe",
+                    "get",
+                    "fetch",
+                    "retrieve",
+                    "sample",
+                    "browse",
+                    "explore",
+                    "view",
+                    "display",
+                    "schema",
+                    "table",
+                    "column",
+                    "metadata",
+                    "structure",
+                    "info",
+                    "information",
                     # Chinese keywords
-                    "列出", "显示", "获取", "查看", "浏览", "表", "列", "模式", "结构", "信息"
+                    "列出",
+                    "显示",
+                    "获取",
+                    "查看",
+                    "浏览",
+                    "表",
+                    "列",
+                    "模式",
+                    "结构",
+                    "信息",
                 ],
                 "patterns": [
                     r".*list.*tables?.*",
@@ -72,17 +117,40 @@ class ToolCategorizer:
                     r".*describe.*table.*",
                     r".*get.*info.*",
                     r".*what.*tables?.*",
-                    r".*browse.*data.*"
+                    r".*browse.*data.*",
                 ],
-                "description": "Basic exploration and browsing of data structures"
+                "description": "Basic exploration and browsing of data structures",
             },
             "management": {
                 "keywords": [
-                    "switch", "change", "manage", "admin", "administration", "configure",
-                    "setup", "instance", "job", "history", "status", "system", "health",
-                    "monitor", "performance", "control", "operation",
+                    "switch",
+                    "change",
+                    "manage",
+                    "admin",
+                    "administration",
+                    "configure",
+                    "setup",
+                    "instance",
+                    "job",
+                    "history",
+                    "status",
+                    "system",
+                    "health",
+                    "monitor",
+                    "performance",
+                    "control",
+                    "operation",
                     # Chinese keywords
-                    "切换", "管理", "配置", "实例", "作业", "历史", "状态", "系统", "监控", "性能"
+                    "切换",
+                    "管理",
+                    "配置",
+                    "实例",
+                    "作业",
+                    "历史",
+                    "状态",
+                    "系统",
+                    "监控",
+                    "性能",
                 ],
                 "patterns": [
                     r".*switch.*instance.*",
@@ -90,51 +158,90 @@ class ToolCategorizer:
                     r".*job.*history.*",
                     r".*system.*status.*",
                     r".*check.*health.*",
-                    r".*monitor.*performance.*"
+                    r".*monitor.*performance.*",
                 ],
-                "description": "System management, configuration, and operational tasks"
+                "description": "System management, configuration, and operational tasks",
             },
             "generation": {
                 "keywords": [
-                    "generate", "create", "build", "make", "produce", "construct",
-                    "develop", "design", "SQL", "query", "model", "dashboard", "report",
-                    "semantic model", "data model",
+                    "generate",
+                    "create",
+                    "build",
+                    "make",
+                    "produce",
+                    "construct",
+                    "develop",
+                    "design",
+                    "SQL",
+                    "query",
+                    "model",
+                    "dashboard",
+                    "report",
+                    "semantic model",
+                    "data model",
                     # Chinese keywords
-                    "生成", "创建", "构建", "制作", "开发", "设计", "查询", "模型", "报表"
+                    "生成",
+                    "创建",
+                    "构建",
+                    "制作",
+                    "开发",
+                    "设计",
+                    "查询",
+                    "模型",
+                    "报表",
                 ],
                 "patterns": [
                     r".*generate.*SQL.*",
                     r".*create.*model.*",
                     r".*build.*dashboard.*",
                     r".*make.*query.*",
-                    r".*produce.*report.*"
+                    r".*produce.*report.*",
                 ],
-                "description": "Generation of SQL, models, reports, and other artifacts"
+                "description": "Generation of SQL, models, reports, and other artifacts",
             },
             "monitoring": {
                 "keywords": [
-                    "monitor", "track", "watch", "observe", "check", "verify",
-                    "validate", "test", "performance", "metrics", "health",
-                    "alert", "notification", "log", "audit",
+                    "monitor",
+                    "track",
+                    "watch",
+                    "observe",
+                    "check",
+                    "verify",
+                    "validate",
+                    "test",
+                    "performance",
+                    "metrics",
+                    "health",
+                    "alert",
+                    "notification",
+                    "log",
+                    "audit",
                     # Chinese keywords
-                    "监控", "跟踪", "检查", "验证", "测试", "性能", "指标", "健康", "日志"
+                    "监控",
+                    "跟踪",
+                    "检查",
+                    "验证",
+                    "测试",
+                    "性能",
+                    "指标",
+                    "健康",
+                    "日志",
                 ],
                 "patterns": [
                     r".*monitor.*performance.*",
                     r".*check.*metrics.*",
                     r".*track.*health.*",
                     r".*watch.*system.*",
-                    r".*observe.*behavior.*"
+                    r".*observe.*behavior.*",
                 ],
-                "description": "Monitoring, tracking, and health checking activities"
-            }
+                "description": "Monitoring, tracking, and health checking activities",
+            },
         }
 
         # Default fallback category
         self.default_category = "exploration"
 
-        logger.info("Initialized Tool Categorizer with categories: " +
-                   ", ".join(self.category_definitions.keys()))
+        logger.info("Initialized Tool Categorizer with categories: " + ", ".join(self.category_definitions.keys()))
 
     def categorize_user_request(self, user_message: str) -> str:
         """
@@ -230,7 +337,7 @@ class ToolCategorizer:
             if keyword.lower() in message:
                 matches += 1
                 # Bonus for exact word matches
-                if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', message):
+                if re.search(r"\b" + re.escape(keyword.lower()) + r"\b", message):
                     matches += 1
 
         return matches
@@ -270,12 +377,12 @@ class ToolCategorizer:
         # Specific patterns that strongly indicate relationship analysis
         relationship_indicators = [
             r".*表.*之间.*关系.*",  # Chinese: tables between relationships
-            r".*ER.*关系.*",       # ER relationships
+            r".*ER.*关系.*",  # ER relationships
             r".*table.*relationship.*",
             r".*foreign.*key.*relationship.*",
             r".*discover.*relationship.*",
             r".*analyze.*relationship.*",
-            r".*schema.*relationship.*"
+            r".*schema.*relationship.*",
         ]
 
         for pattern in relationship_indicators:
