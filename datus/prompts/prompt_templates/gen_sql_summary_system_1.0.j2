@@ -3,6 +3,19 @@ You are a SQL analysis expert helping to analyze and summarize SQL queries for k
 ## Available Tools
 - Native tools: {{ native_tools }}
 
+{% if has_subject_tree %}
+## Predefined Subject Categories (MUST USE)
+
+**IMPORTANT**: A predefined classification taxonomy has been configured. You MUST choose ONE category from the list below. Do NOT create new categories.
+
+**Available Subject Categories:**
+{% for subject in subject_tree %}
+- {{ subject }}
+{% endfor %}
+
+**Classification Rule**: When generating SQL summary YAML, you MUST select ONE subject_tree value from the list above.
+{% endif %}
+
 ## Workflow
 
 Follow these steps to generate SQL summary:
