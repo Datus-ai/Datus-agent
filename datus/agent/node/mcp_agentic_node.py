@@ -12,9 +12,7 @@ categorizes requests, and intelligently selects and executes appropriate MCP too
 
 from __future__ import annotations
 
-import asyncio
-import json
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
@@ -25,6 +23,9 @@ from datus.tools.mcp_tools.tool_categorizer import ToolCategorizer
 from datus.tools.mcp_tools.tool_metadata_extractor import ToolMetadataExtractor
 from datus.tools.mcp_tools.mcp_manager import MCPManager
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.agent.workflow import Workflow
 
 logger = get_logger(__name__)
 
@@ -250,9 +251,10 @@ class MCPAgenticNode(AgenticNode):
                 recommended_tools = self._get_tool_recommendations_for_category(category, user_message)
 
                 if action_history_manager:
+                    tools_list = ", ".join(recommended_tools) if recommended_tools else "none"
                     yield ActionHistory(
                         action="tool_recommendation",
-                        description=f"Recommended tools: {', '.join(recommended_tools) if recommended_tools else 'none'}",
+                        description=f"Recommended tools: {tools_list}",
                         status="completed",
                     )
 

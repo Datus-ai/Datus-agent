@@ -11,7 +11,7 @@ intent, context, and tool capabilities.
 """
 
 import asyncio
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 from cachetools import TTLCache
 
 from datus.tools.mcp_tools.mcp_manager import MCPManager

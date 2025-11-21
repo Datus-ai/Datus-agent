@@ -10,7 +10,7 @@ for MCP tools, including descriptions, parameters, and usage information.
 """
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from cachetools import TTLCache
 
 from datus.tools.mcp_tools.mcp_manager import MCPManager
