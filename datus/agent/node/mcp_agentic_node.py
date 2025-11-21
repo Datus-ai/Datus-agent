@@ -19,9 +19,9 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.base import BaseInput, BaseResult
 from datus.tools.mcp_tools.intelligent_tool_selector import IntelligentToolSelector
+from datus.tools.mcp_tools.mcp_manager import MCPManager
 from datus.tools.mcp_tools.tool_categorizer import ToolCategorizer
 from datus.tools.mcp_tools.tool_metadata_extractor import ToolMetadataExtractor
-from datus.tools.mcp_tools.mcp_manager import MCPManager
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
