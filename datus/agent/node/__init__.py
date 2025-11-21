@@ -22,6 +22,7 @@ __all__ = [
     "GenSQLAgenticNode",
     "ChatAgenticNode",
     "CompareAgenticNode",
+    "MCPAgenticNode",
     "Node",
 ]
 
@@ -38,6 +39,7 @@ from .fix_node import FixNode
 from .gen_sql_agentic_node import GenSQLAgenticNode
 from .generate_sql_node import GenerateSQLNode
 from .hitl_node import HitlNode
+from .mcp_agentic_node import MCPAgenticNode
 from .output_node import OutputNode
 from .parallel_node import ParallelNode
 from .reason_sql_node import ReasonSQLNode

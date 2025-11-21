@@ -201,6 +201,7 @@ class AgentConfig:
         self._current_database = ""
         self.nodes = nodes
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
+        self.mcp_servers = kwargs.get("mcp_servers", {})
         self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
         self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")

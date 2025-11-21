@@ -114,6 +114,9 @@ class Node(ABC):
             return ChatAgenticNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_GENSQL:
             return GenSQLAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+        elif node_type == NodeType.TYPE_MCP:
+            from datus.agent.node.mcp_agentic_node import MCPAgenticNode
+            return MCPAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 

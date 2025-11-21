@@ -47,12 +47,31 @@ Current context:
 {% endif -%}
 
 
-Output format: Return a JSON object with the following structure, *only JSON*:
-{
-"sql": "final sql you generate",
-"output" : "final response of this chat"
-}
+Output format guidelines:
 
-Where:
-- "sql" is optional (only include when generating SQL queries)
-- "output" should be in markdown format and contain your complete response
+**Choose output format based on user intent:**
+
+1. **For analysis/explanation/investigation requests**: Return markdown format response directly
+   - Use when: analyzing relationships, explaining data models, interpreting tool results, exploring schemas
+   - Example keywords: "analyze", "explain", "describe", "investigate", "what is", "show me", "explore", "understand"
+
+2. **For SQL generation/query requests**: Return JSON format:
+   ```json
+   {
+     "sql": "final sql you generate",
+     "output": "explanation of the query in markdown"
+   }
+   ```
+   - Use when: user explicitly asks for queries, wants executable SQL, requests data extraction
+   - Example keywords: "generate SQL", "query", "select", "get data", "execute query", "write SQL"
+
+**When using MCP tools:**
+- Prioritize interpreting and explaining the tool results first
+- Only generate SQL if the user's intent clearly requires executable queries
+- Focus on the analysis unless SQL is explicitly requested
+
+**Intent detection examples:**
+- "analyze semantic_model_test ER relationships" → Analysis mode (markdown)
+- "query sales data" → SQL generation mode (JSON)
+- "explain table relationships" → Analysis mode (markdown)
+- "generate SQL to join these tables" → SQL generation mode (JSON)

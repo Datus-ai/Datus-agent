@@ -33,3 +33,6 @@ before_reflection_*.yaml
 /dist
 *.egg-info
 .datus_home/
+conf/agent.clickzetta.yml
+/queries
+/visualizations

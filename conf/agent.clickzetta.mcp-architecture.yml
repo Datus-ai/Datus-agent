@@ -1,0 +1,89 @@
+agent:
+  target: qwen_main
+  home: .datus_home
+  models:
+    qwen_main:
+      type: qwen
+      vendor: aliyun
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api_key: ${DASHSCOPE_API_KEY}
+      model: qwen-plus
+      enable_thinking: false
+    qwen_reasoning:
+      type: qwen
+      vendor: aliyun
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api_key: ${DASHSCOPE_API_KEY}
+      model: qwen3-max
+      enable_thinking: true
+    deepseek_chat:
+      type: deepseek
+      vendor: deepseek
+      base_url: https://api.deepseek.com
+      api_key: ${DEEPSEEK_API_KEY}
+      model: deepseek-chat
+
+  # MCP Server Configuration
+  mcp_servers:
+    clickzetta_mcp_sse:
+      url: http://localhost:8003/sse
+
+  # Agentic nodes with clean separation of concerns
+  agentic_nodes:
+    # Traditional SQL generation node
+    chatbot:
+      model: qwen_main
+      system_prompt: gen_sql
+      prompt_version: '1.0'
+      prompt_language: en
+      max_turns: 15
+      tools: db_tools.*, context_search_tools.*
+      agent_description: A SQL assistant focused on the ClickZetta Lakehouse
+      rules:
+      - Always explain your reasoning when producing SQL and return executable statements
+      - Prioritize objects inside the ClickZetta Lakehouse quick_start
+
+    # Universal MCP tool orchestrator node
+    clickzetta_mcp:
+      node_type: mcp
+      model: qwen_main
+      system_prompt: clickzetta_lakehouse_mcp
+      prompt_version: '1.0'
+      prompt_language: en
+      max_turns: 15
+      mcp: clickzetta_mcp_sse
+      agent_description: Universal MCP tool orchestrator with intelligent tool selection
+      rules:
+      - Automatically detect user intent and categorize requests
+      - Intelligently select and recommend appropriate MCP tools based on request category
+      - Use specialized analysis tools for relationship discovery and schema analysis
+      - Use exploration tools for basic data browsing and discovery
+      - Use management tools for system operations and configuration
+      - Prefer comprehensive single tools over multiple basic tools when available
+      - Provide clear explanations of tool selection rationale
+      - Focus on tool execution results rather than generating SQL when using analysis tools
+
+  # Workflow configuration
+  workflow:
+    plan: reflection
+    chat_default_node: clickzetta_mcp
+
+  schema_linking_rate: medium
+  namespace:
+    clickzetta:
+      type: clickzetta
+      service: ${CLICKZETTA_SERVICE}
+      username: ${CLICKZETTA_USERNAME}
+      password: ${CLICKZETTA_PASSWORD}
+      instance: ${CLICKZETTA_INSTANCE}
+      workspace: ${CLICKZETTA_WORKSPACE}
+      schema: ${CLICKZETTA_SCHEMA}
+      vcluster: ${CLICKZETTA_VCLUSTER}
+      secure: false
+  storage:
+    embedding_device_type: cpu
+    document:
+      registry_name: sentence-transformers
+      model_name: all-MiniLM-L6-v2
+      dim_size: 384
+      batch_size: 64
