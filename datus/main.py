@@ -9,6 +9,7 @@ import os
 import sys
 from datetime import datetime
 
+from datus.cli.models_manager import ModelsManager
 from datus.cli.namespace_manager import NamespaceManager
 from datus.cli.tutorial import BenchmarkTutorial
 from datus.utils.async_utils import setup_windows_policy
@@ -69,6 +70,15 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     namespace_parser.add_argument("command", help="namespace manage command", choices=["list", "add", "delete"])
+
+    # models command
+    models_parser = subparsers.add_parser(
+        "models",
+        help="Manage LLM models",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    models_parser.add_argument("command", help="models manage command", choices=["list", "add", "delete", "set-target"])
 
     # probe-llm command
     probe_parser = subparsers.add_parser(
@@ -373,6 +383,11 @@ def main():
         configure_logging(args.debug, console_output=False)
         namespace_manager = NamespaceManager(args.config or "")
         return namespace_manager.run(args.command)
+
+    if args.action == "models":
+        configure_logging(args.debug, console_output=False)
+        models_manager = ModelsManager(args.config or "")
+        return models_manager.run(args.command)
 
     configure_logging(args.debug)
     setup_exception_handler()
