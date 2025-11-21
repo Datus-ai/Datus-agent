@@ -281,7 +281,13 @@ class ModelsManager:
             console.print(f"  - {model_name}{is_target}")
 
         # Get new target model
-        new_target = Prompt.ask("- New target model name", choices=list(self.models.keys()), default=self.target)
+        choices = list(self.models.keys())
+        default = self.target or choices[0]
+        new_target = Prompt.ask(
+            "- New target model name",
+            choices=choices,
+            default=default,
+        )
 
         if new_target == self.target:
             console.print(f"Target model is already '{new_target}'")
