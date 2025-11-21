@@ -78,6 +78,7 @@ class ContextSearchTools:
                 }
                 for domain, layer1_map in domain_tree.items()
             }
+            logger.debug(f"serializable_tree: {serializable_tree}")
 
             return FuncToolResult(result=serializable_tree)
         except ValueError as exc:

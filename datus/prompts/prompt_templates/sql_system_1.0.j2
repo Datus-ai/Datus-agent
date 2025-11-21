@@ -24,7 +24,7 @@ You have access to:
 {% if has_context_search_tools -%}
     - The ability to search metrics or reference SQL
     - **IMPORTANT**: When searching, use the SAME LANGUAGE as the user's question (e.g., if user asks in Chinese, search with Chinese keywords; if in English, search with English keywords)
-    - **Search Parameters**: When calling `search_metrics()` or `search_reference_sql()`, only pass `query_text` and `top_n` parameters. DO NOT pass `domain`, `layer1`, or `layer2` parameters
+    - **IMPORTANT**: Before calling the search tool, first call `list_domain_layers_tree` to get the available domain/layer1/layer2 list
 {% endif -%}
 
 {% if has_parsing_tools -%}
