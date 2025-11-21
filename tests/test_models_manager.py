@@ -505,13 +505,226 @@ class TestModelsManagerRun:
 class TestModelsManagerSaveConfiguration:
     """Test cases for ModelsManager._save_configuration method."""
 
-    def test_save_configuration_success(self, models_manager, mock_console):
-        """Test successful configuration save."""
-        with patch.object(models_manager.config_manager, "update", return_value=True):
-            result = models_manager._save_configuration()
+    def test_save_configuration_success(self, tmp_path):
+        """Test successful configuration save with correct content."""
+        from datus.configuration.agent_config_loader import configuration_manager
 
-            assert result is True
-            assert any("Configuration saved" in str(call) for call in mock_console.print.call_args_list)
+        # Create a fresh config file for this test
+        config_file = tmp_path / "test_success.yml"
+        config_content = """agent:
+  target: test_model
+  models:
+    test_model:
+      type: openai
+      base_url: https://api.openai.com/v1
+      api_key: sk-test-key
+      model: gpt-4o-mini
+      save_llm_trace: false
+      enable_thinking: false
+    another_model:
+      type: claude
+      base_url: https://api.anthropic.com
+      api_key: sk-ant-test-key
+      model: claude-haiku-4-5
+      save_llm_trace: false
+      enable_thinking: false
+"""
+        config_file.write_text(config_content)
+
+        # Force reload of configuration manager
+        configuration_manager(str(config_file), reload=True)
+
+        # Create manager and add a new model
+        manager = ModelsManager(str(config_file))
+        new_model = ModelConfig(
+            type="gemini",
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            api_key="test-gemini-key",
+            model="gemini-2.0-flash-exp",
+            save_llm_trace=True,
+            enable_thinking=False,
+        )
+        manager.models["gemini_model"] = new_model
+        manager.target = "gemini_model"
+
+        # Save configuration
+        result = manager._save_configuration()
+
+        assert result is True
+
+        # Reload config to verify
+        config_mgr_verify = configuration_manager(str(config_file), reload=True)
+        saved_config = {"agent": config_mgr_verify.data}
+
+        # Check that all models are saved
+        assert "models" in saved_config["agent"]
+        assert len(saved_config["agent"]["models"]) == 3
+        assert "gemini_model" in saved_config["agent"]["models"]
+
+        # Check target is updated
+        assert saved_config["agent"]["target"] == "gemini_model"
+
+        # Check new model details
+        gemini_config = saved_config["agent"]["models"]["gemini_model"]
+        assert gemini_config["type"] == "gemini"
+        assert gemini_config["base_url"] == "https://generativelanguage.googleapis.com/v1beta"
+        assert gemini_config["api_key"] == "test-gemini-key"
+        assert gemini_config["model"] == "gemini-2.0-flash-exp"
+        assert gemini_config["save_llm_trace"] is True
+        assert gemini_config["enable_thinking"] is False
+
+    def test_save_configuration_preserves_existing_models(self, tmp_path):
+        """Test that saving configuration preserves existing models."""
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        # Create a fresh config file for this test
+        config_file = tmp_path / "test_preserve.yml"
+        config_content = """agent:
+  target: test_model
+  models:
+    test_model:
+      type: openai
+      base_url: https://api.openai.com/v1
+      api_key: sk-test-key
+      model: gpt-4o-mini
+      save_llm_trace: false
+      enable_thinking: false
+    another_model:
+      type: claude
+      base_url: https://api.anthropic.com
+      api_key: sk-ant-test-key
+      model: claude-haiku-4-5
+      save_llm_trace: false
+      enable_thinking: false
+"""
+        config_file.write_text(config_content)
+
+        # Force reload of configuration manager
+        configuration_manager(str(config_file), reload=True)
+
+        # Create manager and modify target
+        manager = ModelsManager(str(config_file))
+        manager.target = "another_model"
+
+        # Save configuration
+        result = manager._save_configuration()
+
+        assert result is True
+
+        # Reload config to verify
+        config_mgr_verify = configuration_manager(str(config_file), reload=True)
+        saved_config = {"agent": config_mgr_verify.data}
+
+        # Check that original models are preserved
+        assert "test_model" in saved_config["agent"]["models"]
+        assert "another_model" in saved_config["agent"]["models"]
+
+        # Check original model details are intact
+        test_model_config = saved_config["agent"]["models"]["test_model"]
+        assert test_model_config["type"] == "openai"
+        assert test_model_config["api_key"] == "sk-test-key"
+
+        # Check target is updated
+        assert saved_config["agent"]["target"] == "another_model"
+
+    def test_save_configuration_after_delete(self, tmp_path):
+        """Test that deleted models are removed from saved configuration."""
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        # Create a fresh config file for this test
+        config_file = tmp_path / "test_delete.yml"
+        config_content = """agent:
+  target: test_model
+  models:
+    test_model:
+      type: openai
+      base_url: https://api.openai.com/v1
+      api_key: sk-test-key
+      model: gpt-4o-mini
+      save_llm_trace: false
+      enable_thinking: false
+    another_model:
+      type: claude
+      base_url: https://api.anthropic.com
+      api_key: sk-ant-test-key
+      model: claude-haiku-4-5
+      save_llm_trace: false
+      enable_thinking: false
+"""
+        config_file.write_text(config_content)
+
+        # Force reload of configuration manager
+        configuration_manager(str(config_file), reload=True)
+
+        # Create manager and delete a model
+        manager = ModelsManager(str(config_file))
+        del manager.models["another_model"]
+
+        # Save configuration
+        result = manager._save_configuration()
+
+        assert result is True
+
+        # Reload config to verify
+        config_mgr_verify = configuration_manager(str(config_file), reload=True)
+        saved_config = {"agent": config_mgr_verify.data}
+
+        # Check that deleted model is not in saved config
+        assert "another_model" not in saved_config["agent"]["models"]
+
+        # Check that remaining model is still there
+        assert "test_model" in saved_config["agent"]["models"]
+        assert len(saved_config["agent"]["models"]) == 1
+
+    def test_save_configuration_updates_model_properties(self, tmp_path):
+        """Test that model property updates are saved correctly."""
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        # Create a fresh config file for this test
+        config_file = tmp_path / "test_update.yml"
+        config_content = """agent:
+  target: test_model
+  models:
+    test_model:
+      type: openai
+      base_url: https://api.openai.com/v1
+      api_key: sk-test-key
+      model: gpt-4o-mini
+      save_llm_trace: false
+      enable_thinking: false
+    another_model:
+      type: claude
+      base_url: https://api.anthropic.com
+      api_key: sk-ant-test-key
+      model: claude-haiku-4-5
+      save_llm_trace: false
+      enable_thinking: false
+"""
+        config_file.write_text(config_content)
+
+        # Force reload of configuration manager
+        configuration_manager(str(config_file), reload=True)
+
+        # Create manager and update model properties
+        manager = ModelsManager(str(config_file))
+        manager.models["test_model"].save_llm_trace = True
+        manager.models["test_model"].enable_thinking = True
+        manager.models["test_model"].model = "gpt-4o"
+
+        # Save configuration
+        result = manager._save_configuration()
+
+        assert result is True
+
+        # Reload config to verify
+        config_mgr_verify = configuration_manager(str(config_file), reload=True)
+        saved_config = {"agent": config_mgr_verify.data}
+
+        # Check that updates are reflected
+        test_model_config = saved_config["agent"]["models"]["test_model"]
+        assert test_model_config["save_llm_trace"] is True
+        assert test_model_config["enable_thinking"] is True
+        assert test_model_config["model"] == "gpt-4o"
 
     def test_save_configuration_exception(self, models_manager, mock_console):
         """Test configuration save with exception."""
