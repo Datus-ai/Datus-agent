@@ -78,6 +78,7 @@ class ContextSearchTools:
                 }
                 for domain, layer1_map in domain_tree.items()
             }
+            logger.debug(f"serializable_tree: {serializable_tree}")
 
             return FuncToolResult(result=serializable_tree)
         except ValueError as exc:
@@ -141,6 +142,7 @@ class ContextSearchTools:
                 layer2=layer2,
                 top_n=top_n,
             )
+            logger.debug(f"result of search_metrics: {metrics}")
             return FuncToolResult(success=1, error=None, result=metrics)
         except Exception as e:
             logger.error(f"Failed to search metrics for table '{query_text}': {str(e)}")

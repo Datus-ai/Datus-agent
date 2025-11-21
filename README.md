@@ -6,16 +6,16 @@
       </a>
     </td>
     <td align="right">
-      <a href="https://datus.ai"><img src="https://img.shields.io/badge/Official%20Website-5A0FC8" alt="Website"></a> 
+      <a href="https://datus.ai"><img src="https://img.shields.io/badge/Official%20Website-5A0FC8" alt="Website"></a>
     </td>
     <td align="right">
-      <a href="https://docs.datus.ai/"><img src="https://img.shields.io/badge/Document-654FF0" alt="Document"></a> 
+      <a href="https://docs.datus.ai/"><img src="https://img.shields.io/badge/Document-654FF0" alt="Document"></a>
     </td>
     <td align="right">
-      <a href="https://docs.datus.ai/getting_started/Quickstart/"><img src="https://img.shields.io/badge/Quick%20Start-3423A6" alt="Quick Start"></a> 
+      <a href="https://docs.datus.ai/getting_started/Quickstart/"><img src="https://img.shields.io/badge/Quick%20Start-3423A6" alt="Quick Start"></a>
     </td>
     <td align="right">
-      <a href="https://docs.datus.ai/release_notes/"><img src="https://img.shields.io/badge/Release%20Note-092540" alt="Release Note"></a> 
+      <a href="https://docs.datus.ai/release_notes/"><img src="https://img.shields.io/badge/Release%20Note-092540" alt="Release Note"></a>
     </td>
     <td align="right">
       <a href="https://join.slack.com/t/datus-ai/shared_invite/zt-3g6h4fsdg-iOl5uNoz6A4GOc4xKKWUYg"><img src="https://img.shields.io/badge/Join%20our%20Slack-4A154B" alt="Join our Slack"></a>
@@ -25,9 +25,9 @@
 
 ## 🎯 Overview
 
-**Datus** is an open-source data engineering agent that builds evolvable context for your data system. 
+**Datus** is an open-source data engineering agent that builds evolvable context for your data system.
 
-Data engineering needs a shift from "building tables and pipelines" to "delivering scoped, domain-aware agents for analysts and business users. 
+Data engineering needs a shift from "building tables and pipelines" to "delivering scoped, domain-aware agents for analysts and business users.
 
 ![DatusArchitecure](docs/assets/datus_architecture.svg)
 
@@ -37,19 +37,19 @@ Data engineering needs a shift from "building tables and pipelines" to "deliveri
 
 ## 🚀 Key Features
 
-### 🧩 Contextual Data Engineering  
-Automatically builds a **living semantic map** of your company’s data — combining metadata, metrics, SQL history, and external knowledge — so engineers and analysts collaborate through context instead of raw SQL.
+### 🧩 Contextual Data Engineering
+Automatically builds a **living semantic map** of your company’s data — combining metadata, metrics, reference SQL, and external knowledge — so engineers and analysts collaborate through context instead of raw SQL.
 
-### 💬 Agentic Chat  
-A **Claude-Code-like CLI** for data engineers.  
+### 💬 Agentic Chat
+A **Claude-Code-like CLI** for data engineers.
 Chat with your data, recall tables or metrics instantly, and run agentic actions — all in one terminal.
 
-### 🧠 Subagents for Every Domain  
-Turn data domains into **domain-aware chatbots**.  
+### 🧠 Subagents for Every Domain
+Turn data domains into **domain-aware chatbots**.
 Each subagent encapsulates the right context, tools, and rules — making data access accurate, reusable, and safe.
 
-### 🔁 Continuous Learning Loop  
-Every query and feedback improves the model.  
+### 🔁 Continuous Learning Loop
+Every query and feedback improves the model.
 Datus learns from success stories and user corrections to evolve reasoning accuracy over time.
 
 

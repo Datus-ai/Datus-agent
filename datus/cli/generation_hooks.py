@@ -390,10 +390,10 @@ class GenerationHooks(AgentHooks):
             tags_list: List of tags from locked_metadata.tags
 
         Returns:
-            tuple: (domain, layer1, layer2) or (None, None, None) if not found
+            tuple: (domain, layer1, layer2) or ("", "", "") if not found
         """
         if not tags_list or not isinstance(tags_list, list):
-            return None, None, None
+            return "", "", ""
 
         for tag in tags_list:
             if isinstance(tag, str) and tag.startswith("subject_tree:"):
@@ -405,7 +405,7 @@ class GenerationHooks(AgentHooks):
                 else:
                     logger.warning(f"Invalid subject_tree format: {tag}, expected 'subject_tree: domain/layer1/layer2'")
 
-        return None, None, None
+        return "", "", ""
 
     @staticmethod
     def _sync_semantic_to_db(file_path: str, agent_config: AgentConfig) -> dict:
@@ -427,7 +427,6 @@ class GenerationHooks(AgentHooks):
 
             import yaml
 
-            from datus.configuration.agent_config import MetricMeta
             from datus.storage.metric.init_utils import existing_semantic_metrics, gen_metric_id, gen_semantic_model_id
             from datus.storage.metric.store import SemanticMetricsRAG
 
@@ -455,19 +454,6 @@ class GenerationHooks(AgentHooks):
             # Get database config
             current_db_config = agent_config.current_db_config()
 
-            # Get domain/layer info - use default MetricMeta if not configured
-            if hasattr(agent_config, "metric_meta") and agent_config.metric_meta:
-                # Use the first available metric_meta
-                first_meta_name = next(iter(agent_config.metric_meta.keys()))
-                current_metric_meta = agent_config.metric_meta[first_meta_name]
-            else:
-                # Use default values
-                current_metric_meta = MetricMeta()
-
-            domain = current_metric_meta.domain
-            layer1 = current_metric_meta.layer1
-            layer2 = current_metric_meta.layer2
-
             synced_count = 0
             skipped_count = 0
             message_parts = []
@@ -494,9 +480,9 @@ class GenerationHooks(AgentHooks):
                         "database_name": current_db_config.database or "",
                         "schema_name": current_db_config.schema or "",
                         "table_name": table_name,
-                        "domain": domain,
-                        "layer1": layer1,
-                        "layer2": layer2,
+                        "domain": "",
+                        "layer1": "",
+                        "layer2": "",
                         "semantic_file_path": file_path,
                         "semantic_model_name": data_source.get("name", ""),
                         "semantic_model_desc": data_source.get("description", ""),
@@ -520,10 +506,9 @@ class GenerationHooks(AgentHooks):
             for metric_doc in metrics_list:
                 metric_name = metric_doc.get("name", "")
 
-                # Try to extract domain/layer1/layer2 from locked_metadata tags first
-                metric_domain = None
-                metric_layer1 = None
-                metric_layer2 = None
+                metric_domain = ""
+                metric_layer1 = ""
+                metric_layer2 = ""
 
                 if "locked_metadata" in metric_doc:
                     locked_meta = metric_doc["locked_metadata"]
@@ -531,18 +516,6 @@ class GenerationHooks(AgentHooks):
                         metric_domain, metric_layer1, metric_layer2 = GenerationHooks._parse_subject_tree_from_tags(
                             locked_meta["tags"]
                         )
-
-                # Fallback to global metric_meta if not found in tags
-                if not metric_domain:
-                    metric_domain = domain
-                    metric_layer1 = layer1
-                    metric_layer2 = layer2
-                    logger.debug(f"Using global metric_meta for {metric_name}: {domain}/{layer1}/{layer2}")
-                else:
-                    logger.info(
-                        f"Using subject_tree from tags for {metric_name}: "
-                        f"{metric_domain}/{metric_layer1}/{metric_layer2}"
-                    )
 
                 metric_id = gen_metric_id(metric_domain, metric_layer1, metric_layer2, semantic_model_name, metric_name)
 

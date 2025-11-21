@@ -913,7 +913,7 @@ class SubAgentWizard:
         )
 
         self._picker_dialog = Dialog(
-            title={"tables": "Choose Tables", "metrics": "Choose Metrics", "sqls": "Choose SQL History"}.get(
+            title={"tables": "Choose Tables", "metrics": "Choose Metrics", "sqls": "Choose Reference SQL"}.get(
                 kind, "Pick"
             ),
             body=body,
@@ -1701,7 +1701,7 @@ class SubAgentWizard:
                     Label("Metrics (optional):", style="class:label"),
                     self.metrics_area,
                     Window(height=1, char=" "),
-                    Label("SQL History (optional):", style="class:label"),
+                    Label("Reference SQL (optional):", style="class:label"),
                     self.sqls_area,
                 ]
             )

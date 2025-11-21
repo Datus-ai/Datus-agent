@@ -224,8 +224,8 @@ class FilesystemFuncTool:
 
         Args:
             path: The path of the file to edit
-            edits: List of edits to apply, each containing 'oldText' and 'newText'
-
+            edits: List of edit operations. Each edit must be an object (not a string) with two properties
+                   Example: [{"oldText": "text to find", "newText": "text to replace"}]
         Returns:
             dict: A dictionary with the execution result, containing these keys:
                   - 'success' (int): 1 for success, 0 for failure.
@@ -233,6 +233,15 @@ class FilesystemFuncTool:
                   - 'result' (Optional[str]): Success message on success.
         """
         try:
+            # Handle edits passed as JSON string from LLM
+            if isinstance(edits, str):
+                try:
+                    import json
+
+                    edits = json.loads(edits)
+                except json.JSONDecodeError as e:
+                    return FuncToolResult(success=0, error=f"Invalid JSON in edits parameter: {str(e)}")
+
             target_path = self._get_safe_path(path)
 
             if not target_path or not target_path.exists():

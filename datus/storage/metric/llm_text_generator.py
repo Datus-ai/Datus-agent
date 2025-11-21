@@ -23,10 +23,6 @@ def generate_metric_llm_text(metric_doc: dict, data_source: dict = None) -> str:
     """
     lines = []
 
-    # Header: Metric name
-    metric_name = metric_doc.get("name", "")
-    lines.append(f"Metric: {metric_name}")
-
     # Description
     description = metric_doc.get("description", "")
     if description:
@@ -36,7 +32,6 @@ def generate_metric_llm_text(metric_doc: dict, data_source: dict = None) -> str:
 
     # Metric type
     metric_type = metric_doc.get("type", "").lower()
-    lines.append(f"Type: {metric_type}")
 
     # Type-specific parameters
     type_params = metric_doc.get("type_params", {})
@@ -142,35 +137,10 @@ def generate_metric_llm_text(metric_doc: dict, data_source: dict = None) -> str:
         if sql_table:
             lines.append(f"Source: {sql_table}")
 
-    lines.append("")
-
     # Constraint/Filter
     constraint = metric_doc.get("constraint", "") or metric_doc.get("where_constraint", "")
     if constraint:
         lines.append(f"Filter: {constraint}")
-
-    # Locked metadata
-    locked_metadata = metric_doc.get("locked_metadata", {})
-    if locked_metadata:
-        display_name = locked_metadata.get("display_name", "")
-        if display_name:
-            lines.append(f"Display Name: {display_name}")
-
-        unit = locked_metadata.get("unit", "")
-        if unit:
-            lines.append(f"Unit: {unit}")
-
-        value_format = locked_metadata.get("value_format", "")
-        if value_format:
-            lines.append(f"Value Format: {value_format}")
-
-        tags = locked_metadata.get("tags", [])
-        if tags:
-            lines.append(f"Tags: {', '.join(tags)}")
-
-        increase_is_good = locked_metadata.get("increase_is_good")
-        if increase_is_good is not None:
-            lines.append(f"Increase is Good: {increase_is_good}")
 
     return "\n".join(lines)
 

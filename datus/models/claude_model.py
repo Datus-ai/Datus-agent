@@ -13,7 +13,15 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import anthropic
 import httpx
-from agents import Agent, OpenAIChatCompletionsModel, RunContextWrapper, Runner, SQLiteSession, Usage
+from agents import (
+    Agent,
+    OpenAIChatCompletionsModel,
+    RunContextWrapper,
+    Runner,
+    SQLiteSession,
+    Usage,
+    set_tracing_disabled,
+)
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
@@ -26,9 +34,12 @@ from datus.schemas.node_models import SQLContext
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import extract_json_str, to_str
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import create_openai_client
+from datus.utils.traceable_utils import create_openai_client, optional_traceable
 
 logger = get_logger(__name__)
+
+# Disable OpenAI Agents SDK tracing to prevent sending traces to OpenAI
+set_tracing_disabled(True)
 
 # Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue in openai-agents 0.3.2
 try:
@@ -181,6 +192,7 @@ class ClaudeModel(LLMBaseModel):
         self.async_client = None
         # Session manager is initialized lazily in the base class via property
 
+    @optional_traceable(name="claude_generate", run_type="chain")
     def generate(self, prompt: Any, **kwargs) -> str:
         """Generate a response from the Claude model.
 
@@ -263,6 +275,7 @@ class ClaudeModel(LLMBaseModel):
                 pass
             return {}
 
+    @optional_traceable(name="claude_tools", run_type="chain")
     async def generate_with_tools(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -297,6 +310,7 @@ class ClaudeModel(LLMBaseModel):
             prompt, mcp_servers, tools, instruction, output_type, max_turns, session, hooks, **kwargs
         )
 
+    @optional_traceable(name="claude_tools_stream", run_type="chain")
     async def generate_with_tools_stream(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -329,6 +343,7 @@ class ClaudeModel(LLMBaseModel):
         ):
             yield action
 
+    @optional_traceable(name="claude_mcp", run_type="chain")
     async def generate_with_mcp(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -499,6 +514,7 @@ class ClaudeModel(LLMBaseModel):
             logger.error(f"Error in generate_with_mcp: {str(e)}")
             raise
 
+    @optional_traceable(name="claude_mcp_stream", run_type="chain")
     async def generate_with_mcp_stream(
         self,
         prompt: Union[str, List[Dict[str, str]]],
