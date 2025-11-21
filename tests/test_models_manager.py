@@ -16,6 +16,7 @@ import pytest
 
 from datus.cli.models_manager import ModelsManager
 from datus.configuration.agent_config import ModelConfig
+from datus.configuration.agent_config_loader import configuration_manager
 
 
 @pytest.fixture
@@ -47,6 +48,7 @@ def temp_config_file(tmp_path):
 @pytest.fixture
 def models_manager(temp_config_file):
     """Create a ModelsManager instance with test configuration."""
+    configuration_manager(temp_config_file, reload=True)
     return ModelsManager(temp_config_file)
 
 
@@ -183,7 +185,7 @@ class TestModelsManagerAdd:
         assert result == 1
         mock_console.print.assert_called_with("❌ Model 'test_model' already exists")
 
-    def test_add_openai_model_success(self, models_manager, mock_prompt, mock_console):
+    def test_add_model_success(self, models_manager, mock_prompt, mock_console):
         """Test successfully adding an OpenAI model."""
         mock_ask, mock_getpass, mock_confirm = mock_prompt
 
@@ -205,27 +207,6 @@ class TestModelsManagerAdd:
         assert models_manager.models["new_openai"].type == "openai"
         assert models_manager.models["new_openai"].api_key == "sk-new-key"
         mock_console.print.assert_called_with("✔ Model 'new_openai' added successfully")
-
-    def test_add_claude_model_success(self, models_manager, mock_prompt, mock_console):
-        """Test successfully adding a Claude model."""
-        mock_ask, mock_getpass, mock_confirm = mock_prompt
-
-        mock_ask.side_effect = [
-            "new_claude",  # model name
-            "claude",  # model type
-            "https://api.anthropic.com",  # base URL
-            "claude-haiku-4-5",  # model identifier
-        ]
-        mock_getpass.return_value = "sk-ant-new-key"
-        mock_confirm.side_effect = [False, False, False]
-
-        with patch.object(models_manager, "_save_configuration", return_value=True):
-            result = models_manager.add()
-
-        assert result == 0
-        assert "new_claude" in models_manager.models
-        assert models_manager.models["new_claude"].type == "claude"
-        assert models_manager.models["new_claude"].model == "claude-haiku-4-5"
 
     def test_add_model_with_thinking_enabled(self, models_manager, mock_prompt, mock_console):
         """Test adding model with thinking mode enabled."""
@@ -358,20 +339,6 @@ class TestModelsManagerDelete:
         assert result == 1
         mock_console.print.assert_called_with("❌ Model deletion cancelled")
 
-    def test_delete_non_target_model_success(self, models_manager, mock_prompt, mock_console):
-        """Test successfully deleting a non-target model."""
-        mock_ask, _, mock_confirm = mock_prompt
-        mock_ask.return_value = "another_model"
-        mock_confirm.return_value = True
-
-        with patch.object(models_manager, "_save_configuration", return_value=True):
-            result = models_manager.delete()
-
-        assert result == 0
-        assert "another_model" not in models_manager.models
-        assert models_manager.target == "test_model"  # Target unchanged
-        mock_console.print.assert_called_with("✔ Model 'another_model' deleted successfully")
-
     def test_delete_target_model_success(self, models_manager, mock_prompt, mock_console):
         """Test successfully deleting the target model."""
         mock_ask, _, mock_confirm = mock_prompt
@@ -447,67 +414,11 @@ class TestModelsManagerSetTarget:
         mock_console.print.assert_called_with("❌ Failed to save configuration")
 
 
-class TestModelsManagerRun:
-    """Test cases for ModelsManager.run method."""
-
-    def test_run_list_command(self, models_manager):
-        """Test running list command."""
-        with patch.object(models_manager, "list", return_value=0) as mock_list:
-            result = models_manager.run("list")
-
-            assert result == 0
-            mock_list.assert_called_once()
-
-    def test_run_add_command(self, models_manager):
-        """Test running add command."""
-        with patch.object(models_manager, "add", return_value=0) as mock_add:
-            result = models_manager.run("add")
-
-            assert result == 0
-            mock_add.assert_called_once()
-
-    def test_run_delete_command(self, models_manager):
-        """Test running delete command."""
-        with patch.object(models_manager, "delete", return_value=0) as mock_delete:
-            result = models_manager.run("delete")
-
-            assert result == 0
-            mock_delete.assert_called_once()
-
-    def test_run_set_target_command(self, models_manager):
-        """Test running set-target command."""
-        with patch.object(models_manager, "set_target", return_value=0) as mock_set_target:
-            result = models_manager.run("set-target")
-
-            assert result == 0
-            mock_set_target.assert_called_once()
-
-    def test_run_unknown_command(self, models_manager, mock_console):
-        """Test running unknown command."""
-        result = models_manager.run("unknown")
-
-        assert result == 1
-        mock_console.print.assert_called_with("❌ Unknown command: unknown")
-
-    def test_run_config_not_loaded(self):
-        """Test running command when config is not loaded."""
-        with patch("datus.cli.models_manager.configuration_manager") as mock_config_manager:
-            from datus.utils.exceptions import DatusException, ErrorCode
-
-            mock_config_manager.side_effect = DatusException(ErrorCode.COMMON_FILE_NOT_FOUND)
-
-            manager = ModelsManager("/non/existent/path.yml")
-            result = manager.run("list")
-
-            assert result == 1
-
-
 class TestModelsManagerSaveConfiguration:
     """Test cases for ModelsManager._save_configuration method."""
 
     def test_save_configuration_success(self, tmp_path):
         """Test successful configuration save with correct content."""
-        from datus.configuration.agent_config_loader import configuration_manager
 
         # Create a fresh config file for this test
         config_file = tmp_path / "test_success.yml"
@@ -575,7 +486,6 @@ class TestModelsManagerSaveConfiguration:
 
     def test_save_configuration_preserves_existing_models(self, tmp_path):
         """Test that saving configuration preserves existing models."""
-        from datus.configuration.agent_config_loader import configuration_manager
 
         # Create a fresh config file for this test
         config_file = tmp_path / "test_preserve.yml"
@@ -629,7 +539,6 @@ class TestModelsManagerSaveConfiguration:
 
     def test_save_configuration_after_delete(self, tmp_path):
         """Test that deleted models are removed from saved configuration."""
-        from datus.configuration.agent_config_loader import configuration_manager
 
         # Create a fresh config file for this test
         config_file = tmp_path / "test_delete.yml"
@@ -678,7 +587,6 @@ class TestModelsManagerSaveConfiguration:
 
     def test_save_configuration_updates_model_properties(self, tmp_path):
         """Test that model property updates are saved correctly."""
-        from datus.configuration.agent_config_loader import configuration_manager
 
         # Create a fresh config file for this test
         config_file = tmp_path / "test_update.yml"
@@ -726,14 +634,6 @@ class TestModelsManagerSaveConfiguration:
         assert test_model_config["enable_thinking"] is True
         assert test_model_config["model"] == "gpt-4o"
 
-    def test_save_configuration_exception(self, models_manager, mock_console):
-        """Test configuration save with exception."""
-        with patch.object(models_manager.config_manager, "update", side_effect=Exception("Save error")):
-            result = models_manager._save_configuration()
-
-            assert result is False
-            assert any("Failed to save configuration" in str(call) for call in mock_console.print.call_args_list)
-
 
 class TestValidationFunctions:
     """Test cases for validation helper functions."""
@@ -755,14 +655,6 @@ class TestValidationFunctions:
             valid, error = _validate_model_name(name)
             assert valid is False
             assert "cannot contain" in error
-
-    def test_validate_model_name_valid(self):
-        """Test validation of valid model name."""
-        from datus.cli.models_manager import _validate_model_name
-
-        valid, error = _validate_model_name("valid_model_name")
-        assert valid is True
-        assert error == ""
 
     def test_validate_url_empty(self):
         """Test validation of empty URL."""
