@@ -12,8 +12,18 @@ and status monitoring.
 
 import asyncio
 import json
+import sys
 import threading
 from typing import Any, Dict, List, Optional, Tuple
+
+# ExceptionGroup is only available in Python 3.11+
+if sys.version_info >= (3, 11):
+    from builtins import ExceptionGroup
+else:
+    # For Python < 3.11, create a dummy class
+    class ExceptionGroup(Exception):
+        pass
+
 
 from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdioParams

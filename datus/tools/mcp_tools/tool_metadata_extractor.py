@@ -88,9 +88,7 @@ class ToolMetadataExtractor:
         """
         try:
             # First, get the list of all tools to find detailed information
-            success, result, tools = await self.mcp_manager.call_tool(
-                server_name=mcp_server, tool_name="list_tools", arguments={}
-            )
+            success, result, tools = await self.mcp_manager.list_tools(server_name=mcp_server, apply_filter=True)
 
             if success and tools:
                 # Find the specific tool in the list
@@ -363,9 +361,7 @@ class ToolMetadataExtractor:
         """
         try:
             # Get list of all tools
-            success, result, tools = await self.mcp_manager.call_tool(
-                server_name=mcp_server, tool_name="list_tools", arguments={}
-            )
+            success, result, tools = await self.mcp_manager.list_tools(server_name=mcp_server, apply_filter=True)
 
             if not success or not tools:
                 logger.warning(f"Failed to get tools from {mcp_server}: {result}")

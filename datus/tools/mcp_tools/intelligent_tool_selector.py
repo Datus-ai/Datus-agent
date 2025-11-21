@@ -114,8 +114,24 @@ class IntelligentToolSelector:
             return self.recommendation_cache[cache_key]
 
         try:
-            # Get available tools from MCP server
-            available_tools = asyncio.run(self._get_available_tools(mcp_server))
+            # Try to avoid asyncio.run if we're already in an async context
+            try:
+                import inspect
+
+                if inspect.iscoroutinefunction(type(self).get_tool_recommendations):
+                    # If we're meant to be async, someone is calling this wrong
+                    raise RuntimeError("Use get_tool_recommendations_async for async contexts")
+
+                # Get available tools from MCP server
+                available_tools = asyncio.run(self._get_available_tools(mcp_server))
+            except RuntimeError as e:
+                if "running event loop" in str(e):
+                    logger.error(
+                        f"Cannot use asyncio.run in running event loop. Use get_tool_recommendations_async: {e}"
+                    )
+                    return []
+                else:
+                    raise
 
             if not available_tools:
                 logger.warning(f"No tools available from MCP server: {mcp_server}")
@@ -139,6 +155,54 @@ class IntelligentToolSelector:
             logger.error(f"Error generating tool recommendations: {e}")
             return []
 
+    async def get_tool_recommendations_async(
+        self, category: str, user_message: str, mcp_server: str = "clickzetta_mcp_sse", max_recommendations: int = 5
+    ) -> List[str]:
+        """
+        Async version of get_tool_recommendations for use in async contexts.
+
+        Args:
+            category: Request category ("analysis", "exploration", "management", "generation", "monitoring")
+            user_message: User's request message
+            mcp_server: MCP server name
+            max_recommendations: Maximum number of recommendations to return
+
+        Returns:
+            List of recommended tool names
+        """
+        cache_key = f"{category}:{user_message[:50]}:{mcp_server}"
+
+        # Check cache first
+        if cache_key in self.recommendation_cache:
+            logger.debug(f"Using cached recommendations for: {cache_key}")
+            return self.recommendation_cache[cache_key]
+
+        try:
+            # Get available tools from MCP server
+            available_tools = await self._get_available_tools(mcp_server)
+
+            if not available_tools:
+                logger.warning(f"No tools available from MCP server: {mcp_server}")
+                return []
+
+            # Generate recommendations using multiple strategies
+            recommendations = self._generate_recommendations(
+                category=category,
+                user_message=user_message,
+                available_tools=available_tools,
+                max_recommendations=max_recommendations,
+            )
+
+            # Cache the results
+            self.recommendation_cache[cache_key] = recommendations
+
+            logger.info(f"Generated {len(recommendations)} tool recommendations for category: {category}")
+            return recommendations
+
+        except Exception as e:
+            logger.error(f"Error generating tool recommendations (async): {e}")
+            return []
+
     async def _get_available_tools(self, mcp_server: str) -> List[Dict]:
         """
         Get list of available tools from MCP server.
@@ -150,11 +214,10 @@ class IntelligentToolSelector:
             List of tool dictionaries with metadata
         """
         try:
-            success, result, tools = await self.mcp_manager.call_tool(
-                server_name=mcp_server, tool_name="list_tools", arguments={}
-            )
+            # Use the correct list_tools API instead of call_tool
+            success, result, tools = await self.mcp_manager.list_tools(server_name=mcp_server, apply_filter=True)
 
-            if success and tools:
+            if success:
                 return tools
             else:
                 logger.warning(f"Failed to get tools from {mcp_server}: {result}")

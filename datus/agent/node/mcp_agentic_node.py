@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tup
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.tools.mcp_tools.intelligent_tool_selector import IntelligentToolSelector
 from datus.tools.mcp_tools.mcp_manager import MCPManager
@@ -52,7 +52,11 @@ class MCPAgenticNode(AgenticNode):
         tools: Optional[List[Any]] = None,
         node_name: Optional[str] = None,
     ):
-        super().__init__(node_id, description, node_type, input_data, agent_config, tools, node_name)
+        # Pass only the correct parameters to AgenticNode.__init__
+        super().__init__(node_id, description, node_type, input_data, agent_config, tools)
+
+        # Store node_name for MCP server configuration
+        self.node_name = node_name
 
         # Initialize MCP components
         self.mcp_manager = MCPManager()
@@ -61,12 +65,10 @@ class MCPAgenticNode(AgenticNode):
         self.metadata_extractor = ToolMetadataExtractor()
 
         # Get MCP server name from node configuration
-        if node_name and agent_config and hasattr(agent_config, "agentic_nodes"):
-            node_config = agent_config.agentic_nodes.get(node_name)
-            if node_config and hasattr(node_config, "mcp"):
-                self.mcp_server_name = node_config.mcp
-            else:
-                self.mcp_server_name = "clickzetta_mcp_sse"  # fallback
+        if self.node_name and agent_config and hasattr(agent_config, "agentic_nodes"):
+            node_config = agent_config.agentic_nodes.get(self.node_name) or {}
+            # node_config is a dict, so use dict access instead of attribute access
+            self.mcp_server_name = node_config.get("mcp", "clickzetta_mcp_sse")
         else:
             self.mcp_server_name = "clickzetta_mcp_sse"
 
@@ -100,6 +102,8 @@ class MCPAgenticNode(AgenticNode):
         """
         Get intelligent tool recommendations based on category and user message.
 
+        Note: This sync method falls back to basic recommendations when async context is unavailable.
+
         Args:
             category: The request category (e.g., "analysis", "generation", "management")
             user_message: The original user message
@@ -118,6 +122,30 @@ class MCPAgenticNode(AgenticNode):
 
         except Exception as e:
             logger.error(f"Error getting tool recommendations: {e}")
+            return []
+
+    async def _get_tool_recommendations_for_category_async(self, category: str, user_message: str) -> List[str]:
+        """
+        Async version of tool recommendations for use in async contexts like execute_stream.
+
+        Args:
+            category: The request category (e.g., "analysis", "generation", "management")
+            user_message: The original user message
+
+        Returns:
+            List of recommended tool names
+        """
+        try:
+            # Use the async version to avoid asyncio.run issues
+            recommendations = await self.tool_selector.get_tool_recommendations_async(
+                category=category, user_message=user_message, mcp_server=self.mcp_server_name
+            )
+
+            logger.debug(f"Tool recommendations (async) for category '{category}': {recommendations}")
+            return recommendations
+
+        except Exception as e:
+            logger.error(f"Error getting tool recommendations (async): {e}")
             return []
 
     def _get_recommended_tools_prompt(self, recommended_tools: List[str]) -> str:
@@ -227,10 +255,12 @@ class MCPAgenticNode(AgenticNode):
         try:
             # Yield initial status
             if action_history_manager:
-                yield ActionHistory(
-                    action="mcp_orchestration_start",
-                    description="Starting intelligent MCP tool orchestration",
-                    status="running",
+                yield ActionHistory.create_action(
+                    role=ActionRole.SYSTEM,
+                    action_type="mcp_orchestration_start",
+                    messages="Starting intelligent MCP tool orchestration",
+                    input_data={"server": self.mcp_server_name},
+                    status=ActionStatus.PROCESSING,
                 )
 
             # Get user message
@@ -241,21 +271,25 @@ class MCPAgenticNode(AgenticNode):
                 intent, category = self._detect_user_intent_and_category(user_message)
 
                 if action_history_manager:
-                    yield ActionHistory(
-                        action="intent_detection",
-                        description=f"Detected intent category: {category}",
-                        status="completed",
+                    yield ActionHistory.create_action(
+                        role=ActionRole.SYSTEM,
+                        action_type="intent_detection",
+                        messages=f"Detected intent category: {category}",
+                        input_data={"user_message": user_message, "category": category},
+                        status=ActionStatus.SUCCESS,
                     )
 
-                # Step 2: Tool recommendation
-                recommended_tools = self._get_tool_recommendations_for_category(category, user_message)
+                # Step 2: Tool recommendation (async version for streaming context)
+                recommended_tools = await self._get_tool_recommendations_for_category_async(category, user_message)
 
                 if action_history_manager:
                     tools_list = ", ".join(recommended_tools) if recommended_tools else "none"
-                    yield ActionHistory(
-                        action="tool_recommendation",
-                        description=f"Recommended tools: {tools_list}",
-                        status="completed",
+                    yield ActionHistory.create_action(
+                        role=ActionRole.SYSTEM,
+                        action_type="tool_recommendation",
+                        messages=f"Recommended tools: {tools_list}",
+                        input_data={"category": category, "recommended_tools": recommended_tools},
+                        status=ActionStatus.SUCCESS,
                     )
 
             # Execute the main agentic workflow with enhanced context
@@ -264,17 +298,23 @@ class MCPAgenticNode(AgenticNode):
 
             # Yield completion status
             if action_history_manager:
-                yield ActionHistory(
-                    action="mcp_orchestration_complete",
-                    description="MCP tool orchestration completed successfully",
-                    status="completed",
+                yield ActionHistory.create_action(
+                    role=ActionRole.SYSTEM,
+                    action_type="mcp_orchestration_complete",
+                    messages="MCP tool orchestration completed successfully",
+                    input_data={},
+                    status=ActionStatus.SUCCESS,
                 )
 
         except Exception as e:
             logger.error(f"Error in MCP node streaming execution: {e}")
             if action_history_manager:
-                yield ActionHistory(
-                    action="mcp_orchestration_error", description=f"MCP orchestration failed: {str(e)}", status="failed"
+                yield ActionHistory.create_action(
+                    role=ActionRole.SYSTEM,
+                    action_type="mcp_orchestration_error",
+                    messages=f"MCP orchestration failed: {str(e)}",
+                    input_data={"error": str(e)},
+                    status=ActionStatus.FAILED,
                 )
             raise
 

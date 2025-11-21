@@ -615,11 +615,15 @@ def resolve_env(value: str) -> str:
 
     import re
 
-    pattern = r"\${([^}]+)}"
+    # Pattern to match ${VAR} or ${VAR:-default}
+    pattern = r"\$\{([^}:]+)(?::-([^}]+))?\}"
 
     def replace_env(match):
         env_var = match.group(1)
-        return os.getenv(env_var, f"<MISSING:{env_var}>")
+        default_value = match.group(2)
+
+        # Use the environment variable value or the default
+        return os.getenv(env_var, default_value if default_value is not None else f"<MISSING:{env_var}>")
 
     return re.sub(pattern, replace_env, value)
 
