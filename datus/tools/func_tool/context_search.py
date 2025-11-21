@@ -56,10 +56,6 @@ class ContextSearchTools:
             },
             ...
         }
-
-        Use this tool to prime the agent with valid hierarchical filters before calling `search_metrics` or
-        `search_reference_sql`. Counters represent how many records exist for each leaf sourced from metrics and SQL
-        reference respectively; keys with missing counts simply have no entries from that store.
         """
         try:
             domain_tree: Dict[str, Dict[str, Dict[str, Dict[str, int]]]] = defaultdict(
