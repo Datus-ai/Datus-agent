@@ -23,27 +23,40 @@ agent:
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-chat
 
-  # MCP Server Configuration
+  # MCP Server Configuration - Platform agnostic
   mcp_servers:
-    clickzetta_mcp_sse:
-      url: http://localhost:8003/sse
+    # Default MCP server can be any platform
+    default_mcp:
+      url: ${MCP_SERVER_URL}
 
-  # Agentic nodes with clean separation of concerns
+    # Example: ClickZetta (optional, one of many possible servers)
+    clickzetta:
+      url: ${CLICKZETTA_MCP_URL}
+
+    # Example: Other database platforms (configurable)
+    postgres:
+      url: ${POSTGRES_MCP_URL}
+
+    snowflake:
+      url: ${SNOWFLAKE_MCP_URL}
+
+  # Agentic nodes with universal design
   agentic_nodes:
-    # Traditional SQL generation node
-    chatbot:
+    # Traditional SQL generation node (database agnostic)
+    sql:
       model: qwen_main
       system_prompt: gen_sql
       prompt_version: '1.0'
       prompt_language: en
       max_turns: 15
       tools: db_tools.*, context_search_tools.*
-      agent_description: A SQL assistant focused on database operations
+      agent_description: Universal SQL assistant for database operations
       rules:
       - Always explain your reasoning when producing SQL and return executable statements
-      - Prioritize objects inside the current database schema
+      - Adapt to the current database platform and schema
+      - Use standard SQL when possible, platform-specific features when necessary
 
-    # Universal MCP tool orchestrator node - Generic name for broad applicability
+    # Universal MCP intelligent agent - Platform agnostic
     agent:
       node_type: mcp
       model: qwen_main
@@ -51,10 +64,10 @@ agent:
       prompt_version: '1.0'
       prompt_language: en
       max_turns: 15
-      mcp: clickzetta_mcp_sse
+      mcp: ${DEFAULT_MCP_SERVER:-default_mcp}
       agent_description: Universal intelligent agent with automatic tool selection and orchestration
       rules:
-      - Automatically detect user intent and categorize requests
+      - Automatically detect user intent and categorize requests across all data platforms
       - Intelligently select and recommend appropriate tools based on request category
       - Use specialized analysis tools for relationship discovery and data analysis
       - Use exploration tools for data browsing and discovery
@@ -64,6 +77,22 @@ agent:
       - Prefer comprehensive single tools over multiple basic tools when available
       - Provide clear explanations of tool selection rationale
       - Focus on tool execution results and actionable insights
+      - Adapt tool selection to the current data platform context
+
+    # Specialized platform agents (optional, can be extended)
+    clickzetta_agent:
+      node_type: mcp
+      model: qwen_main
+      system_prompt: universal_mcp_orchestrator
+      prompt_version: '1.0'
+      prompt_language: en
+      max_turns: 15
+      mcp: clickzetta
+      agent_description: Specialized ClickZetta agent with platform-specific optimizations
+      rules:
+      - All universal agent rules apply
+      - Optimize for ClickZetta Lakehouse specific features (vclusters, workspaces)
+      - Leverage ClickZetta-specific performance optimizations
 
   # Workflow configuration
   workflow:
@@ -71,7 +100,22 @@ agent:
     chat_default_node: agent
 
   schema_linking_rate: medium
+
+  # Database namespace configuration - Platform configurable
   namespace:
+    # Active namespace (can be any platform)
+    active:
+      type: ${DB_TYPE:-clickzetta}
+      service: ${DB_SERVICE}
+      username: ${DB_USERNAME}
+      password: ${DB_PASSWORD}
+      instance: ${DB_INSTANCE}
+      workspace: ${DB_WORKSPACE}
+      schema: ${DB_SCHEMA}
+      vcluster: ${DB_VCLUSTER}
+      secure: ${DB_SECURE:-false}
+
+    # Example configurations for different platforms
     clickzetta:
       type: clickzetta
       service: ${CLICKZETTA_SERVICE}
@@ -82,6 +126,24 @@ agent:
       schema: ${CLICKZETTA_SCHEMA}
       vcluster: ${CLICKZETTA_VCLUSTER}
       secure: false
+
+    postgres:
+      type: postgres
+      host: ${POSTGRES_HOST}
+      port: ${POSTGRES_PORT}
+      database: ${POSTGRES_DATABASE}
+      username: ${POSTGRES_USERNAME}
+      password: ${POSTGRES_PASSWORD}
+
+    snowflake:
+      type: snowflake
+      account: ${SNOWFLAKE_ACCOUNT}
+      username: ${SNOWFLAKE_USERNAME}
+      password: ${SNOWFLAKE_PASSWORD}
+      warehouse: ${SNOWFLAKE_WAREHOUSE}
+      database: ${SNOWFLAKE_DATABASE}
+      schema: ${SNOWFLAKE_SCHEMA}
+
   storage:
     embedding_device_type: cpu
     document:
