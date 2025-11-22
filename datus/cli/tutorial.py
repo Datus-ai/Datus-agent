@@ -2,9 +2,11 @@ from pathlib import Path
 from typing import Any, Dict
 
 from datus.cli.interactive_init import console, create_agent
-from datus.configuration.agent_config_loader import load_agent_config
+from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
+from datus.schemas.agent_models import SubAgentConfig
 from datus.utils.loggings import get_logger, print_rich_exception
 from datus.utils.path_manager import get_path_manager
+from datus.utils.sub_agent_manager import SubAgentManager
 
 logger = get_logger(__name__)
 
@@ -94,7 +96,7 @@ class BenchmarkTutorial:
                 "Let's start learning how to prepare for benchmarking step by step using a dataset "
                 "from California schools."
             )
-            console.print("[bold yellow][1/4] Ensure data files and configuration[/bold yellow]")
+            console.print("[bold yellow][1/5] Ensure data files and configuration[/bold yellow]")
             with console.status("Ensuring...") as status:
                 self._ensure_files()
                 console.print("Data files are ready.")
@@ -105,7 +107,7 @@ class BenchmarkTutorial:
             california_schools_path = self.benchmark_path / self.namespace_name
             from datus.cli.interactive_init import init_metadata_and_log_result, init_sql_and_log_result
 
-            console.print("[bold yellow][2/4] Initialize Metadata using command: [/bold yellow]")
+            console.print("[bold yellow][2/5] Initialize Metadata using command: [/bold yellow]")
             console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
                 "--namespace california_schools "
@@ -113,39 +115,48 @@ class BenchmarkTutorial:
             )
             init_metadata_and_log_result(namespace_name=self.namespace_name, config_path=self.config_path)
 
-            console.print("[bold yellow][3/4] Initialize Metrics using command: [/bold yellow]")
+            console.print("[bold yellow][3/5] Initialize Metrics using command: [/bold yellow]")
             success_path = self.benchmark_path / self.namespace_name / "success_story.csv"
             console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
                 f"--namespace california_schools "
-                f"--components metrics --kb_update_strategy overwrite --success_story {success_path}"
-                f" [/]"
+                f"--components metrics --kb_update_strategy overwrite --success_story {success_path} "
+                f'--subject_tree "california_schools/Students_K-12/Free_Rate,'
+                f'california_schools/Charter_School/Location"[/]'
             )
             console.print("[bold cyan]This step needs DeepSeek or Claude, otherwise you may generate failures[/]")
             with console.status("Metrics initializing..."):
                 self._init_metrics(success_path)
 
-            console.print("[bold yellow][4/4] Initialize Reference SQL using command: [/bold yellow]")
+            console.print("[bold yellow][4/5] Initialize Reference SQL using command: [/bold yellow]")
             console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
                 "--namespace california_schools --components reference_sql --kb_update_strategy overwrite "
                 f"--sql_dir {str(california_schools_path / 'reference_sql')} "
                 f'--subject_tree "'
-                "bird/california_schools/FRPM_Meal_Analysis,"
-                "bird/california_schools/Enrollment_Demographics,"
-                'bird/california_schools/SAT_Academic_Performance"'
-                " [/]"
+                "california_schools/Continuation/Free_Rate,"
+                "california_schools/Charter/Location,"
+                "california_schools/SAT_Score/Average,"
+                "california_schools/SAT_Score/Excellence_Rate,"
+                "california_schools/FRPM_Enrollment/Rate,"
+                "california_schools/Enrollment/Total"
+                '" [/]'
             )
             init_sql_and_log_result(
                 namespace_name=self.namespace_name,
                 sql_dir=str(california_schools_path / "reference_sql"),
-                subject_tree=(
-                    "bird/california_schools/FRPM_Meal_Analysis,"
-                    "bird/california_schools/Enrollment_Demographics,"
-                    "bird/california_schools/SAT_Academic_Performance"
-                ),
+                subject_tree="california_schools/Continuation/Free_Rate,"
+                "california_schools/Charter/Location,"
+                "california_schools/SAT_Score/Average,"
+                "california_schools/SAT_Score/Excellence_Rate,"
+                "california_schools/FRPM_Enrollment/Rate,"
+                "california_schools/Enrollment/Total",
                 config_path=self.config_path,
             )
+            console.print("[bold yellow][5/5] Building sub-agents: [/bold yellow]")
+
+            with console.status("Sub-Agents Building..."):
+                self.add_sub_agents()
             console.print(" 🎉 [bold green]Now you can start with the benchmarking section of the guidance document[/]")
             return 0
         except Exception as e:
@@ -162,6 +173,7 @@ class BenchmarkTutorial:
                 success_story=success_path,
                 validate_only=False,
                 config_path=self.config_path,
+                subject_tree="california_schools/Students_K-12/Free_Rate,california_schools/Education/Location",
             )
             result = agent.bootstrap_kb()
             if result.get("status") == "success":
@@ -186,6 +198,49 @@ class BenchmarkTutorial:
         except Exception as e:
             print_rich_exception(console, e, "Metrics initialization failed", logger)
             return False
+
+    def add_sub_agents(self):
+        agent_config = load_agent_config(reload=True)
+        manager = SubAgentManager(
+            configuration_manager=configuration_manager(config_path=self.config_path, reload=True),
+            namespace=self.namespace_name,
+            agent_config=agent_config,
+        )
+        manager.save_agent(
+            SubAgentConfig(
+                system_prompt="california_schools",
+                prompt_version="1.0",
+                prompt_language="en",
+                agent_description="",
+                rules=[],
+                tools="db_tools, date_parsing_tools",
+            ),
+            previous_name="california_schools",
+        )
+        console.print("  ✅ Sub-agent `california_schools` have been added. It can work using database tools.")
+
+        manager.save_agent(
+            SubAgentConfig(
+                system_prompt="california_schools_with_context_search",
+                prompt_version="1.0",
+                prompt_language="en",
+                agent_description="",
+                rules=[],
+                tools="context_search_tools, db_tools, date_parsing_tools",
+            ),
+            previous_name="california_schools",
+        )
+        console.print(
+            "  ✅ Sub-agent `california_schools_with_context_search` have been added. "
+            "It can work using metrics, relevant SQL and database tools."
+        )
+
+        console.print(
+            "[bold cyan]The sub-agents are now configured. You can use them in the following ways:\n"
+            "  1. Conduct multi-turn conversations in the CLI via `/california_schools <your question>`\n"
+            "  2. After configuring the sub-agents in the workflow in agent.yml, perform benchmarking and "
+            "evaluation.[/]"
+        )
 
 
 def dict_to_yaml_str(data: Dict[str, Any]) -> str:
