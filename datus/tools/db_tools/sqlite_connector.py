@@ -327,7 +327,6 @@ class SQLiteConnector(BaseSqlConnector):
     @override
     def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         """SQLite does not support switch context"""
-        pass
 
     def _get_schema_with_ddl(
         self, database_name: str = "", table_type: str = "table", filter_tables: Optional[List[str]] = None

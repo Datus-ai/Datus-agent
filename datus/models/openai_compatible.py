@@ -108,9 +108,10 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.model_name = model_config.model
         self.api_key = self._get_api_key()
         self.base_url = self._get_base_url()
+        self.default_headers = self.model_config.default_headers
 
         # Initialize clients
-        self.client = create_openai_client(OpenAI, self.api_key, self.base_url)
+        self.client = create_openai_client(OpenAI, self.api_key, self.base_url, default_headers=self.default_headers)
 
         # Context for tracing ToDo: replace it with Context object
         self.current_node = None
@@ -471,7 +472,9 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._setup_custom_json_encoder()
 
         async def _tools_operation():
-            async_client = create_openai_client(AsyncOpenAI, self.api_key, self.base_url)
+            async_client = create_openai_client(
+                AsyncOpenAI, self.api_key, self.base_url, default_headers=self.default_headers
+            )
             model_params = {"model": self.model_name}
             async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
 
@@ -598,7 +601,9 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._setup_custom_json_encoder()
 
         async def _stream_operation():
-            async_client = create_openai_client(AsyncOpenAI, self.api_key, self.base_url)
+            async_client = create_openai_client(
+                AsyncOpenAI, self.api_key, self.base_url, default_headers=self.default_headers
+            )
 
             try:
                 # Configure stream_options to include usage information for token tracking
