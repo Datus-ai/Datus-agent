@@ -121,8 +121,9 @@ class BenchmarkTutorial:
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
                 f"--namespace california_schools "
                 f"--components metrics --kb_update_strategy overwrite --success_story {success_path} "
-                f'--subject_tree "california_schools/Students_K-12/Free_Rate,'
-                f'california_schools/Charter_School/Location"[/]'
+                '--subject_tree "california_schools/Continuation_School/Free_Rate,'
+                'california_schools/Charter/Education_Location"'
+                "[/]"
             )
             console.print(
                 "[bold purple]This step recommends using DeepSeek and Claude;"
@@ -139,7 +140,7 @@ class BenchmarkTutorial:
                 f"--sql_dir {str(california_schools_path / 'reference_sql')} "
                 f'--subject_tree "'
                 "california_schools/Continuation/Free_Rate,"
-                "california_schools/Charter/Location,"
+                "california_schools/Charter/Education_Location/,"
                 "california_schools/SAT_Score/Average,"
                 "california_schools/SAT_Score/Excellence_Rate,"
                 "california_schools/FRPM_Enrollment/Rate,"
@@ -150,7 +151,7 @@ class BenchmarkTutorial:
                 namespace_name=self.namespace_name,
                 sql_dir=str(california_schools_path / "reference_sql"),
                 subject_tree="california_schools/Continuation/Free_Rate,"
-                "california_schools/Charter/Location,"
+                "california_schools/Charter/Education_Location,"
                 "california_schools/SAT_Score/Average,"
                 "california_schools/SAT_Score/Excellence_Rate,"
                 "california_schools/FRPM_Enrollment/Rate,"
@@ -177,7 +178,8 @@ class BenchmarkTutorial:
                 success_story=success_path,
                 validate_only=False,
                 config_path=self.config_path,
-                subject_tree="california_schools/Students_K-12/Free_Rate,california_schools/Education/Location",
+                subject_tree="california_schools/Continuation_School/Free_Rate,"
+                "california_schools/Charter/Education_Location",
             )
             result = agent.bootstrap_kb()
             if result.get("status") == "success":
