@@ -124,7 +124,11 @@ class BenchmarkTutorial:
                 f'--subject_tree "california_schools/Students_K-12/Free_Rate,'
                 f'california_schools/Charter_School/Location"[/]'
             )
-            console.print("[bold cyan]This step needs DeepSeek or Claude, otherwise you may generate failures[/]")
+            console.print(
+                "[bold purple]This step recommends using DeepSeek and Claude;"
+                " using other models may result in errors. You may modify the models used by `gen_semantic_model` "
+                "and `gen_metrics` within the configuration file.[/]"
+            )
             with console.status("Metrics initializing..."):
                 self._init_metrics(success_path)
 
@@ -208,37 +212,38 @@ class BenchmarkTutorial:
         )
         manager.save_agent(
             SubAgentConfig(
-                system_prompt="california_schools",
+                system_prompt="datus_schools",
                 prompt_version="1.0",
                 prompt_language="en",
                 agent_description="",
                 rules=[],
                 tools="db_tools, date_parsing_tools",
             ),
-            previous_name="california_schools",
+            previous_name="datus_schools",
         )
-        console.print("  ✅ Sub-agent `california_schools` have been added. It can work using database tools.")
+        console.print("  ✅ Sub-agent `datus_schools` have been added. It can work using database tools.")
 
         manager.save_agent(
             SubAgentConfig(
-                system_prompt="california_schools_with_context_search",
+                system_prompt="datus_schools_context",
                 prompt_version="1.0",
                 prompt_language="en",
                 agent_description="",
                 rules=[],
                 tools="context_search_tools, db_tools, date_parsing_tools",
             ),
-            previous_name="california_schools",
+            previous_name="datus_schools_context",
         )
         console.print(
-            "  ✅ Sub-agent `california_schools_with_context_search` have been added. "
+            "  ✅ Sub-agent `datus_schools_context` have been added. "
             "It can work using metrics, relevant SQL and database tools."
         )
 
         console.print(
             "[bold cyan]The sub-agents are now configured. You can use them in the following ways:\n"
-            "  1. Conduct multi-turn conversations in the CLI via `/california_schools <your question>`\n"
-            "  2. After configuring the sub-agents in the workflow in agent.yml, perform benchmarking and "
+            "  1. Conduct multi-turn conversations in the CLI via `/datus_schools <your question>` or  "
+            "`/datus_schools_context <your question>`\n"
+            f"  2. After configuring the sub-agents in the workflow in {self.config_path}, perform benchmarking and "
             "evaluation.[/]"
         )
 
