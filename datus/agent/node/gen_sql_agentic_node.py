@@ -800,7 +800,7 @@ def build_enhanced_message(
     enhanced_message = user_message
     enhanced_parts = []
     if external_knowledge:
-        enhanced_parts.append(f"### External knowledge / Evidence (AUTHORITATIVE)\n{external_knowledge}")
+        enhanced_parts.append(f"### External Knowledge (AUTHORITATIVE)\n{external_knowledge}")
 
     context_parts = [f"dialect: {db_type}"]
     if catalog:

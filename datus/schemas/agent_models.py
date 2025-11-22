@@ -47,7 +47,7 @@ class ScopedContext(BaseModel):
 
 
 class SubAgentConfig(BaseModel):
-    system_prompt: str = Field(..., init=True, description="Name of sub agent")
+    system_prompt: str = Field("", init=True, description="Name of sub agent")
     agent_description: Optional[str] = Field(default=None, init=True, description="Description of sub agent")
     tools: str = Field(default="", init=True, description="Native tools to be used by sub-agents")
     mcp: str = Field(default="", init=True, description="MCP tools to be used by sub-agents")
