@@ -1639,7 +1639,10 @@ class SubAgentWizard:
             agent_config=self.cli_instance.agent_config,
             workspace_root=self.cli_instance.agent_config.workspace_root,
         )
-        prompt_text = prompt_manager.render_template(self.prompt_template_name, **prompt_context)
+        try:
+            prompt_text = prompt_manager.render_template(self.prompt_template_name, **prompt_context)
+        except FileNotFoundError:
+            prompt_text = prompt_manager.render_template("sql_system", **prompt_context)
         try:
             self.prompt_preview_buffer.text = prompt_text
         except Exception:

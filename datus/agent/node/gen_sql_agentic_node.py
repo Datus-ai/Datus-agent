@@ -802,14 +802,14 @@ def build_enhanced_message(
     if external_knowledge:
         enhanced_parts.append(f"### External Knowledge (AUTHORITATIVE)\n{external_knowledge}")
 
-    context_parts = [f"dialect: {db_type}"]
+    context_parts = [f"**Dialect**: {db_type}"]
     if catalog:
-        context_parts.append(f"catalog: {catalog}")
+        context_parts.append(f"**Catalog**: {catalog}")
     if database:
-        context_parts.append(f"database: {database}")
+        context_parts.append(f"**Database**: {database}")
     if db_schema:
-        context_parts.append(f"schema: {db_schema}")
-    context_part_str = f'Context: {", ".join(context_parts)}'
+        context_parts.append(f"**Schema**: {db_schema}")
+    context_part_str = f'Context: \n{", ".join(context_parts)}'
     enhanced_parts.append(context_part_str)
 
     if schemas:

@@ -140,7 +140,8 @@ class BenchmarkTutorial:
                 f"--sql_dir {str(california_schools_path / 'reference_sql')} "
                 f'--subject_tree "'
                 "california_schools/Continuation/Free_Rate,"
-                "california_schools/Charter/Education_Location/,"
+                "california_schools/Charter/Education_Location,"
+                "california_schools/Charter-Fund/Phone,"
                 "california_schools/SAT_Score/Average,"
                 "california_schools/SAT_Score/Excellence_Rate,"
                 "california_schools/FRPM_Enrollment/Rate,"
@@ -152,6 +153,7 @@ class BenchmarkTutorial:
                 sql_dir=str(california_schools_path / "reference_sql"),
                 subject_tree="california_schools/Continuation/Free_Rate,"
                 "california_schools/Charter/Education_Location,"
+                "california_schools/Charter-Fund/Phone,"
                 "california_schools/SAT_Score/Average,"
                 "california_schools/SAT_Score/Excellence_Rate,"
                 "california_schools/FRPM_Enrollment/Rate,"

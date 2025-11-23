@@ -148,12 +148,7 @@ class ContextSearchTools:
         self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
     ) -> FuncToolResult:
         """
-        Perform a vector search to match reference SQL queries by intent.
-
-        **Application Guidance**: If matches are found, MUST reuse the 'sql' directly if it aligns perfectly, or adjust
-        minimally (e.g., change table names or add conditions). Avoid generating new SQL.
-        Example: If reference SQL is "SELECT * FROM users WHERE active=1" for "active users", reuse or adjust to
-        "SELECT * FROM users WHERE active=1 AND join_date > '2023'".
+        Search for reference SQL queries using natural language queries.
 
         Args:
             query_text: The natural language query text representing the desired SQL intent.
