@@ -397,12 +397,12 @@ class AgentCommands:
                 f"Found [bold green]{len(metadata)}[/] relevant tables and [bold blue]{len(sample_data)}[/] sample rows"
             )
 
-            if metadata:
+            if metadata.num_rows > 0:
                 self._print_metadata_table(
                     metadata.to_pylist(), data_column="definition", data_column_dsc="Definition (DDL)", lexer="sql"
                 )
 
-            if sample_data:
+            if sample_data.num_rows > 0:
                 self._print_metadata_table(
                     sample_data.to_pylist(), data_column="sample_rows", data_column_dsc="Sample Rows", lexer="markdown"
                 )
