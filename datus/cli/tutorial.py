@@ -125,11 +125,6 @@ class BenchmarkTutorial:
                 'california_schools/Charter/Education_Location"'
                 "[/]"
             )
-            console.print(
-                "[bold purple]This step recommends using DeepSeek and Claude;"
-                " using other models may result in errors. You may modify the models used by `gen_semantic_model` "
-                "and `gen_metrics` within the configuration file.[/]"
-            )
             with console.status("Metrics initializing..."):
                 self._init_metrics(success_path)
 
