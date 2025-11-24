@@ -93,3 +93,9 @@ class SubAgentConfig(BaseModel):
             payload["scoped_context"] = scoped_context
 
         return payload
+
+    @property
+    def tool_list(self) -> List[str]:
+        if not self.tools or not self.tools.strip():
+            return []
+        return [tool.strip() for tool in self.tools.split(",") if tool.strip()]

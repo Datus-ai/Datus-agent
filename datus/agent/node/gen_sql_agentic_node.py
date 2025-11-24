@@ -753,7 +753,7 @@ def prepare_template_context(
         node_config = SubAgentConfig.model_validate(node_config)
 
     # Tool name lists for template display
-    context["native_tools"] = [] if not node_config.tools else node_config.tools.split(",")
+    context["native_tools"] = node_config.tool_list
     context["mcp_tools"] = node_config.mcp
     # Limited context support
     has_scoped_context = False
