@@ -764,12 +764,6 @@ def prepare_template_context(
 
     context["scoped_context"] = has_scoped_context
 
-    if has_scoped_context:
-        # Filter and format limited context data
-        context["tables"] = scoped_context.tables
-        context["metrics"] = scoped_context.metrics
-        context["reference_sql"] = scoped_context.sqls
-
     # Add rules from configuration
     context["rules"] = node_config.rules or []
 
