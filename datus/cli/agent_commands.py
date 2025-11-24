@@ -25,7 +25,6 @@ from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
-from datus.tools.func_tool import db_function_tool_instance
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.output_tools import OutputTool
 from datus.utils.constants import DBType
@@ -382,36 +381,32 @@ class AgentCommands:
         # I will omit prompting for it as it won't be used.
 
         with self.console.status("[bold green]Searching for relevant tables...[/]"):
-            db_tool = db_function_tool_instance(self.cli.agent_config)
-            result = db_tool.search_table(
+            from datus.storage.schema_metadata import SchemaWithValueRAG
+
+            schema_rag = SchemaWithValueRAG(self.cli.agent_config)
+            metadata, sample_data = schema_rag.search_similar(
                 query_text=input_text,
                 catalog_name=catalog_name,
                 database_name=database_name,
                 schema_name=schema_name,
-                simple_sample_data=False,
                 top_n=int(top_n.strip()),
             )
 
-        if result.success and result.result:
-            metadata = result.result.get("metadata", [])
-            sample_data = result.result.get("sample_data", [])
-
+        if metadata.num_rows > 0 or sample_data.num_rows > 0:
             self.console.print(
                 f"Found [bold green]{len(metadata)}[/] relevant tables and [bold blue]{len(sample_data)}[/] sample rows"
             )
 
             if metadata:
                 self._print_metadata_table(
-                    metadata, data_column="definition", data_column_dsc="Definition (DDL)", lexer="sql"
+                    metadata.to_pylist(), data_column="definition", data_column_dsc="Definition (DDL)", lexer="sql"
                 )
 
             if sample_data:
                 self._print_metadata_table(
-                    sample_data, data_column="sample_rows", data_column_dsc="Sample Rows", lexer="markdown"
+                    sample_data.to_pylist(), data_column="sample_rows", data_column_dsc="Sample Rows", lexer="markdown"
                 )
 
-        elif not result.success:
-            self.console.print(f"[bold red]Error during schema linking:[/] {result.error}")
         else:
             self.console.print("[yellow]No relevant tables found.[/]")
 
