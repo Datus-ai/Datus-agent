@@ -185,21 +185,27 @@ class ParallelNode(Node):
         """Create child node instances for parallel execution"""
         child_nodes = []
 
-        for i, child_node_type in enumerate(self.input.child_nodes):
-            # Support `child` as the subworkflow name (a string that exists in `custom_workflows`),
-            # in which case the type is `TYPE_SUBWORKFLOW`.
+        for i, child_spec in enumerate(self.input.child_nodes):
+            # child_spec can be: a subworkflow name, an agentic node name, or a NodeType constant
+            # Check if it's a subworkflow (exists in custom_workflows)
             is_subworkflow_name = (
-                isinstance(child_node_type, str)
+                isinstance(child_spec, str)
                 and self.agent_config
-                and child_node_type in getattr(self.agent_config, "custom_workflows", {})
+                and child_spec in getattr(self.agent_config, "custom_workflows", {})
+            )
+            # Check if it's an agentic node (sub_agent) defined in agentic_nodes
+            is_agentic_node = (
+                isinstance(child_spec, str)
+                and self.agent_config
+                and child_spec in getattr(self.agent_config, "agentic_nodes", {})
             )
 
-            node_type_to_use = NodeType.TYPE_SUBWORKFLOW if is_subworkflow_name else child_node_type
-            child_node_id = f"{self.id}_child_{i}_{child_node_type}"
+            node_type_to_use = NodeType.TYPE_SUBWORKFLOW if is_subworkflow_name else child_spec
+            child_node_id = f"{self.id}_child_{i}_{child_spec}"
             child_description = (
-                f"Parallel child subworkflow: {child_node_type}"
+                f"Parallel child subworkflow: {child_spec}"
                 if is_subworkflow_name
-                else f"Parallel child: {NodeType.get_description(child_node_type)}"
+                else f"Parallel child: {NodeType.get_description(child_spec)}"
             )
 
             input_data = None
@@ -207,9 +213,23 @@ class ParallelNode(Node):
                 try:
                     from datus.schemas.subworkflow_node_models import SubworkflowInput
 
-                    input_data = SubworkflowInput(workflow_name=child_node_type, pass_context=True)
+                    input_data = SubworkflowInput(workflow_name=child_spec, pass_context=True)
                 except Exception as e:
-                    logger.error(f"Create SubworkflowInput failed for {child_node_type}: {e}")
+                    logger.error(f"Create SubworkflowInput failed for {child_spec}: {e}")
+
+            # Create independent tools for each child node to avoid connection sharing in parallel execution
+            # Use child_spec as sub_agent_name if it's a subworkflow or agentic node
+            from datus.tools.func_tool.database import db_function_tools
+
+            child_sub_agent_name = child_spec if (is_subworkflow_name or is_agentic_node) else None
+            child_tools = db_function_tools(
+                self.agent_config,
+                workflow.task.database_name if workflow.task else "",
+                sub_agent_name=child_sub_agent_name,
+            )
+            logger.debug(
+                f"Created independent tools for child node {child_node_id} (sub_agent_name={child_sub_agent_name})"
+            )
 
             child_node = Node.new_instance(
                 node_id=child_node_id,
@@ -217,7 +237,7 @@ class ParallelNode(Node):
                 node_type=node_type_to_use,
                 input_data=input_data,
                 agent_config=self.agent_config,
-                tools=workflow.tools,
+                tools=child_tools,
             )
 
             child_node.workflow = workflow
