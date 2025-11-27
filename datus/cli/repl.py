@@ -237,7 +237,7 @@ class DatusCLI:
 
         @kb.add("c-d")
         def _(event):
-            """Show details"""
+            """Show details for display_actions"""
             event.app.exit(result="_open_chat_sql_details")
 
         return kb
