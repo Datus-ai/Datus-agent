@@ -166,6 +166,8 @@ def _create_single_node(
         normalized_type = NodeType.TYPE_REFLECT
     elif node_type == "execute":
         normalized_type = NodeType.TYPE_EXECUTE_SQL
+    elif node_type == "chat":
+        normalized_type = NodeType.TYPE_CHAT
     # Check if node_type is defined in agentic_nodes config - if so, map to gensql
     elif agent_config and hasattr(agent_config, "agentic_nodes") and node_type in agent_config.agentic_nodes:
         normalized_type = NodeType.TYPE_GENSQL

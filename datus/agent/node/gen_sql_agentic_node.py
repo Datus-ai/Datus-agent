@@ -10,10 +10,7 @@ SQL generation with support for limited context, enhanced template variables,
 and flexible configuration through agent.yml.
 """
 
-import os
 from typing import Any, AsyncGenerator, Dict, Optional, Union
-
-from agents.mcp import MCPServerStdio
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.workflow import Workflow
@@ -23,9 +20,8 @@ from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.func_tool import ContextSearchTools, DBFuncTool
+from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
-from datus.tools.mcp_tools.mcp_server import MCPServer
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
@@ -54,7 +50,6 @@ class GenSQLAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
-        max_turns: int = 30,
     ):
         """
         Initialize the GenSQLAgenticNode as a workflow-compatible node.
@@ -67,11 +62,15 @@ class GenSQLAgenticNode(AgenticNode):
             agent_config: Agent configuration
             tools: List of tools (will be populated in setup_tools)
             node_name: Name of the node configuration in agent.yml (e.g., "gensql", "gen_sql")
-            max_turns: Maximum conversation turns per interaction
         """
         # Determine node name from node_type if not provided
         self.configured_node_name = node_name
-        self.max_turns = max_turns
+
+        self.max_turns = 30
+        if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
+            agentic_node_config = agent_config.agentic_nodes[node_name]
+            if isinstance(agentic_node_config, dict):
+                self.max_turns = agentic_node_config.get("max_turns", 30)
 
         # Initialize tool attributes BEFORE calling parent constructor
         # This is required because parent's __init__ calls _get_system_prompt()
@@ -79,6 +78,11 @@ class GenSQLAgenticNode(AgenticNode):
         self.db_func_tool: Optional[DBFuncTool] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.date_parsing_tools: Optional[DateParsingTools] = None
+        self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
+
+        # Initialize plan mode attributes
+        self.plan_mode_active = False
+        self.plan_hooks = None
 
         # Call parent constructor with all required Node parameters
         super().__init__(
@@ -101,6 +105,7 @@ class GenSQLAgenticNode(AgenticNode):
 
         # Setup tools based on configuration
         self.setup_tools()
+        logger.debug(f"GenSQLAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
     def get_node_name(self) -> str:
         """
@@ -132,8 +137,14 @@ class GenSQLAgenticNode(AgenticNode):
             )
             self._update_database_connection(task_database)
 
+        # Read plan mode flags from workflow metadata
+        plan_mode = workflow.metadata.get("plan_mode", False)
+        auto_execute_plan = workflow.metadata.get("auto_execute_plan", False)
+
+        logger.debug(f"context: {workflow.context}")
         # Create GenSQLNodeInput if not already set
         if not self.input or not isinstance(self.input, GenSQLNodeInput):
+            logger.debug(f"creating GenSQLNodeInput: {self.input}")
             self.input = GenSQLNodeInput(
                 user_message=workflow.task.task,
                 external_knowledge=workflow.task.external_knowledge,
@@ -142,6 +153,8 @@ class GenSQLAgenticNode(AgenticNode):
                 db_schema=workflow.task.schema_name,
                 schemas=workflow.context.table_schemas,
                 metrics=workflow.context.metrics,
+                plan_mode=plan_mode,
+                auto_execute_plan=auto_execute_plan,
             )
         else:
             # Update existing input with workflow data
@@ -152,6 +165,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.input.db_schema = workflow.task.schema_name
             self.input.schemas = workflow.context.table_schemas
             self.input.metrics = workflow.context.metrics
+            self.input.plan_mode = plan_mode
+            self.input.auto_execute_plan = auto_execute_plan
 
         return {"success": True, "message": "GenSQL input prepared from workflow"}
 
@@ -180,6 +195,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.context_search_tools.available_tools())
         if self.date_parsing_tools:
             self.tools.extend(self.date_parsing_tools.available_tools())
+        if self.filesystem_func_tool:
+            self.tools.extend(self.filesystem_func_tool.available_tools())
 
     def setup_tools(self):
         """Setup tools based on configuration."""
@@ -229,6 +246,16 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup date parsing tools: {e}")
 
+    def _setup_filesystem_tools(self):
+        """Setup filesystem tools (all available tools)."""
+        try:
+            root_path = self._resolve_workspace_root()
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.tools.extend(self.filesystem_func_tool.available_tools())
+            logger.info(f"Setup filesystem tools with root path: {root_path}")
+        except Exception as e:
+            logger.error(f"Failed to setup filesystem tools: {e}")
+
     def _setup_tool_pattern(self, pattern: str):
         """Setup tools based on pattern."""
         try:
@@ -241,6 +268,8 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_context_search_tools()
                 elif base_type == "date_parsing_tools":
                     self._setup_date_parsing_tools()
+                elif base_type == "filesystem_tools":
+                    self._setup_filesystem_tools()
                 else:
                     logger.warning(f"Unknown tool type: {base_type}")
 
@@ -251,6 +280,8 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_context_search_tools()
             elif pattern == "date_parsing_tools":
                 self._setup_date_parsing_tools()
+            elif pattern == "filesystem_tools":
+                self._setup_filesystem_tools()
 
             # Handle specific method patterns (e.g., "db_tools.list_tables")
             elif "." in pattern:
@@ -284,6 +315,11 @@ class GenSQLAgenticNode(AgenticNode):
                 if not self.date_parsing_tools:
                     self.date_parsing_tools = DateParsingTools(self.agent_config, self.model)
                 tool_instance = self.date_parsing_tools
+            elif tool_type == "filesystem_tools":
+                if not self.filesystem_func_tool:
+                    root_path = self._resolve_workspace_root()
+                    self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+                tool_instance = self.filesystem_func_tool
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
                 return
@@ -298,26 +334,6 @@ class GenSQLAgenticNode(AgenticNode):
                 logger.warning(f"Method '{method_name}' not found in {tool_type}")
         except Exception as e:
             logger.error(f"Failed to setup {tool_type}.{method_name}: {e}")
-
-    def _setup_filesystem_mcp(self) -> Optional[MCPServerStdio]:
-        """Setup filesystem MCP server."""
-        try:
-            root_path = self._resolve_workspace_root()
-            # Handle relative vs absolute paths
-            if root_path and os.path.isabs(root_path):
-                filesystem_path = root_path
-            else:
-                filesystem_path = os.path.join(os.getcwd(), root_path)
-
-            filesystem_server = MCPServer.get_filesystem_mcp_server(path=filesystem_path)
-            if filesystem_server:
-                logger.info(f"Added filesystem MCP server at path: {filesystem_path}")
-                return filesystem_server
-            else:
-                logger.warning(f"Failed to create filesystem MCP server for path: {filesystem_path}")
-        except Exception as e:
-            logger.error(f"Failed to setup filesystem MCP server: {e}")
-        return None
 
     def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
         """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
@@ -359,17 +375,15 @@ class GenSQLAgenticNode(AgenticNode):
 
         for server_name in mcp_server_names:
             try:
-                # Handle filesystem_mcp
+                # Skip filesystem_mcp - now handled by native filesystem tools
                 if server_name == "filesystem_mcp":
-                    server = self._setup_filesystem_mcp()
-                    if server:
-                        mcp_servers["filesystem_mcp"] = server
+                    logger.info("Skipping filesystem_mcp - use filesystem_tools instead")
+                    continue
 
                 # Handle MCP servers from {agent.home}/conf/.mcp.json using mcp_manager
-                else:
-                    server = self._setup_mcp_server_from_config(server_name)
-                    if server:
-                        mcp_servers[server_name] = server
+                server = self._setup_mcp_server_from_config(server_name)
+                if server:
+                    mcp_servers[server_name] = server
 
             except Exception as e:
                 logger.error(f"Failed to setup MCP server '{server_name}': {e}")
@@ -399,7 +413,7 @@ class GenSQLAgenticNode(AgenticNode):
         context = prepare_template_context(
             node_config=self.node_config,
             has_db_tools=bool(self.db_func_tool),
-            has_mcp_filesystem="filesystem_mcp" in self.mcp_servers,
+            has_filesystem_tools=bool(self.filesystem_func_tool),
             has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
             has_context_search_tools=bool(self.context_search_tools),
             has_parsing_tools=bool(self.date_parsing_tools),
@@ -467,12 +481,27 @@ class GenSQLAgenticNode(AgenticNode):
         action_history_manager.add_action(action)
         yield action
 
+        # Track plan mode state for cleanup
+        is_plan_mode = False
+
         try:
             # Check for auto-compact before session creation to ensure fresh context
             await self._auto_compact()
 
             # Get or create session and any available summary
             session, conversation_summary = self._get_or_create_session()
+
+            # Check for plan mode activation
+            is_plan_mode = getattr(user_input, "plan_mode", False)
+            if is_plan_mode:
+                self.plan_mode_active = True
+                from rich.console import Console
+
+                from datus.cli.plan_hooks import PlanModeHooks
+
+                auto_mode = getattr(user_input, "auto_execute_plan", False)
+                self.plan_hooks = PlanModeHooks(console=Console(), session=session, auto_mode=auto_mode)
+                logger.info(f"Plan mode activated (auto_mode={auto_mode})")
 
             system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)
 
@@ -509,15 +538,16 @@ class GenSQLAgenticNode(AgenticNode):
             logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
 
-            # Stream response using the model's generate_with_tools_stream
-            async for stream_action in self.model.generate_with_tools_stream(
+            # Choose execution mode based on plan_mode flag
+            execution_mode = "plan" if is_plan_mode else "normal"
+
+            # Stream response using unified execution (supports plan mode and normal mode)
+            async for stream_action in self._execute_with_recursive_replan(
                 prompt=enhanced_message,
-                tools=self.tools,
-                mcp_servers=self.mcp_servers,
-                instruction=system_instruction,
-                max_turns=self.max_turns,
-                session=session,
+                execution_mode=execution_mode,
+                original_input=user_input,
                 action_history_manager=action_history_manager,
+                session=session,
             ):
                 yield stream_action
 
@@ -661,6 +691,176 @@ class GenSQLAgenticNode(AgenticNode):
             action_history_manager.add_action(error_action)
             yield error_action
 
+        finally:
+            # Clean up plan mode state
+            if is_plan_mode:
+                self.plan_mode_active = False
+                self.plan_hooks = None
+                logger.info("Plan mode deactivated")
+
+    def update_context(self, workflow: Workflow) -> dict:
+        """
+        Update workflow context with SQL generation results.
+
+        Stores SQL query, explanation, and execution results to workflow context.
+        """
+        if not self.result:
+            return {"success": False, "message": "No result to update context"}
+
+        result = self.result
+
+        try:
+            if hasattr(result, "sql") and result.sql:
+                from datus.schemas.node_models import SQLContext
+
+                # Extract SQL result from response if available
+                sql_result = ""
+                if hasattr(result, "response") and result.response:
+                    _, sql_result = self._extract_sql_and_output_from_response({"content": result.response})
+                    sql_result = sql_result or ""
+
+                # Create complete SQLContext record
+                new_record = SQLContext(
+                    sql_query=result.sql,
+                    explanation=result.response if hasattr(result, "response") else "",
+                    sql_return=sql_result,
+                )
+                workflow.context.sql_contexts.append(new_record)
+
+            return {"success": True, "message": "Updated SQL generation context"}
+        except Exception as e:
+            logger.error(f"Failed to update SQL generation context: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def _execute_with_recursive_replan(
+        self,
+        prompt: str,
+        execution_mode: str,
+        original_input: GenSQLNodeInput,
+        action_history_manager: ActionHistoryManager,
+        session,
+    ):
+        """
+        Unified recursive execution function that handles all execution modes.
+
+        Args:
+            prompt: The prompt to send to LLM
+            execution_mode: "normal", "plan", or "replan"
+            original_input: Original SQL generation input for context
+            action_history_manager: Action history manager
+            session: SQL generation session
+        """
+        logger.info(f"Executing mode: {execution_mode}")
+
+        # Get execution configuration for this mode
+        config = self._get_execution_config(execution_mode, original_input)
+
+        # Reset state for replan mode
+        if execution_mode == "plan" and self.plan_hooks:
+            self.plan_hooks.plan_phase = "generating"
+
+        try:
+            # Build enhanced prompt for plan mode
+            final_prompt = prompt
+            if execution_mode == "plan":
+                final_prompt = self._build_plan_prompt(prompt)
+
+            # Unified execution using configuration
+            async for stream_action in self.model.generate_with_tools_stream(
+                prompt=final_prompt,
+                tools=config["tools"],
+                mcp_servers=self.mcp_servers,
+                instruction=config["instruction"],
+                max_turns=self.max_turns,
+                session=session,
+                action_history_manager=action_history_manager,
+                hooks=config.get("hooks"),
+            ):
+                yield stream_action
+
+        except Exception as e:
+            if "REPLAN_REQUIRED" in str(e):
+                logger.info("Replan requested, recursing...")
+
+                # Recursive call - enter replan mode with original user prompt
+                async for action in self._execute_with_recursive_replan(
+                    prompt=prompt,
+                    execution_mode=execution_mode,
+                    original_input=original_input,
+                    action_history_manager=action_history_manager,
+                    session=session,
+                ):
+                    yield action
+            else:
+                raise
+
+    def _get_execution_config(self, execution_mode: str, original_input: GenSQLNodeInput) -> dict:
+        """
+        Get execution configuration based on mode.
+
+        Args:
+            execution_mode: "normal", "plan"
+            original_input: Original SQL generation input for context
+
+        Returns:
+            Configuration dict with tools, instruction, and hooks
+        """
+        if execution_mode == "normal":
+            return {"tools": self.tools, "instruction": self._get_system_instruction(original_input), "hooks": None}
+        elif execution_mode == "plan":
+            # Plan mode: standard tools + plan tools
+            plan_tools = self.plan_hooks.get_plan_tools() if self.plan_hooks else []
+
+            # Add execution steps to instruction for consistency
+            base_instruction = self._get_system_instruction(original_input)
+            current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
+
+            if current_phase in ["executing", "confirming"]:
+                plan_instruction = (
+                    base_instruction
+                    + "\n\nEXECUTION steps:\n"
+                    + "For each todo step: todo_update(id, 'pending') → execute task → todo_update(id, 'completed')\n"
+                    + "Always follow this exact sequence for every step."
+                )
+            else:
+                plan_instruction = base_instruction
+
+            return {
+                "tools": self.tools + plan_tools,
+                "instruction": plan_instruction,
+                "hooks": self.plan_hooks,
+            }
+        else:
+            raise ValueError(f"Unknown execution mode: {execution_mode}")
+
+    def _get_system_instruction(self, original_input: GenSQLNodeInput) -> str:
+        """Get system instruction for normal mode."""
+        _, conversation_summary = self._get_or_create_session()
+        return self._get_system_prompt(conversation_summary, original_input.prompt_version)
+
+    def _build_plan_prompt(self, original_prompt: str) -> str:
+        """Build enhanced prompt for plan mode based on current phase."""
+        from datus.prompts.prompt_manager import prompt_manager
+
+        # Check current phase and replan feedback
+        current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
+        replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
+
+        # Load plan mode prompt from template
+        try:
+            plan_prompt_addition = prompt_manager.render_template(
+                template_name="plan_mode_system",
+                version=None,  # Use latest version
+                current_phase=current_phase,
+                replan_feedback=replan_feedback,
+            )
+        except FileNotFoundError:
+            # Fallback to inline prompt if template not found
+            logger.warning("plan_mode_system template not found, using inline prompt")
+            plan_prompt_addition = "\n\nPLAN MODE\nCheck todo_read to see current plan status and proceed accordingly."
+
+        return original_prompt + "\n\n" + plan_prompt_addition
+
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """
         Extract SQL content and formatted output from model response.
@@ -726,7 +926,7 @@ class GenSQLAgenticNode(AgenticNode):
 def prepare_template_context(
     node_config: Union[Dict[str, Any], SubAgentConfig],
     has_db_tools: bool = True,
-    has_mcp_filesystem: bool = True,
+    has_filesystem_tools: bool = True,
     has_mf_tools: bool = True,
     has_context_search_tools: bool = True,
     has_parsing_tools: bool = True,
@@ -744,7 +944,7 @@ def prepare_template_context(
     """
     context: Dict[str, Any] = {
         "has_db_tools": has_db_tools,
-        "has_mcp_filesystem": has_mcp_filesystem,
+        "has_filesystem_tools": has_filesystem_tools,
         "has_mf_tools": has_mf_tools,
         "has_context_search_tools": has_context_search_tools,
         "has_parsing_tools": has_parsing_tools,

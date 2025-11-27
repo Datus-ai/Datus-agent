@@ -5,26 +5,24 @@
 """
 ChatAgenticNode implementation for flexible CLI chat interactions.
 
-This module provides a concrete implementation of AgenticNode specifically
+This module provides a concrete implementation of GenSQLAgenticNode specifically
 designed for chat interactions with database and filesystem tool support.
 """
-from typing import AsyncGenerator, Dict, Optional
+from typing import AsyncGenerator, Optional, override
 
-from agents.mcp import MCPServerStdio
-
-from datus.agent.node.agentic_node import AgenticNode
+from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.func_tool import ContextSearchTools, DateParsingTools, DBFuncTool, FilesystemFuncTool
+from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 
-class ChatAgenticNode(AgenticNode):
+class ChatAgenticNode(GenSQLAgenticNode):
     """
     Chat-focused agentic node with database and filesystem tool support.
 
@@ -45,7 +43,7 @@ class ChatAgenticNode(AgenticNode):
         tools: Optional[list] = None,
     ):
         """
-        Initialize the ChatAgenticNode as a workflow-compatible node.
+        Initialize the ChatAgenticNode as a specialized GenSQLAgenticNode.
 
         Args:
             node_id: Unique identifier for the node
@@ -55,45 +53,20 @@ class ChatAgenticNode(AgenticNode):
             agent_config: Agent configuration
             tools: List of tools (will be populated in setup_tools)
         """
-        # Extract namespace from agent_config
-        namespace = agent_config.current_namespace if agent_config else None
-        self.namespace = namespace
-
-        # Get max_turns from nodes configuration, default to 30
-        self.max_turns = 30
-        if agent_config and hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
-            chat_node_config = agent_config.nodes["chat"]
-            if (
-                chat_node_config.input
-                and hasattr(chat_node_config.input, "max_turns")
-                and chat_node_config.input.max_turns is not None
-            ):
-                self.max_turns = chat_node_config.input.max_turns
-
-        # Initialize MCP servers based on namespace
-        mcp_servers = self._setup_mcp_servers(agent_config)
-
-        # Call parent constructor with all required Node parameters
+        # Call parent constructor with node_name="chat"
+        # This will initialize max_turns, tool attributes, plan mode attributes, and MCP servers
         super().__init__(
             node_id=node_id,
             description=description,
             node_type=node_type,
             input_data=input_data,
             agent_config=agent_config,
-            tools=tools or [],
-            mcp_servers=mcp_servers,
+            tools=tools,
+            node_name="chat",
         )
-
-        # ChatAgenticNode-specific attributes
-        self.db_func_tool: DBFuncTool
-        self.context_search_tools: ContextSearchTools
-        self.date_parsing_tools: Optional[DateParsingTools] = None
-        self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
-        self.plan_mode_active = False
-        self.plan_hooks = None
-
-        # Setup tools after initialization
-        self.setup_tools()
+        logger.debug(
+            f"ChatAgenticNode initialized: {self.agent_config.current_namespace} {self.agent_config.current_database}"
+        )
 
     def setup_input(self, workflow: Workflow) -> dict:
         """
@@ -186,30 +159,10 @@ class ChatAgenticNode(AgenticNode):
             logger.error(f"Failed to update chat context: {e}")
             return {"success": False, "message": str(e)}
 
-    def _update_database_connection(self, database_name: str):
-        """
-        Update database connection to a different database.
-
-        Args:
-            database_name: The name of the database to connect to
-        """
-        db_manager = db_manager_instance(self.agent_config.namespaces)
-        conn = db_manager.get_conn(self.agent_config.current_namespace, database_name)
-        self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
-        self._rebuild_tools()
-
-    def _rebuild_tools(self):
-        """Rebuild the tools list with current tool instances."""
-        self.tools = (
-            self.db_func_tool.available_tools()
-            + self.context_search_tools.available_tools()
-            + (self.date_parsing_tools.available_tools() if self.date_parsing_tools else [])
-            + (self.filesystem_func_tool.available_tools() if self.filesystem_func_tool else [])
-        )
-
+    @override
     def setup_tools(self):
         """Initialize all tools with default database connection."""
-        # Only a single database connection is now supported
+        # Chat node uses all available tools by default
         db_manager = db_manager_instance(self.agent_config.namespaces)
         conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
@@ -217,67 +170,6 @@ class ChatAgenticNode(AgenticNode):
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
         self._rebuild_tools()
-
-    def _setup_date_parsing_tools(self):
-        """Setup date parsing tools."""
-        try:
-            self.date_parsing_tools = DateParsingTools(self.agent_config, self.model)
-            logger.info("Setup date parsing tools")
-        except Exception as e:
-            logger.error(f"Failed to setup date parsing tools: {e}")
-
-    def _setup_filesystem_tools(self):
-        """Setup filesystem tools (all available tools)."""
-        try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
-            logger.info(f"Setup filesystem tools with root path: {root_path}")
-        except Exception as e:
-            logger.error(f"Failed to setup filesystem tools: {e}")
-
-    def _resolve_workspace_root(self) -> str:
-        """
-        Resolve workspace_root from chat node configuration.
-        Expands ~ to user home directory.
-
-        Returns:
-            Resolved workspace_root path with ~ expanded
-        """
-        import os
-
-        # Default workspace_root
-        workspace_root = "."
-
-        # Read from chat node configuration if available
-        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
-            configured_root = self.agent_config.workspace_root
-            if configured_root is not None:
-                workspace_root = configured_root
-
-        # Expand ~ to user home directory
-        if workspace_root.startswith("~"):
-            workspace_root = os.path.expanduser(workspace_root)
-            logger.debug(f"Expanded workspace_root: {workspace_root}")
-
-        # Handle relative vs absolute paths
-        if os.path.isabs(workspace_root):
-            return workspace_root
-        else:
-            return os.path.join(os.getcwd(), workspace_root)
-
-    def _setup_mcp_servers(self, agent_config: Optional[AgentConfig] = None) -> Dict[str, MCPServerStdio]:
-        """
-        Set up MCP servers based on namespace and configuration.
-
-        Args:
-            agent_config: Agent configuration
-
-        Returns:
-            Dictionary of MCP servers
-        """
-        # No MCP servers for chat node currently
-        # (Previously had filesystem MCP server, now using native filesystem tools)
-        return {}
 
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
@@ -579,172 +471,3 @@ class ChatAgenticNode(AgenticNode):
             if is_plan_mode:
                 self.plan_mode_active = False
                 self.plan_hooks = None
-
-    async def _execute_with_recursive_replan(
-        self,
-        prompt: str,
-        execution_mode: str,
-        original_input: ChatNodeInput,
-        action_history_manager: ActionHistoryManager,
-        session,
-    ):
-        """
-        Unified recursive execution function that handles all execution modes.
-
-        Args:
-            prompt: The prompt to send to LLM
-            execution_mode: "normal", "plan", or "replan"
-            original_input: Original chat input for context
-            action_history_manager: Action history manager
-            session: Chat session
-        """
-        logger.info(f"Executing mode: {execution_mode}")
-
-        # Get execution configuration for this mode
-        config = self._get_execution_config(execution_mode, original_input)
-
-        # Reset state for replan mode
-        if execution_mode == "plan" and self.plan_hooks:
-            self.plan_hooks.plan_phase = "generating"
-
-        try:
-            # Build enhanced prompt for plan mode
-            final_prompt = prompt
-            if execution_mode == "plan":
-                final_prompt = self._build_plan_prompt(prompt)
-
-            # Unified execution using configuration
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=final_prompt,
-                tools=config["tools"],
-                mcp_servers=self.mcp_servers,
-                instruction=config["instruction"],
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                hooks=config.get("hooks"),
-            ):
-                yield stream_action
-
-        except Exception as e:
-            if "REPLAN_REQUIRED" in str(e):
-                logger.info("Replan requested, recursing...")
-
-                # Recursive call - enter replan mode with original user prompt
-                async for action in self._execute_with_recursive_replan(
-                    prompt=prompt,
-                    execution_mode=execution_mode,
-                    original_input=original_input,
-                    action_history_manager=action_history_manager,
-                    session=session,
-                ):
-                    yield action
-            else:
-                raise
-
-    def _get_execution_config(self, execution_mode: str, original_input: ChatNodeInput) -> dict:
-        """
-        Get execution configuration based on mode.
-
-        Args:
-            execution_mode: "normal", "plan"
-            original_input: Original chat input for context
-
-        Returns:
-            Configuration dict with tools, instruction, and hooks
-        """
-        if execution_mode == "normal":
-            return {"tools": self.tools, "instruction": self._get_system_instruction(original_input), "hooks": None}
-        elif execution_mode == "plan":
-            # Plan mode: standard tools + plan tools
-            plan_tools = self.plan_hooks.get_plan_tools() if self.plan_hooks else []
-
-            # Add execution steps to instruction for consistency
-            base_instruction = self._get_system_instruction(original_input)
-            current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
-
-            if current_phase in ["executing", "confirming"]:
-                plan_instruction = (
-                    base_instruction
-                    + "\n\nEXECUTION steps:\n"
-                    + "For each todo step: todo_update(id, 'pending') → execute task → todo_update(id, 'completed')\n"
-                    + "Always follow this exact sequence for every step."
-                )
-            else:
-                plan_instruction = base_instruction
-
-            return {
-                "tools": self.tools + plan_tools,
-                "instruction": plan_instruction,
-                "hooks": self.plan_hooks,
-            }
-        else:
-            raise ValueError(f"Unknown execution mode: {execution_mode}")
-
-    def _get_system_instruction(self, original_input: ChatNodeInput) -> str:
-        """Get system instruction for normal mode."""
-        _, conversation_summary = self._get_or_create_session()
-        return self._get_system_prompt(conversation_summary, original_input.prompt_version)
-
-    def _build_plan_prompt(self, original_prompt: str) -> str:
-        """Build enhanced prompt for plan mode based on current phase."""
-        from datus.prompts.prompt_manager import prompt_manager
-
-        # Check current phase and replan feedback
-        current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
-        replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
-
-        # Load plan mode prompt from template
-        try:
-            plan_prompt_addition = prompt_manager.render_template(
-                template_name="plan_mode_system",
-                version=None,  # Use latest version
-                current_phase=current_phase,
-                replan_feedback=replan_feedback,
-            )
-        except FileNotFoundError:
-            # Fallback to inline prompt if template not found
-            logger.warning("plan_mode_system template not found, using inline prompt")
-            plan_prompt_addition = "\n\nPLAN MODE\nCheck todo_read to see current plan status and proceed accordingly."
-
-        return original_prompt + "\n\n" + plan_prompt_addition
-
-    def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
-        """
-        Extract SQL content and formatted output from model response.
-
-        Args:
-            output: Output dictionary from model generation
-
-        Returns:
-            Tuple of (sql_string, output_string) - both can be None if not found
-        """
-        try:
-            from datus.utils.json_utils import llm_result2json
-
-            content = output.get("content", "")
-            logger.info(
-                f"extract_sql_and_output_from_final_resp: {content[:200] if isinstance(content, str) else content}"
-            )
-
-            if not isinstance(content, str) or not content.strip():
-                return None, None
-
-            # Parse the JSON content
-            parsed = llm_result2json(content, expected_type=dict)
-
-            if parsed and isinstance(parsed, dict):
-                sql = parsed.get("sql")
-                output_text = parsed.get("output")
-
-                # Unescape output content if present
-                if output_text and isinstance(output_text, str):
-                    output_text = output_text.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
-
-                return sql, output_text
-
-            return None, None
-
-        except Exception as e:
-            logger.warning(f"Failed to extract SQL and output from response: {e}")
-            return None, None

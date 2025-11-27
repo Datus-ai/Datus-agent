@@ -119,13 +119,13 @@ class TableSchema(BaseTableSchema):
         # schema_text = schema_text.replace('NUMBER(38,0)', 'NUMBER')
         # schema_text = schema_text.replace('create or replace TABLE', 'TABLE')
         full_name = self.table_name if dialect == DBType.SQLITE else self.identifier
-        return f"{full_name}: {schema_text}"
+        return f"Table Name: {full_name}\nSchema:\n{schema_text}"
 
     @classmethod
     def list_to_prompt(cls, schemas: List[TableSchema], dialect: str = "snowflake") -> str:
         if not schemas:
             return ""
-        return "\n".join([schema.to_prompt(dialect) for schema in schemas])
+        return "\n\n".join([schema.to_prompt(dialect) for schema in schemas])
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> TableSchema:
