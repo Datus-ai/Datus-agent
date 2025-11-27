@@ -822,3 +822,19 @@ def normalize_sql(sql: str) -> str:
     # 3) Remove the spaces at both ends
     s = s.strip()
     return s
+
+
+def format_sql_to_pretty(sql: str, dialect: str) -> str:
+    if not sql:
+        return sql
+    read_dialect = parse_read_dialect(dialect)
+    """Pretty print SQL if possible, otherwise return the original text."""
+    if not sql:
+        return ""
+    try:
+        formatted = sqlglot.transpile(sql, read=read_dialect, pretty=True)
+        if formatted:
+            return formatted[0]
+    except Exception as exc:
+        logger.debug(f"Failed to format SQL for download: {exc}")
+    return sql

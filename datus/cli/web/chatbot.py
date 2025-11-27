@@ -14,11 +14,15 @@ maximizing reuse of existing Datus CLI components including:
 """
 
 import csv
+import math
 import os
 import re
+import uuid
 from datetime import datetime
+from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
+import pandas as pd
 import streamlit as st
 import structlog
 
@@ -467,6 +471,132 @@ class StreamlitChatbot:
         self._store_session_id()
         # Note: actions are stored in session_state by caller
 
+    def do_download(self, sql: str, markdown: str, sql_id: Optional[str]):
+        """Execute SQL, build a multi-sheet Excel workbook, and expose it for download."""
+
+        if not sql_id:
+            sql_id = str(uuid.uuid4())
+
+        if not self.cli or not getattr(self.cli, "db_connector", None):
+            st.error("Database connector is not initialized. Please configure the agent first.")
+            logger.error("Download requested without an active database connector")
+            return
+        markdown = markdown or ""
+
+        def _normalize_dataframe(sql_return: Any) -> pd.DataFrame:
+            """Convert different result payloads into a DataFrame."""
+            if isinstance(sql_return, pd.DataFrame):
+                return sql_return
+            if sql_return is None:
+                return pd.DataFrame()
+            if isinstance(sql_return, list):
+                return pd.DataFrame(sql_return)
+            if isinstance(sql_return, dict):
+                return pd.DataFrame([sql_return])
+            return pd.DataFrame({"result": [sql_return]})
+
+        def _write_text_block(worksheet, text: str):
+            """
+            Write text into a single merged cell spanning multiple rows/columns.
+
+            The goal is to end up with a single logical cell (one merged region)
+            that contains the full text (with line breaks), instead of one row
+            per line.
+            """
+            text = text or ""
+            lines = text.splitlines() or [""]
+
+            # Estimate how many columns we want based on the longest line length
+            max_len = max((len(line) for line in lines), default=1)
+            approx_chars_per_col = 45
+            col_span = max(1, min(8, math.ceil(max_len / approx_chars_per_col)))
+            row_span = max(1, len(lines))
+
+            # Configure column widths
+            for col in range(col_span):
+                worksheet.set_column(col, col, approx_chars_per_col)
+
+            text_format = writer.book.add_format(
+                {
+                    "text_wrap": True,
+                    "valign": "top",
+                    "align": "left",
+                }
+            )
+
+            # If the merged region would cover more than a single cell, use merge_range.
+            # Otherwise, just write into the single top-left cell to avoid xlsxwriter's
+            # "Can't merge single cell" warning.
+            if row_span > 1 or col_span > 1:
+                worksheet.merge_range(0, 0, row_span - 1, col_span - 1, text, text_format)
+            else:
+                worksheet.write(0, 0, text or " ", text_format)
+
+        with st.spinner("Preparing Excel..."):
+            execution_error = None
+            result = None
+            try:
+                result = self.cli.db_connector.execute_pandas(sql)
+            except Exception as exc:
+                execution_error = str(exc)
+                logger.error(f"Failed to execute SQL for download: {exc}", exc_info=True)
+
+            buffer = BytesIO()
+            try:
+                with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                    if result and getattr(result, "success", False):
+                        df = _normalize_dataframe(result.sql_return)
+                        df.to_excel(writer, sheet_name="result", index=False)
+                    else:
+                        worksheet = writer.book.add_worksheet("result")
+                        writer.sheets["result"] = worksheet
+                        error_text = (getattr(result, "error", None) or execution_error or "Unknown error").strip()
+                        error_format = writer.book.add_format(
+                            {
+                                "text_wrap": True,
+                                "font_color": "#9C0006",
+                                "bold": True,
+                                "align": "left",
+                                "valign": "top",
+                            }
+                        )
+                        worksheet.set_column(0, 3, 50)
+                        worksheet.merge_range(0, 0, 0, 3, error_text, error_format)
+
+                    sql_sheet = writer.book.add_worksheet("SQL")
+                    writer.sheets["SQL"] = sql_sheet
+                    from datus.utils.sql_utils import format_sql_to_pretty
+
+                    _write_text_block(
+                        sql_sheet,
+                        format_sql_to_pretty(
+                            sql, getattr(self.cli.db_connector, "dialect", None) or self.cli.agent_config.db_type
+                        ),
+                    )
+
+                    markdown_sheet = writer.book.add_worksheet("markdown")
+                    writer.sheets["markdown"] = markdown_sheet
+                    _write_text_block(markdown_sheet, markdown)
+            except Exception as exc:
+                st.error(f"Failed to generate Excel: {exc}")
+                logger.error(f"Failed to build download workbook: {exc}", exc_info=True)
+                return
+
+            buffer.seek(0)
+            file_bytes = buffer.getvalue()
+
+        file_name = f"{sql_id}.xlsx"
+
+        st.success("Excel file generated. Click below to download.")
+        st.download_button(
+            label="⬇ Save results as Excel",
+            data=file_bytes,
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"excel_download_{sql_id}",
+            use_container_width=True,
+        )
+
     def run(self):
         """Main Streamlit app runner"""
         # Read query params and update session_state
@@ -606,12 +736,18 @@ class StreamlitChatbot:
 
                         # Show SQL if available
                         if "sql" in message and message["sql"]:
+                            sql = message["sql"]
                             user_msg = ""
                             if st.session_state.messages:
                                 user_msgs = [m["content"] for m in st.session_state.messages if m["role"] == "user"]
                                 if user_msgs:
                                     user_msg = user_msgs[-1]
-                            self.ui.display_sql_with_copy(message["sql"], user_msg, False, self.save_success_story)
+                            self.ui.display_sql(sql)
+                            col1, col2 = st.columns([1, 11])
+                            with col1:
+                                self.ui.display_success_button(sql, user_msg, self.save_success_story)
+                            with col2:
+                                self.ui.display_download(sql, message["content"], self.do_download)
 
                         # Show collapsed action history at bottom
                         actions_data = message.get("actions", [])

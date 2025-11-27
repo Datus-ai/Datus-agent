@@ -252,27 +252,35 @@ class UIComponents:
             st.markdown("---")
             st.info("💡 **Tip**: Bookmark subagent URLs for direct access!")
 
-    def display_sql_with_copy(self, sql: str, user_message: str, readonly_mode: bool, save_callback) -> None:
-        """Display SQL with syntax highlighting and save button."""
+    def display_success_button(self, sql: str, user_message: str, sql_id, save_callback):
+        # Create unique ID for this SQL block
+        if st.button("👍 Success", key=f"save_{sql_id}", help="Save this query as a success story"):
+            save_callback(sql, user_message)
+
+    def display_sql(self, sql):
         if not sql:
             return
-
         st.markdown("### 🔧 Generated SQL")
 
         # Display SQL with syntax highlighting
         st.code(sql, language="sql")
 
+    def display_sql_with_copy(self, sql: str, user_message: str, readonly_mode: bool, save_callback) -> None:
+        """Display SQL with syntax highlighting and save button."""
+        if not sql:
+            return
+
+        self.display_sql(sql)
+
         # Save button (only show if not in readonly mode)
         if not readonly_mode:
-            # Create unique ID using current timestamp to ensure uniqueness across duplicate SQLs
-            import time
+            self.display_success_button(sql, user_message, save_callback)
 
-            sql_hash = hashlib.md5(sql.encode()).hexdigest()[:8]
-            timestamp = str(time.time()).replace(".", "_")  # Use timestamp for uniqueness
-            unique_key = f"save_{sql_hash}_{timestamp}"
-
-            if st.button("👍 Success", key=unique_key, help="Save this query as a success story"):
-                save_callback(sql, user_message)
+    def display_download(self, sql: str, output_md: str, sql_id, download_callback):
+        if not sql:
+            return
+        if st.button("⏬ Download", key=f"download_{sql_id}", help="Download the SQL and execute the results"):
+            download_callback(sql, output_md, sql_id)
 
     def display_markdown_response(self, response: str) -> None:
         """Display clean response as formatted markdown."""
