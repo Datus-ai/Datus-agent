@@ -351,7 +351,7 @@ class ChatCommands:
                     if clean_output:
                         self._display_markdown_response(clean_output)
                     self.last_actions = incremental_actions
-                    self._show_detail(incremental_actions)
+                    self.cli.console.print("[bold bright_black]Use `Ctrl+D` to display trace details.[/]")
 
             # Update chat history for potential context in future interactions
             self.chat_history.append(
@@ -369,24 +369,6 @@ class ChatCommands:
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
-
-    def _show_detail(self, actions: List[ActionHistory]):
-        """Show detailed action information with user confirmation."""
-        # Skip interactive prompt in Streamlit mode
-        if hasattr(self.cli, "streamlit_mode") and self.cli.streamlit_mode:
-            choice = "n"  # Auto-skip in Streamlit mode
-        else:
-            choice = self.cli.prompt_input(
-                "Would you like to check the details?",
-                choices=["y", "n"],
-                default="y",
-            )
-        # modify the node input
-        if choice == "y":
-            from datus.cli.screen.action_display_app import ChatApp
-
-            app = ChatApp(actions)
-            app.run()
 
     def _display_sql_with_copy(self, sql: str):
         """

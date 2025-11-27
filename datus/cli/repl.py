@@ -63,6 +63,7 @@ class DatusCLI:
         self.console = Console()
         self.console_column_width = 16
         self.selected_catalog_path = ""
+        self.streamlit_mode = False
         self.selected_catalog_data = {}
 
         setup_exception_handler(
@@ -234,6 +235,11 @@ class DatusCLI:
             # Performs normal Enter behavior when there is no completion menu.
             buffer.validate_and_handle()
 
+        @kb.add("c-d")
+        def _(event):
+            """Show details"""
+            event.app.exit(result="_open_chat_sql_details")
+
         return kb
 
     def _get_prompt_text(self):
@@ -308,7 +314,18 @@ class DatusCLI:
                 )
                 if user_input_raw is None:
                     continue
+                if user_input_raw == "_open_chat_sql_details":
+                    if not self.streamlit_mode and self.chat_commands and self.chat_commands.last_actions:
+                        from datus.cli.screen.action_display_app import ChatApp
+
+                        app = ChatApp(self.chat_commands.last_actions)
+                        app.run()
+                        continue
+                    else:
+                        self.console.print("[bold bright_black]No chat history to display[/]")
+                        continue
                 user_input = user_input_raw.strip()
+
                 if not user_input:
                     continue
 
