@@ -825,12 +825,10 @@ def normalize_sql(sql: str) -> str:
 
 
 def format_sql_to_pretty(sql: str, dialect: str) -> str:
+    """Pretty print SQL if possible, otherwise return the original text."""
     if not sql:
         return sql
     read_dialect = parse_read_dialect(dialect)
-    """Pretty print SQL if possible, otherwise return the original text."""
-    if not sql:
-        return ""
     try:
         formatted = sqlglot.transpile(sql, read=read_dialect, pretty=True)
         if formatted:
