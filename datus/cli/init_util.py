@@ -54,6 +54,18 @@ def detect_db_connectivity(namespace_name, db_config_data) -> tuple[bool, str]:
                 database=db_config_data.get("database", ""),
                 schema=db_config_data.get("schema", ""),
             )
+        elif db_type == "clickzetta":
+            # For ClickZetta connector
+            db_config = DbConfig(
+                type=db_type,
+                service=db_config_data.get("service", ""),
+                username=db_config_data.get("username", ""),
+                password=db_config_data.get("password", ""),
+                instance=db_config_data.get("instance", ""),
+                workspace=db_config_data.get("workspace", ""),
+                schema=db_config_data.get("schema", ""),
+                vcluster=db_config_data.get("vcluster", ""),
+            )
         else:
             # For URI-based connectors (sqlite, duckdb, postgresql)
             uri = db_config_data.get("uri", "")

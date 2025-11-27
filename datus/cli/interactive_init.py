@@ -244,7 +244,7 @@ class InteractiveInit:
             return False
 
         # Database type selection
-        db_types = ["sqlite", "duckdb", "snowflake", "mysql", "starrocks"]
+        db_types = ["sqlite", "duckdb", "snowflake", "mysql", "starrocks", "clickzetta"]
         db_type = Prompt.ask("- Database type", choices=db_types, default="duckdb")
 
         # Connection configuration based on database type
@@ -272,6 +272,29 @@ class InteractiveInit:
                 config_data["catalog"] = "default_catalog"
 
             self.config["agent"]["namespace"][self.namespace_name] = config_data
+        elif db_type == "clickzetta":
+            # ClickZetta-specific configuration
+            console.print("  [dim]ClickZetta API configuration[/dim]")
+            service = Prompt.ask("- Service endpoint", default="cn-shanghai-alicloud.api.clickzetta.com")
+            username = Prompt.ask("- Username")
+            password = getpass("- Password: ")
+            instance = Prompt.ask("- Instance ID")
+            workspace = Prompt.ask("- Workspace", default="quick_start")
+            schema = Prompt.ask("- Schema", default="mcp_demo")
+            vcluster = Prompt.ask("- Virtual Cluster", default="default_ap")
+
+            # Store ClickZetta-specific configuration
+            self.config["agent"]["namespace"][self.namespace_name] = {
+                "type": db_type,
+                "name": self.namespace_name,
+                "service": service,
+                "username": username,
+                "password": password,
+                "instance": instance,
+                "workspace": workspace,
+                "schema": schema,
+                "vcluster": vcluster,
+            }
         elif db_type == "snowflake":
             # Snowflake specific configuration
             username = Prompt.ask("- Username")
