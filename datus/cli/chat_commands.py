@@ -194,6 +194,7 @@ class ChatCommands:
                     reference_sql=at_sqls,
                     prompt_version="1.0",
                     prompt_language="en",
+                    plan_mode=plan_mode,
                 ),
                 "gensql",
             )

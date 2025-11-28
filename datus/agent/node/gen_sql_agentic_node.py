@@ -1007,8 +1007,10 @@ def build_enhanced_message(
     enhanced_parts.append(context_part_str)
 
     if schemas:
+        table_names_str = TableSchema.table_names_to_prompt(schemas)
         table_schemas_str = TableSchema.list_to_prompt(schemas, dialect=db_type)
-        enhanced_parts.append(f"Table Schemas: \n{table_schemas_str}")
+        enhanced_parts.append(f"MUST USE AND ONLY USE THESE TABLES: \n{table_names_str}")
+        enhanced_parts.append(f"Pay attention to the column comments from these table schemas: \n{table_schemas_str}")
     if metrics:
         enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
 

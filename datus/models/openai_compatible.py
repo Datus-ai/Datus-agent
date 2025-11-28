@@ -11,6 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
+import httpx
 import yaml
 from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool, set_tracing_disabled
 from agents.exceptions import MaxTurnsExceeded
@@ -842,9 +843,43 @@ class OpenAICompatibleModel(LLMBaseModel):
                 await async_client.close()
                 logger.debug("Closed AsyncOpenAI client")
 
-        # Execute the streaming operation directly without retry logic
-        async for action in _stream_operation():
-            yield action
+        # Execute the streaming operation with retry logic for connection errors
+        max_retries = getattr(self.model_config, "max_retry", 3)
+        retry_delay = getattr(self.model_config, "retry_interval", 2.0)
+
+        for attempt in range(max_retries):
+            try:
+                async for action in _stream_operation():
+                    yield action
+                # If we successfully complete, break out of retry loop
+                break
+
+            except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError) as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Stream connection error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}. "
+                        f"Retrying in {retry_delay}s..."
+                    )
+
+                    # Yield a retry notification action to inform user
+                    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+                    retry_action = ActionHistory.create_action(
+                        role=ActionRole.ASSISTANT,
+                        action_type="retry_notification",
+                        messages=f"Connection interrupted, retrying ({attempt + 2}/{max_retries})...",
+                        input_data={"error": str(e), "attempt": attempt + 1},
+                        status=ActionStatus.PROCESSING,
+                    )
+                    action_history_manager.add_action(retry_action)
+                    yield retry_action
+
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    # All retries exhausted
+                    logger.error(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
+                    raise
 
     async def _extract_and_distribute_token_usage(self, result, action_history_manager: ActionHistoryManager) -> None:
         """Extract token usage from completed streaming result and distribute to ActionHistory objects."""

@@ -115,17 +115,19 @@ class TableSchema(BaseTableSchema):
 
         schema_text = " ".join(self.definition.split())
         # TODO: improve the schema compact for all databases
-        schema_text = schema_text.replace("VARCHAR(16777216)", "VARCHAR")
-        # schema_text = schema_text.replace('NUMBER(38,0)', 'NUMBER')
-        # schema_text = schema_text.replace('create or replace TABLE', 'TABLE')
-        full_name = self.table_name if dialect == DBType.SQLITE else self.identifier
-        return f"Table Name: {full_name}\nSchema:\n{schema_text}"
+        return schema_text.replace("VARCHAR(16777216)", "VARCHAR")
+
+    @classmethod
+    def table_names_to_prompt(cls, schemas: List[TableSchema]) -> str:
+        if not schemas:
+            return ""
+        return "\n".join([schema.table_name for schema in schemas])
 
     @classmethod
     def list_to_prompt(cls, schemas: List[TableSchema], dialect: str = "snowflake") -> str:
         if not schemas:
             return ""
-        return "\n\n".join([schema.to_prompt(dialect) for schema in schemas])
+        return "\n".join([schema.to_prompt(dialect) for schema in schemas])
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> TableSchema:

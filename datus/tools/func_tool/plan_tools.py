@@ -75,7 +75,6 @@ class SessionTodoStorage:
         """Save the todo list to in-memory storage"""
         try:
             self._current_todo_list = todo_list
-            logger.info(f"Saved todo list to memory with {len(todo_list.items)} items")
             return True
         except Exception as e:
             logger.error(f"Failed to save todo list to memory: {e}")

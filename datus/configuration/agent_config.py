@@ -87,6 +87,9 @@ class ModelConfig:
     save_llm_trace: bool = False
     enable_thinking: bool = False
     default_headers: Optional[Dict[str, str]] = None
+    # Retry configuration for stream connection errors
+    max_retry: int = 3
+    retry_interval: float = 2.0  # seconds
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

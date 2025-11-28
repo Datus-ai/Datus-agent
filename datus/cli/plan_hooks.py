@@ -25,7 +25,6 @@ class UserCancelledException(Exception):
     """Exception raised when user explicitly cancels execution"""
 
 
-@optional_traceable(name="PlanModeHooks", run_type="chain")
 class PlanModeHooks(AgentHooks):
     """Plan Mode hooks for workflow management"""
 
@@ -42,19 +41,17 @@ class PlanModeHooks(AgentHooks):
         self._state_transitions = []
 
     async def on_start(self, context, agent) -> None:
-        logger.info(f"Plan mode start: phase={self.plan_phase}")
+        logger.debug(f"Plan mode start: phase={self.plan_phase}")
 
-    @optional_traceable(name="on_tool_start", run_type="chain")
     async def on_tool_start(self, context, agent, tool) -> None:
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
-        logger.info(f"Plan mode tool start: {tool_name}, phase: {self.plan_phase}, mode: {self.execution_mode}")
+        logger.debug(f"Plan mode tool start: {tool_name}, phase: {self.plan_phase}, mode: {self.execution_mode}")
 
         if tool_name == "todo_update" and self.execution_mode == "manual" and self.plan_phase == "executing":
             # Check if this is updating to pending status
             if self._is_pending_update(context):
                 await self._handle_execution_step(tool_name)
 
-    @optional_traceable(name="on_tool_end", run_type="chain")
     async def on_tool_end(self, context, agent, tool, result) -> None:
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
 
