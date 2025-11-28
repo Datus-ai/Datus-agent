@@ -485,7 +485,6 @@ class Agent:
             database_name = task_item.get(benchmark_config.db_key) or conn.database_name or ""
             logger.info(f"start benchmark with {task_id}: {task}")
             use_tables = None if not benchmark_config.use_tables_key else task_item.get(benchmark_config.use_tables_key)
-            logger.debug(f"---use_tables: {use_tables}")
             result = self.run(
                 SqlTask(
                     id=task_id,

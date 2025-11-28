@@ -31,6 +31,7 @@ class ExecutionFlowController:
         self._user_input_result: Optional[Any] = None
         self._user_input_event = asyncio.Event()
         self._live_display = None  # Reference to active Rich Live display
+        self._live_context = None  # Reference to StreamingActionContext for recreation
 
     async def get_state(self) -> ExecutionState:
         """Get current execution state."""
@@ -112,19 +113,34 @@ class ExecutionFlowController:
         """Check if waiting for user input."""
         return self._state == ExecutionState.WAITING_USER_INPUT
 
-    def register_live_display(self, live_display):
-        """Register the active Rich Live display."""
+    def register_live_display(self, live_display, context=None):
+        """
+        Register the active Rich Live display.
+
+        Args:
+            live_display: The Rich Live object
+            context: Optional StreamingActionContext for recreation capability
+        """
         self._live_display = live_display
+        if context:
+            self._live_context = context
 
     def unregister_live_display(self):
         """Unregister the Rich Live display."""
         self._live_display = None
 
-    def stop_live_display(self):
-        """Stop the Rich Live display if active."""
+    def stop_live_display(self, unregister: bool = False):
+        """
+        Stop the Rich Live display if active.
+
+        Args:
+            unregister: If True, also unregister the display so it won't be resumed
+        """
         if self._live_display:
             try:
                 self._live_display.stop()
+                if unregister:
+                    self._live_display = None
                 return True
             except Exception as e:
                 logger.warning(f"Failed to stop live display: {e}")
@@ -138,6 +154,25 @@ class ExecutionFlowController:
                 return True
             except Exception as e:
                 logger.warning(f"Failed to resume live display: {e}")
+        return False
+
+    def recreate_live_display(self):
+        """
+        Recreate a brand new Live display from current cursor position.
+
+        This calls the StreamingActionContext's recreate_live_display() method
+        to create a fresh display that starts from the current terminal position,
+        avoiding overlap with previously displayed content (menus, plans).
+
+        Returns:
+            True if successfully recreated, False otherwise
+        """
+        if self._live_context and hasattr(self._live_context, "recreate_live_display"):
+            try:
+                self._live_context.recreate_live_display()
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to recreate live display: {e}")
         return False
 
 

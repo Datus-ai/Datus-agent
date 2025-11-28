@@ -625,19 +625,61 @@ class StreamingActionContext:
         self.actions = actions_list
         self.display = display_instance
         self.live = None
+        self._content_renderer = None  # Keep reference to content for recreation
+        self._display_checkpoint = 0  # Track how many actions were shown before recreation
+
+    def recreate_live_display(self):
+        """
+        Recreate a brand new Live display from current cursor position.
+
+        This is used in plan mode to create a fresh display after showing
+        static content (menus, plans), avoiding overlap with previous content.
+        """
+        from datus.cli.execution_state import execution_controller
+
+        # Stop and discard the old Live display
+        if self.live:
+            try:
+                self.live.stop()
+            except Exception:
+                # Ignore any errors when stopping the old display
+                pass
+
+        # Set checkpoint to current number of actions
+        # This ensures only new actions (after recreation) will be displayed
+        self._display_checkpoint = len(self.actions)
+
+        # Create a new Live display from current cursor position
+        # Reuse the same content renderer (it will respect the checkpoint)
+        if self._content_renderer:
+            self.live = Live(self._content_renderer, refresh_per_second=4)
+            self.live.start()
+
+            # Register with execution controller
+            try:
+                execution_controller.register_live_display(self.live)
+            except Exception as e:
+                logger.warning(f"Failed to register recreated live display: {e}")
+
+        return self.live
 
     def __enter__(self):
         # Create the content renderer
         class StreamingContent:
-            def __init__(self, actions_list, display_instance: ActionHistoryDisplay):
+            def __init__(self, actions_list, display_instance: ActionHistoryDisplay, context):
                 self.actions = actions_list
                 self.display = display_instance
+                self.context = context  # Reference to StreamingActionContext for checkpoint
 
             def __rich_console__(self, console, options):  # pylint: disable=unused-argument
-                # Update sliding window with current actions
+                # Filter actions based on checkpoint
+                # Only show actions that came after the display was recreated
+                filtered_actions = self.actions[self.context._display_checkpoint :]
+
+                # Update sliding window with filtered actions
                 if self.display._action_window is not None:
                     self.display._action_window.clear()
-                    for action in self.actions:
+                    for action in filtered_actions:
                         self.display._action_window.append(action)
 
                 # Generate content using content generator
@@ -648,7 +690,8 @@ class StreamingActionContext:
                 yield Panel(content, title="[bold cyan]Action Stream[/bold cyan]", border_style="cyan")
 
         # Create the content object that will update dynamically
-        content = StreamingContent(self.actions, self.display)
+        content = StreamingContent(self.actions, self.display, self)
+        self._content_renderer = content  # Save for potential recreation
 
         # Create Live display
         self.live = Live(content, refresh_per_second=4)
@@ -656,11 +699,11 @@ class StreamingActionContext:
         # Start the live display
         self.live.start()
 
-        # Register with execution controller
+        # Register with execution controller (including context for recreation)
         try:
             from datus.cli.execution_state import execution_controller
 
-            execution_controller.register_live_display(self.live)
+            execution_controller.register_live_display(self.live, context=self)
         except Exception as e:
             logger.warning(f"Failed to register live display: {e}")
 

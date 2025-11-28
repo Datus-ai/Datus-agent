@@ -11,6 +11,8 @@ from agents import SQLiteSession
 from agents.lifecycle import AgentHooks
 from rich.console import Console
 
+from datus.cli.blocking_input_manager import blocking_input_manager
+from datus.cli.execution_state import execution_controller
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -39,6 +41,7 @@ class PlanModeHooks(AgentHooks):
         self.execution_mode = "auto" if auto_mode else "manual"
         self.replan_feedback = ""
         self._state_transitions = []
+        self._plan_generated_pending = False  # Flag to defer plan display until LLM ends
 
     async def on_start(self, context, agent) -> None:
         logger.debug(f"Plan mode start: phase={self.plan_phase}")
@@ -56,7 +59,16 @@ class PlanModeHooks(AgentHooks):
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
 
         if tool_name == "todo_write":
-            logger.info("Plan generation completed, transitioning to confirmation")
+            logger.info("Plan generation completed, will show plan after LLM finishes current turn")
+            # Set flag instead of immediately showing plan
+            # This allows any remaining "Thinking" messages to be generated first
+            self._plan_generated_pending = True
+
+    async def on_llm_end(self, context, agent, output) -> None:
+        """Called when LLM finishes a turn - perfect time to show plan after all thinking is done"""
+        if self._plan_generated_pending and self.plan_phase == "generating":
+            logger.info("LLM turn ended and plan is pending, now showing plan")
+            self._plan_generated_pending = False
             await self._on_plan_generated()
 
     async def on_end(self, context, agent, output) -> None:
@@ -90,7 +102,12 @@ class PlanModeHooks(AgentHooks):
             self.console.print("[red]No plan generated[/]")
             return
 
-        self.console.print("\n[bold green]Plan Generated Successfully![/]")
+        # Stop live display BEFORE showing the plan (keep registered for restart)
+        # At this point, LLM has finished its turn, so all thinking/tool messages are already displayed
+        execution_controller.stop_live_display()
+        await asyncio.sleep(0.3)
+
+        self.console.print("[bold green]Plan Generated Successfully![/]")
         self.console.print("[bold cyan]Execution Plan:[/]")
 
         for i, item in enumerate(todo_list.items, 1):
@@ -116,7 +133,6 @@ class PlanModeHooks(AgentHooks):
         import sys
 
         try:
-            await asyncio.sleep(0.2)
             sys.stdout.flush()
             sys.stderr.flush()
 
@@ -129,18 +145,32 @@ class PlanModeHooks(AgentHooks):
             self.console.print("  4. Cancel")
             self.console.print("")
 
-            loop = asyncio.get_event_loop()
-            choice = await loop.run_in_executor(None, lambda: input("Your choice (1-4) [1]: ").strip() or "1")
+            # Pause execution while getting user input (live display already stopped by caller)
+            async with execution_controller.pause_execution():
+                # Small delay for console stability after flushing
+                await asyncio.sleep(0.2)
+
+                # Get input using blocking_input_manager
+                def get_user_input():
+                    return blocking_input_manager.get_blocking_input(
+                        lambda: input("Your choice (1-4) [1]: ").strip() or "1"
+                    )
+
+                choice = await execution_controller.request_user_input(get_user_input)
 
             if choice == "1":
                 self.execution_mode = "manual"
                 self._transition_state("executing", {"mode": "manual"})
                 self.console.print("[green]Manual confirmation mode selected[/]")
+                # Recreate live display from current cursor position (brand new display)
+                execution_controller.recreate_live_display()
                 return
             elif choice == "2":
                 self.execution_mode = "auto"
                 self._transition_state("executing", {"mode": "auto"})
                 self.console.print("[green]Auto execution mode selected[/]")
+                # Recreate live display from current cursor position (brand new display)
+                execution_controller.recreate_live_display()
                 return
             elif choice == "3":
                 await self._handle_replan()
@@ -160,8 +190,18 @@ class PlanModeHooks(AgentHooks):
     @optional_traceable(name="_handle_replan", run_type="chain")
     async def _handle_replan(self):
         try:
-            loop = asyncio.get_event_loop()
-            feedback = await loop.run_in_executor(None, lambda: input("\nFeedback for replanning: ").strip())
+            # Stop live display before prompting (keep registered for restart)
+            execution_controller.stop_live_display()
+
+            async with execution_controller.pause_execution():
+                await asyncio.sleep(0.1)
+
+                self.console.print("\n[bold yellow]Provide feedback for replanning:[/]")
+
+                def get_user_input():
+                    return blocking_input_manager.get_blocking_input(lambda: input("> ").strip())
+
+                feedback = await execution_controller.request_user_input(get_user_input)
             if feedback:
                 todo_list = self.todo_storage.get_todo_list()
                 completed_items = [item for item in todo_list.items if item.status == "completed"] if todo_list else []
@@ -207,10 +247,16 @@ class PlanModeHooks(AgentHooks):
 
         current_item = pending_items[0]
 
+        # Stop live display BEFORE showing step progress (keep registered for restart)
+        execution_controller.stop_live_display()
+
         await asyncio.sleep(0.2)
         sys.stdout.flush()
         sys.stderr.flush()
-        self.console.print("\n" + "-" * 40)
+
+        # Print newlines to push content down and avoid overlap when resuming
+        self.console.print("\n" * 2)
+        self.console.print("-" * 40)
 
         try:
             if self.execution_mode == "auto":
@@ -233,11 +279,22 @@ class PlanModeHooks(AgentHooks):
                     self.console.print(f"  {status_icon} {text_style}{i}. {item.content}{close_tag}")
 
                 self.console.print(f"\n[bold cyan]Auto Mode:[/] {current_item.content}")
-                loop = asyncio.get_event_loop()
-                choice = await loop.run_in_executor(None, lambda: input("Execute? (y/n) [y]: ").strip().lower() or "y")
+
+                # Pause execution while getting user input (live display already stopped)
+                async with execution_controller.pause_execution():
+                    await asyncio.sleep(0.1)
+
+                    def get_user_input():
+                        return blocking_input_manager.get_blocking_input(
+                            lambda: input("Execute? (y/n) [y]: ").strip().lower() or "y"
+                        )
+
+                    choice = await execution_controller.request_user_input(get_user_input)
 
                 if choice in ["y", "yes"]:
                     self.console.print("[green]Executing...[/]")
+                    # Recreate live display from current cursor position
+                    execution_controller.recreate_live_display()
                     return
                 elif choice in ["cancel", "c", "n", "no"]:
                     self.console.print("[yellow]Execution cancelled[/]")
@@ -270,15 +327,27 @@ class PlanModeHooks(AgentHooks):
                 self.console.print("  4. Cancel")
 
                 while True:
-                    loop = asyncio.get_event_loop()
-                    choice = await loop.run_in_executor(None, lambda: input("\nYour choice (1-4) [1]: ").strip() or "1")
+                    # Pause execution while getting user input (live display already stopped)
+                    async with execution_controller.pause_execution():
+                        await asyncio.sleep(0.1)
+
+                        def get_user_input():
+                            return blocking_input_manager.get_blocking_input(
+                                lambda: input("\nYour choice (1-4) [1]: ").strip() or "1"
+                            )
+
+                        choice = await execution_controller.request_user_input(get_user_input)
 
                     if choice == "1":
                         self.console.print("[green]Executing step...[/]")
+                        # Recreate live display from current cursor position
+                        execution_controller.recreate_live_display()
                         return
                     elif choice == "2":
                         self.execution_mode = "auto"
                         self.console.print("[green]Switching to auto mode...[/]")
+                        # Recreate live display from current cursor position
+                        execution_controller.recreate_live_display()
                         return
                     elif choice == "3":
                         await self._handle_replan()
