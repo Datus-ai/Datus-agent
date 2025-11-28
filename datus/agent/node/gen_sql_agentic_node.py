@@ -994,7 +994,7 @@ def build_enhanced_message(
     enhanced_message = user_message
     enhanced_parts = []
     if external_knowledge:
-        enhanced_parts.append(f"### External Knowledge (AUTHORITATIVE)\n{external_knowledge}")
+        enhanced_parts.append(f"MUST use these business logic:\n{external_knowledge}")
 
     context_parts = [f"**Dialect**: {db_type}"]
     if catalog:
@@ -1008,9 +1008,11 @@ def build_enhanced_message(
 
     if schemas:
         table_names_str = TableSchema.table_names_to_prompt(schemas)
-        table_schemas_str = TableSchema.list_to_prompt(schemas, dialect=db_type)
-        enhanced_parts.append(f"MUST USE AND ONLY USE THESE TABLES: \n{table_names_str}")
-        enhanced_parts.append(f"Pay attention to the column comments from these table schemas: \n{table_schemas_str}")
+        # table_schemas_str = TableSchema.list_to_prompt(schemas, dialect=db_type)
+        enhanced_parts.append(
+            f"Available tables (ONLY use these table names in FROM/JOIN clauses): \n{table_names_str}"
+        )
+        # enhanced_parts.append(f"Pay attention to the column comments from these table schemas: \n{table_schemas_str}")
     if metrics:
         enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
 
@@ -1018,6 +1020,8 @@ def build_enhanced_message(
         enhanced_parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
 
     if enhanced_parts:
-        enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {user_message}"
+        enhanced_message = (
+            f"{'\n\n'.join(enhanced_parts)}\n\nNow based on the roles above, answer the user question: {user_message}"
+        )
 
     return enhanced_message
