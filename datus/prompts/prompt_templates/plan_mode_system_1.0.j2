@@ -1,4 +1,6 @@
-{# Plan Mode Prompt Template
+{# Plan Mode Prompt Template - Sub-Query Decomposition Approach
+   Version 2.0 - Semantic Query Breakdown
+
    Variables:
    - current_phase: Current phase of plan mode ("generating", "executing", "confirming", etc.)
    - replan_feedback: User feedback for replanning (optional)
@@ -6,12 +8,19 @@
 
 {# Execution prompt - reused across different phases #}
 {% set execution_prompt %}
-After the plan has been confirmed, execute the pending steps.
+After the plan has been confirmed, execute each sub-query step:
 
-Execution steps for each pending step:
+EXECUTION WORKFLOW for each pending step:
 1. FIRST: call todo_update(todo_id, 'pending') to mark step as pending (triggers user confirmation)
-2. then execute the actual task (SQL queries, data processing, etc.)
-3. then call todo_update(todo_id, 'completed') to mark step as completed
+2. Execute the sub-query:
+   - Generate the SQL query for this specific sub-question
+   - Execute using `read_query` tool
+   - Validate the results (check for completeness, correctness, edge cases)
+   - Store/document the result for later aggregation
+3. Handle execution outcome:
+   - If successful: call todo_update(todo_id, 'completed')
+   - If failed: call todo_update(todo_id, 'failed') and analyze why
+   - If needs refinement: iterate on the query until correct
 
 Start with the first pending step in the plan.
 {% endset %}
@@ -19,34 +28,99 @@ Start with the first pending step in the plan.
 {% if replan_feedback and current_phase == "generating" %}
 {# REPLAN MODE: Generate revised plan based on user feedback #}
 
-REPLAN MODE
-Revise the current plan based on USER FEEDBACK: {{ replan_feedback }}
+REPLAN MODE - QUERY DECOMPOSITION
+Revise the current query decomposition plan based on USER FEEDBACK: {{ replan_feedback }}
 
 STEPS:
-1. FIRST: call todo_read to review the current plan, the completed and pending steps
-2. then call todo_write to generate revised plan following these rules:
-   - COMPLETED steps(if there are any): keep items as 'completed'
-   - PENDING steps that are no longer needed: DISCARD (don't include in new plan)
-   - PENDING steps that are still needed: keep as 'pending' or revise content
-   - NEW steps(if there are any): add as 'pending'
-3. Only include steps that are actually needed in the revised plan
+1. FIRST: call todo_read to review the current plan, the completed and pending sub-queries
+2. Analyze completed sub-queries:
+   - Review their results
+   - Identify what insights were gained
+   - Determine which remaining sub-questions are still needed
+3. Generate revised plan using todo_write following these rules:
+   - COMPLETED sub-queries: keep items as 'completed' with their results
+   - PENDING sub-queries that are no longer needed: DISCARD (don't include)
+   - PENDING sub-queries that are still needed: keep as 'pending' or revise based on new insights
+   - NEW sub-queries (if needed): add as 'pending'
+4. Only include sub-queries that are actually needed to answer the user's question
+
 {{ execution_prompt }}
 
 {% elif current_phase == "generating" %}
-{# INITIAL PLANNING PHASE: Generate initial plan #}
+{# INITIAL PLANNING PHASE: Generate query decomposition plan #}
 
-PLAN MODE - PLANNING PHASE
-Task: Break down user request into 3-8 steps.
+PLAN MODE - QUERY DECOMPOSITION PHASE
 
-call todo_write to generate complete todo list (3-8 steps)
-Example: todo_write('[{"content": "Connect to database", "status": "pending"}, {"content": "Query data", "status": "pending"}]')
+Your task is to break down the user's question into **independent sub-questions**, where each sub-question can be answered with a separate SQL query.
+
+DECOMPOSITION STRATEGY:
+1. Analyze the user's question to identify:
+   - What data entities/tables are involved?
+   - What are the distinct analytical components? (e.g., filtering, aggregation, comparison, ranking)
+   - What temporal/dimensional breakdowns are needed?
+   - Are there dependencies between parts of the question?
+
+2. Break down into sub-questions following these principles:
+   - Each sub-question should address ONE specific aspect of the overall question
+   - Sub-questions should be as independent as possible (can be executed in parallel)
+   - If dependencies exist, order them logically (prerequisite queries first)
+   - Each sub-question should produce a verifiable intermediate result
+   - The combination of all sub-query results should answer the complete question
+   - Number of sub-questions should match the actual complexity(MUST be less than 10 sub-questions):
+     * Simple questions: 1-2 sub-questions
+     * Medium complexity: 3-5 sub-questions
+     * Complex analytical questions: 6-10 sub-questions
+
+3. For each sub-question, define:
+   - What specific question it answers
+   - What tables/columns it will query
+   - What the expected output format is
+   - How it contributes to the final answer
+
+EXAMPLE DECOMPOSITION:
+User Question: "Compare the top 3 products by revenue in each region, and show year-over-year growth"
+
+Sub-questions:
+1. "Identify all unique regions in the database" → Validates data scope
+2. "Calculate total revenue per product per region" → Base aggregation
+3. "Rank products by revenue within each region and select top 3" → Ranking logic
+4. "Calculate revenue for the same products in the previous year" → Historical comparison
+5. "Compute year-over-year growth rate for top 3 products per region" → Final calculation
+6. "Format and present results with region, product, current revenue, previous revenue, growth %" → Aggregation
+
+Now, use todo_write to create the decomposition plan with appropriate number of sub-questions based on question complexity.
+
+Format each todo item as:
+{
+  "content": "Sub-question: [specific question to answer] | Expected: [what this query will return]",
+  "status": "pending"
+}
+
+Example:
+'[
+  {"content": "Sub-question: Identify all unique regions | Expected: List of region names", "status": "pending"},
+  {"content": "Sub-question: Calculate total revenue per product per region | Expected: Table with product_id, region, total_revenue", "status": "pending"}
+]'
+
 {{ execution_prompt }}
 
 {% else %}
 {# Default fallback: Check current plan status and execute if needed #}
 
-PLAN MODE
-Check todo_read to see current plan status and proceed accordingly.
+PLAN MODE - QUERY DECOMPOSITION
+Check todo_read to see current sub-query plan status and proceed accordingly.
+
+VALIDATION CHECKLIST for each completed sub-query:
+- Does the result answer the specific sub-question?
+- Is the data complete (no unexpected NULLs or missing values)?
+- Are there any edge cases to consider?
+- Does this result align with what's needed for the final aggregation?
+
+FINAL AGGREGATION:
+Once all sub-queries are completed:
+1. Review all intermediate results
+2. Synthesize them into a final SQL query or combine results programmatically
+3. Present the final answer with clear explanation of how sub-results were combined
 
 {{ execution_prompt }}
 {% endif %}

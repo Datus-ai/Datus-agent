@@ -14,7 +14,6 @@ from rich.console import Console
 from datus.cli.blocking_input_manager import blocking_input_manager
 from datus.cli.execution_state import execution_controller
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -89,7 +88,6 @@ class PlanModeHooks(AgentHooks):
         logger.info(f"Plan mode state transition: {old_state} -> {new_state}")
         return transition_data
 
-    @optional_traceable(name="_on_plan_generated", run_type="chain")
     async def _on_plan_generated(self):
         todo_list = self.todo_storage.get_todo_list()
         logger.info(f"Plan generation - todo_list: {todo_list.model_dump() if todo_list else None}")
@@ -127,7 +125,6 @@ class PlanModeHooks(AgentHooks):
             # Re-raise to be handled by chat_agentic_node.py
             raise
 
-    @optional_traceable(name="_get_user_confirmation", run_type="chain")
     async def _get_user_confirmation(self):
         import asyncio
         import sys
@@ -187,7 +184,6 @@ class PlanModeHooks(AgentHooks):
             self._transition_state("cancelled", {"reason": "keyboard_interrupt"})
             self.console.print("\n[yellow]Plan cancelled[/]")
 
-    @optional_traceable(name="_handle_replan", run_type="chain")
     async def _handle_replan(self):
         try:
             # Stop live display before prompting (keep registered for restart)
@@ -220,7 +216,6 @@ class PlanModeHooks(AgentHooks):
         except (KeyboardInterrupt, EOFError):
             self.console.print("\n[yellow]Replan cancelled[/]")
 
-    @optional_traceable(name="_handle_execution_step", run_type="chain")
     async def _handle_execution_step(self, _tool_name: str):
         import asyncio
         import sys
