@@ -90,7 +90,12 @@ class ActionHistoryManager:
         self.current_action_id: Optional[str] = None
 
     def add_action(self, action: ActionHistory) -> None:
-        """Add an action to the history"""
+        """Add an action to the history, preventing duplicates by action_id"""
+        # Check if action with same ID already exists (prevents duplicates from retries)
+        if self.find_action_by_id(action.action_id):
+            logger.debug(f"Action with id {action.action_id} already exists, skipping duplicate")
+            return
+
         logger.debug(f"Adding action: {action}")
         self.actions.append(action)
         self.current_action_id = action.action_id

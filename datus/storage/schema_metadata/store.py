@@ -365,6 +365,7 @@ class SchemaWithValueRAG:
         # Ensure tables are ready before direct table access
         self.schema_store._ensure_table_ready()
         self.value_store._ensure_table_ready()
+
         # Parse table names and build where clause
         table_conditions = []
         for full_table in tables:
@@ -442,6 +443,7 @@ class SchemaWithValueRAG:
             .to_arrow()
         )
         schemas_result = TableSchema.from_arrow(schema_results)
+
         value_results = (
             value_query.select(
                 [
@@ -458,6 +460,7 @@ class SchemaWithValueRAG:
             .to_arrow()
         )
         values_result = TableValue.from_arrow(value_results)
+
         return schemas_result, values_result
 
     def remove_data(

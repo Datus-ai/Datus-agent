@@ -37,6 +37,6 @@ workflow:
     - output
 
   gensql_agentic:
-    - games
+    - chatbot
     - execute_sql
     - output

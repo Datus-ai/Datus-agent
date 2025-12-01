@@ -847,9 +847,19 @@ class OpenAICompatibleModel(LLMBaseModel):
         max_retries = getattr(self.model_config, "max_retry", 3)
         retry_delay = getattr(self.model_config, "retry_interval", 2.0)
 
+        # Track already processed action IDs to prevent duplicates across retries
+        processed_action_ids = set()
+
         for attempt in range(max_retries):
             try:
                 async for action in _stream_operation():
+                    # Skip actions that were already yielded in previous retry attempts
+                    if action.action_id in processed_action_ids:
+                        logger.debug(f"Skipping duplicate action: {action.action_id}")
+                        continue
+
+                    # Mark this action as processed
+                    processed_action_ids.add(action.action_id)
                     yield action
                 # If we successfully complete, break out of retry loop
                 break
@@ -872,13 +882,14 @@ class OpenAICompatibleModel(LLMBaseModel):
                         status=ActionStatus.PROCESSING,
                     )
                     action_history_manager.add_action(retry_action)
+                    processed_action_ids.add(retry_action.action_id)
                     yield retry_action
 
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
                     # All retries exhausted
-                    logger.error(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
+                    logger.exception(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
 
     async def _extract_and_distribute_token_usage(self, result, action_history_manager: ActionHistoryManager) -> None:

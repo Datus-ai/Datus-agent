@@ -633,6 +633,9 @@ def resolve_env(value: str) -> str:
 
 
 def load_model_config(data: dict) -> ModelConfig:
+    max_retry = data.get("max_retry")
+    retry_interval = data.get("retry_interval")
+
     return ModelConfig(
         type=data["type"],
         base_url=resolve_env(data["base_url"]),
@@ -641,6 +644,8 @@ def load_model_config(data: dict) -> ModelConfig:
         save_llm_trace=data.get("save_llm_trace", False),
         enable_thinking=data.get("enable_thinking", False),
         default_headers=data.get("default_headers"),
+        max_retry=int(max_retry) if max_retry is not None else 3,
+        retry_interval=float(retry_interval) if retry_interval is not None else 2.0,
     )
 
 
