@@ -171,6 +171,8 @@ class PlanModeHooks(AgentHooks):
                 return
             elif choice == "3":
                 await self._handle_replan()
+                # Recreate live display for regeneration phase
+                execution_controller.recreate_live_display()
                 raise PlanningPhaseException(f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}")
             elif choice == "4":
                 self._transition_state("cancelled", {})
@@ -346,6 +348,8 @@ class PlanModeHooks(AgentHooks):
                         return
                     elif choice == "3":
                         await self._handle_replan()
+                        # Recreate live display for regeneration phase
+                        execution_controller.recreate_live_display()
                         raise PlanningPhaseException(
                             f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}"
                         )
