@@ -75,7 +75,7 @@ class SessionTodoStorage:
         """Save the todo list to in-memory storage"""
         try:
             self._current_todo_list = todo_list
-            logger.info(f"Saved todo list to memory with {len(todo_list.items)} items")
+            logger.debug(f"Saved todo list to memory with {len(todo_list.items)} items")
             return True
         except Exception as e:
             logger.error(f"Failed to save todo list to memory: {e}")
@@ -89,7 +89,7 @@ class SessionTodoStorage:
         """Clear the todo list from in-memory storage"""
         try:
             self._current_todo_list = None
-            logger.info("Cleared todo list from memory")
+            logger.debug("Cleared todo list from memory")
         except Exception as e:
             logger.error(f"Failed to clear todo list from memory: {e}")
 

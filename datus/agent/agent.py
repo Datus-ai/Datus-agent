@@ -473,8 +473,23 @@ class Agent:
         )
         self.check_db()
 
-        def run_single_task(task_id: str, benchmark_config: BenchmarkConfig, task_item: Dict[str, Any]):
-            """Execute a single benchmark task"""
+        def run_single_task(
+            task_id: str,
+            benchmark_config: BenchmarkConfig,
+            task_item: Dict[str, Any],
+            args: argparse.Namespace,
+            agent_config: AgentConfig,
+        ):
+            """Execute a single benchmark task with isolated Agent instance
+
+            Note: Each task creates its own Agent instance to avoid shared state.
+            However, the following resources are still shared across tasks:
+            - agent_config (AgentConfig): Shared configuration object
+            - Storage Cache (_CACHE_INSTANCE): Global singleton for schema/metrics storage
+            - DB Manager (_INSTANCE): Global singleton for database connections
+
+            These shared resources are generally safe for read-only operations in benchmark tasks.
+            """
             task = task_item.get(benchmark_config.question_key)
             if not task:
                 logger.warning(
@@ -486,14 +501,17 @@ class Agent:
             logger.info(f"start benchmark with {task_id}: {task}")
             use_tables = None if not benchmark_config.use_tables_key else task_item.get(benchmark_config.use_tables_key)
 
-            result = self.run(
+            # Create isolated Agent instance for this task to avoid shared state
+            task_agent = Agent(args, agent_config)
+
+            result = task_agent.run(
                 SqlTask(
                     id=task_id,
                     database_type=conn.dialect,
                     task=task,
                     database_name=database_name,
-                    output_dir=self.global_config.output_dir,
-                    current_date=self.args.current_date,
+                    output_dir=agent_config.output_dir,
+                    current_date=args.current_date,
                     tables=use_tables,
                     external_knowledge=""
                     if not benchmark_config.ext_knowledge_key
@@ -503,9 +521,7 @@ class Agent:
                 check_storage=False,
                 check_db=False,
             )
-            logger.info(
-                f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
-            )
+            logger.info(f"Finish benchmark with {task_id}, " f"file saved in {agent_config.output_dir}/{task_id}.csv.")
             return task_id, result
 
         max_workers = getattr(self.args, "max_workers", 1) or 1
@@ -523,7 +539,10 @@ class Agent:
                     task_id = str(raw_task_id)
                 task_item[task_id_key] = task_id
                 if not target_task_ids or task_id in target_task_ids:
-                    f = executor.submit(run_single_task, task_id, benchmark_config, task_item)
+                    # Pass args and agent_config to create isolated instances
+                    f = executor.submit(
+                        run_single_task, task_id, benchmark_config, task_item, self.args, self.global_config
+                    )
                     future_to_task[f] = task_item
 
             # Wait for completion

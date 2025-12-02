@@ -1,5 +1,4 @@
 {# Plan Mode Prompt Template - Sub-Query Decomposition Approach
-   Version 2.0 - Semantic Query Breakdown
 
    Variables:
    - current_phase: Current phase of plan mode ("generating", "executing", "confirming", etc.)
@@ -8,21 +7,27 @@
 
 {# Execution prompt - reused across different phases #}
 {% set execution_prompt %}
-After the plan has been confirmed, execute each sub-query step:
+IMPORTANT: After calling todo_write, immediately proceed to execute each sub-question step in sequence.
 
 EXECUTION WORKFLOW for each pending step:
-1. FIRST: call todo_update(todo_id, 'pending') to mark step as pending (triggers user confirmation)
-2. Execute the sub-query:
-   - Generate the SQL query for this specific sub-question
-   - Execute using `read_query` tool
-   - Validate the results (check for completeness, correctness, edge cases)
-   - Store/document the result for later aggregation
-3. Handle execution outcome:
-   - If successful: call todo_update(todo_id, 'completed')
-   - If failed: call todo_update(todo_id, 'failed') and analyze why
-   - If needs refinement: iterate on the query until correct
 
-Start with the first pending step in the plan.
+1. Start the step:
+   - Call todo_update(todo_id, 'pending') to mark step as starting
+
+2. Execute the sub-question to get actual data:
+   - Follow all tool usage rules from the system instructions
+   - Use available tools to explore schema and execute queries
+   - Generate and run SQL query that answers this specific sub-question
+   - Capture the actual query results (not just schema verification)
+
+3. Complete the step:
+   - ONLY call todo_update(todo_id, 'completed') after you have obtained actual query results
+   - Document the results for aggregating in later steps
+
+CRITICAL: Each step must produce REAL DATA RESULTS, not just schema verification.
+DO NOT mark a step as completed until you have executed queries and captured real data.
+
+DO NOT STOP after creating the plan. Continue with the first pending step immediately.
 {% endset %}
 
 {% if replan_feedback and current_phase == "generating" %}
@@ -62,14 +67,17 @@ DECOMPOSITION STRATEGY:
 
 2. Break down into sub-questions following these principles:
    - Each sub-question should address ONE specific aspect of the overall question
+   - Each sub-question MUST be answerable by a SINGLE SQL query that returns actual data
    - Sub-questions should be as independent as possible (can be executed in parallel)
    - If dependencies exist, order them logically (prerequisite queries first)
-   - Each sub-question should produce a verifiable intermediate result
+   - Each sub-question MUST produce actual data results (not just schema exploration)
    - The combination of all sub-query results should answer the complete question
    - Number of sub-questions should match the actual complexity(MUST be less than 10 sub-questions):
      * Simple questions: 1-2 sub-questions
      * Medium complexity: 3-5 sub-questions
      * Complex analytical questions: 6-10 sub-questions
+   - AVOID creating "schema exploration" or "understand tables" as separate sub-questions
+     (schema exploration is part of the execution workflow, not a sub-question)
 
 3. For each sub-question, define:
    - What specific question it answers
@@ -88,7 +96,7 @@ Sub-questions:
 5. "Compute year-over-year growth rate for top 3 products per region" → Final calculation
 6. "Format and present results with region, product, current revenue, previous revenue, growth %" → Aggregation
 
-Now, use todo_write to create the decomposition plan with appropriate number of sub-questions based on question complexity.
+STEP 1: Use todo_write to create the decomposition plan with appropriate number of sub-questions based on question complexity.
 
 Format each todo item as:
 {
@@ -102,7 +110,7 @@ Example:
   {"content": "Sub-question: Calculate total revenue per product per region | Expected: Table with product_id, region, total_revenue", "status": "pending"}
 ]'
 
-{{ execution_prompt }}
+STEP 2: {{ execution_prompt }}
 
 {% else %}
 {# Default fallback: Check current plan status and execute if needed #}

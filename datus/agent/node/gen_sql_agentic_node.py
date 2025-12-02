@@ -811,23 +811,12 @@ class GenSQLAgenticNode(AgenticNode):
             # Plan mode: standard tools + plan tools
             plan_tools = self.plan_hooks.get_plan_tools() if self.plan_hooks else []
 
-            # Add execution steps to instruction for consistency
+            # Use base instruction (chat_system.j2) which contains tool usage rules
             base_instruction = self._get_system_instruction(original_input)
-            current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
-
-            if current_phase in ["executing", "confirming"]:
-                plan_instruction = (
-                    base_instruction
-                    + "\n\nEXECUTION steps:\n"
-                    + "For each todo step: todo_update(id, 'pending') → execute task → todo_update(id, 'completed')\n"
-                    + "Always follow this exact sequence for every step."
-                )
-            else:
-                plan_instruction = base_instruction
 
             return {
                 "tools": self.tools + plan_tools,
-                "instruction": plan_instruction,
+                "instruction": base_instruction,
                 "hooks": self.plan_hooks,
             }
         else:
@@ -1008,11 +997,10 @@ def build_enhanced_message(
 
     if schemas:
         table_names_str = TableSchema.table_names_to_prompt(schemas)
-        table_schemas_str = TableSchema.list_to_prompt(schemas, dialect=db_type)
         enhanced_parts.append(
-            f"Available tables (ONLY use these table names in FROM/JOIN clauses): \n{table_names_str}"
+            f"Available tables (MUST use these tables and ONLY use these table names in FROM/JOIN clauses):"
+            f" \n{table_names_str}"
         )
-        enhanced_parts.append(f"Use these table schemas: \n{table_schemas_str}")
     if metrics:
         enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
 
