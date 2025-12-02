@@ -143,20 +143,49 @@ class SessionManager:
         else:
             logger.warning(f"Attempted to delete non-existent session: {session_id}")
 
-    def list_sessions(self) -> list[str]:
+    def list_sessions(self, limit: int = None, sort_by_modified: bool = False) -> list[str]:
         """
-        List all available session IDs.
+        List available session IDs.
+
+        Args:
+            limit: Maximum number of sessions to return (None for all)
+            sort_by_modified: If True, sort by file modification time (newest first). Defaults to False.
 
         Returns:
-            List of session IDs
+            List of session IDs sorted by modification time (newest first) if sort_by_modified is True
         """
         # Check for existing database files
         session_ids = []
         if os.path.exists(self.session_dir):
-            for filename in os.listdir(self.session_dir):
-                if filename.endswith(".db"):
-                    session_id = filename[:-3]  # Remove .db extension
-                    session_ids.append(session_id)
+            if sort_by_modified:
+                # Get files with modification times
+                files_with_mtime = []
+                for filename in os.listdir(self.session_dir):
+                    if filename.endswith(".db"):
+                        filepath = os.path.join(self.session_dir, filename)
+                        try:
+                            mtime = os.path.getmtime(filepath)
+                            session_id = filename[:-3]  # Remove .db extension
+                            files_with_mtime.append((session_id, mtime))
+                        except OSError:
+                            continue
+
+                # Sort by modification time (newest first) and extract session IDs
+                files_with_mtime.sort(key=lambda x: x[1], reverse=True)
+                session_ids = [sid for sid, _ in files_with_mtime]
+
+                # Apply limit if specified
+                if limit is not None:
+                    session_ids = session_ids[:limit]
+            else:
+                for filename in os.listdir(self.session_dir):
+                    if filename.endswith(".db"):
+                        session_id = filename[:-3]  # Remove .db extension
+                        session_ids.append(session_id)
+
+                        # Apply limit if specified
+                        if limit is not None and len(session_ids) >= limit:
+                            break
 
         return session_ids
 
@@ -170,15 +199,16 @@ class SessionManager:
         Returns:
             True if session exists and has data, False otherwise
         """
-        if session_id not in self.list_sessions():
+        # Check if database file exists first (avoid listing all sessions)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
             return False
 
         # Check if the session has actual data (messages or session record)
         try:
             import sqlite3
 
-            db_path = os.path.join(self.session_dir, f"{session_id}.db")
-            with sqlite3.connect(db_path) as conn:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
                 cursor = conn.cursor()
 
                 # Check if session has any messages
@@ -208,10 +238,11 @@ class SessionManager:
         Returns:
             Dictionary with session information including timestamps, file size, etc.
         """
-        if not self.session_exists(session_id):
-            return {"exists": False}
-
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
+
+        # Check if database file exists first
+        if not os.path.exists(db_path):
+            return {"exists": False}
 
         # Get basic file information
         file_info = {}
@@ -230,7 +261,7 @@ class SessionManager:
             import json
             import sqlite3
 
-            with sqlite3.connect(db_path) as conn:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
                 cursor = conn.cursor()
 
                 # Get session metadata with COALESCE for backward compatibility
@@ -349,7 +380,7 @@ class SessionManager:
 
             db_path = os.path.join(self.session_dir, f"{session_id}.db")
 
-            with sqlite3.connect(db_path) as conn:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
                 cursor = conn.cursor()
 
                 # Check if total_tokens column exists, add it if missing (backward compatibility)

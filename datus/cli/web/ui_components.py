@@ -264,10 +264,14 @@ class UIComponents:
 
         # Save button (only show if not in readonly mode)
         if not readonly_mode:
-            # Create unique ID for this SQL block
-            sql_id = hashlib.md5(sql.encode()).hexdigest()[:8]
+            # Create unique ID using current timestamp to ensure uniqueness across duplicate SQLs
+            import time
 
-            if st.button("👍 Success", key=f"save_{sql_id}", help="Save this query as a success story"):
+            sql_hash = hashlib.md5(sql.encode()).hexdigest()[:8]
+            timestamp = str(time.time()).replace(".", "_")  # Use timestamp for uniqueness
+            unique_key = f"save_{sql_hash}_{timestamp}"
+
+            if st.button("👍 Success", key=unique_key, help="Save this query as a success story"):
                 save_callback(sql, user_message)
 
     def display_markdown_response(self, response: str) -> None:

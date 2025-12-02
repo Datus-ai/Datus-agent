@@ -257,23 +257,21 @@ class StreamlitChatbot:
                 st.markdown("---")
                 st.subheader("📚 Session History")
 
-                # List all sessions
-                all_sessions = self.session_manager.list_sessions()
-                if all_sessions:
-                    # Get session info and sort by modified time
+                # List only recent 10 sessions (already sorted by modification time)
+                recent_sessions = self.session_manager.list_sessions(limit=10, sort_by_modified=True)
+                if recent_sessions:
+                    # Get session info for the recent sessions
                     session_infos = []
-                    for sid in all_sessions:
+                    for sid in recent_sessions:
                         info = self.session_manager.get_session_info(sid)
                         if info.get("exists"):
                             session_infos.append(info)
 
-                    session_infos.sort(key=lambda x: x.get("file_modified", 0), reverse=True)
-
-                    # Display recent 10 sessions
-                    st.caption(f"Showing {min(len(session_infos), 10)} of {len(session_infos)} sessions")
-
-                    for info in session_infos[:10]:
-                        self.ui.render_session_item(info)
+                    # Display recent sessions
+                    if session_infos:
+                        st.caption(f"Showing {len(session_infos)} recent session(s)")
+                        for info in session_infos:
+                            self.ui.render_session_item(info)
                 else:
                     st.caption("No saved sessions yet")
 
