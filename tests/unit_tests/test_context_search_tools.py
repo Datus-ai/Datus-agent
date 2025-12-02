@@ -37,20 +37,42 @@ def build_context_tools(mock_agent_config):
         metric_rag.search_all_metrics.return_value = metric_entries
         metric_rag.search_metrics.return_value = metric_cfg.get("search_return", [])
         metric_rag.get_metrics_size.return_value = metric_cfg.get("size", len(metric_entries))
+
+        def get_metric_by_name_impl(name):
+            for entry in metric_entries:
+                if entry.get("name") == name:
+                    return entry
+            return None
+
+        metric_rag.get_metric_by_name.side_effect = get_metric_by_name_impl
+
         if "search_all_side_effect" in metric_cfg:
             metric_rag.search_all_metrics.side_effect = metric_cfg["search_all_side_effect"]
         if "search_metrics_side_effect" in metric_cfg:
             metric_rag.search_metrics.side_effect = metric_cfg["search_metrics_side_effect"]
+        if "get_metric_by_name_side_effect" in metric_cfg:
+            metric_rag.get_metric_by_name.side_effect = metric_cfg["get_metric_by_name_side_effect"]
 
         sql_rag = Mock()
         sql_entries = sql_cfg.get("entries", [])
         sql_rag.search_all_reference_sql.return_value = sql_entries
         sql_rag.search_reference_sql_by_summary.return_value = sql_cfg.get("search_return", [])
         sql_rag.get_reference_sql_size.return_value = sql_cfg.get("size", len(sql_entries))
+
+        def get_reference_sql_by_name_impl(name):
+            for entry in sql_entries:
+                if entry.get("name") == name:
+                    return entry
+            return None
+
+        sql_rag.get_reference_sql_by_name.side_effect = get_reference_sql_by_name_impl
+
         if "search_all_side_effect" in sql_cfg:
             sql_rag.search_all_reference_sql.side_effect = sql_cfg["search_all_side_effect"]
         if "search_sql_side_effect" in sql_cfg:
             sql_rag.search_reference_sql_by_summary.side_effect = sql_cfg["search_sql_side_effect"]
+        if "get_reference_sql_by_name_side_effect" in sql_cfg:
+            sql_rag.get_reference_sql_by_name.side_effect = sql_cfg["get_reference_sql_by_name_side_effect"]
 
         with (
             patch("datus.tools.func_tool.context_search.SemanticMetricsRAG", return_value=metric_rag),
@@ -69,7 +91,15 @@ def test_available_tools_with_metrics_and_sql(build_context_tools):
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_domain_layers_tree", "search_metrics", "search_reference_sql"}
+    assert tool_names == {
+        "list_domain_layers_tree",
+        "search_metrics",
+        "search_reference_sql",
+        "list_metrics",
+        "get_metric",
+        "list_reference_sqls",
+        "get_reference_sql",
+    }
 
 
 def test_available_tools_metrics_only(build_context_tools):
@@ -79,7 +109,7 @@ def test_available_tools_metrics_only(build_context_tools):
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_domain_layers_tree", "search_metrics"}
+    assert tool_names == {"list_domain_layers_tree", "search_metrics", "list_metrics", "get_metric"}
 
 
 def test_available_tools_sql_only(build_context_tools):
@@ -89,7 +119,12 @@ def test_available_tools_sql_only(build_context_tools):
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_domain_layers_tree", "search_reference_sql"}
+    assert tool_names == {
+        "list_domain_layers_tree",
+        "search_reference_sql",
+        "list_reference_sqls",
+        "get_reference_sql",
+    }
 
 
 def test_list_domain_layers_tree_combined(build_context_tools):
@@ -231,3 +266,140 @@ def test_search_historical_sql_handles_failure(build_context_tools):
     assert result.success == 0
     assert "sql search failed" in (result.error or "")
     sql_rag.search_reference_sql_by_summary.assert_called_once()
+
+
+def test_list_metrics_all(build_context_tools):
+    tools, metric_rag, _ = build_context_tools(metric_cfg={"entries": METRIC_ENTRIES})
+
+    result = tools.list_metrics()
+    assert result.success == 1
+    assert "Sales" in result.result
+    assert "Revenue" in result.result["Sales"]
+    assert "Monthly" in result.result["Sales"]["Revenue"]
+    assert "Quarterly" in result.result["Sales"]["Revenue"]
+    assert isinstance(result.result["Sales"]["Revenue"]["Monthly"], list)
+    assert len(result.result["Sales"]["Revenue"]["Monthly"]) == 1
+    assert result.result["Sales"]["Revenue"]["Monthly"][0]["name"] == "monthly_sales"
+
+
+def test_list_metrics_with_domain_filter(build_context_tools):
+    tools, metric_rag, _ = build_context_tools(metric_cfg={"entries": METRIC_ENTRIES})
+
+    result = tools.list_metrics(domain="Sales")
+    assert result.success == 1
+    assert "Sales" in result.result
+    assert len(result.result) == 1
+
+
+def test_list_metrics_with_layer_filters(build_context_tools):
+    tools, metric_rag, _ = build_context_tools(metric_cfg={"entries": METRIC_ENTRIES})
+
+    result = tools.list_metrics(domain="Sales", layer1="Revenue", layer2="Monthly")
+    assert result.success == 1
+    assert result.result["Sales"]["Revenue"]["Monthly"][0]["name"] == "monthly_sales"
+    assert "Quarterly" not in result.result["Sales"]["Revenue"]
+
+
+def test_list_metrics_handles_exception(build_context_tools):
+    tools, metric_rag, _ = build_context_tools(
+        metric_cfg={"entries": [], "search_all_side_effect": RuntimeError("rag error")}
+    )
+
+    result = tools.list_metrics()
+    assert result.success == 0
+    assert "rag error" in (result.error or "")
+
+
+def test_get_metric_found(build_context_tools):
+    tools, metric_rag, _ = build_context_tools(metric_cfg={"entries": METRIC_ENTRIES})
+
+    result = tools.get_metric("monthly_sales")
+    assert result.success == 1
+    assert result.result["name"] == "monthly_sales"
+    assert result.result["domain"] == "Sales"
+
+
+def test_get_metric_not_found(build_context_tools):
+    tools, metric_rag, _ = build_context_tools(metric_cfg={"entries": METRIC_ENTRIES})
+
+    result = tools.get_metric("nonexistent_metric")
+    assert result.success == 0
+    assert "not found" in (result.error or "")
+
+
+def test_get_metric_handles_exception(build_context_tools):
+    tools, metric_rag, _ = build_context_tools(
+        metric_cfg={"entries": [], "get_metric_by_name_side_effect": RuntimeError("rag error")}
+    )
+
+    result = tools.get_metric("any_metric")
+    assert result.success == 0
+    assert "rag error" in (result.error or "")
+
+
+def test_list_reference_sqls_all(build_context_tools):
+    tools, _, sql_rag = build_context_tools(sql_cfg={"entries": SQL_ENTRIES})
+
+    result = tools.list_reference_sqls()
+    assert result.success == 1
+    assert "Sales" in result.result
+    assert "Support" in result.result
+    assert "Revenue" in result.result["Sales"]
+    assert "Tickets" in result.result["Support"]
+    assert isinstance(result.result["Sales"]["Revenue"]["Monthly"], list)
+    assert len(result.result["Sales"]["Revenue"]["Monthly"]) == 1
+    assert result.result["Sales"]["Revenue"]["Monthly"][0]["name"] == "sales_query"
+
+
+def test_list_reference_sqls_with_domain_filter(build_context_tools):
+    tools, _, sql_rag = build_context_tools(sql_cfg={"entries": SQL_ENTRIES})
+
+    result = tools.list_reference_sqls(domain="Support")
+    assert result.success == 1
+    assert "Support" in result.result
+    assert "Sales" not in result.result
+
+
+def test_list_reference_sqls_with_layer_filters(build_context_tools):
+    tools, _, sql_rag = build_context_tools(sql_cfg={"entries": SQL_ENTRIES})
+
+    result = tools.list_reference_sqls(domain="Support", layer1="Tickets", layer2="Escalations")
+    assert result.success == 1
+    assert result.result["Support"]["Tickets"]["Escalations"][0]["name"] == "support_query"
+
+
+def test_list_reference_sqls_handles_exception(build_context_tools):
+    tools, _, sql_rag = build_context_tools(
+        sql_cfg={"entries": [], "search_all_side_effect": RuntimeError("rag error")}
+    )
+
+    result = tools.list_reference_sqls()
+    assert result.success == 0
+    assert "rag error" in (result.error or "")
+
+
+def test_get_reference_sql_found(build_context_tools):
+    tools, _, sql_rag = build_context_tools(sql_cfg={"entries": SQL_ENTRIES})
+
+    result = tools.get_reference_sql("sales_query")
+    assert result.success == 1
+    assert result.result["name"] == "sales_query"
+    assert result.result["domain"] == "Sales"
+
+
+def test_get_reference_sql_not_found(build_context_tools):
+    tools, _, sql_rag = build_context_tools(sql_cfg={"entries": SQL_ENTRIES})
+
+    result = tools.get_reference_sql("nonexistent_sql")
+    assert result.success == 0
+    assert "not found" in (result.error or "")
+
+
+def test_get_reference_sql_handles_exception(build_context_tools):
+    tools, _, sql_rag = build_context_tools(
+        sql_cfg={"entries": [], "get_reference_sql_by_name_side_effect": RuntimeError("rag error")}
+    )
+
+    result = tools.get_reference_sql("any_sql")
+    assert result.success == 0
+    assert "rag error" in (result.error or "")

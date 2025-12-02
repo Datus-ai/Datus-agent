@@ -303,6 +303,26 @@ class SemanticMetricsRAG:
                 return query_result.remove_column(columns.index("_distance")).to_pylist()
             return query_result.to_pylist()
 
+    def get_metric_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific metric by its name.
+
+        Args:
+            name: The metric name to retrieve
+
+        Returns:
+            The metric dictionary if found, None otherwise
+        """
+        results = self.metric_storage._search_all(
+            where=eq("name", name),
+            select_fields=None,
+        )
+        if results is None or results.num_rows == 0:
+            return None
+
+        metrics = results.to_pylist()
+        return metrics[0] if metrics else None
+
     def get_semantic_model(
         self,
         catalog_name: str = "",

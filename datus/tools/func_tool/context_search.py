@@ -52,13 +52,14 @@ class ContextSearchTools:
     def available_tools(self) -> List[Tool]:
         tools = []
         if self.has_metrics:
-            for tool in (self.list_domain_layers_tree, self.search_metrics):
+            for tool in (self.list_domain_layers_tree, self.search_metrics, self.list_metrics, self.get_metric):
                 tools.append(trans_to_function_tool(tool))
 
         if self.has_reference_sql:
             if not self.has_metrics:
                 tools.append(trans_to_function_tool(self.list_domain_layers_tree))
-            tools.append(trans_to_function_tool(self.search_reference_sql))
+            for tool in (self.search_reference_sql, self.list_reference_sqls, self.get_reference_sql):
+                tools.append(trans_to_function_tool(tool))
         return tools
 
     def list_domain_layers_tree(self) -> FuncToolResult:
@@ -202,4 +203,174 @@ class ContextSearchTools:
             return FuncToolResult(success=1, error=None, result=result)
         except Exception as e:
             logger.error(f"Failed to search reference SQL for `{query_text}`: {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def list_metrics(self, domain: str = "", layer1: str = "", layer2: str = "") -> FuncToolResult:
+        """
+        List all metrics in the taxonomy tree structure with metric details at leaf nodes.
+
+        Args:
+            domain: Optional business domain filter
+            layer1: Optional first-layer subject filter
+            layer2: Optional second-layer subject filter
+
+        Returns:
+            FuncToolResult with tree structure where leaf nodes contain metric lists instead of counts.
+            Structure:
+            {
+                "<domain>": {
+                    "<layer1>": {
+                        "<layer2>": [
+                            {"name": "metric_name", "llm_text": "...", ...},
+                            ...
+                        ]
+                    }
+                }
+            }
+        """
+        try:
+            metrics = self.metric_rag.search_all_metrics(
+                select_fields=["domain", "layer1", "layer2", "name", "llm_text"]
+            )
+
+            # Filter by domain/layer if specified
+            if domain or layer1 or layer2:
+                filtered_metrics = []
+                for m in metrics:
+                    if domain and (m.get("domain") or "").strip() != domain:
+                        continue
+                    if layer1 and (m.get("layer1") or "").strip() != layer1:
+                        continue
+                    if layer2 and (m.get("layer2") or "").strip() != layer2:
+                        continue
+                    filtered_metrics.append(m)
+                metrics = filtered_metrics
+
+            # Build tree structure with metric lists at leaf nodes
+            tree: Dict[str, Dict[str, Dict[str, List[Dict[str, Any]]]]] = defaultdict(
+                lambda: defaultdict(lambda: defaultdict(list))
+            )
+
+            for metric in metrics:
+                d = (metric.get("domain") or "").strip()
+                l1 = (metric.get("layer1") or "").strip()
+                l2 = (metric.get("layer2") or "").strip()
+                tree[d][l1][l2].append(metric)
+
+            # Convert to regular dict for serialization
+            result = {
+                domain: {
+                    layer1: {layer2: metrics_list for layer2, metrics_list in layer2_map.items()}
+                    for layer1, layer2_map in layer1_map.items()
+                }
+                for domain, layer1_map in tree.items()
+            }
+
+            return FuncToolResult(result=result)
+        except Exception as e:
+            logger.error(f"Failed to list metrics: {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def get_metric(self, name: str) -> FuncToolResult:
+        """
+        Get detailed information for a specific metric by name.
+
+        Args:
+            name: The metric name to retrieve
+
+        Returns:
+            FuncToolResult with the metric details including name, description, constraint, sql_query, etc.
+        """
+        try:
+            metric = self.metric_rag.get_metric_by_name(name)
+            if metric is None:
+                return FuncToolResult(success=0, error=f"Metric '{name}' not found")
+            return FuncToolResult(result=metric)
+        except Exception as e:
+            logger.error(f"Failed to get metric '{name}': {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def list_reference_sqls(self, domain: str = "", layer1: str = "", layer2: str = "") -> FuncToolResult:
+        """
+        List all reference SQL queries in the taxonomy tree structure with SQL details at leaf nodes.
+
+        Args:
+            domain: Optional business domain filter
+            layer1: Optional first-layer subject filter
+            layer2: Optional second-layer subject filter
+
+        Returns:
+            FuncToolResult with tree structure where leaf nodes contain reference SQL lists instead of counts.
+            Structure:
+            {
+                "<domain>": {
+                    "<layer1>": {
+                        "<layer2>": [
+                            {"name": "sql_name", "sql": "...", "summary": "...", ...},
+                            ...
+                        ]
+                    }
+                }
+            }
+        """
+        try:
+            sqls = self.reference_sql_store.search_all_reference_sql(
+                selected_fields=["domain", "layer1", "layer2", "name", "summary"]
+            )
+
+            # Filter by domain/layer if specified
+            if domain or layer1 or layer2:
+                filtered_sqls = []
+                for s in sqls:
+                    if domain and (s.get("domain") or "").strip() != domain:
+                        continue
+                    if layer1 and (s.get("layer1") or "").strip() != layer1:
+                        continue
+                    if layer2 and (s.get("layer2") or "").strip() != layer2:
+                        continue
+                    filtered_sqls.append(s)
+                sqls = filtered_sqls
+
+            # Build tree structure with SQL lists at leaf nodes
+            tree: Dict[str, Dict[str, Dict[str, List[Dict[str, Any]]]]] = defaultdict(
+                lambda: defaultdict(lambda: defaultdict(list))
+            )
+
+            for sql in sqls:
+                d = (sql.get("domain") or "").strip()
+                l1 = (sql.get("layer1") or "").strip()
+                l2 = (sql.get("layer2") or "").strip()
+                tree[d][l1][l2].append(sql)
+
+            # Convert to regular dict for serialization
+            result = {
+                domain: {
+                    layer1: {layer2: sql_list for layer2, sql_list in layer2_map.items()}
+                    for layer1, layer2_map in layer1_map.items()
+                }
+                for domain, layer1_map in tree.items()
+            }
+
+            return FuncToolResult(result=result)
+        except Exception as e:
+            logger.error(f"Failed to list reference SQLs: {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def get_reference_sql(self, name: str) -> FuncToolResult:
+        """
+        Get detailed information for a specific reference SQL by name.
+
+        Args:
+            name: The reference SQL name to retrieve
+
+        Returns:
+            FuncToolResult with the SQL details including name, sql, comment, tags, summary, file_path, etc.
+        """
+        try:
+            sql = self.reference_sql_store.get_reference_sql_by_name(name)
+            if sql is None:
+                return FuncToolResult(success=0, error=f"Reference SQL '{name}' not found")
+            return FuncToolResult(result=sql)
+        except Exception as e:
+            logger.error(f"Failed to get reference SQL '{name}': {e}")
             return FuncToolResult(success=0, error=str(e))

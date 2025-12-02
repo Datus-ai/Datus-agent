@@ -295,6 +295,26 @@ class ReferenceSqlRAG:
             logger.info(f"No reference SQL results found for query: {query_text}")
             return []
 
+    def get_reference_sql_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific reference SQL by its name.
+
+        Args:
+            name: The reference SQL name to retrieve
+
+        Returns:
+            The reference SQL dictionary if found, None otherwise
+        """
+        results = self.reference_sql_storage._search_all(
+            where=eq("name", name),
+            select_fields=None,
+        )
+        if results is None or results.num_rows == 0:
+            return None
+
+        sqls = results.to_pylist()
+        return sqls[0] if sqls else None
+
     def get_reference_sql_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
         return self.reference_sql_storage._search_all(
             And([eq("domain", domain), eq("layer1", layer1), eq("layer2", layer2), eq("name", name)]),
