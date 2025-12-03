@@ -200,13 +200,21 @@ class ParallelNode(Node):
                 and child_spec in getattr(self.agent_config, "agentic_nodes", {})
             )
 
-            node_type_to_use = NodeType.TYPE_SUBWORKFLOW if is_subworkflow_name else child_spec
+            if is_subworkflow_name:
+                node_type_to_use = NodeType.TYPE_SUBWORKFLOW
+            elif is_agentic_node:
+                node_type_to_use = NodeType.TYPE_GENSQL
+            else:
+                node_type_to_use = child_spec
+
             child_node_id = f"{self.id}_child_{i}_{child_spec}"
-            child_description = (
-                f"Parallel child subworkflow: {child_spec}"
-                if is_subworkflow_name
-                else f"Parallel child: {NodeType.get_description(child_spec)}"
-            )
+
+            if is_subworkflow_name:
+                child_description = f"Parallel child subworkflow: {child_spec}"
+            elif is_agentic_node:
+                child_description = f"Parallel child agentic node: {child_spec}"
+            else:
+                child_description = f"Parallel child: {NodeType.get_description(child_spec)}"
 
             input_data = None
             if is_subworkflow_name:
