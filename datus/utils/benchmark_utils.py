@@ -482,6 +482,7 @@ def _extract_artifacts_from_action_history(
 
         output_payload = entry.get("output") or {}
         result_payload = _extract_result_payload(output_payload)
+        logger.info(f"function_name: {function_name}, result_payload: {result_payload}")
         if function_name in {"write_file", "read_file", "read_multiple_files", "search_files"}:
             _collect_file_artifacts(artifacts, result_payload)
         elif function_name in {"search_reference_sql", "search_sql"}:
@@ -1310,6 +1311,13 @@ class EvaluationReportBuilder:
         empty_result_task_ids: set[str] = set()
         comparison_error_task_ids: set[str] = set()
 
+        # Metrics comparison tracking
+        total_with_expected_metrics = 0
+        metrics_matched_count = 0
+        metrics_mismatched_count = 0
+        metrics_matched_task_ids: set[str] = set()
+        metrics_mismatched_task_ids: set[str] = set()
+
         for task_id, evaluation in evaluations.items():
             analysis = evaluation.analysis
 
@@ -1343,8 +1351,25 @@ class EvaluationReportBuilder:
                     mismatches += 1
                     mismatched_task_ids.add(task_id)
 
+                # Check metrics comparison
+                if outcome.tools_comparison:
+                    metrics_info = outcome.tools_comparison.get("expected_metrics", {})
+                    expected = metrics_info.get("expected", [])
+                    if expected:
+                        total_with_expected_metrics += 1
+                        match = metrics_info.get("match", False)
+                        if match:
+                            metrics_matched_count += 1
+                            metrics_matched_task_ids.add(task_id)
+                        else:
+                            metrics_mismatched_count += 1
+                            metrics_mismatched_task_ids.add(task_id)
+
         success_rate = (total_output_success / total_output_nodes * 100) if total_output_nodes else 0.0
         match_rate = (match_count / total_comparisons * 100) if total_comparisons else 0.0
+        metrics_match_rate = (
+            (metrics_matched_count / total_with_expected_metrics * 100) if total_with_expected_metrics else 0.0
+        )
 
         summary = {
             "total_files": total_files,
@@ -1360,6 +1385,14 @@ class EvaluationReportBuilder:
                 "comparison_error_task_ids": ",".join(map(str, sorted(comparison_error_task_ids))),
                 "empty_result_count": empty_result_count,
                 "match_rate": round(match_rate, 2),
+            },
+            "metrics_summary": {
+                "total_with_expected_metrics": total_with_expected_metrics,
+                "metrics_matched_count": metrics_matched_count,
+                "metrics_mismatched_count": metrics_mismatched_count,
+                "metrics_match_rate": round(metrics_match_rate, 2),
+                "metrics_matched_task_ids": ",".join(map(str, sorted(metrics_matched_task_ids))),
+                "metrics_mismatched_task_ids": ",".join(map(str, sorted(metrics_mismatched_task_ids))),
             },
         }
 
@@ -2124,6 +2157,18 @@ def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
         list_text = ", ".join(values) if values else "None"
         return f"{label:<40}{list_text}"
 
+    # Extract metrics summary
+    metrics_summary = summary.get("metrics_summary", {})
+    total_with_metrics = metrics_summary.get("total_with_expected_metrics", 0)
+    metrics_matched = metrics_summary.get("metrics_matched_count", 0)
+    metrics_mismatched = metrics_summary.get("metrics_mismatched_count", 0)
+    metrics_match_rate = metrics_summary.get("metrics_match_rate", 0.0)
+    metrics_matched_ids_str = metrics_summary.get("metrics_matched_task_ids", "")
+    metrics_mismatched_ids_str = metrics_summary.get("metrics_mismatched_task_ids", "")
+
+    metrics_matched_ids = set(_parse_task_ids(metrics_matched_ids_str))
+    metrics_mismatched_ids = set(_parse_task_ids(metrics_mismatched_ids_str))
+
     separator = "─" * 80
     report_lines = [
         separator,
@@ -2137,16 +2182,43 @@ def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
         _format_stat_line("         - Row Count Mismatch:", missmatch_row_count),
         _format_stat_line("         - Column Value Mismatch:", missmatch_column_count),
         separator,
-        "",
-        _format_list_line(" Passed Queries:", matched_ids),
-        _format_list_line(" No SQL / Empty Result Queries:", empty_result_ids),
-        _format_list_line(" Failed (Table Mismatch):", table_mismatch_ids),
-        _format_list_line(" Failed (Row Count Mismatch):", row_count_mismatch_ids),
-        _format_list_line(" Failed (Column Value Mismatch):", column_value_mismatch_ids),
-        "",
-        separator,
-        "",
     ]
+
+    # Add metrics summary if there are tasks with expected metrics
+    if total_with_metrics > 0:
+        report_lines.extend(
+            [
+                f" Metrics Evaluation (Total with Expected Metrics: {total_with_metrics})",
+                separator,
+                _format_stat_line(" ✅ Metrics Matched:", metrics_matched),
+                _format_stat_line(" ❌ Metrics Mismatched:", metrics_mismatched),
+                f" Metrics Match Rate: {metrics_match_rate:.2f}%",
+                separator,
+            ]
+        )
+
+    report_lines.extend(
+        [
+            "",
+            _format_list_line(" Passed Queries:", matched_ids),
+            _format_list_line(" No SQL / Empty Result Queries:", empty_result_ids),
+            _format_list_line(" Failed (Table Mismatch):", table_mismatch_ids),
+            _format_list_line(" Failed (Row Count Mismatch):", row_count_mismatch_ids),
+            _format_list_line(" Failed (Column Value Mismatch):", column_value_mismatch_ids),
+        ]
+    )
+
+    # Add metrics task IDs if available
+    if total_with_metrics > 0:
+        report_lines.extend(
+            [
+                "",
+                _format_list_line(" Metrics Matched Queries:", metrics_matched_ids),
+                _format_list_line(" Metrics Mismatched Queries:", metrics_mismatched_ids),
+            ]
+        )
+
+    report_lines.extend(["", separator, ""])
 
     logger.info(f'\n\n{"\n".join(report_lines)}')
 
