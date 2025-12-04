@@ -502,13 +502,16 @@ class Agent:
             logger.info(f"start benchmark with {task_id}: {task}")
             use_tables = None if not benchmark_config.use_tables_key else task_item.get(benchmark_config.use_tables_key)
 
+            # Use hierarchical save directory structure
+            output_dir = self.global_config.get_save_run_dir(run_id) if run_id else self.global_config.output_dir
+
             result = self.run(
                 SqlTask(
                     id=task_id,
                     database_type=conn.dialect,
                     task=task,
                     database_name=database_name,
-                    output_dir=self.global_config.output_dir,
+                    output_dir=output_dir,
                     current_date=self.args.current_date,
                     tables=use_tables,
                     external_knowledge=""
@@ -520,9 +523,7 @@ class Agent:
                 check_db=False,
                 run_id=run_id,
             )
-            logger.info(
-                f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
-            )
+            logger.info(f"Finish benchmark with {task_id}, " f"file saved in {output_dir}/{task_id}.csv.")
             return task_id, result
 
         max_workers = getattr(self.args, "max_workers", 1) or 1
@@ -599,6 +600,9 @@ class Agent:
                     # Use only file knowledge if metric_meta doesn't have any
                     combined_ext_knowledge = task["external_knowledge"]
 
+            # Use hierarchical save directory structure
+            output_dir = self.global_config.get_save_run_dir(run_id) if run_id else self.global_config.output_dir
+
             self.run(
                 SqlTask(
                     id=task_id,
@@ -609,16 +613,14 @@ class Agent:
                     domain=metric_meta.domain,
                     layer1=metric_meta.layer1,
                     layer2=metric_meta.layer2,
-                    output_dir=self.global_config.output_dir,
+                    output_dir=output_dir,
                     external_knowledge=combined_ext_knowledge,
                     current_date=self.args.current_date,
                 ),
                 run_id=run_id,
             )
 
-            logger.info(
-                f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
-            )
+            logger.info(f"Finish benchmark with {task_id}, " f"file saved in {output_dir}/{task_id}.csv.")
 
         return {"status": "success", "message": "Benchmark tasks executed successfully"}
 

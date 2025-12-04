@@ -556,8 +556,26 @@ class ResultProvider(Protocol):
 
 
 class CsvPerTaskResultProvider(ResultProvider):
-    def __init__(self, directory: str):
-        self.directory = Path(directory)
+    def __init__(self, directory: str, namespace: Optional[str] = None, run_id: Optional[str] = None):
+        """
+        Initialize CSV result provider with support for hierarchical directory structure.
+
+        Args:
+            directory: Base directory path
+            namespace: Optional namespace subdirectory
+            run_id: Optional run_id subdirectory
+        """
+        self.base_directory = Path(directory)
+        self.namespace = namespace
+        self.run_id = run_id
+
+        # Determine actual search directory
+        if namespace and run_id:
+            self.directory = self.base_directory / namespace / run_id
+        elif namespace:
+            self.directory = self.base_directory / namespace
+        else:
+            self.directory = self.base_directory
 
     def fetch(self, task_id: str) -> ResultData:
         csv_path = self.directory / f"{task_id}.csv"
@@ -923,9 +941,34 @@ class AgentResultSqlProvider(SqlProvider):
     Parser for JSON files output by Datus-Agent
     """
 
-    def __init__(self, result_dir: str, dialect: str = DBType.SNOWFLAKE):
-        self.result_dir = Path(result_dir)
+    def __init__(
+        self,
+        result_dir: str,
+        dialect: str = DBType.SNOWFLAKE,
+        namespace: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """
+        Initialize agent result SQL provider with support for hierarchical directory structure.
+
+        Args:
+            result_dir: Base result directory path
+            dialect: SQL dialect
+            namespace: Optional namespace subdirectory
+            run_id: Optional run_id subdirectory
+        """
+        self.base_result_dir = Path(result_dir)
         self.dialect = dialect
+        self.namespace = namespace
+        self.run_id = run_id
+
+        # Determine actual search directory
+        if namespace and run_id:
+            self.result_dir = self.base_result_dir / namespace / run_id
+        elif namespace:
+            self.result_dir = self.base_result_dir / namespace
+        else:
+            self.result_dir = self.base_result_dir
 
     def fetch(self, task_id: str) -> SqlData:
         if not self.result_dir.exists():
@@ -1677,6 +1720,42 @@ def list_trajectory_runs(trajectory_dir: str, namespace: Optional[str] = None) -
     return runs
 
 
+def list_save_runs(save_dir: str, namespace: Optional[str] = None) -> Dict[str, List[str]]:
+    """
+    List all available run IDs in the save directory.
+
+    Args:
+        save_dir: Base save directory
+        namespace: Optional namespace to filter by
+
+    Returns:
+        Dict mapping namespace to list of run_ids (sorted by name, newest first)
+    """
+    directory = Path(save_dir)
+    if not directory.exists():
+        return {}
+
+    runs: Dict[str, List[str]] = {}
+
+    if namespace:
+        # List runs for specific namespace
+        namespace_dir = directory / namespace
+        if namespace_dir.exists() and namespace_dir.is_dir():
+            run_dirs = sorted([d.name for d in namespace_dir.iterdir() if d.is_dir()], reverse=True)
+            if run_dirs:
+                runs[namespace] = run_dirs
+    else:
+        # List runs for all namespaces
+        for ns_dir in directory.iterdir():
+            if ns_dir.is_dir():
+                ns_name = ns_dir.name
+                run_dirs = sorted([d.name for d in ns_dir.iterdir() if d.is_dir()], reverse=True)
+                if run_dirs:
+                    runs[ns_name] = run_dirs
+
+    return runs
+
+
 def collect_latest_trajectory_files(
     save_dir: str, namespace: Optional[str] = None, run_id: Optional[str] = None
 ) -> Dict[str, Path]:
@@ -2000,7 +2079,15 @@ def evaluate_benchmark(
     target_task_ids: Optional[Iterable[str]] = None,
     run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    result_directory = Path(agent_config.output_dir)
+    namespace = agent_config.current_namespace
+
+    # Use the new hierarchical directory structure
+    if run_id:
+        result_directory = Path(agent_config.get_save_run_dir(run_id))
+    else:
+        # Fallback to legacy flat structure for backward compatibility
+        result_directory = Path(agent_config.output_dir)
+
     if not result_directory.exists():
         logger.warning(f"Result directory not found at {result_directory}")
         return {}
@@ -2034,8 +2121,12 @@ def evaluate_benchmark(
     if not dialect:
         dialect = _default_sql_dialect(benchmark_platform)
 
-    agent_result_provider = CsvPerTaskResultProvider(str(result_directory))
-    result_sql_provider = AgentResultSqlProvider(str(result_directory), dialect=dialect)
+    # Use base save directory for providers, they will handle subdirectories
+    save_base_dir = Path(agent_config._save_dir)
+    agent_result_provider = CsvPerTaskResultProvider(str(save_base_dir), namespace=namespace, run_id=run_id)
+    result_sql_provider = AgentResultSqlProvider(
+        str(save_base_dir), dialect=dialect, namespace=namespace, run_id=run_id
+    )
     try:
         gold_sql_provider = _build_gold_sql_provider(benchmark_config, benchmark_root, question_file_path, dialect)
         gold_result_provider = _build_gold_result_provider(
@@ -2057,7 +2148,6 @@ def evaluate_benchmark(
         gold_sql_provider=gold_sql_provider,
     )
 
-    namespace = agent_config.current_namespace
     report = evaluator.evaluate_directory(
         str(trajectory_directory), target_task_ids, namespace=namespace, run_id=run_id
     )

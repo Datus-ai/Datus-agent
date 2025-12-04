@@ -130,6 +130,25 @@ class DatusPathManager:
         base.mkdir(parents=True, exist_ok=True)
         return base
 
+    def save_run_dir(self, namespace: str, run_id: Optional[str] = None) -> Path:
+        """
+        Get save directory for a specific namespace and run.
+
+        Args:
+            namespace: Namespace name
+            run_id: Optional run identifier (timestamp). If None, returns namespace dir only.
+
+        Returns:
+            Path: ~/.datus/save/{namespace}/{run_id} or ~/.datus/save/{namespace}
+        """
+        base = self.save_dir / namespace
+        if run_id:
+            path = base / run_id
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        base.mkdir(parents=True, exist_ok=True)
+        return base
+
     @property
     def semantic_models_dir(self) -> Path:
         """Semantic models directory: ~/.datus/semantic_models"""

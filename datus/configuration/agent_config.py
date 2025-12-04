@@ -372,6 +372,21 @@ class AgentConfig:
     def output_dir(self) -> str:
         return f"{self._save_dir}/{self._current_namespace}"
 
+    def get_save_run_dir(self, run_id: Optional[str] = None) -> str:
+        """
+        Get save directory for current namespace and optional run_id.
+
+        Args:
+            run_id: Optional run identifier (typically a timestamp)
+
+        Returns:
+            Path string for save storage
+        """
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+        return str(path_manager.save_run_dir(self._current_namespace, run_id))
+
     @property
     def trajectory_dir(self) -> str:
         return self._trajectory_dir
