@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+from datetime import datetime
 from typing import AsyncGenerator, Callable, Dict, Optional
 
 from datus.agent.evaluate import evaluate_result, setup_node_input
@@ -26,12 +27,15 @@ class WorkflowRunner:
         agent_config: AgentConfig,
         *,
         pre_run_callable: Optional[Callable[[], Dict]] = None,
+        run_id: Optional[str] = None,
     ):
         self.args = args
         self.global_config = agent_config
         self.workflow: Optional[Workflow] = None
         self.workflow_ready = False
         self._pre_run = pre_run_callable
+        # Generate run_id if not provided (format: YYYYMMDD_HHMMSS)
+        self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
 
     def initialize_workflow(self, sql_task: SqlTask):
         """Generate a new workflow plan."""
@@ -105,8 +109,9 @@ class WorkflowRunner:
         self.workflow.display()
         file_name = self.workflow.task.id
         timestamp = int(time.time())
-        trajectory_dir = self.global_config.trajectory_dir
 
+        # Use new hierarchical directory structure: {trajectory_dir}/{namespace}/{run_id}/
+        trajectory_dir = self.global_config.get_trajectory_run_dir(self.run_id)
         os.makedirs(trajectory_dir, exist_ok=True)
 
         save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
@@ -119,6 +124,7 @@ class WorkflowRunner:
             "final_result": final_result,
             "save_path": save_path,
             "steps": step_count,
+            "run_id": self.run_id,
         }
 
     def _ensure_prerequisites(self, sql_task: Optional[SqlTask], check_storage: bool) -> bool:

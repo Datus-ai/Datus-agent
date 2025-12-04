@@ -1434,8 +1434,14 @@ class BenchmarkEvaluator:
         self.comparator = comparator or TableComparator()
         self.report_builder = report_builder or EvaluationReportBuilder()
 
-    def evaluate_directory(self, trajectory_dir: str, target_task_ids: Iterable[str]) -> EvaluationReport:
-        trajectories = collect_latest_trajectory_files(trajectory_dir)
+    def evaluate_directory(
+        self,
+        trajectory_dir: str,
+        target_task_ids: Iterable[str],
+        namespace: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> EvaluationReport:
+        trajectories = collect_latest_trajectory_files(trajectory_dir, namespace=namespace, run_id=run_id)
         target_ids = {str(task_id) for task_id in target_task_ids}
         trajectories = {task_id: path for task_id, path in trajectories.items() if task_id in target_ids}
 
@@ -1635,17 +1641,100 @@ class BenchmarkEvaluator:
         outcome.tools_comparison = artifact_results
 
 
-def collect_latest_trajectory_files(save_dir: str) -> Dict[str, Path]:
+def list_trajectory_runs(trajectory_dir: str, namespace: Optional[str] = None) -> Dict[str, List[str]]:
+    """
+    List all available run IDs in the trajectory directory.
+
+    Args:
+        trajectory_dir: Base trajectory directory
+        namespace: Optional namespace to filter by
+
+    Returns:
+        Dict mapping namespace to list of run_ids (sorted by name, newest first)
+    """
+    directory = Path(trajectory_dir)
+    if not directory.exists():
+        return {}
+
+    runs: Dict[str, List[str]] = {}
+
+    if namespace:
+        # List runs for specific namespace
+        namespace_dir = directory / namespace
+        if namespace_dir.exists() and namespace_dir.is_dir():
+            run_dirs = sorted([d.name for d in namespace_dir.iterdir() if d.is_dir()], reverse=True)
+            if run_dirs:
+                runs[namespace] = run_dirs
+    else:
+        # List runs for all namespaces
+        for ns_dir in directory.iterdir():
+            if ns_dir.is_dir():
+                ns_name = ns_dir.name
+                run_dirs = sorted([d.name for d in ns_dir.iterdir() if d.is_dir()], reverse=True)
+                if run_dirs:
+                    runs[ns_name] = run_dirs
+
+    return runs
+
+
+def collect_latest_trajectory_files(
+    save_dir: str, namespace: Optional[str] = None, run_id: Optional[str] = None
+) -> Dict[str, Path]:
+    """
+    Collect latest trajectory files from directory.
+
+    Supports both legacy flat structure and new hierarchical structure:
+    - Legacy: {save_dir}/*.yaml
+    - New: {save_dir}/{namespace}/{run_id}/*.yaml
+
+    Args:
+        save_dir: Base trajectory directory
+        namespace: Optional namespace to filter by
+        run_id: Optional run_id to filter by. If None, finds latest run.
+
+    Returns:
+        Dict mapping task_id to latest trajectory file path
+    """
     directory = Path(save_dir)
     if not directory.exists():
         return {}
 
     file_groups: dict[str, list[tuple[float, Path]]] = defaultdict(list)
 
-    for filepath in directory.glob("*.yaml"):
-        task_id, timestamp = parse_trajectory_filename(filepath.name)
-        if task_id and timestamp is not None:
-            file_groups[task_id].append((timestamp, filepath))
+    # Determine search paths based on structure
+    search_paths: list[Path] = []
+
+    if namespace and run_id:
+        # Specific namespace and run
+        search_paths.append(directory / namespace / run_id)
+    elif namespace:
+        # Specific namespace, find latest run
+        namespace_dir = directory / namespace
+        if namespace_dir.exists():
+            run_dirs = sorted([d for d in namespace_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True)
+            if run_dirs:
+                search_paths.append(run_dirs[0])
+    else:
+        # Legacy flat structure or search all
+        if any(directory.glob("*.yaml")):
+            # Legacy flat structure
+            search_paths.append(directory)
+        else:
+            # Search in all namespace/run directories
+            for ns_dir in directory.iterdir():
+                if ns_dir.is_dir():
+                    run_dirs = sorted([d for d in ns_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True)
+                    if run_dirs:
+                        search_paths.append(run_dirs[0])
+
+    # Collect trajectory files from search paths
+    for search_path in search_paths:
+        if not search_path.exists():
+            continue
+        for filepath in search_path.glob("*.yaml"):
+            task_id, timestamp = parse_trajectory_filename(filepath.name)
+            if task_id and timestamp is not None:
+                file_groups[task_id].append((timestamp, filepath))
 
     latest_files: Dict[str, Path] = {}
     for task_id, files in file_groups.items():
@@ -1909,6 +1998,7 @@ def evaluate_benchmark(
     agent_config: AgentConfig,
     benchmark_platform: str,
     target_task_ids: Optional[Iterable[str]] = None,
+    run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     result_directory = Path(agent_config.output_dir)
     if not result_directory.exists():
@@ -1967,7 +2057,10 @@ def evaluate_benchmark(
         gold_sql_provider=gold_sql_provider,
     )
 
-    report = evaluator.evaluate_directory(str(trajectory_directory), target_task_ids)
+    namespace = agent_config.current_namespace
+    report = evaluator.evaluate_directory(
+        str(trajectory_directory), target_task_ids, namespace=namespace, run_id=run_id
+    )
     return report.to_dict()
 
 
@@ -1977,11 +2070,13 @@ def evaluate_benchmark_and_report(
     target_task_ids: Optional[Iterable[str]] = None,
     output_file: Optional[str] = None,
     log_summary: bool = True,
+    run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     accuracy_report = evaluate_benchmark(
         agent_config=agent_config,
         benchmark_platform=benchmark_platform,
         target_task_ids=target_task_ids,
+        run_id=run_id,
     )
 
     if accuracy_report.get("status") == "success":

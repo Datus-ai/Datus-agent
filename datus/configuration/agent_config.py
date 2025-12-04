@@ -376,6 +376,21 @@ class AgentConfig:
     def trajectory_dir(self) -> str:
         return self._trajectory_dir
 
+    def get_trajectory_run_dir(self, run_id: Optional[str] = None) -> str:
+        """
+        Get trajectory directory for current namespace and optional run_id.
+
+        Args:
+            run_id: Optional run identifier (typically a timestamp)
+
+        Returns:
+            Path string for trajectory storage
+        """
+        from datus.utils.path_manager import get_path_manager
+
+        path_manager = get_path_manager()
+        return str(path_manager.trajectory_run_dir(self._current_namespace, run_id))
+
     def reflection_nodes(self, strategy: str) -> List[str]:
         if strategy not in self._reflection_nodes:
             raise DatusException(

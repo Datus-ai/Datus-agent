@@ -111,6 +111,25 @@ class DatusPathManager:
         """Trajectory directory: ~/.datus/trajectory"""
         return self._datus_home / "trajectory"
 
+    def trajectory_run_dir(self, namespace: str, run_id: Optional[str] = None) -> Path:
+        """
+        Get trajectory directory for a specific namespace and run.
+
+        Args:
+            namespace: Namespace name
+            run_id: Optional run identifier (timestamp). If None, returns namespace dir only.
+
+        Returns:
+            Path: ~/.datus/trajectory/{namespace}/{run_id} or ~/.datus/trajectory/{namespace}
+        """
+        base = self.trajectory_dir / namespace
+        if run_id:
+            path = base / run_id
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        base.mkdir(parents=True, exist_ok=True)
+        return base
+
     @property
     def semantic_models_dir(self) -> Path:
         """Semantic models directory: ~/.datus/semantic_models"""

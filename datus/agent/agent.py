@@ -113,15 +113,23 @@ class Agent:
 
         logger.info(f"Storage modules initialized: {list(self.storage_modules.keys())}")
 
-    def create_workflow_runner(self, check_db: bool = True) -> WorkflowRunner:
+    def create_workflow_runner(self, check_db: bool = True, run_id: Optional[str] = None) -> WorkflowRunner:
         """Create a workflow runner that can safely execute in isolation."""
-        return WorkflowRunner(self.args, self.global_config, pre_run_callable=self.check_db if check_db else None)
+        return WorkflowRunner(
+            self.args, self.global_config, pre_run_callable=self.check_db if check_db else None, run_id=run_id
+        )
 
-    def run(self, sql_task: Optional[SqlTask] = None, check_storage: bool = False, check_db: bool = True) -> dict:
+    def run(
+        self,
+        sql_task: Optional[SqlTask] = None,
+        check_storage: bool = False,
+        check_db: bool = True,
+        run_id: Optional[str] = None,
+    ) -> dict:
         """
         Execute a workflow synchronously via a dedicated runner.
         """
-        runner = self.create_workflow_runner(check_db=check_db)
+        runner = self.create_workflow_runner(check_db=check_db, run_id=run_id)
         return runner.run(sql_task=sql_task, check_storage=check_storage)
 
     async def run_stream(
@@ -451,23 +459,31 @@ class Agent:
         target_task_ids = getattr(self.args, "benchmark_task_ids", [])
         target_task_ids = set(target_task_ids) if target_task_ids else None
         import time
+        from datetime import datetime
+
+        # Generate a shared run_id for this benchmark run
+        benchmark_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        logger.info(f"Benchmark run_id: {benchmark_run_id}")
 
         start = time.perf_counter()
         if benchmark_platform == "semantic_layer":
             self.global_config.check_init_storage_config("metric")
-            result = self.benchmark_semantic_layer(benchmark_path, target_task_ids)
+            result = self.benchmark_semantic_layer(benchmark_path, target_task_ids, run_id=benchmark_run_id)
         else:
             self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metric")
-            result = self.do_benchmark(benchmark_platform, target_task_ids)
+            result = self.do_benchmark(benchmark_platform, target_task_ids, run_id=benchmark_run_id)
         end = time.perf_counter()
 
         time_spends = end - start
         result["time_spends"] = format_duration_human(time_spends)
         result["time_spends_seconds"] = str(time_spends)
+        result["run_id"] = benchmark_run_id
         return result
 
-    def do_benchmark(self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None):
+    def do_benchmark(
+        self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
+    ):
         _, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
             self.global_config.current_namespace
         )
@@ -502,6 +518,7 @@ class Agent:
                 ),
                 check_storage=False,
                 check_db=False,
+                run_id=run_id,
             )
             logger.info(
                 f"Finish benchmark with {task_id}, " f"file saved in {self.global_config.output_dir}/{task_id}.csv."
@@ -538,7 +555,9 @@ class Agent:
         logger.info("Benchmark execution completed.")
         return {"status": "success", "message": "Benchmark tasks executed successfully"}
 
-    def benchmark_semantic_layer(self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None):
+    def benchmark_semantic_layer(
+        self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
+    ):
         task_file = self.args.testing_set
         self._check_benchmark_file(task_file)
 
@@ -593,7 +612,8 @@ class Agent:
                     output_dir=self.global_config.output_dir,
                     external_knowledge=combined_ext_knowledge,
                     current_date=self.args.current_date,
-                )
+                ),
+                run_id=run_id,
             )
 
             logger.info(
@@ -645,12 +665,14 @@ class Agent:
 
         from datus.utils.benchmark_utils import evaluate_benchmark_and_report
 
+        run_id = getattr(self.args, "run_id", None)
         evaluation_result = evaluate_benchmark_and_report(
             agent_config=self.global_config,
             benchmark_platform=benchmark_platform,
             target_task_ids=self.args.task_ids,
             output_file=self.args.output_file,
             log_summary=log_summary,
+            run_id=run_id,
         )
         return {
             "status": evaluation_result.get("status"),
