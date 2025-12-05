@@ -558,23 +558,40 @@ class ResultProvider(Protocol):
 class CsvPerTaskResultProvider(ResultProvider):
     def __init__(self, directory: str, namespace: Optional[str] = None, run_id: Optional[str] = None):
         """
-        Initialize CSV result provider with support for hierarchical directory structure.
+        Initialize CSV result provider with hierarchical directory structure.
 
         Args:
             directory: Base directory path
-            namespace: Optional namespace subdirectory
-            run_id: Optional run_id subdirectory
+            namespace: Optional namespace subdirectory. If None, uses directory directly.
+            run_id: Optional run_id subdirectory. If None and namespace is provided, uses latest run.
         """
         self.base_directory = Path(directory)
         self.namespace = namespace
         self.run_id = run_id
 
         # Determine actual search directory
-        if namespace and run_id:
-            self.directory = self.base_directory / namespace / run_id
-        elif namespace:
-            self.directory = self.base_directory / namespace
+        if namespace:
+            namespace_dir = self.base_directory / namespace
+            if run_id:
+                # Specific namespace and run
+                self.directory = namespace_dir / run_id
+            else:
+                # Auto-select latest run
+                if namespace_dir.exists() and namespace_dir.is_dir():
+                    run_dirs = sorted(
+                        [d for d in namespace_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True
+                    )
+                    if run_dirs:
+                        self.directory = run_dirs[0]
+                        logger.info(f"Auto-selected latest run: {run_dirs[0].name}")
+                    else:
+                        # No run subdirectories found
+                        self.directory = namespace_dir
+                else:
+                    # Namespace directory doesn't exist yet
+                    self.directory = namespace_dir
         else:
+            # No namespace - use directory directly (for gold results)
             self.directory = self.base_directory
 
     def fetch(self, task_id: str) -> ResultData:
@@ -944,18 +961,18 @@ class AgentResultSqlProvider(SqlProvider):
     def __init__(
         self,
         result_dir: str,
-        dialect: str = DBType.SNOWFLAKE,
-        namespace: Optional[str] = None,
+        namespace: str,
         run_id: Optional[str] = None,
+        dialect: str = DBType.SNOWFLAKE,
     ):
         """
-        Initialize agent result SQL provider with support for hierarchical directory structure.
+        Initialize agent result SQL provider with hierarchical directory structure.
 
         Args:
             result_dir: Base result directory path
+            namespace: Namespace subdirectory (required)
+            run_id: Optional run_id subdirectory. If None, uses latest run.
             dialect: SQL dialect
-            namespace: Optional namespace subdirectory
-            run_id: Optional run_id subdirectory
         """
         self.base_result_dir = Path(result_dir)
         self.dialect = dialect
@@ -963,12 +980,25 @@ class AgentResultSqlProvider(SqlProvider):
         self.run_id = run_id
 
         # Determine actual search directory
-        if namespace and run_id:
-            self.result_dir = self.base_result_dir / namespace / run_id
-        elif namespace:
-            self.result_dir = self.base_result_dir / namespace
+        namespace_dir = self.base_result_dir / namespace
+        if run_id:
+            # Specific namespace and run
+            self.result_dir = namespace_dir / run_id
         else:
-            self.result_dir = self.base_result_dir
+            # Auto-select latest run
+            if namespace_dir.exists() and namespace_dir.is_dir():
+                run_dirs = sorted(
+                    [d for d in namespace_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True
+                )
+                if run_dirs:
+                    self.result_dir = run_dirs[0]
+                    logger.info(f"Auto-selected latest run for SQL: {run_dirs[0].name}")
+                else:
+                    # No run subdirectories found
+                    self.result_dir = namespace_dir
+            else:
+                # Namespace directory doesn't exist yet
+                self.result_dir = namespace_dir
 
     def fetch(self, task_id: str) -> SqlData:
         if not self.result_dir.exists():
@@ -1481,10 +1511,10 @@ class BenchmarkEvaluator:
         self,
         trajectory_dir: str,
         target_task_ids: Iterable[str],
-        namespace: Optional[str] = None,
+        namespace: str,
         run_id: Optional[str] = None,
     ) -> EvaluationReport:
-        trajectories = collect_latest_trajectory_files(trajectory_dir, namespace=namespace, run_id=run_id)
+        trajectories = collect_latest_trajectory_files(trajectory_dir, namespace, run_id)
         target_ids = {str(task_id) for task_id in target_task_ids}
         trajectories = {task_id: path for task_id, path in trajectories.items() if task_id in target_ids}
 
@@ -1756,20 +1786,16 @@ def list_save_runs(save_dir: str, namespace: Optional[str] = None) -> Dict[str, 
     return runs
 
 
-def collect_latest_trajectory_files(
-    save_dir: str, namespace: Optional[str] = None, run_id: Optional[str] = None
-) -> Dict[str, Path]:
+def collect_latest_trajectory_files(save_dir: str, namespace: str, run_id: Optional[str] = None) -> Dict[str, Path]:
     """
     Collect latest trajectory files from directory.
 
-    Supports both legacy flat structure and new hierarchical structure:
-    - Legacy: {save_dir}/*.yaml
-    - New: {save_dir}/{namespace}/{run_id}/*.yaml
+    Uses hierarchical structure: {save_dir}/{namespace}/{run_id}/*.yaml
 
     Args:
         save_dir: Base trajectory directory
-        namespace: Optional namespace to filter by
-        run_id: Optional run_id to filter by. If None, finds latest run.
+        namespace: Namespace to filter by (required)
+        run_id: Optional run_id to filter by. If None, uses latest run.
 
     Returns:
         Dict mapping task_id to latest trajectory file path
@@ -1780,36 +1806,27 @@ def collect_latest_trajectory_files(
 
     file_groups: dict[str, list[tuple[float, Path]]] = defaultdict(list)
 
-    # Determine search paths based on structure
-    search_paths: list[Path] = []
-
-    if namespace and run_id:
+    # Determine search path
+    namespace_dir = directory / namespace
+    if run_id:
         # Specific namespace and run
-        search_paths.append(directory / namespace / run_id)
-    elif namespace:
-        # Specific namespace, find latest run
-        namespace_dir = directory / namespace
-        if namespace_dir.exists():
+        search_path = namespace_dir / run_id
+    else:
+        # Auto-select latest run
+        if namespace_dir.exists() and namespace_dir.is_dir():
             run_dirs = sorted([d for d in namespace_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True)
             if run_dirs:
-                search_paths.append(run_dirs[0])
-    else:
-        # Legacy flat structure or search all
-        if any(directory.glob("*.yaml")):
-            # Legacy flat structure
-            search_paths.append(directory)
+                search_path = run_dirs[0]
+                logger.info(f"Auto-selected latest run for trajectories: {run_dirs[0].name}")
+            else:
+                # No run subdirectories found
+                search_path = namespace_dir
         else:
-            # Search in all namespace/run directories
-            for ns_dir in directory.iterdir():
-                if ns_dir.is_dir():
-                    run_dirs = sorted([d for d in ns_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True)
-                    if run_dirs:
-                        search_paths.append(run_dirs[0])
+            # Namespace directory doesn't exist
+            return {}
 
-    # Collect trajectory files from search paths
-    for search_path in search_paths:
-        if not search_path.exists():
-            continue
+    # Collect trajectory files from search path
+    if search_path.exists():
         for filepath in search_path.glob("*.yaml"):
             task_id, timestamp = parse_trajectory_filename(filepath.name)
             if task_id and timestamp is not None:
@@ -2080,18 +2097,6 @@ def evaluate_benchmark(
     run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     namespace = agent_config.current_namespace
-
-    # Use the new hierarchical directory structure
-    if run_id:
-        result_directory = Path(agent_config.get_save_run_dir(run_id))
-    else:
-        # Fallback to legacy flat structure for backward compatibility
-        result_directory = Path(agent_config.output_dir)
-
-    if not result_directory.exists():
-        logger.warning(f"Result directory not found at {result_directory}")
-        return {}
-
     trajectory_directory = Path(agent_config.trajectory_dir)
 
     try:
@@ -2125,7 +2130,7 @@ def evaluate_benchmark(
     save_base_dir = Path(agent_config._save_dir)
     agent_result_provider = CsvPerTaskResultProvider(str(save_base_dir), namespace=namespace, run_id=run_id)
     result_sql_provider = AgentResultSqlProvider(
-        str(save_base_dir), dialect=dialect, namespace=namespace, run_id=run_id
+        str(save_base_dir), namespace=namespace, run_id=run_id, dialect=dialect
     )
     try:
         gold_sql_provider = _build_gold_sql_provider(benchmark_config, benchmark_root, question_file_path, dialect)
