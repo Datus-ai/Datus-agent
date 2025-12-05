@@ -42,7 +42,7 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
                     pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
                 ]
             ),
-            vector_source_name="terminology",
+            vector_source_name="explanation",
         )
 
     def create_indices(self):
@@ -192,14 +192,6 @@ class ExtKnowledgeStore(BaseEmbeddingStore):
             unique_layers.add((result["layer1"], result["layer2"]))
 
         return [{"layer1": layer1, "layer2": layer2} for layer1, layer2 in unique_layers]
-
-    def get_knowledge_size(self) -> int:
-        """Get the total number of knowledge entries."""
-        try:
-            self._ensure_table_ready()
-            return self.table.count_rows()
-        except Exception:
-            return 0
 
     def after_init(self):
         """After initialization, create indices for the table."""
