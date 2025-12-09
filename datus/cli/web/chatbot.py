@@ -34,6 +34,7 @@ from datus.cli.web.session_loader import SessionLoader
 from datus.cli.web.ui_components import UIComponents
 from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory
+from datus.schemas.node_models import ExecuteSQLResult
 from datus.utils.loggings import configure_logging, setup_web_chatbot_logging
 
 # Logging setup shared with CLI entry point
@@ -151,6 +152,7 @@ class StreamlitChatbot:
         try:
             self.cli = self.config_manager.setup_config(config_path, namespace, catalog, database)
             st.session_state.chat_session_initialized = True
+            self.ui.agent_config = self.cli.agent_config
             return True
         except Exception as e:
             st.error(f"Failed to load configuration: {e}")
@@ -471,7 +473,7 @@ class StreamlitChatbot:
         self._store_session_id()
         # Note: actions are stored in session_state by caller
 
-    def do_download(self, sql: str, markdown: str, sql_id: Optional[str]):
+    def do_download(self, sql: str, markdown: str, data: ExecuteSQLResult, sql_id: Optional[str], display_column):
         """Execute SQL, build a multi-sheet Excel workbook, and expose it for download."""
 
         if not sql_id:
@@ -533,24 +535,16 @@ class StreamlitChatbot:
                 worksheet.write(0, 0, text or " ", text_format)
 
         with st.spinner("Preparing Excel..."):
-            execution_error = None
-            result = None
-            try:
-                result = self.cli.db_connector.execute_pandas(sql)
-            except Exception as exc:
-                execution_error = str(exc)
-                logger.error(f"Failed to execute SQL for download: {exc}", exc_info=True)
-
             buffer = BytesIO()
             try:
                 with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-                    if result and getattr(result, "success", False):
-                        df = _normalize_dataframe(result.sql_return)
+                    if data and getattr(data, "success", False):
+                        df = _normalize_dataframe(data.sql_return)
                         df.to_excel(writer, sheet_name="result", index=False)
                     else:
                         worksheet = writer.book.add_worksheet("result")
                         writer.sheets["result"] = worksheet
-                        error_text = (getattr(result, "error", None) or execution_error or "Unknown error").strip()
+                        error_text = (getattr(data, "error", None) or "Unknown error").strip()
                         error_format = writer.book.add_format(
                             {
                                 "text_wrap": True,
@@ -574,8 +568,8 @@ class StreamlitChatbot:
                         ),
                     )
 
-                    markdown_sheet = writer.book.add_worksheet("markdown")
-                    writer.sheets["markdown"] = markdown_sheet
+                    markdown_sheet = writer.book.add_worksheet("report")
+                    writer.sheets["report"] = markdown_sheet
                     _write_text_block(markdown_sheet, markdown)
             except Exception as exc:
                 st.error(f"Failed to generate Excel: {exc}")
@@ -587,15 +581,16 @@ class StreamlitChatbot:
 
         file_name = f"{sql_id}.xlsx"
 
-        st.success("Excel file generated. Click below to download.")
-        st.download_button(
-            label="⬇ Save results as Excel",
-            data=file_bytes,
-            file_name=file_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"excel_download_{sql_id}",
-            use_container_width=True,
-        )
+        with display_column:
+            st.download_button(
+                label="⬇ Save results as Excel",
+                data=file_bytes,
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"excel_download_{sql_id}",
+                use_container_width=False,
+                disabled=not df.empty and len(df) > self.cli.agent_config.max_export_lines,
+            )
 
     def run(self):
         """Main Streamlit app runner"""
@@ -646,6 +641,10 @@ class StreamlitChatbot:
                 [data-testid="stSidebarCollapsedControl"] {
                     display: none;
                 }
+                [aria-label="Download as CSV"] {
+                    display: none !important;
+                    visibility: hidden !important;
+                }
                 </style>
                 """,
                 unsafe_allow_html=True,
@@ -669,6 +668,10 @@ class StreamlitChatbot:
                     border: 1px solid #ddd;
                     border-radius: 0.5rem;
                     margin-bottom: 0.5rem;
+                }
+                [aria-label="Download as CSV"] {
+                    display: none !important;
+                    visibility: hidden !important;
                 }
                 </style>
                 """,
@@ -702,59 +705,12 @@ class StreamlitChatbot:
             st.warning("⚠️ Please wait for configuration to load or check the sidebar")
             st.info("Configuration file contains database connections, model settings, etc.")
             return
+        self.ui.reset_sql_display_state()
+        self._display_chat_actions()
 
-        # Display chat history
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                # Display user messages
-                if message["role"] == "user":
-                    st.markdown(message["content"])
-
-                # Display assistant messages
-                elif message["role"] == "assistant":
-                    # Different display based on readonly mode
-                    if st.session_state.session_readonly_mode:
-                        # Session page: Only show expanded action history
-                        actions_data = message.get("actions", [])
-                        chat_id = message.get("chat_id", "default")
-                        if actions_data:
-                            self.ui.render_action_history(actions_data, chat_id, expanded=True)
-                    else:
-                        # Normal page: Show progress summary, AI response, SQL, and collapsed details at bottom
-                        # Show progress summary if available
-                        progress_messages = message.get("progress_messages", [])
-                        if progress_messages:
-                            with st.status(
-                                f"✓ Completed ({len(progress_messages)} steps)", state="complete", expanded=False
-                            ):
-                                st.caption("Click to expand and view execution steps")
-                                for msg in progress_messages:
-                                    st.text(f"• {msg}")
-
-                        # Show AI response summary
-                        st.markdown(message["content"])
-
-                        # Show SQL if available
-                        if "sql" in message and message["sql"]:
-                            sql = message["sql"]
-                            user_msg = ""
-                            if st.session_state.messages:
-                                user_msgs = [m["content"] for m in st.session_state.messages if m["role"] == "user"]
-                                if user_msgs:
-                                    user_msg = user_msgs[-1]
-                            self.ui.display_sql(sql)
-                            col1, col2 = st.columns([1, 11])
-                            with col1:
-                                self.ui.display_success_button(sql, user_msg, self.save_success_story)
-                            with col2:
-                                self.ui.display_download(sql, message["content"], self.do_download)
-
-                        # Show collapsed action history at bottom
-                        actions_data = message.get("actions", [])
-                        chat_id = message.get("chat_id", "default")
-                        if actions_data:
-                            self.ui.render_action_history(actions_data, chat_id, expanded=False)
-
+        if not self.cli or not self.cli.chat_commands:
+            st.warning("⚠️ Something went wrong, please try restarting.")
+            return
         # Chat input - disabled in read-only mode
         if not st.session_state.session_readonly_mode:
             if prompt := st.chat_input("Enter your data query question..."):
@@ -777,38 +733,17 @@ class StreamlitChatbot:
                     status_placeholder = st.empty()
                     progress_messages = []
 
-                    # Stream execution with incremental display
-                    for progress_msg in self.execute_chat_stream(prompt):
-                        # Only add non-empty messages
-                        if progress_msg and progress_msg.strip():
-                            progress_messages.append(progress_msg)
-
-                            # Update progress display (expanded during execution)
-                            with status_placeholder.container():
-                                with st.status("Processing your query...", expanded=True):
-                                    # Smart display strategy: show only recent messages to avoid UI lag
-                                    max_visible = 15
-                                    if len(progress_messages) <= max_visible:
-                                        # Show all if under limit
-                                        for msg in progress_messages:
-                                            st.text(f"• {msg}")
-                                    else:
-                                        # Show count + recent messages
-                                        hidden_count = len(progress_messages) - max_visible
-                                        st.caption(f"({hidden_count} earlier steps completed)")
-                                        recent_msgs = progress_messages[-max_visible:]
-                                        for msg in recent_msgs:
-                                            st.text(f"• {msg}")
-
-                    # Update to collapsed state after completion (keep all progress)
                     with status_placeholder.container():
-                        with st.status(
-                            f"✓ Completed ({len(progress_messages)} steps)", state="complete", expanded=False
-                        ):
-                            st.caption("Click to expand and view execution steps")
-                            for msg in progress_messages:
-                                st.text(f"• {msg}")
+                        with st.status("Processing your query... ", expanded=True) as status:
+                            step_index = 0
+                            from datus.cli.action_history_display import ActionContentGenerator
 
+                            content_generator = ActionContentGenerator(enable_truncation=False)
+
+                            for action in self.execute_chat_stream(prompt):
+                                self.ui.render_action_item(chat_id, step_index, action, content_generator)
+                                step_index += 1
+                            status.update(label=f"✓ Completed {step_index + 1} steps", state="complete", expanded=True)
                     # Get complete actions from chat executor
                     actions = self.chat_executor.last_actions
                     logger.info(f"Chat execution completed: {len(actions) if actions else 0} actions collected")
@@ -827,9 +762,9 @@ class StreamlitChatbot:
 
                     # Display SQL if available
                     if sql:
-                        self.ui.display_sql_with_copy(sql, prompt, False, self.save_success_story)
+                        self.ui.display_sql(sql, self.cli.db_connector.execute_pandas(sql))
 
-                    # Display collapsed action history at bottom
+                    # # Display collapsed action history at bottom
                     if actions:
                         self.ui.render_action_history(actions, chat_id, expanded=False)
 
@@ -870,6 +805,55 @@ class StreamlitChatbot:
             with col3:
                 current_model = self.get_current_chat_model()
                 st.metric("Current Model", current_model)
+
+    def _display_chat_actions(self):
+        # Display chat history
+        readonly_mode = st.session_state.session_readonly_mode
+        last_chat_id = None if not self.chat_executor.last_actions else self.chat_executor.last_actions[-1]["chat_id"]
+        for _, message in enumerate(st.session_state.messages):
+            if last_chat_id and last_chat_id == message["chat_id"]:
+                continue
+            with st.chat_message(message["role"]):
+                # Display user messages
+                if message["role"] == "user":
+                    st.markdown(message["content"])
+
+                # Display assistant messages
+                elif message["role"] == "assistant":
+                    # Different display based on readonly mode
+                    if readonly_mode:
+                        # Session page: Only show expanded action history
+                        actions_data = message.get("actions", [])
+                        chat_id = message.get("chat_id", "default")
+                        if actions_data:
+                            self.ui.render_action_history(actions_data, chat_id, expanded=True)
+                    else:
+                        # Normal page: Show progress summary, AI response, SQL, and collapsed details at bottom
+                        # Show progress summary if available
+                        # Show collapsed action history at bottom
+                        actions_data = message.get("actions", [])
+                        chat_id = message.get("chat_id", "default")
+                        if actions_data:
+                            self.ui.render_action_history(actions_data, chat_id, expanded=False)
+
+                        # Show AI response summary
+                        st.markdown(message["content"])
+
+                        # Show SQL if available
+                        if "sql" in message and message["sql"]:
+                            sql = message["sql"]
+                            user_msg = ""
+                            if st.session_state.messages:
+                                user_msgs = [m["content"] for m in st.session_state.messages if m["role"] == "user"]
+                                if user_msgs:
+                                    user_msg = user_msgs[-1]
+                            data = self.cli.db_connector.execute_pandas(sql)
+                            sql_id = self.ui.display_sql(sql, data)
+                            col1, col2, col3 = st.columns([1, 1, 12])
+                            with col1:
+                                self.ui.display_success_button(sql, user_msg, sql_id, self.save_success_story)
+                            with col2:
+                                self.ui.display_download(sql, message["content"], data, col3, sql_id, self.do_download)
 
 
 def run_web_interface(args):

@@ -38,6 +38,8 @@ agent:
       name: california_schools
       uri: ~/.datus/benchmark/california_schools/california_schools.sqlite
 
+  export:
+      max_lines: 1000
   nodes:
     schema_linking:
       matching_rate: fast

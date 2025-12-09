@@ -235,7 +235,7 @@ class DatusCLI:
             # Performs normal Enter behavior when there is no completion menu.
             buffer.validate_and_handle()
 
-        @kb.add("c-d")
+        @kb.add("c-o")
         def _(event):
             """Show details for display_actions"""
             event.app.exit(result="_open_chat_sql_details")
@@ -320,10 +320,7 @@ class DatusCLI:
 
                         app = ChatApp(self.chat_commands.last_actions)
                         app.run()
-                        continue
-                    else:
-                        self.console.print("[bold bright_black]No chat history to display[/]")
-                        continue
+                    continue
                 user_input = user_input_raw.strip()
 
                 if not user_input:

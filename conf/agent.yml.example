@@ -58,6 +58,8 @@ agent:
       model: anthropic
       max_turns: 25
 
+  export:
+    max_lines: 1000  # Maximum number of exported data rows, default is 1000
   # Benchmark data is stored at {agent.home}/benchmark/{name}
   # Supported benchmarks: bird_dev, spider2, semantic_layer and other benchmarks you customize
   # Directory structure:

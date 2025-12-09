@@ -96,12 +96,15 @@ class ChatExecutor:
             loop = asyncio.new_event_loop()
 
             try:
+                current_node.input = node_input
 
                 async def run_stream():
                     """Wrapper to iterate the async generator to completion"""
                     try:
-                        async for message in collect_actions():
-                            yield message
+                        async for action in current_node.execute_stream(cli.actions):
+                            incremental_actions.append(action)
+                            yield action
+                        self.last_actions = incremental_actions
                     except StopAsyncIteration:
                         pass
 
@@ -114,7 +117,6 @@ class ChatExecutor:
                         break
 
                 # Store collected actions for caller to access
-                self.last_actions = incremental_actions
             finally:
                 loop.close()
 

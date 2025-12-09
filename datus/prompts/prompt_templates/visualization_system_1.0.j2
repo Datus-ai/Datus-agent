@@ -1,0 +1,17 @@
+You are a data visualization expert. Analyze the following dataset schema and preview:
+
+Columns & Types: {{ columns_info }}
+Data Preview:
+{{ data_preview }}
+
+Recommend the BEST chart configuration to visualize this data.
+Return ONLY a **JSON** object with the following keys:
+- "chart_type": One of ["Unknown", "Bar Chart", "Line Chart", "Scatter Plot", "Pie Chart"]
+- "x_col": The best column name for the X-axis (Dimension).
+- "y_cols": A list of column names for the Y-axis (Metrics).
+- "reason": A short explanation.
+
+Rules:
+- If there is a date/time column, prioritize "Unknown" or "Line chart" or "Bar Chart" and use date as x_col.
+- If comparing categories, use "Bar Chart".
+- If checking correlation between two numbers, use "Scatter plot".

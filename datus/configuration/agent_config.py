@@ -201,6 +201,7 @@ class AgentConfig:
         self._current_namespace = ""
         self._current_database = ""
         self.nodes = nodes
+        self.export_config: Dict[str, Any] = kwargs.get("export", {})
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
 
         for name, raw_config in self.agentic_nodes.items():
@@ -264,6 +265,10 @@ class AgentConfig:
     @property
     def current_namespace(self) -> str:
         return self._current_namespace
+
+    @property
+    def max_export_lines(self) -> int:
+        return self.export_config.get("max_lines", 5000)
 
     @current_namespace.setter
     def current_namespace(self, value: str):

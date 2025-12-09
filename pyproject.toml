@@ -61,6 +61,7 @@ dependencies = [
     "fastembed==0.4.2",
     # Optional: install torch manually to enable reranker models.
     "uv>=0.9.9",
+    "plotly>=6.5.0",
 ]
 
 [project.optional-dependencies]

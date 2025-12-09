@@ -420,7 +420,7 @@ class CustomSqlLexer(SqlLexer):
         "root": [
             (rf"@Table(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtTables),
             (rf"@Metrics(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtMetrics),
-            (rf"@ReferenceSql(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtReferenceSql),
+            (rf"@Sql(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtReferenceSql),
             (r"@File(?:\s+[^\r\n@]+)?", Token.AtFiles),
         ]
         + SqlLexer.tokens["root"],
@@ -850,13 +850,13 @@ class AtReferenceCompleter(Completer):
         self.completer_dict = {
             "Table": self.table_completer,
             "Metrics": self.metric_completer,
-            "ReferenceSql": self.sql_completer,
+            "Sql": self.sql_completer,
             "File": self.file_completer,
         }
         self.type_options = {
             "Table": "📊 Table",
             "Metrics": "📈 Metrics",
-            "ReferenceSql": "💻 ReferenceSql",
+            "Sql": "💻 Sql",
             "File": "📁 File",
         }
 
@@ -934,7 +934,7 @@ class AtReferenceCompleter(Completer):
                     formatted = self.sql_completer.format_path_for_completion(match)
                     display = f"💻 {formatted}"
                     yield Completion(
-                        f"@ReferenceSql {formatted}", start_position=-len(prefix), display=display, style="class:fuzzy"
+                        f"@Sql {formatted}", start_position=-len(prefix), display=display, style="class:fuzzy"
                     )
 
                 for file_path in file_matches:
@@ -1033,7 +1033,7 @@ class SubagentCompleter(Completer):
 
 class AtReferenceParser:
     """
-    Independent parser for extracting @Table, @Metrics, and @ReferenceSql references from text.
+    Independent parser for extracting @Table, @Metrics, and @Sql references from text.
     This parser only extracts the reference paths, not the actual data.
     """
 
@@ -1043,7 +1043,7 @@ class AtReferenceParser:
         self.patterns = {
             "Table": re.compile(rf"@Table\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
             "Metrics": re.compile(rf"@Metrics\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
-            "Sqls": re.compile(rf"@ReferenceSql\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
+            "Sqls": re.compile(rf"@Sql\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
         }
 
     def parse_input(self, text: str) -> Dict[str, List[str]]:
