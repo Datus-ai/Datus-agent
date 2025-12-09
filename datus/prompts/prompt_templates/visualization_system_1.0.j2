@@ -12,6 +12,7 @@ Return ONLY a **JSON** object with the following keys:
 - "reason": A short explanation.
 
 Rules:
-- If there is a date/time column, prioritize "Unknown" or "Line chart" or "Bar Chart" and use date as x_col.
+- If there is a date/time column, prioritize "Line Chart" or "Bar Chart" and use date as x_col.
 - If comparing categories, use "Bar Chart".
 - If checking correlation between two numbers, use "Scatter plot".
+- If it cannot be confirmed, "chart_type" returns Unknown.
