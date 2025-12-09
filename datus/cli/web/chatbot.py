@@ -542,6 +542,7 @@ class StreamlitChatbot:
                         df = _normalize_dataframe(data.sql_return)
                         df.to_excel(writer, sheet_name="result", index=False)
                     else:
+                        df = pd.DataFrame()
                         worksheet = writer.book.add_worksheet("result")
                         writer.sheets["result"] = worksheet
                         error_text = (getattr(data, "error", None) or "Unknown error").strip()

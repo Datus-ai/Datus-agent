@@ -268,7 +268,7 @@ class AgentConfig:
 
     @property
     def max_export_lines(self) -> int:
-        return self.export_config.get("max_lines", 5000)
+        return self.export_config.get("max_lines", 1000)
 
     @current_namespace.setter
     def current_namespace(self, value: str):
