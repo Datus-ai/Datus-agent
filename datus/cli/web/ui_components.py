@@ -458,10 +458,10 @@ class UIComponents:
 
     def render_dynamic_chart_in_tab(self, df: pd.DataFrame, state_id: str, chart_type: str):
         """
-        在 Tab 内部渲染一个可配置的动态图表，配置项位于 st.popover 中。
+        Render a configurable dynamic chart inside Tab, and the configuration items are located in st.popover.
 
-        参数:
-            df (pd.DataFrame): SQL 查询结果的 DataFrame。
+        Parameters:
+            df (pd.DataFrame): DataFrame of SQL query results.
             state_id (str): Stable identifier used for widget state caching.
             chart_type (str): Suggested chart type from visualization tool.
         """
@@ -469,7 +469,7 @@ class UIComponents:
             st.error("The data is empty and the chart cannot be generated.")
             return
 
-        # 1. 数据列分析
+        # 1. Data column analysis
         all_cols = df.columns.tolist()
         numeric_cols = [col for col in all_cols if is_numeric_dtype(df[col])]
 
@@ -512,7 +512,7 @@ class UIComponents:
                 st.warning("Only one indicator (Y-axis) can be selected for pie charts.")
 
             y_col_single = y_cols[0]
-            fig = px.pie(df, names=x_col, values=y_col_single, title=f"{y_col_single} 按 {x_col} 分布")
+            fig = px.pie(df, names=x_col, values=y_col_single, title=f"{y_col_single} by {x_col}")
 
         # Other charts (bar, line, scatter)
         else:
@@ -537,7 +537,7 @@ class UIComponents:
             else:
                 # Single Y-axis, no Melt required
                 fig_func = getattr(px, chart_func_name)
-                fig = fig_func(df, x=x_col, y=y_cols[0], title=f"{selected_chart_name}：{y_cols[0]} vs {x_col}")
+                fig = fig_func(df, x=x_col, y=y_cols[0], title=f"{selected_chart_name}: {y_cols[0]} vs {x_col}")
 
         # unified rendering
         st.plotly_chart(fig, config={"width": "content"})
