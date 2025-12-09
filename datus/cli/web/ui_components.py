@@ -480,8 +480,8 @@ class UIComponents:
             st.session_state[chart_key] = default_chart
 
         # --- Configuration panel (st.popover) ---
-        with st.popover("⚙️ Configuration diagram"):
-            st.write("**Select chart and axis mapping**")
+        with st.popover("⚙️ Chart Configuration"):
+            st.write("**Select chart type and axis mapping**")
             selected_chart_name = st.selectbox("Chart Type", list(chart_options.keys()), key=chart_key)
             chart_func_name = chart_options[selected_chart_name]
 
