@@ -742,9 +742,9 @@ class StreamlitChatbot:
                             content_generator = ActionContentGenerator(enable_truncation=False)
 
                             for action in self.execute_chat_stream(prompt):
-                                self.ui.render_action_item(chat_id, step_index, action, content_generator)
                                 step_index += 1
-                            status.update(label=f"✓ Completed {step_index + 1} steps", state="complete", expanded=True)
+                                self.ui.render_action_item(chat_id, step_index, action, content_generator)
+                            status.update(label=f"✓ Completed {step_index} steps", state="complete", expanded=True)
                     # Get complete actions from chat executor
                     actions = self.chat_executor.last_actions
                     logger.info(f"Chat execution completed: {len(actions) if actions else 0} actions collected")

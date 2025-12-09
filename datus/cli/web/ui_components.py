@@ -547,7 +547,7 @@ class UIComponents:
     ):
         if not sql:
             return
-        if st.button("Download", icon="⏬", key=f"download_{sql_id}", help="Prepare data for download"):
+        if st.button("⏬ Download", key=f"download_{sql_id}", help="Prepare data for download"):
             download_callback(sql, output_md, execute_result, sql_id, display_column)
 
     def display_markdown_response(self, response: str) -> None:
