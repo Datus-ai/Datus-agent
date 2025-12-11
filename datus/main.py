@@ -305,6 +305,11 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         help="Specific run ID to evaluate. If not provided, evaluates the latest run for the namespace",
     )
+    evaluation_parser.add_argument(
+        "--summary_report_file",
+        type=str,
+        help="Path to summary report file. Reports will be appended to this file.",
+    )
 
     # tutorial command
     subparsers.add_parser(
