@@ -49,6 +49,12 @@ def parse_args() -> argparse.Namespace:
         help="Explicit task ids to benchmark and evaluate (space/comma separated)",
     )
     parser.add_argument("--max_workers", type=int, default=1, help="Concurrent workers for benchmark execution.")
+    parser.add_argument(
+        "--summary_report_file",
+        type=str,
+        default=None,
+        help="Path to summary report file. Reports will be appended to this file for each round.",
+    )
     return parser.parse_args()
 
 
@@ -121,6 +127,7 @@ def build_agent_args(
         "workflow": cli_args.workflow,
         "output_file": str(evaluation_file),
         "max_workers": cli_args.max_workers,
+        "summary_report_file": cli_args.summary_report_file,
     }
     return argparse.Namespace(**common_kwargs)
 

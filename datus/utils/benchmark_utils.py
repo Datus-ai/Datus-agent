@@ -2166,6 +2166,7 @@ def evaluate_benchmark_and_report(
     output_file: Optional[str] = None,
     log_summary: bool = True,
     run_id: Optional[str] = None,
+    summary_report_file: Optional[str] = None,
 ) -> Dict[str, Any]:
     accuracy_report = evaluate_benchmark(
         agent_config=agent_config,
@@ -2176,7 +2177,7 @@ def evaluate_benchmark_and_report(
 
     if accuracy_report.get("status") == "success":
         if log_summary:
-            _log_accuracy_summary(accuracy_report)
+            _log_accuracy_summary(accuracy_report, summary_report_file=summary_report_file)
         if output_file:
             with open(output_file, "w", encoding="utf-8") as handle:
                 json.dump(accuracy_report, handle, ensure_ascii=False, indent=2)
@@ -2189,7 +2190,7 @@ def evaluate_benchmark_and_report(
     return accuracy_report
 
 
-def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
+def _log_accuracy_summary(accuracy_report: Dict[str, Any], summary_report_file: Optional[str] = None) -> None:
     summary = accuracy_report.get("summary", {})
     task_ids_section = accuracy_report.get("task_ids", {})
     details_section = accuracy_report.get("details", {})
@@ -2410,7 +2411,22 @@ def _log_accuracy_summary(accuracy_report: Dict[str, Any]) -> None:
 
     report_lines.extend(["", separator, ""])
 
-    logger.info(f'\n\n{"\n".join(report_lines)}')
+    report_content = "\n".join(report_lines)
+    logger.info(f"\n\n{report_content}")
+
+    # Write to summary report file if specified (append mode)
+    if summary_report_file:
+        try:
+            from datetime import datetime
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(summary_report_file, "a", encoding="utf-8") as f:
+                f.write(f"\n\n### Report generated at {timestamp}\n")
+                f.write(report_content)
+                f.write("\n")
+            logger.info(f" Summary report appended to: {summary_report_file}")
+        except Exception as e:
+            logger.warning(f" Failed to write summary report to file: {e}")
 
 
 def _ensure_task_identifier(task: Dict[str, Any], task_id_key: str, position: int) -> Dict[str, Any]:

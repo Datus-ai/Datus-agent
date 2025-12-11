@@ -668,6 +668,7 @@ class Agent:
         from datus.utils.benchmark_utils import evaluate_benchmark_and_report
 
         run_id = getattr(self.args, "run_id", None)
+        summary_report_file = getattr(self.args, "summary_report_file", None)
         evaluation_result = evaluate_benchmark_and_report(
             agent_config=self.global_config,
             benchmark_platform=benchmark_platform,
@@ -675,6 +676,7 @@ class Agent:
             output_file=self.args.output_file,
             log_summary=log_summary,
             run_id=run_id,
+            summary_report_file=summary_report_file,
         )
         return {
             "status": evaluation_result.get("status"),
