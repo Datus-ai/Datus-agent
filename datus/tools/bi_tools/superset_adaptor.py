@@ -157,9 +157,9 @@ class SupersetAdaptor(BiAdaptorBase):
     ) -> Optional[str]:
         description = None
         if chart_meta:
-            description = chart_meta.get("description")
+            description = chart_meta.get("description") or chart_meta.get("description_markeddown")
         if not description and chart_detail:
-            description = chart_detail.get("description")
+            description = chart_detail.get("description") or chart_detail.get("description_markeddown")
         return description
 
     def _extract_query_context(self, chart_detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:

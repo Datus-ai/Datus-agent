@@ -13,6 +13,16 @@ class QuestionSqlPair(BaseModel):
     origin: str = Field(default="", init=True)  # "native" | "rebuilt" | "approximate"
     extra: Dict[str, Any] = Field(default_factory=dict, init=True)
 
+    def get_question(self):
+        question = ""
+        if self.title:
+            question += self.title
+        if self.description:
+            if not question:
+                question = self.description
+            else:
+                question += f"  {self.description}"
+
 
 class BiAdaptorBase(ABC):
     @abstractmethod
