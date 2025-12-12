@@ -60,7 +60,7 @@ class SupersetAdaptor(BiAdaptorBase):
                 or chart_meta.get("id")
             )
             if chart_id is None:
-                logger.warning(f"Skip chart without chat_id: {chart_meta}")
+                logger.warning(f"Skip chart without chart_id: {chart_meta}")
                 continue
 
             try:
@@ -304,13 +304,3 @@ class SupersetAdaptor(BiAdaptorBase):
             self._auth_header_value = str(self.auth_params)
             # Treat API keys as long-lived credentials
             self._token_expiration = time.time() + 365 * 24 * 60 * 60
-
-
-if __name__ == "__main__":
-    adapter = SupersetAdaptor(
-        base_url="https://superset.datatest.ch",
-        auth_type=AuthType.API_KEY,
-        auth_params="Ijg1MzQwM2UzYzRlMjkzM2E5NWM3ODc4NDAyNTQ1M2FhY2ZkZTA1YzQi.aThGsg.6PYthEHMyeBP7QpWQPbhYCLKRY0",
-    )
-    for sql_pair in adapter.parse_sql_pair("https://superset.datatest.ch/superset/dashboard/8/"):
-        print(sql_pair)
