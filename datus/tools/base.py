@@ -5,8 +5,11 @@
 import functools
 import inspect
 from abc import ABC
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, Optional
+
+from agents.tool_context import ToolContext
 
 
 @dataclass
@@ -61,6 +64,10 @@ class BaseTool(ABC):
         self.tool_params = kwargs
         self._actions = {}
         self._register_actions()
+        self.tool_ctx = ContextVar("tool_ctx")
+
+    def set_tool_context(self, tool_context: ToolContext):
+        self.tool_ctx.set(tool_context)
 
     def _register_actions(self):
         """Register all methods decorated with ToolAction"""

@@ -10,6 +10,7 @@ from agents import Tool
 from pydantic import BaseModel, Field
 from wcmatch import glob
 
+from datus.tools import BaseTool
 from datus.tools.func_tool import FuncToolResult
 from datus.utils.loggings import get_logger
 
@@ -51,10 +52,11 @@ class FilesystemConfig:
         self.max_file_size = max_file_size
 
 
-class FilesystemFuncTool:
+class FilesystemFuncTool(BaseTool):
     """Function tool wrapper for filesystem operations"""
 
-    def __init__(self, root_path: str = None):
+    def __init__(self, root_path: str = None, **kwargs):
+        super().__init__(**kwargs)
         self.root_path = root_path or os.getenv("FILESYSTEM_MCP_PATH", os.path.expanduser("~"))
         self.config = FilesystemConfig(root_path=root_path)
 

@@ -53,6 +53,11 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
             # Call sync or async bound methods transparently
             import inspect
 
+            if inspect.ismethod(method_to_call):
+                tool = method_to_call.__self__
+                if hasattr(tool, "set_tool_context"):
+                    tool.set_tool_context(tool_ctx)
+
             if inspect.iscoroutinefunction(method_to_call):
                 result = await method_to_call(**args_dict)
             else:
