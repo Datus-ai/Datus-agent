@@ -695,11 +695,21 @@ class OpenAICompatibleModel(LLMBaseModel):
                                         "arguments": arguments,
                                         "args_display": args_str,
                                     }
-
+                                    start_action = ActionHistory(
+                                        action_id=call_id,
+                                        role=ActionRole.TOOL,
+                                        messages=f"Tool call: {tool_name}('{args_str}...')",
+                                        action_type=tool_name,
+                                        input={"function_name": tool_name, "arguments": arguments},
+                                        output={},
+                                        status=ActionStatus.PROCESSING,
+                                    )
+                                    action_history_manager.add_action(start_action)
                                     logger.debug(
                                         f"Stored tool call: {tool_name} "
                                         f"(call_id={call_id[:20] if call_id else 'None'}...)"
                                     )
+                                    yield start_action
 
                             # Handle tool call completion
                             elif item_type == "tool_call_output_item":
