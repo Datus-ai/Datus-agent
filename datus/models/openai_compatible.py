@@ -762,8 +762,10 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                                     # update action_history_manager before yielding (consistent with thinking messages)
                                     action_history_manager.update_action_by_id(
-                                        call_id, output=output_data, end_time=datetime.now(),
-                                        status=ActionStatus.SUCCESS
+                                        call_id,
+                                        output=output_data,
+                                        end_time=datetime.now(),
+                                        status=ActionStatus.SUCCESS,
                                     )
                                     updated_action = action_history_manager.find_action_by_id(call_id)
                                     yield updated_action
