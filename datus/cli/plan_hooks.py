@@ -66,7 +66,6 @@ class PlanModeHooks(AgentHooks):
     async def on_llm_end(self, context, agent, output) -> None:
         """Called when LLM finishes a turn - perfect time to show plan after all thinking is done"""
         if self._plan_generated_pending and self.plan_phase == "generating":
-            logger.info("LLM turn ended and plan is pending, now showing plan")
             self._plan_generated_pending = False
             await self._on_plan_generated()
 
