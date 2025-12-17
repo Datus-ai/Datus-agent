@@ -63,7 +63,7 @@ class PlanModeHooks(AgentHooks):
             # This allows any remaining "Thinking" messages to be generated first
             self._plan_generated_pending = True
 
-    async def on_llm_end(self, context, agent, output) -> None:
+    async def on_llm_end(self, context, agent, response) -> None:
         """Called when LLM finishes a turn - perfect time to show plan after all thinking is done"""
         if self._plan_generated_pending and self.plan_phase == "generating":
             self._plan_generated_pending = False
