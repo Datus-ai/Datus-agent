@@ -250,7 +250,11 @@ class DataCompressor:
             tolerance_ratio: Tolerance ratio, no compression if exceeding within this ratio
             output_format: Output format, "csv" or "table"
         """
-        self.tokenizer = tiktoken.encoding_for_model(model_name)
+        try:
+            self.tokenizer = tiktoken.encoding_for_model(model_name)
+        except Exception:
+            # Fallback: use None to indicate rough estimation should be used
+            self.tokenizer = None
         self.token_threshold = token_threshold
         self.tolerance_ratio = tolerance_ratio
         self.max_tolerable_tokens = int(token_threshold * (1 + tolerance_ratio))
@@ -258,7 +262,11 @@ class DataCompressor:
 
     def count_tokens(self, text: str) -> int:
         """Calculate the number of tokens in text"""
-        return len(self.tokenizer.encode(text))
+        if self.tokenizer is not None:
+            return len(self.tokenizer.encode(text))
+        else:
+            # Fallback: rough estimation (1 token ≈ 4 characters for English text)
+            return len(text) // 4
 
     def _compress_columns(
         self, df: pd.DataFrame, compressed_indices: Optional[Tuple[List[int], List[int]]] = None
