@@ -764,17 +764,21 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         from datus.storage.cache import get_storage_cache_instance
 
         storage = get_storage_cache_instance(self.agent_config).metrics_storage()
-        data = storage.search_all(select_fields=["domain", "layer1", "layer2", "name", "llm_text"])
+        data = storage.search_all_metrics()
 
         result = {}
         for metric in data:
-            domain = metric.get("domain", "unknown")
-            layer1 = metric.get("layer1", "unknown")
-            layer2 = metric.get("layer2", "unknown")
+            subject_path = metric.get("subject_path", [])
             name = metric.get("name", "unknown")
             llm_text = metric.get("llm_text", "")
-            insert_into_dict_with_dict(result, [domain, layer1, layer2], name, llm_text)
-            self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
+
+            # Build nested dict using subject_path
+            if subject_path:
+                insert_into_dict_with_dict(result, subject_path, name, llm_text)
+
+            # Flatten key uses "/" separator
+            flatten_key = "/".join(subject_path + [name]) if subject_path else name
+            self.flatten_data[flatten_key] = {
                 "name": name,
                 "llm_text": llm_text,
             }
@@ -792,17 +796,19 @@ class ReferenceSqlCompleter(DynamicAtReferenceCompleter):
         from datus.storage.reference_sql.store import ReferenceSqlRAG
 
         storage = ReferenceSqlRAG(self.agent_config)
-        search_data = storage.search_all_reference_sql(domain="")
+        search_data = storage.search_all_reference_sql()
         result = {}
         for item in search_data:
-            domain = item["domain"]
-            layer1 = item["layer1"]
-            layer2 = item["layer2"]
+            subject_path = item.get("subject_path", [])
             name = item["name"]
 
-            insert_into_dict_with_dict(result, [domain, layer1, layer2], name, item["summary"])
+            # Build nested dict using subject_path
+            if subject_path:
+                insert_into_dict_with_dict(result, subject_path, name, item["summary"])
 
-            self.flatten_data[f"{domain}.{layer1}.{layer2}.{name}"] = {
+            # Flatten key uses "/" separator
+            flatten_key = "/".join(subject_path + [name]) if subject_path else name
+            self.flatten_data[flatten_key] = {
                 "name": name,
                 "comment": item["comment"],
                 "summary": item["summary"],

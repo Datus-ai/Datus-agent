@@ -380,32 +380,32 @@ class GenerationHooks(AgentHooks):
             return False
 
     @staticmethod
-    def _parse_subject_tree_from_tags(tags_list) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    def _parse_subject_tree_from_tags(tags_list) -> Optional[list]:
         """
-        Parse domain/layer1/layer2 from metric tags.
+        Parse subject_path from metric tags.
 
-        Looks for tag format: "subject_tree: domain/layer1/layer2"
+        Looks for tag format: "subject_tree: path/component1/component2/..."
 
         Args:
             tags_list: List of tags from locked_metadata.tags
 
         Returns:
-            tuple: (domain, layer1, layer2) or ("", "", "") if not found
+            List[str]: Subject path components or None if not found
         """
         if not tags_list or not isinstance(tags_list, list):
-            return "", "", ""
+            return None
 
         for tag in tags_list:
             if isinstance(tag, str) and tag.startswith("subject_tree:"):
                 # Extract the path after "subject_tree: "
                 path = tag.split("subject_tree:", 1)[1].strip()
                 parts = [part.strip() for part in path.split("/") if part.strip()]
-                if len(parts) == 3:
-                    return parts[0], parts[1], parts[2]
+                if parts:
+                    return parts
                 else:
-                    logger.warning(f"Invalid subject_tree format: {tag}, expected 'subject_tree: domain/layer1/layer2'")
+                    logger.warning(f"Invalid subject_tree format: {tag}, expected 'subject_tree: path/component1/...'")
 
-        return "", "", ""
+        return None
 
     @staticmethod
     def _sync_semantic_to_db(file_path: str, agent_config: AgentConfig) -> dict:
@@ -480,9 +480,6 @@ class GenerationHooks(AgentHooks):
                         "database_name": current_db_config.database or "",
                         "schema_name": current_db_config.schema or "",
                         "table_name": table_name,
-                        "domain": "",
-                        "layer1": "",
-                        "layer2": "",
                         "semantic_file_path": file_path,
                         "semantic_model_name": data_source.get("name", ""),
                         "semantic_model_desc": data_source.get("description", ""),
@@ -506,18 +503,18 @@ class GenerationHooks(AgentHooks):
             for metric_doc in metrics_list:
                 metric_name = metric_doc.get("name", "")
 
-                metric_domain = ""
-                metric_layer1 = ""
-                metric_layer2 = ""
+                metric_subject_path = None
 
                 if "locked_metadata" in metric_doc:
                     locked_meta = metric_doc["locked_metadata"]
                     if isinstance(locked_meta, dict) and "tags" in locked_meta:
-                        metric_domain, metric_layer1, metric_layer2 = GenerationHooks._parse_subject_tree_from_tags(
-                            locked_meta["tags"]
-                        )
+                        metric_subject_path = GenerationHooks._parse_subject_tree_from_tags(locked_meta["tags"])
 
-                metric_id = gen_metric_id(metric_domain, metric_layer1, metric_layer2, semantic_model_name, metric_name)
+                # Use empty list if no subject_path found
+                if not metric_subject_path:
+                    metric_subject_path = []
+
+                metric_id = gen_metric_id(metric_subject_path, semantic_model_name, metric_name)
 
                 # Check if metric already exists
                 if metric_id not in existing_metrics:
@@ -525,16 +522,13 @@ class GenerationHooks(AgentHooks):
                     llm_text = generate_metric_llm_text(metric_doc, data_source)
 
                     metric_dict = {
-                        "id": metric_id,
                         "semantic_model_name": semantic_model_name,
-                        "domain": metric_domain,
-                        "layer1": metric_layer1,
-                        "layer2": metric_layer2,
+                        "subject_path": metric_subject_path,
                         "name": metric_name,
                         "llm_text": llm_text,
                         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
-                    storage.metric_storage.store([metric_dict])
+                    storage.metric_storage.batch_store_metrics([metric_dict])
                     existing_metrics.add(metric_id)
                     synced_count += 1
                     logger.info(f"Synced metric: {metric_name}")
@@ -608,17 +602,12 @@ class GenerationHooks(AgentHooks):
                 }
 
             # Parse subject_tree if available
-            subject_tree = reference_sql_data.get("subject_tree", "")
-            if subject_tree:
-                # Parse subject_tree format: "domain/layer1/layer2"
-                parts = subject_tree.split("/")
-                domain = parts[0].strip() if len(parts) > 0 else ""
-                layer1 = parts[1].strip() if len(parts) > 1 else ""
-                layer2 = parts[2].strip() if len(parts) > 2 else ""
-            else:
-                domain = ""
-                layer1 = ""
-                layer2 = ""
+            subject_path = []
+            subject_tree_str = reference_sql_data.get("subject_tree", "")
+            if subject_tree_str:
+                # Parse subject_tree format: "path/component1/component2/..."
+                parts = subject_tree_str.split("/")
+                subject_path = [part.strip() for part in parts if part.strip()]
 
             # Ensure all required fields are present
             reference_sql_dict = {
@@ -628,9 +617,7 @@ class GenerationHooks(AgentHooks):
                 "comment": comment,
                 "summary": reference_sql_data.get("summary", ""),
                 "filepath": file_path,
-                "domain": domain,
-                "layer1": layer1,
-                "layer2": layer2,
+                "subject_path": subject_path,
                 "tags": reference_sql_data.get("tags", ""),
             }
 

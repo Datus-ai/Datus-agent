@@ -33,14 +33,9 @@ logger = get_logger(__name__)
 
 
 TREE_VALIDATION_RULES: Dict[str, Dict[str, str]] = {
-    "domain": {
+    "subject_node": {
         "pattern": r"^[a-zA-Z0-9_\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+$",
-    },
-    "layer1": {
-        "pattern": r"^[a-zA-Z0-9_\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+$",
-    },
-    "layer2": {
-        "pattern": r"^[a-zA-Z0-9_\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+$",
+        "description": "Subject tree node component",
     },
 }
 
@@ -341,13 +336,13 @@ class ReferenceSqlPanel(Vertical):
 
 @lru_cache(maxsize=128)
 def _fetch_metrics_with_cache(
-    metrics_rag: SemanticMetricsRAG, domain: str, layer1: str, layer2: str, name: str
+    metrics_rag: SemanticMetricsRAG, subject_path_tuple: tuple, name: str
 ) -> List[Dict[str, Any]]:
+    """Fetch metrics with caching. subject_path_tuple is a tuple to allow hashing for lru_cache."""
     try:
+        subject_path = list(subject_path_tuple) if subject_path_tuple else []
         table = metrics_rag.get_metrics_detail(
-            domain=domain,
-            layer1=layer1,
-            layer2=layer2,
+            subject_path=subject_path,
             name=name,
         )
         return table if table is not None else []
@@ -357,24 +352,17 @@ def _fetch_metrics_with_cache(
 
 
 @lru_cache(maxsize=128)
-def _sql_details_cache(
-    sql_rag: ReferenceSqlRAG, domain: str, layer1: str, layer2: str, name: str
-) -> List[Dict[str, Any]]:
+def _sql_details_cache(sql_rag: ReferenceSqlRAG, subject_path_tuple: tuple, name: str) -> List[Dict[str, Any]]:
+    """Fetch SQL details with caching. subject_path_tuple is a tuple to allow hashing for lru_cache."""
     try:
+        subject_path = list(subject_path_tuple) if subject_path_tuple else []
         table = sql_rag.get_reference_sql_detail(
-            domain,
-            layer1,
-            layer2,
+            subject_path,
             name,
         )
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error(
-            "Failed to fetch SQL details for %s/%s/%s/%s: %s",
-            domain,
-            layer1,
-            layer2,
-            name,
-            exc,
+            "Failed to fetch SQL details for %s/%s: %s", "/".join(subject_path) if subject_path else "[]", name, exc
         )
         return []
 
@@ -382,7 +370,7 @@ def _sql_details_cache(
 
 
 class SubjectScreen(ContextScreen):
-    """Screen for browsing domain metrics alongside reference SQL."""
+    """Screen for browsing metrics alongside reference SQL."""
 
     CSS = """
         #tree-container {
@@ -471,6 +459,8 @@ class SubjectScreen(ContextScreen):
         Binding("left", "collapse_node", "Collapse", show=False),
         Binding("f4", "show_path", "Show Path"),
         Binding("f5", "exit_with_selection", "Select"),
+        Binding("f7", "create_node", "New Node", show=True),
+        # Binding("f8", "delete_node", "Delete Node", show=True), todo lancedb delete
         # Binding("f6", "change_edit_mode", "Change to edit/readonly mode "),
         Binding("q", "quit_if_idle", "Quit", show=False),
         Binding("ctrl+e", "start_edit", "Edit", show=True, priority=True),
@@ -492,6 +482,7 @@ class SubjectScreen(ContextScreen):
         self.agent_config: AgentConfig = context_data.get("agent_config")
         self.metrics_rag: SemanticMetricsRAG = SemanticMetricsRAG(self.agent_config)
         self.sql_rag: ReferenceSqlRAG = ReferenceSqlRAG(self.agent_config)
+        self.subject_tree_store = self.metrics_rag.metric_storage.subject_tree
         self.inject_callback = inject_callback
         self.selected_path = ""
         self.readonly = True
@@ -503,6 +494,7 @@ class SubjectScreen(ContextScreen):
         self._last_tree_selection: Optional[Dict[str, Any]] = None
         self._active_dialog: TreeEditDialog | None = None
         self._subject_updater: SubjectUpdater | None = None
+        self._pending_focus_path: Optional[List[str]] = None  # Path to focus after tree reload
 
     @property
     def subject_updater(self) -> SubjectUpdater:
@@ -596,53 +588,96 @@ class SubjectScreen(ContextScreen):
 
     @work(thread=True)
     def _load_subject_tree_data(self) -> None:
+        """Load subject tree data from SubjectTreeStore and attach metrics/SQL counts."""
         get_current_worker()
-        tree_data: Dict[str, Any] = {}
 
         try:
-            metrics_table = self.metrics_rag.search_all_metrics(select_fields=["domain", "layer1", "layer2", "name"])
-            metrics_rows = metrics_table if metrics_table is not None else []
+            # Step 1: Load complete subject tree from SubjectTreeStore
+            tree_structure = self.subject_tree_store.get_tree_structure()
+
+            # Step 2: Initialize tree_data with node metadata
+            tree_data = self._init_tree_data_from_structure(tree_structure)
+
+            # Step 3: Fetch and attach subject_entry (metrics/SQL names) as virtual leaf nodes
+            self._attach_subject_entries(tree_data)
+
+            self.tree_data = tree_data
+            self.app.call_from_thread(self._populate_tree, tree_data)
+
         except Exception as exc:
-            logger.error(f"Failed to load metric taxonomy for subject screen: {exc}")
-            metrics_rows = []
+            logger.error(f"Failed to load subject tree data: {exc}")
+            self.tree_data = {}
+            self.app.call_from_thread(self._populate_tree, {})
 
-        for item in metrics_rows:
-            domain = item.get("domain") or "Uncategorized"
-            layer1 = item.get("layer1") or "General"
-            layer2 = item.get("layer2") or "General"
-            name = item.get("name") or "Unnamed Metric"
-            bucket = (
-                tree_data.setdefault(domain, {})
-                .setdefault(layer1, {})
-                .setdefault(layer2, {})
-                .setdefault(name, {"metrics_count": 0, "sql_count": 0})
-            )
-            bucket["metrics_count"] += 1
+    def _init_tree_data_from_structure(self, tree_structure: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively initialize tree_data from SubjectTreeStore structure.
 
-        try:
-            sql_table = self.sql_rag.search_all_reference_sql(selected_fields=["domain", "layer1", "layer2", "name"])
-            sql_rows = sql_table if sql_table is not None else []
-        except Exception as exc:
-            logger.error(f"Failed to load SQL taxonomy for subject screen: {exc}")
-            sql_rows = []
+        Args:
+            tree_structure: Nested dict from subject_tree.get_tree_structure()
+                          Format: {"name": {"node_id": int, "name": str, "children": {...}}}
 
-        for item in sql_rows:
-            domain = item.get("domain") or "Uncategorized"
-            layer1 = item.get("layer1") or "General"
-            layer2 = item.get("layer2") or "General"
-            name = item.get("name") or "Unnamed SQL"
-            bucket = (
-                tree_data.setdefault(domain, {})
-                .setdefault(layer1, {})
-                .setdefault(layer2, {})
-                .setdefault(name, {"metrics_count": 0, "sql_count": 0})
-            )
-            bucket["sql_count"] += 1
+        Returns:
+            tree_data with initialized metadata for each node
+        """
+        tree_data = {}
 
-        self.tree_data = tree_data
-        self.app.call_from_thread(self._populate_tree, tree_data)
+        for name, node_info in tree_structure.items():
+            tree_data[name] = {
+                "node_id": node_info["node_id"],
+                "name": name,
+                "children": {},
+                "subject_entries": {},  # Will be populated later
+            }
+
+            # Recursively process children
+            if "children" in node_info and node_info["children"]:
+                tree_data[name]["children"] = self._init_tree_data_from_structure(node_info["children"])
+
+        return tree_data
+
+    def _attach_subject_entries(self, tree_data: Dict[str, Any]) -> None:
+        """Dynamically fetch and attach subject_entry (metrics/SQL names) as virtual leaf nodes.
+        Each entry is separated by type (metric or sql) with entry_type field.
+
+        Args:
+            tree_data: Tree data structure to attach entries to
+        """
+
+        def attach_entries_for_node(node_data: Dict[str, Any], subject_path: List[str]) -> None:
+            """Recursively attach entries for a node and its children."""
+            node_id = node_data.get("node_id")
+            if not node_id:
+                return
+
+            # Get metrics for this exact node (not descendants)
+            metrics_results = self.metrics_rag.metric_storage.list_entries(node_id)
+            for metric in metrics_results:
+                name = metric.get("name", "")
+                if name:
+                    # Create separate entry for each metric with unique key
+                    entry_key = f"metric:{name}"
+                    node_data["subject_entries"][entry_key] = {"name": name, "entry_type": "metric"}
+
+            # Get SQL for this exact node (not descendants)
+            sql_results = self.sql_rag.reference_sql_storage.list_entries(node_id)
+            for sql_entry in sql_results:
+                name = sql_entry.get("name", "")
+                if name:
+                    # Create separate entry for each SQL with unique key
+                    entry_key = f"sql:{name}"
+                    node_data["subject_entries"][entry_key] = {"name": name, "entry_type": "sql"}
+
+            # Recursively attach entries for children
+            for child_name, child_data in node_data.get("children", {}).items():
+                child_path = subject_path + [child_name]
+                attach_entries_for_node(child_data, child_path)
+
+        # Attach entries for all root nodes
+        for name, node_data in tree_data.items():
+            attach_entries_for_node(node_data, [name])
 
     def _populate_tree(self, tree_data: Dict[str, Any]) -> None:
+        """Populate tree with subject nodes and entries from tree_data."""
         tree = self.query_one("#subject-tree", EditableTree)
         tree.clear()
         tree.root.expand()
@@ -651,34 +686,69 @@ class SubjectScreen(ContextScreen):
             tree.root.add_leaf("📂 No metrics or reference SQL found", data={"type": "empty"})
             return
 
-        for domain in sorted(tree_data.keys()):
-            domain_node = tree.root.add(f"📁 {domain}", data={"type": "domain", "name": domain})
-            for layer1 in sorted(tree_data[domain].keys()):
-                layer1_node = domain_node.add(f"📂 {layer1}", data={"type": "layer1", "name": layer1, "domain": domain})
-                for layer2 in sorted(tree_data[domain][layer1].keys()):
-                    layer2_node = layer1_node.add(
-                        f"📂 {layer2}",
-                        data={"type": "layer2", "name": layer2, "layer1": layer1, "domain": domain},
-                    )
-                    for name in sorted(tree_data[domain][layer1][layer2].keys()):
-                        payload = tree_data[domain][layer1][layer2][name]
-                        type_tokens: List[str] = []
-                        if payload.get("metrics_count"):
-                            type_tokens.append("📈")
-                        if payload.get("sql_count"):
-                            type_tokens.append("💻")
+        # Recursively build tree for each root node
+        for name, node_data in sorted(tree_data.items()):
+            self._add_tree_node_recursive(tree.root, name, node_data)
 
-                        label = f"{''.join(type_tokens)} {name}"
-                        node_data = {
-                            "type": "subject_entry",
-                            "name": name,
-                            "domain": domain,
-                            "layer1": layer1,
-                            "layer2": layer2,
-                            "metrics_count": payload.get("metrics_count", 0),
-                            "sql_count": payload.get("sql_count", 0),
-                        }
-                        layer2_node.add_leaf(label, data=node_data)
+        # Focus on pending path if set (after tree is fully populated)
+        if self._pending_focus_path:
+            self._focus_tree_path_by_name(tree, self._pending_focus_path)
+            self._pending_focus_path = None
+
+    def _add_tree_node_recursive(self, parent_node: TreeNode, name: str, node_data: Dict[str, Any]) -> TreeNode:
+        """Recursively add subject_node and its children to the tree.
+
+        Args:
+            parent_node: Parent TreeNode to attach to
+            name: Name of the current node
+            node_data: Node data containing node_id, children, subject_entries, etc.
+
+        Returns:
+            The created TreeNode
+        """
+        icon = "📁"
+        label = f"{icon} {name}"
+
+        # Create subject_node
+        tree_node = parent_node.add(
+            label,
+            data={
+                "type": "subject_node",
+                "node_id": node_data["node_id"],
+                "name": name,
+            },
+        )
+
+        # Recursively add children (other subject nodes)
+        for child_name, child_data in sorted(node_data.get("children", {}).items()):
+            self._add_tree_node_recursive(tree_node, child_name, child_data)
+
+        # Add subject_entries as leaf nodes
+        for entry_key, entry_data in sorted(node_data.get("subject_entries", {}).items()):
+            # Get entry type and name from entry_data
+            entry_type = entry_data.get("entry_type", "")
+            entry_name = entry_data.get("name", "")
+
+            # Generate icon based on entry_type
+            if entry_type == "metric":
+                icon = "📈"
+            elif entry_type == "sql":
+                icon = "💻"
+            else:
+                icon = "📋"  # Fallback icon
+
+            entry_label = f"{icon} {entry_name}"
+            tree_node.add_leaf(
+                entry_label,
+                data={
+                    "type": "subject_entry",
+                    "entry_type": entry_type,  # Add entry_type to node data
+                    "name": entry_name,
+                    "node_id": node_data["node_id"],  # Parent subject node_id
+                },
+            )
+
+        return tree_node
 
     def on_tree_node_selected(self, event: TextualTree.NodeSelected) -> None:
         self.update_path_display(event.node)
@@ -694,14 +764,14 @@ class SubjectScreen(ContextScreen):
 
         while current and str(current.label) != "Metrics & SQL":
             name = str(current.data.get("name", "")) if current.data else str(current.label)
-            name = name.replace("📁 ", "").replace("📂 ", "").replace("📋 ", "")
+            name = name.replace("📂 ", "").replace("📋 ", "")
             if name:
                 path_parts.insert(0, name)
             current = current.parent
 
         header = self.query_one(Header)
         if path_parts:
-            self.selected_path = ".".join(path_parts)
+            self.selected_path = "/".join(path_parts)
             header._name = self.selected_path
         else:
             self.selected_path = ""
@@ -812,11 +882,24 @@ class SubjectScreen(ContextScreen):
 
         if modified:
             panel.update_data(data)
+
+            # Extract subject_path and name from selected_data
+            node_id = self.selected_data.get("node_id")
+            name = self.selected_data.get("name")
+
+            if not node_id or not name:
+                self.app.notify("Missing node_id or name in selected data", severity="error")
+                return
+
+            subject_path = self.subject_tree_store.get_full_path(node_id)
+
             if component == "sql":
-                self.subject_updater.update_historical_sql(self.selected_data, data)
+                logger.info(f"Updating SQL: subject_path={subject_path}, name={name}, data={data}")
+                self.subject_updater.update_historical_sql(subject_path, name, data)
                 _sql_details_cache.cache_clear()
             elif component == "metrics":
-                self.subject_updater.update_metrics_detail(self.selected_data, data)
+                logger.info(f"Updating metrics: subject_path={subject_path}, name={name}, data={data}")
+                self.subject_updater.update_metrics_detail(subject_path, name, data)
                 _fetch_metrics_with_cache.cache_clear()
         else:
             self.app.notify(f"No changes detected in {component}.", severity="warning")
@@ -836,7 +919,7 @@ class SubjectScreen(ContextScreen):
         node_data = node.data or {}
         node_type = node_data.get("type")
 
-        if node_type not in {"domain", "layer1", "layer2", "subject_entry"}:
+        if node_type not in {"subject_node", "subject_entry"}:
             self.app.notify("Selected item cannot be edited", severity="warning")
             self._update_edit_indicator(None)
             return
@@ -936,157 +1019,180 @@ class SubjectScreen(ContextScreen):
     def _build_parent_selection_tree(
         self, node_type: str, node_data: Dict[str, Any]
     ) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
-        if node_type == "domain":
-            current = {"selection_type": "root"}
-            nodes = [
-                {
-                    "label": "Root",
-                    "data": {"selection_type": "root"},
-                    "expand": False,
-                }
-            ]
-            return current, nodes, "root"
+        """Build parent selection tree for editing nodes.
 
-        if node_type == "layer1":
-            domains = sorted(self.tree_data.keys())
-            nodes = [
-                {
-                    "label": domain,
-                    "data": {"selection_type": "domain", "domain": domain},
-                    "expand": False,
-                }
-                for domain in domains
-            ]
-            current_domain = node_data.get("domain")
-            current = {"selection_type": "domain", "domain": current_domain} if current_domain else None
-            return current, nodes, "domain"
+        Args:
+            node_type: Type of node being edited ("subject_node" or "subject_entry")
+            node_data: Data of the node being edited
 
-        if node_type == "layer2":
-            domain = node_data.get("domain")
-            if not domain or domain not in self.tree_data:
-                return None, [], None
-            nodes: List[Dict[str, Any]] = []
-            for domain_name, layer1_map in sorted(self.tree_data.items()):
-                layer1_children = []
-                for layer1_name in sorted(layer1_map.keys()):
-                    layer1_children.append(
-                        {
-                            "label": layer1_name,
-                            "data": {
-                                "selection_type": "layer1",
-                                "domain": domain_name,
-                                "layer1": layer1_name,
-                            },
-                        }
-                    )
-
-                node_entry: Dict[str, Any] = {
-                    "label": domain_name,
-                    "data": {"selection_type": "domain", "domain": domain_name},
-                    "expand": domain_name == domain,
-                }
-                if layer1_children:
-                    node_entry["children"] = layer1_children
-                nodes.append(node_entry)
-            current_layer1 = node_data.get("layer1")
-            current = (
-                {
-                    "selection_type": "layer1",
-                    "domain": domain,
-                    "layer1": current_layer1,
-                }
-                if current_layer1
-                else None
-            )
-            return current, nodes, "layer1"
-
+        Returns:
+            Tuple of (current_parent, parent_tree_nodes, selection_type)
+        """
         if node_type == "subject_entry":
-            domain = node_data.get("domain")
-            if not domain:
-                return None, [], None
-            choices: List[Dict[str, Any]] = []
-            for domain_name, layer1_map in sorted(self.tree_data.items()):
-                layer1_children: List[Dict[str, Any]] = []
-                for layer1_name, layer2_map in sorted(layer1_map.items()):
-                    layer2_children = [
-                        {
-                            "label": layer2_name,
-                            "data": {
-                                "selection_type": "layer2",
-                                "domain": domain_name,
-                                "layer1": layer1_name,
-                                "layer2": layer2_name,
-                            },
-                        }
-                        for layer2_name in sorted(layer2_map.keys())
-                    ]
-
-                    layer1_children.append(
-                        {
-                            "label": layer1_name,
-                            "data": {
-                                "selection_type": "layer1-context",
-                                "domain": domain_name,
-                                "layer1": layer1_name,
-                            },
-                            "expand": domain_name == domain and layer1_name == node_data.get("layer1"),
-                            "children": layer2_children,
-                        }
-                    )
-
-                choices.append(
-                    {
-                        "label": domain_name,
-                        "data": {
-                            "selection_type": "domain",
-                            "domain": domain_name,
-                        },
-                        "expand": domain_name == domain,
-                        "children": layer1_children,
-                    }
-                )
-
-            current = (
-                {
-                    "selection_type": "layer2",
-                    "domain": domain,
-                    "layer1": node_data.get("layer1"),
-                    "layer2": node_data.get("layer2"),
-                }
-                if node_data.get("layer2")
-                else None
+            # subject_entry can only move to subject_node (not root)
+            # For subject_entry, node_id is the parent node's ID (not the entry itself)
+            parent_node_id = node_data.get("node_id")
+            return self._build_subject_node_selection_tree(
+                current_node_id=None,  # Don't look for parent of parent
+                current_parent_id=parent_node_id,  # Directly specify current parent
+                allow_root=False,
             )
-            return current, choices, "layer2"
+
+        elif node_type == "subject_node":
+            # subject_node can move to any other subject_node or root
+            # Exclude self and all descendants
+            current_node_id = node_data.get("node_id")
+            return self._build_subject_node_selection_tree(
+                current_node_id=current_node_id, exclude_node_id=current_node_id, allow_root=True
+            )
 
         return None, [], None
 
-    def _derive_path_from_node(self, node_type: str, node_data: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    def _build_subject_node_selection_tree(
+        self,
+        current_node_id: Optional[int] = None,
+        exclude_node_id: Optional[int] = None,
+        allow_root: bool = True,
+        current_parent_id: Optional[int] = None,
+    ) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
+        """Build selection tree from subject_tree, excluding descendants of exclude_node_id.
+
+        Args:
+            current_node_id: ID of the current node (to determine current parent)
+            exclude_node_id: ID of node to exclude along with its descendants
+            allow_root: Whether to allow selection of root (None parent)
+            current_parent_id: Direct ID of current parent (for subject_entry where node_id is the parent)
+
+        Returns:
+            Tuple of (current_parent, selection_nodes, selection_type)
+        """
+
+        # Get current parent
+        current_parent = None
+        if current_parent_id is not None:
+            # For subject_entry, current_parent_id is directly specified
+            current_parent = {"selection_type": "subject_node", "node_id": current_parent_id}
+        elif current_node_id:
+            try:
+                node = self.subject_tree_store.get_node(current_node_id)
+                if node and node.get("parent_id"):
+                    current_parent = {"selection_type": "subject_node", "node_id": node["parent_id"]}
+                elif allow_root:
+                    current_parent = {"selection_type": "root"}
+            except Exception as e:
+                logger.warning(f"Failed to get current node parent: {e}")
+
+        # Build excluded IDs set
+        excluded_ids = set()
+        if exclude_node_id:
+            excluded_ids.add(exclude_node_id)
+            try:
+                descendants = self.subject_tree_store.get_descendants(exclude_node_id)
+                excluded_ids.update(d["node_id"] for d in descendants)
+            except Exception as e:
+                logger.warning(f"Failed to get descendants for exclusion: {e}")
+
+        # Build selection tree
+        nodes = []
+        if allow_root:
+            nodes.append(
+                {
+                    "label": "Root",
+                    "data": {"selection_type": "root"},
+                    "expand": current_parent and current_parent.get("selection_type") == "root",
+                }
+            )
+
+        # Add all subject nodes except excluded ones
+        for name, node_info in sorted(self.tree_data.items()):
+            if node_info["node_id"] not in excluded_ids:
+                selection_node = self._build_selection_node_recursive(node_info, excluded_ids, current_parent)
+                nodes.append(selection_node)
+
+        return current_parent, nodes, "subject_node"
+
+    def _build_selection_node_recursive(
+        self, node_info: Dict, excluded_ids: set, current_parent: Optional[Dict]
+    ) -> Dict[str, Any]:
+        """Recursively build selection tree node.
+
+        Args:
+            node_info: Node info from tree_data
+            excluded_ids: Set of node IDs to exclude
+            current_parent: Current parent selection for expansion
+
+        Returns:
+            Selection node dictionary
+        """
+        node_data = {"selection_type": "subject_node", "node_id": node_info["node_id"]}
+
+        should_expand = (
+            current_parent
+            and current_parent.get("selection_type") == "subject_node"
+            and current_parent.get("node_id") == node_info["node_id"]
+        )
+
+        result = {"label": node_info["name"], "data": node_data, "expand": should_expand}
+
+        # Recursively add children
+        children = []
+        for child_name, child_info in sorted(node_info.get("children", {}).items()):
+            if child_info["node_id"] not in excluded_ids:
+                child_node = self._build_selection_node_recursive(child_info, excluded_ids, current_parent)
+                children.append(child_node)
+
+        if children:
+            result["children"] = children
+
+        return result
+
+    def _derive_path_from_node(self, node_type: str, node_data: Dict[str, Any]) -> Optional[List[str]]:
+        """Derive full path from node data.
+
+        Args:
+            node_type: Type of node ("subject_node" or "subject_entry")
+            node_data: Node data containing node_id and other fields
+
+        Returns:
+            List of path components (e.g., ["Finance", "Revenue", "Q1"])
+        """
         try:
-            if node_type == "domain":
-                return {"domain": node_data["name"]}
-            if node_type == "layer1":
-                return {"domain": node_data["domain"], "layer1": node_data["name"]}
-            if node_type == "layer2":
-                return {
-                    "domain": node_data["domain"],
-                    "layer1": node_data["layer1"],
-                    "layer2": node_data["name"],
-                }
-            if node_type == "subject_entry":
-                return {
-                    "domain": node_data["domain"],
-                    "layer1": node_data["layer1"],
-                    "layer2": node_data["layer2"],
-                    "name": node_data["name"],
-                }
-        except KeyError:
+            if node_type == "subject_node":
+                # Get path from subject_tree using node_id
+                node_id = node_data.get("node_id")
+                if not node_id:
+                    return None
+                return self.subject_tree_store.get_full_path(node_id)
+
+            elif node_type == "subject_entry":
+                # Path = subject_node_path + entry_name
+                node_id = node_data.get("node_id")  # Parent subject node's ID
+                if not node_id:
+                    return None
+
+                subject_path = self.subject_tree_store.get_full_path(node_id)
+                entry_name = node_data.get("name")
+                if not entry_name:
+                    return None
+
+                return subject_path + [entry_name]
+
+        except Exception as e:
+            logger.error(f"Failed to derive path from node: {e}")
             return None
+
         return None
 
     def _on_tree_edit_finished(self, result: Optional[Dict[str, Any]]) -> None:
+        """Handle tree edit completion with new path-based structure.
+
+        Args:
+            result: Dict with "name" (new name) and "parent" (new parent selection)
+        """
+        logger.info(f"edit:{result}")
         context = self._last_tree_selection or {}
         node_type = context.get("node_type")
-        old_path = context.get("path")
+        old_path = context.get("path")  # List[str]
 
         self._editing_component = None
         self._update_edit_indicator(None)
@@ -1103,185 +1209,172 @@ class SubjectScreen(ContextScreen):
             self.app.notify("Name cannot be empty", severity="warning")
             return
 
+        # Build new path based on node type and parent selection
         parent_value = result.get("parent")
-        new_path = dict(old_path)
+        new_path = self._build_new_path_from_result(node_type, old_path, new_name, parent_value)
 
-        if node_type == "domain":
-            new_path["domain"] = new_name
-        elif node_type == "layer1":
-            new_path["layer1"] = new_name
-            if parent_value and parent_value.get("selection_type") == "domain":
-                new_path["domain"] = parent_value.get("domain", new_path.get("domain", ""))
-        elif node_type == "layer2":
-            new_path["layer2"] = new_name
-            if parent_value and parent_value.get("selection_type") == "layer1":
-                new_path["layer1"] = parent_value.get("layer1", new_path.get("layer1", ""))
-                new_path["domain"] = parent_value.get("domain", new_path.get("domain", ""))
-        elif node_type == "subject_entry":
-            new_path["name"] = new_name
-            if parent_value and parent_value.get("selection_type") == "layer2":
-                new_path["domain"] = parent_value.get("domain", new_path.get("domain", ""))
-                new_path["layer1"] = parent_value.get("layer1", new_path.get("layer1", ""))
-                new_path["layer2"] = parent_value.get("layer2", new_path.get("layer2", ""))
-        if node_type == "subject_entry":
-            if old_path == new_path:
-                self.app.notify("No changes")
-                return
-        else:
-            if old_path[node_type] == new_path[node_type]:
-                self.app.notify("No changes")
-                return
-        self.subject_updater.update_domain_layers(old_path, update_values=new_path)
-        self._show_subject_details(new_path)
-
-        moved_payload = self._apply_tree_edit(node_type, old_path, new_path)
-        if moved_payload is None:
-            self.app.notify("Failed to update tree data", severity="error")
+        if new_path is None:
+            self.app.notify("Failed to build new path", severity="error")
             return
 
-        self._populate_tree(self.tree_data)
-        tree = self.query_one("#subject-tree", EditableTree)
-        self._focus_tree_path(tree, new_path, node_type)
+        # Check if there are actual changes
+        if old_path == new_path:
+            self.app.notify("No changes")
+            return
 
-        if tree.cursor_node:
-            self.update_path_display(tree.cursor_node)
+        try:
+            # Apply the edit to SubjectTreeStore or LanceDB
 
-        new_selected_data = self._build_selected_data(node_type, new_path, moved_payload)
-        if new_selected_data:
-            self.selected_data = new_selected_data
+            if node_type == "subject_node":
+                # Rename/move subject node in tree
+                self.subject_tree_store.rename(old_path, new_path)
 
-        # self._notify_tree_save(node_type, old_path, new_path)
+            elif node_type == "subject_entry":
+                # Rename subject_entry in LanceDB (storage)
+                # Get entry_type from context to determine which storage to update
+                node_data = context.get("node_data", {})
+                entry_type = node_data.get("entry_type", "")
 
-        # if node_type == "subject_entry" and new_selected_data:
-        #     self._show_subject_details(new_selected_data)
+                if entry_type == "metric":
+                    # Only rename in metric storage
+                    try:
+                        self.metrics_rag.metric_storage.rename(old_path, new_path)
+                        _fetch_metrics_with_cache.cache_clear()
+                    except Exception as e:
+                        logger.warning(f"Failed to rename metric entry: {e}")
+                elif entry_type == "sql":
+                    # Only rename in SQL storage
+                    try:
+                        self.sql_rag.reference_sql_storage.rename(old_path, new_path)
+                        _sql_details_cache.cache_clear()
+                    except Exception as e:
+                        logger.warning(f"Failed to rename SQL entry: {e}")
+                else:
+                    # Fallback: rename in both storages for backward compatibility
+                    try:
+                        self.metrics_rag.metric_storage.rename(old_path, new_path)
+                        _fetch_metrics_with_cache.cache_clear()
+                    except Exception as e:
+                        logger.warning(f"Failed to rename metric entry: {e}")
 
-    def _apply_tree_edit(self, node_type: str, old_path: Dict[str, str], new_path: Dict[str, str]) -> Optional[Any]:
-        if node_type == "domain":
-            subtree = self.tree_data.pop(old_path["domain"], None)
-            if subtree is None:
-                return None
-            self.tree_data[new_path["domain"]] = subtree
-            return subtree
+                    try:
+                        self.sql_rag.reference_sql_storage.rename(old_path, new_path)
+                        _sql_details_cache.cache_clear()
+                    except Exception as e:
+                        logger.warning(f"Failed to rename SQL entry: {e}")
 
-        if node_type == "layer1":
-            source_domain = self.tree_data.get(old_path["domain"], {})
-            subtree = source_domain.pop(old_path["layer1"], None)
-            if subtree is None:
-                return None
-            self.tree_data.setdefault(new_path["domain"], {})[new_path["layer1"]] = subtree
-            if not source_domain:
-                self.tree_data.pop(old_path["domain"], None)
-            return subtree
+            # Store path to focus after tree reload, then reload
+            self._pending_focus_path = new_path
+            self._current_loading_task = self.run_worker(self._load_subject_tree_data, thread=True)
 
-        if node_type == "layer2":
-            domain_bucket = self.tree_data.get(old_path["domain"], {})
-            layer1_bucket = domain_bucket.get(old_path["layer1"], {})
-            subtree = layer1_bucket.pop(old_path["layer2"], None)
-            if subtree is None:
-                return None
-            self.tree_data.setdefault(new_path["domain"], {}).setdefault(new_path["layer1"], {})[
-                new_path["layer2"]
-            ] = subtree
-            if not layer1_bucket:
-                domain_bucket.pop(old_path["layer1"], None)
-            if not domain_bucket:
-                self.tree_data.pop(old_path["domain"], None)
-            return subtree
+            self.app.notify(f"Successfully renamed to {'/'.join(new_path)}", severity="success")
 
-        if node_type == "subject_entry":
-            domain_bucket = self.tree_data.get(old_path["domain"], {})
-            layer1_bucket = domain_bucket.get(old_path["layer1"], {})
-            layer2_bucket = layer1_bucket.get(old_path["layer2"], {})
-            payload = layer2_bucket.pop(old_path["name"], None)
-            if payload is None:
-                return None
-            self.tree_data.setdefault(new_path["domain"], {}).setdefault(new_path["layer1"], {}).setdefault(
-                new_path["layer2"], {}
-            )[new_path["name"]] = payload
-            if not layer2_bucket:
-                layer1_bucket.pop(old_path["layer2"], None)
-            if not layer1_bucket:
-                domain_bucket.pop(old_path["layer1"], None)
-            if not domain_bucket:
-                self.tree_data.pop(old_path["domain"], None)
-            return payload
+        except ValueError as e:
+            self.app.notify(f"Failed to rename: {str(e)}", severity="error")
+            logger.error(f"Rename failed: {e}")
+        except Exception as e:
+            self.app.notify("Failed to apply changes", severity="error")
+            logger.error(f"Unexpected error during rename: {e}")
 
-        return None
+    def _build_new_path_from_result(
+        self, node_type: str, old_path: List[str], new_name: str, parent_value: Optional[Dict[str, Any]]
+    ) -> Optional[List[str]]:
+        """Build new path from edit result.
 
-    def _focus_tree_path(self, tree: EditableTree, path: Dict[str, str], node_type: str) -> None:
+        Args:
+            node_type: Type of node being edited ("subject_node" or "subject_entry")
+            old_path: Original path as List[str]
+            new_name: New name for the node
+            parent_value: Selected parent from dialog (may be None)
+
+        Returns:
+            New path as List[str], or None if invalid
+        """
+        try:
+            if node_type == "subject_node":
+                # Build parent path from parent_value
+                if parent_value is None or parent_value.get("selection_type") == "root":
+                    # Root level node
+                    return [new_name]
+                elif parent_value.get("selection_type") == "subject_node":
+                    # Get parent path from parent node_id
+                    parent_node_id = parent_value.get("node_id")
+                    if parent_node_id:
+                        parent_path = self.subject_tree_store.get_full_path(parent_node_id)
+                        return parent_path + [new_name]
+
+            elif node_type == "subject_entry":
+                # For subject_entry, parent is the subject_node
+                if parent_value and parent_value.get("selection_type") == "subject_node":
+                    parent_node_id = parent_value.get("node_id")
+                    if parent_node_id:
+                        parent_path = self.subject_tree_store.get_full_path(parent_node_id)
+                        return parent_path + [new_name]
+                else:
+                    # No parent change, keep same parent path, just change name
+                    return old_path[:-1] + [new_name]
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to build new path: {e}")
+            return None
+
+    def _focus_tree_path_by_name(self, tree: EditableTree, path: List[str]) -> None:
+        """Focus tree node by traversing the path using name matching.
+
+        Args:
+            tree: The EditableTree widget
+            path: List of path components (e.g., ["Finance", "Revenue", "Q1"])
+        """
+        if not path:
+            return
+
         node = tree.root
-        traversal_order = [
-            ("domain", path.get("domain")),
-            ("layer1", path.get("layer1")),
-            ("layer2", path.get("layer2")),
-            ("subject_entry", path.get("name")),
-        ]
-
-        for level_type, target_name in traversal_order:
-            if not target_name:
-                break
+        for target_name in path:
+            # Remove icon prefixes from label for matching
+            found = False
             for child in node.children:
-                data = child.data or {}
-                if data.get("type") == level_type and data.get("name") == target_name:
+                child_name = child.data.get("name", "") if child.data else ""
+                # Strip icon prefixes
+                child_name = child_name.replace("📁", "").replace("📈", "").replace("💻", "").strip()
+                if child_name == target_name:
                     node = child
                     node.expand()
+                    found = True
                     break
-            else:
+            if not found:
+                logger.warning(f"Could not find node '{target_name}' in path")
                 return
 
         tree.move_cursor(node)
 
-    def _build_selected_data(self, node_type: str, path: Dict[str, str], payload: Any) -> Optional[Dict[str, Any]]:
-        if node_type == "domain":
-            return {"type": "domain", "name": path.get("domain", "")}
-        if node_type == "layer1":
-            return {"type": "layer1", "name": path.get("layer1", ""), "domain": path.get("domain", "")}
-        if node_type == "layer2":
-            return {
-                "type": "layer2",
-                "name": path.get("layer2", ""),
-                "layer1": path.get("layer1", ""),
-                "domain": path.get("domain", ""),
-            }
-        if node_type == "subject_entry":
-            return {
-                "type": "subject_entry",
-                "name": path.get("name", ""),
-                "layer2": path.get("layer2", ""),
-                "layer1": path.get("layer1", ""),
-                "domain": path.get("domain", ""),
-                "metrics_count": payload.get("metrics_count", 0) if isinstance(payload, dict) else 0,
-                "sql_count": payload.get("sql_count", 0) if isinstance(payload, dict) else 0,
-            }
-        return None
-
     def _show_subject_details(self, subject_info: Dict[str, Any]) -> None:
-        metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
+        """Show metrics and SQL details for the selected subject.
 
+        Args:
+            subject_info: Dict containing node data with new structure:
+                - For subject_node: {"type": "subject_node", "node_id": int, "name": str, ...}
+                - For subject_entry: {"type": "subject_entry", "node_id": int, "name": str, ...}
+        """
+        metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
         sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
         divider = self.query_one("#panel-divider", Static)
 
         metrics: List[Dict[str, Any]] = []
         sql_entries: List[Dict[str, Any]] = []
 
-        metrics_count = subject_info.get("metrics_count", 0)
-        sql_count = subject_info.get("sql_count", 0)
+        node_type = subject_info.get("type")
+        node_id = subject_info.get("node_id")
+        name = subject_info.get("name", "")
+        entry_type = subject_info.get("entry_type", "")
 
-        if metrics_count and self.metrics_rag:
-            metrics = self._fetch_metrics_details(
-                subject_info.get("domain", ""),
-                subject_info.get("layer1", ""),
-                subject_info.get("layer2", ""),
-                subject_info.get("name", ""),
-            )
-
-        if sql_count and self.sql_rag:
-            sql_entries = self._fetch_sql_details(
-                subject_info.get("domain", ""),
-                subject_info.get("layer1", ""),
-                subject_info.get("layer2", ""),
-                subject_info.get("name", ""),
-            )
+        if node_type == "subject_entry" and node_id and name:
+            # Fetch only the specific type based on entry_type
+            if entry_type == "metric":
+                metrics = self._fetch_metrics_by_path_and_name(node_id, name)
+            elif entry_type == "sql":
+                sql_entries = self._fetch_sql_by_path_and_name(node_id, name)
 
         # Render depending on mode
         if self.readonly:
@@ -1436,6 +1529,193 @@ class SubjectScreen(ContextScreen):
             return
         self.action_exit_without_selection()
 
+    def action_create_node(self) -> None:
+        """Create a new subject node as child of the currently selected node or at root level."""
+        tree = self.query_one("#subject-tree", EditableTree)
+
+        # Determine parent node and ID
+        parent_node_id = None
+        current_parent = {"selection_type": "root"}
+
+        if tree.cursor_node:
+            parent_node = tree.cursor_node
+            parent_data = parent_node.data or {}
+
+            # Only subject_node can have children (not subject_entry or other types)
+            if parent_data.get("type") == "subject_node":
+                parent_node_id = parent_data.get("node_id")
+                if parent_node_id:
+                    current_parent = {"selection_type": "subject_node", "node_id": parent_node_id}
+            elif parent_data.get("type") in {"subject_entry", "loading", "empty"}:
+                # If cursor is on non-subject_node, create at root level
+                pass
+
+        # Build parent selection tree (with root option)
+        nodes = []
+        # Add root option
+        nodes.append(
+            {
+                "label": "Root",
+                "data": {"selection_type": "root"},
+                "expand": current_parent.get("selection_type") == "root",
+            }
+        )
+
+        # Add all subject nodes as potential parents
+        for name, node_info in sorted(self.tree_data.items()):
+            selection_node = self._build_selection_node_recursive(node_info, set(), current_parent)
+            nodes.append(selection_node)
+
+        # Set editing state and show dialog
+        self._editing_component = "tree"
+        self._update_edit_indicator("tree")
+        self._last_tree_selection = {
+            "action": "create",
+            "parent_node_id": parent_node_id,
+        }
+
+        dialog = TreeEditDialog(
+            level="subject_node",
+            current_name="",
+            current_parent=current_parent,
+            parent_tree=nodes,
+            parent_selection_type="subject_node",
+            pattern=TREE_VALIDATION_RULES.get("subject_node", {}).get("pattern"),
+        )
+        self._active_dialog = dialog
+        self.app.push_screen(dialog, callback=self._on_create_node_finished)
+
+    def _on_create_node_finished(self, result: Optional[Dict[str, Any]]) -> None:
+        """Handle create node dialog completion."""
+        self._editing_component = None
+        self._update_edit_indicator(None)
+        self._last_tree_selection = None
+        self._active_dialog = None
+
+        if not result:
+            return
+
+        new_name = result.get("name", "").strip()
+        if not new_name:
+            self.app.notify("Name cannot be empty", severity="warning")
+            return
+
+        parent_value = result.get("parent")
+        if not parent_value:
+            self.app.notify("Invalid parent selection", severity="error")
+            return
+
+        # Determine parent_node_id and path based on selection type
+        parent_node_id = None
+        new_path = [new_name]
+
+        if parent_value.get("selection_type") == "root":
+            # Create at root level (parent_node_id = None)
+            parent_node_id = None
+            new_path = [new_name]
+        elif parent_value.get("selection_type") == "subject_node":
+            # Create under a subject node
+            parent_node_id = parent_value.get("node_id")
+            if not parent_node_id:
+                self.app.notify("Invalid parent node", severity="error")
+                return
+            try:
+                parent_path = self.subject_tree_store.get_full_path(parent_node_id)
+                new_path = parent_path + [new_name]
+            except Exception as e:
+                self.app.notify("Failed to get parent path", severity="error")
+                logger.error(f"Failed to get parent path: {e}")
+                return
+        else:
+            self.app.notify("Invalid parent selection type", severity="error")
+            return
+
+        try:
+            # Create the new node (parent_node_id can be None for root level)
+            self.subject_tree_store.create_node(parent_node_id, new_name)
+
+            # Reload tree
+            self._current_loading_task = self.run_worker(self._load_subject_tree_data, thread=True)
+
+            self.app.notify(f"Created node: {'/'.join(new_path)}", severity="success")
+
+        except ValueError as e:
+            self.app.notify(f"Failed to create node: {str(e)}", severity="error")
+            logger.error(f"Create node failed: {e}")
+        except Exception as e:
+            self.app.notify("Failed to create node", severity="error")
+            logger.error(f"Unexpected error during create: {e}")
+
+    def action_delete_node(self) -> None:
+        """Delete the currently selected node."""
+        tree = self.query_one("#subject-tree", EditableTree)
+        if not tree.cursor_node:
+            self.app.notify("Select a node to delete", severity="warning")
+            return
+
+        node = tree.cursor_node
+        node_data = node.data or {}
+        node_type = node_data.get("type")
+
+        if node_type != "subject_node":
+            self.app.notify("Can only delete subject nodes", severity="warning")
+            return
+
+        node_id = node_data.get("node_id")
+        node_name = node_data.get("name", "")
+
+        if not node_id:
+            self.app.notify("Invalid node", severity="error")
+            return
+
+        # Check if node has children
+        try:
+            children = self.subject_tree_store.get_children(node_id)
+            if children:
+                self.app.notify(f"Cannot delete: '{node_name}' has {len(children)} child(ren).", severity="warning")
+                return
+        except Exception:
+            pass
+
+        # Store path for potential refresh
+        try:
+            node_path = self.subject_tree_store.get_full_path(node_id)
+        except Exception:
+            node_path = [node_name] if node_name else []
+
+        # Confirm and delete
+        self._editing_component = "tree"
+        self._update_edit_indicator("tree")
+        self._last_tree_selection = {
+            "action": "delete",
+            "node_id": node_id,
+            "node_path": node_path,
+        }
+
+        # For simplicity, just delete directly (could add confirmation dialog)
+        try:
+            self.subject_tree_store.delete_node(node_id)
+
+            # Clear caches
+            _fetch_metrics_with_cache.cache_clear()
+            _sql_details_cache.cache_clear()
+
+            # Reload tree
+            self._current_loading_task = self.run_worker(self._load_subject_tree_data, thread=True)
+
+            self.app.notify(f"Deleted node: {'/'.join(node_path)}", severity="success")
+
+        except ValueError as e:
+            self.app.notify(f"Failed to delete: {str(e)}", severity="error")
+            logger.error(f"Delete failed: {e}")
+        except Exception as e:
+            self.app.notify("Failed to delete node", severity="error")
+            logger.error(f"Unexpected error during delete: {e}")
+        finally:
+            self._editing_component = None
+            self._update_edit_indicator(None)
+            self._last_tree_selection = None
+
     def _get_panel(self, component: str) -> Optional[MetricsPanel | ReferenceSqlPanel]:
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
         sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
@@ -1507,15 +1787,29 @@ class SubjectScreen(ContextScreen):
         _fetch_metrics_with_cache.cache_clear()
         _sql_details_cache.cache_clear()
 
-    def _fetch_metrics_details(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
-        return _fetch_metrics_with_cache(
-            self.metrics_rag, domain or "default", layer1 or "default", layer2 or "default", name or ""
-        )
+    def _fetch_metrics_by_path_and_name(self, node_id: int, name: str) -> List[Dict[str, Any]]:
+        """Fetch metrics by subject node ID and entry name.
 
-    def _fetch_sql_details(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
-        return _sql_details_cache(
-            self.sql_rag, domain or "default", layer1 or "default", layer2 or "default", name or ""
-        )
+        Args:
+            node_id: Subject node ID
+            name: Entry name
+
+        Returns:
+            List of metric entries matching the criteria
+        """
+        return self.metrics_rag.metric_storage.list_entries(node_id=node_id, name=name)
+
+    def _fetch_sql_by_path_and_name(self, node_id: int, name: str) -> List[Dict[str, Any]]:
+        """Fetch SQL entries by subject node ID and entry name.
+
+        Args:
+            node_id: Subject node ID
+            name: Entry name
+
+        Returns:
+            List of SQL entries matching the criteria
+        """
+        return self.sql_rag.reference_sql_storage.list_entries(node_id=node_id, name=name)
 
 
 class NavigationHelpScreen(ModalScreen):
@@ -1536,6 +1830,8 @@ class NavigationHelpScreen(ModalScreen):
                 "• Enter - Load details\n"
                 "• F4 - Show path\n"
                 "• F5 - Select and exit\n"
+                "• F7 - Create new node\n"
+                # "• F8 - Delete selected node\n"
                 "• Ctrl+e - Enter edit mode\n"
                 "• Ctrl+w - Save and exit edit mode\n"
                 "• Esc - Exit editing mode or application\n\n"

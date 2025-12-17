@@ -13,7 +13,6 @@ import pytest
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.embedding_models import get_metric_embedding_model
 from datus.storage.metric.store import MetricStorage, SemanticMetricsRAG
-from datus.utils.pyarrow_utils import concat_columns_with_cleaning
 
 
 @pytest.fixture
@@ -53,9 +52,7 @@ def sample_metrics_with_domain_layers():
     """Sample metrics data with domain layer concatenation."""
     return [
         {
-            "domain": "Sales",
-            "layer1": "Revenue",
-            "layer2": "Monthly",
+            "subject_path": ["Sales", "Revenue", "Monthly"],
             "name": "monthly_revenue",
             "llm_text": (
                 "Metric: monthly_revenue\nMonthly revenue across all channels\n\n"
@@ -65,9 +62,7 @@ def sample_metrics_with_domain_layers():
             "created_at": "2023-01-01T00:00:00Z",
         },
         {
-            "domain": "Sales",
-            "layer1": "Revenue",
-            "layer2": "Daily",
+            "subject_path": ["Sales", "Revenue", "Daily"],
             "name": "daily_revenue",
             "llm_text": (
                 "Metric: daily_revenue\nDaily revenue across all channels\n\n"
@@ -77,9 +72,7 @@ def sample_metrics_with_domain_layers():
             "created_at": "2023-01-02T00:00:00Z",
         },
         {
-            "domain": "Marketing",
-            "layer1": "Campaigns",
-            "layer2": "Performance",
+            "subject_path": ["Marketing", "Campaigns", "Performance"],
             "name": "campaign_ctr",
             "llm_text": (
                 "Metric: campaign_ctr\nCampaign click-through rate\n\n"
@@ -97,7 +90,7 @@ class TestSemanticMetricsRAGPyArrow:
     def test_search_all_metrics_returns_pyarrow_table(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test that search_all_metrics returns PyArrow Table."""
         metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        metric_storage.store(sample_metrics_with_domain_layers)
+        metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         # Mock semantic storage
         mock_semantic_storage = Mock()
@@ -106,12 +99,11 @@ class TestSemanticMetricsRAGPyArrow:
         rag.metric_storage = metric_storage
         rag.semantic_model_storage = mock_semantic_storage
 
-        result = rag.search_all_metrics(select_fields=["name", "description"])
+        result = rag.search_all_metrics()
 
-        assert isinstance(result, pa.Table)
-        assert result.num_rows == 3
-        assert "name" in result.column_names
-        assert "description" in result.column_names
+        assert len(result) == 3
+        assert all(element["name"] for element in result)
+        assert all(element["llm_text"] for element in result)
 
     def test_hybrid_search_with_pyarrow_filtering(
         self, temp_db_path, sample_metrics_with_domain_layers, sample_semantic_models
@@ -119,7 +111,7 @@ class TestSemanticMetricsRAGPyArrow:
         """Test hybrid search using PyArrow filtering operations."""
         # Setup storages
         metric_storage = MetricStorage(db_path=temp_db_path + "_metrics", embedding_model=get_metric_embedding_model())
-        metric_storage.store(sample_metrics_with_domain_layers)
+        metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         semantic_storage = Mock()
         semantic_search_result = pa.table({"semantic_model_name": ["sales_model", "sales_model"]})
@@ -131,7 +123,7 @@ class TestSemanticMetricsRAGPyArrow:
         rag.semantic_model_storage = semantic_storage
 
         # Test the filtering logic that uses PyArrow compute
-        all_metrics = metric_storage._search_all()
+        all_metrics = pa.Table.from_pylist(metric_storage.search_all_metrics())
 
         # Simulate the filtering done in search_hybrid_metrics
         semantic_names_set = semantic_search_result["semantic_model_name"].unique()
@@ -153,13 +145,13 @@ class TestSemanticMetricsRAGPyArrow:
     def test_get_metrics_detail_with_compound_where_clause(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test metrics detail retrieval with compound WHERE clauses."""
         metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        metric_storage.store(sample_metrics_with_domain_layers)
+        metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         rag = SemanticMetricsRAG.__new__(SemanticMetricsRAG)
         rag.metric_storage = metric_storage
 
         # Test the get_metrics_detail method functionality
-        result = rag.get_metrics_detail(domain="Sales", layer1="Revenue", layer2="Monthly", name="monthly_revenue")
+        result = rag.get_metrics_detail(subject_path=["Sales", "Revenue", "Monthly"], name="monthly_revenue")
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -171,9 +163,7 @@ class TestSemanticMetricsRAGPyArrow:
         # Create metrics data that needs domain layer concatenation
         raw_metrics = [
             {
-                "domain": "Test Domain",
-                "layer1": "Test/Layer1",
-                "layer2": "Test Layer2",
+                "subject_path": ["Test Domain", "Test/Layer1", "Test Layer2"],
                 "name": "test_metric",
                 "llm_text": "Metric: test_metric\nTest metric description\n\nConstraint: value > 0\nSQL: SELECT 1",
                 "semantic_model_name": "test_model",
@@ -181,35 +171,17 @@ class TestSemanticMetricsRAGPyArrow:
             }
         ]
 
-        # Simulate the concatenation that should happen during storage
-        table = pa.table(
-            {
-                "domain": [item["domain"] for item in raw_metrics],
-                "layer1": [item["layer1"] for item in raw_metrics],
-                "layer2": [item["layer2"] for item in raw_metrics],
-            }
-        )
-
-        # Use the same concatenation logic as in the storage
-        domain_layer_concat = concat_columns_with_cleaning(
-            table, columns=["domain", "layer1", "layer2"], separator="_", replacements={" ": "_", "/": "_"}
-        )
-
-        expected_concat = "Test_Domain_Test_Layer1_Test_Layer2"
-        assert domain_layer_concat.to_pylist()[0] == expected_concat
-
         # Store and verify
         metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        metric_storage.store(raw_metrics)
+        metric_storage.batch_store_metrics(raw_metrics)
 
         # Verify the stored data can be filtered correctly
-        result = metric_storage._search_all(
-            where="domain = 'Test Domain' and layer1 = 'Test Layer1' and layer2 = 'Test Layer2'",
-            select_fields=["name", "domain", "layer1", "layer2"],
+        result = metric_storage.search_all_metrics(
+            subject_path=["Test Domain", "Test/Layer1", "Test Layer2"],
         )
 
-        assert result.num_rows == 1
-        assert result["domain"][0].as_py() == "Test Domain"
+        assert len(result) == 1
+        assert result[0]["subject_path"][0] == "Test Domain"
 
 
 class TestPyArrowComputeIntegration:
@@ -218,12 +190,15 @@ class TestPyArrowComputeIntegration:
     def test_complex_filtering_operations(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test complex filtering operations using PyArrow compute."""
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(sample_metrics_with_domain_layers)
+        storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
-        all_metrics = storage._search_all()
+        all_metrics_list = storage.search_all_metrics()
 
         # Test multiple filtering conditions
-        sales_metrics = all_metrics.filter(pc.equal(all_metrics["domain"], "Sales"))
+        all_metrics = pa.Table.from_pylist(all_metrics_list)
+        subject_path_0 = pc.list_element(all_metrics["subject_path"], 0)
+        subject_path_2 = pc.list_element(all_metrics["subject_path"], 2)
+        sales_metrics = pc.filter(all_metrics, pc.equal(subject_path_0, "Sales"))
         assert sales_metrics.num_rows == 2
 
         # Test string pattern matching
@@ -232,7 +207,7 @@ class TestPyArrowComputeIntegration:
 
         # Test combining filters
         daily_sales = all_metrics.filter(
-            pc.and_(pc.equal(all_metrics["domain"], "Sales"), pc.match_substring(all_metrics["layer2"], "Daily"))
+            pc.and_(pc.equal(subject_path_0, "Sales"), pc.match_substring(subject_path_2, "Daily"))
         )
         assert daily_sales.num_rows == 1
         assert daily_sales["name"][0].as_py() == "daily_revenue"
@@ -240,19 +215,19 @@ class TestPyArrowComputeIntegration:
     def test_aggregation_operations(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test aggregation operations on PyArrow tables."""
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(sample_metrics_with_domain_layers)
+        storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
-        all_metrics = storage._search_all()
+        all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
 
         # Test unique values
-        unique_domains = pc.unique(all_metrics["domain"])
+        unique_domains = pc.unique(pc.list_element(all_metrics["subject_path"], 0))
         unique_domains_list = unique_domains.to_pylist()
         assert "Sales" in unique_domains_list
         assert "Marketing" in unique_domains_list
         assert len(unique_domains_list) == 2
 
         # Test counting
-        domain_counts = pc.value_counts(all_metrics["domain"])
+        domain_counts = pc.value_counts(pc.list_element(all_metrics["subject_path"], 0))
         values = pc.struct_field(domain_counts, [0])
         counts = pc.struct_field(domain_counts, [1])
         counts_dict = dict(zip(values.to_pylist(), counts.to_pylist()))
@@ -262,9 +237,9 @@ class TestPyArrowComputeIntegration:
     def test_string_operations_on_metadata(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test string operations on metadata fields."""
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(sample_metrics_with_domain_layers)
+        storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
-        all_metrics = storage._search_all()
+        all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
 
         # Test string transformations
         upper_names = pc.utf8_upper(all_metrics["name"])
@@ -278,35 +253,21 @@ class TestPyArrowComputeIntegration:
         assert all(length > 0 for length in lengths_list)
 
         # Test string replacement
-        cleaned_descriptions = pc.replace_substring(all_metrics["description"], "revenue", "income")
+        cleaned_descriptions = pc.replace_substring(all_metrics["llm_text"], "revenue", "income")
         cleaned_list = cleaned_descriptions.to_pylist()
         assert any("income" in desc for desc in cleaned_list)
 
     def test_sorting_and_ordering(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test sorting operations on PyArrow tables."""
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(sample_metrics_with_domain_layers)
+        storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
-        all_metrics = storage._search_all()
+        all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
 
         # Test sorting by name
         sorted_by_name = all_metrics.sort_by([("name", "ascending")])
         sorted_names = sorted_by_name["name"].to_pylist()
         assert sorted_names == sorted(sorted_names)
-
-        # Test sorting by multiple columns
-        sorted_multi = all_metrics.sort_by([("domain", "ascending"), ("layer2", "descending")])
-
-        # Verify sort order
-        domains = sorted_multi["domain"].to_pylist()
-
-        # Should be grouped by domain first
-        marketing_indices = [i for i, d in enumerate(domains) if d == "Marketing"]
-        sales_indices = [i for i, d in enumerate(domains) if d == "Sales"]
-
-        # Marketing should come before Sales (alphabetically)
-        if marketing_indices and sales_indices:
-            assert max(marketing_indices) < min(sales_indices)
 
 
 class TestPerformanceOptimizations:
@@ -321,9 +282,7 @@ class TestPerformanceOptimizations:
         for i in range(size):
             large_dataset.append(
                 {
-                    "domain": f"Domain_{i % 10}",
-                    "layer1": f"Layer1_{i % 5}",
-                    "layer2": f"Layer2_{i % 3}",
+                    "subject_path": [f"Domain_{i % 10}", f"Layer1_{i % 5}", f"Layer2_{i % 3}"],
                     "name": f"metric_{i}",
                     "llm_text": (
                         f"Metric: metric_{i}\nDescription for metric {i}\n\n"
@@ -335,13 +294,13 @@ class TestPerformanceOptimizations:
             )
 
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(large_dataset)
+        storage.batch_store_metrics(large_dataset)
 
         # Test that operations complete efficiently
         import time
 
         start_time = time.time()
-        all_metrics = storage._search_all()
+        all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
         end_time = time.time()
 
         assert (end_time - start_time) < 2.0  # Should complete quickly
@@ -349,7 +308,7 @@ class TestPerformanceOptimizations:
 
         # Test filtering performance
         start_time = time.time()
-        filtered = all_metrics.filter(pc.equal(all_metrics["domain"], "Domain_1"))
+        filtered = all_metrics.filter(pc.equal(pc.list_element(all_metrics["subject_path"], 0), "Domain_1"))
         end_time = time.time()
 
         assert (end_time - start_time) < 1.0  # Filtering should be fast
@@ -362,9 +321,7 @@ class TestPerformanceOptimizations:
         for i in range(500):
             dataset.append(
                 {
-                    "domain": "LargeDomain",
-                    "layer1": "LargeLayer1",
-                    "layer2": "LargeLayer2",
+                    "subject_path": ["LargeDomain", "LargeLayer1", "LargeLayer2"],
                     "name": f"large_metric_{i}",
                     "llm_text": f"Metric: large_metric_{i}\n"
                     f"This is a very long description for metric {i} " * 20
@@ -376,24 +333,24 @@ class TestPerformanceOptimizations:
             )
 
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(dataset)
+        storage.batch_store_metrics(dataset)
 
         # Test that we can work with subsets without loading everything
-        all_metrics = storage._search_all()
+        all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
 
         # Test slicing for memory efficiency
         first_100 = all_metrics.slice(0, 100)
         assert first_100.num_rows == 100
 
         # Test column selection for memory efficiency
-        minimal_cols = all_metrics.select(["name", "domain"])
+        minimal_cols = all_metrics.select(["name", "subject_path"])
         assert len(minimal_cols.column_names) == 2
         assert minimal_cols.num_rows == 500
 
     def test_concurrent_read_operations(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test concurrent read operations on PyArrow tables."""
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(sample_metrics_with_domain_layers)
+        storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         import concurrent.futures
 
@@ -402,8 +359,8 @@ class TestPerformanceOptimizations:
 
         def concurrent_reader(thread_id):
             try:
-                all_metrics = storage._search_all()
-                filtered = all_metrics.filter(pc.equal(all_metrics["domain"], "Sales"))
+                all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
+                filtered = all_metrics.filter(pc.equal(pc.list_element(all_metrics["subject_path"], 0), "Sales"))
                 results.append((thread_id, filtered.num_rows))
             except Exception as e:
                 errors.append((thread_id, str(e)))

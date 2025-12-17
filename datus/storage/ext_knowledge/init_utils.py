@@ -5,7 +5,6 @@
 from typing import Set
 
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
-from datus.utils.pyarrow_utils import concat_columns_with_cleaning
 
 
 def exists_ext_knowledge(storage: ExtKnowledgeStore, build_mode: str = "overwrite") -> Set[str]:
@@ -24,35 +23,30 @@ def exists_ext_knowledge(storage: ExtKnowledgeStore, build_mode: str = "overwrit
 
     if build_mode == "incremental":
         # Get all existing knowledge entries to avoid duplicates
-        all_knowledge = storage.search_all_knowledge()
-        existing_knowledge = set(
-            concat_columns_with_cleaning(
-                all_knowledge,
-                columns=["domain", "layer1", "layer2", "terminology"],
-                separator="__",
-                replacements={" ": "_", "/": "_"},
-            ).to_pylist()
-        )
+        knowledge_list = storage.search_all_knowledge()
+
+        for item in knowledge_list:
+            subject_path = item.get("subject_path", [])
+            terminology = item.get("terminology", "")
+            knowledge_id = gen_ext_knowledge_id(subject_path, terminology)
+            existing_knowledge.add(knowledge_id)
 
     return existing_knowledge
 
 
-def gen_ext_knowledge_id(domain: str, layer1: str, layer2: str, terminology: str) -> str:
+def gen_ext_knowledge_id(subject_path: list, terminology: str) -> str:
     """Generate unique ID for external knowledge entry.
 
     Args:
-        domain: Business domain
-        layer1: First layer categorization
-        layer2: Second layer categorization
+        subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
         terminology: Business terminology/concept
 
     Returns:
         Unique knowledge ID
     """
     # Clean inputs to avoid issues with special characters
-    clean_domain = domain.replace(" ", "_").replace("/", "_")
-    clean_layer1 = layer1.replace(" ", "_").replace("/", "_")
-    clean_layer2 = layer2.replace(" ", "_").replace("/", "_")
-    clean_terminology = terminology.replace(" ", "_").replace("/", "_")
+    clean_path_parts = [part.replace("/", "_") for part in subject_path]
+    clean_terminology = terminology.replace("/", "_")
 
-    return f"{clean_domain}__{clean_layer1}__{clean_layer2}__{clean_terminology}"
+    path_str = "/".join(clean_path_parts) if clean_path_parts else ""
+    return f"{path_str}/{clean_terminology}" if path_str else clean_terminology

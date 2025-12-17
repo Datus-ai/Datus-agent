@@ -324,9 +324,7 @@ namespace:
 
 metrics:
   tutorial:
-    domain: sale
-    layer1: layer1
-    layer2: layer2
+    subject_path: sale/layer1/layer2
     ext_knowledge: ""
 ```
 

@@ -1,9 +1,10 @@
 from pathlib import Path
 
+from datus.configuration.agent_config import AgentConfig
 from datus.storage.cache import StorageCache
 
 
-class DummyAgentConfig:
+class DummyAgentConfig(AgentConfig):
     def __init__(self, base_dir: Path):
         self._base_dir = base_dir
 
@@ -20,12 +21,7 @@ class RecordingStorage:
 
 
 def _build_cache(tmp_path):
-    return StorageCache(
-        agent_config=DummyAgentConfig(tmp_path),
-        schema_factory=RecordingStorage,
-        metrics_factory=RecordingStorage,
-        reference_sql_factory=RecordingStorage,
-    )
+    return StorageCache(agent_config=DummyAgentConfig(tmp_path))
 
 
 def test_global_instances_are_cached(tmp_path):

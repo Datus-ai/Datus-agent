@@ -299,7 +299,11 @@ def in_(field: str, values: Iterable[Any]) -> Condition:
 
 
 def like(field: str, pattern: str) -> Condition:
-    return Condition(field, Op.LIKE, pattern)
+    return Condition(field, Op.LIKE, _replace_wildcard(pattern))
+
+
+def _replace_wildcard(value: str) -> str:
+    return value.replace("*", "%")
 
 
 # Logical helpers

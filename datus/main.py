@@ -149,10 +149,9 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--metric_meta", type=str, default="default", help="Metric meta for the success story"
     )
-    bootstrap_parser.add_argument("--domain", type=str, help="Domain of the success story")
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
-    bootstrap_parser.add_argument("--layer1", type=str, help="Layer1 of the metrics")
-    bootstrap_parser.add_argument("--layer2", type=str, help="Layer2 of the metrics")
+
+    bootstrap_parser.add_argument("--subject_path", type=str, help="Subject path of the success story")
     bootstrap_parser.add_argument("--ext_knowledge", type=str, help="Path to external knowledge CSV file")
     bootstrap_parser.add_argument(
         "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"
@@ -191,9 +190,7 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--task_db_name", type=str, help="Database name for the task")
     benchmark_parser.add_argument("--task_schema", type=str, help="Schema name for the task")
     benchmark_parser.add_argument("--metric_meta", type=str, default="default", help="Metric meta for the task")
-    benchmark_parser.add_argument("--domain", type=str, help="Domain for the task")
-    benchmark_parser.add_argument("--layer1", type=str, help="Layer1 for the task")
-    benchmark_parser.add_argument("--layer2", type=str, help="Layer2 for the task")
+    benchmark_parser.add_argument("--subject_path", type=str, help="Subject path for the task")
     benchmark_parser.add_argument("--task_ext_knowledge", type=str, default="", help="External knowledge for the task")
     benchmark_parser.add_argument(
         "--current_date",
@@ -279,9 +276,7 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="Current date reference for relative time expressions (e.g., '2025-07-01')",
     )
-    run_parser.add_argument("--domain", type=str, default="", help="Domain of the success story")
-    run_parser.add_argument("--layer1", type=str, default="", help="Layer1 of the metrics")
-    run_parser.add_argument("--layer2", type=str, default="", help="Layer2 of the metrics")
+    run_parser.add_argument("--subject_path", type=str, default="", help="Subject path of the success story")
 
     # evaluation for benchmark
     evaluation_parser = subparsers.add_parser(
@@ -406,6 +401,7 @@ def main():
         else:
             db_name, db_type = agent_config.current_db_name_type(args.task_db_name)
             task_id = args.task_id or datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
+            subject_path = [c.strip() for c in args.subject_path.split("/") if c.strip()] if args.subject_path else None
             result = agent.run(
                 SqlTask(
                     id=task_id,
@@ -417,9 +413,7 @@ def main():
                     external_knowledge=args.task_ext_knowledge,
                     output_dir=agent_config.output_dir,
                     schema_linking_type=args.schema_linking_type,
-                    domain=args.domain,
-                    layer1=args.layer1,
-                    layer2=args.layer2,
+                    subject_path=subject_path,
                     current_date=args.current_date,
                 ),
                 True,

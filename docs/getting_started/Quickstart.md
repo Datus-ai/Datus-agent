@@ -256,9 +256,7 @@ Add the following section to `~/.datus/conf/agent.yml`
 ```bash
   metrics:
     demo:
-      domain: economic
-      layer1: bank
-      layer2: bank_failures
+      subject_path: economic/bank/bank_failures
 ```
 
 - Set up environment variables

@@ -244,29 +244,13 @@ class SemanticAgenticNode(AgenticNode):
         Query existing subject_tree values from metrics storage.
 
         Returns:
-            List of unique subject_tree values in "domain/layer1/layer2" format
+            List of unique subject_path values as List[str]
         """
         try:
-            # Get all metrics with domain/layer1/layer2 fields
-            all_metrics = self.metrics_rag.search_all_metrics(
-                semantic_model_name="", select_fields=["domain", "layer1", "layer2"]
-            )
-
-            # Extract unique subject_tree combinations
-            subject_trees_set = set()
-            for metric in all_metrics:
-                domain = metric.get("domain", "").strip()
-                layer1 = metric.get("layer1", "").strip()
-                layer2 = metric.get("layer2", "").strip()
-
-                # Only add if all three fields are non-empty
-                if domain and layer1 and layer2:
-                    subject_tree = f"{domain}/{layer1}/{layer2}"
-                    subject_trees_set.add(subject_tree)
-
-            subject_trees = sorted(list(subject_trees_set))
-            logger.debug(f"Found {len(subject_trees)} existing metric subject_trees")
-            return subject_trees
+            # Get all metrics with subject_path field
+            subject_paths = sorted(self.metrics_rag.metric_storage.get_subject_tree_flat())
+            logger.debug(f"Found {len(subject_paths)} unique metric subject_paths")
+            return subject_paths
 
         except Exception as e:
             logger.error(f"Error getting existing metric subject_trees: {e}")

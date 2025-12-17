@@ -9,7 +9,7 @@ This module provides a class to handle all agent-related commands.
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from rich.prompt import Confirm
 from rich.syntax import Syntax
@@ -461,17 +461,13 @@ class AgentCommands:
         if not input_text:
             self.console.print("[bold red]Error:[/] Input text cannot be empty.")
             return
-        domain = self.cli.prompt_input("Enter domain (optional)")
-        layer1 = self.cli.prompt_input("Enter layer1 (optional)")
-        layer2 = self.cli.prompt_input("Enter layer2 (optional)")
+        subject_path = self._prompt_subject_path()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
 
         with self.console.status("[bold green]Searching for metrics...[/]"):
             result = self.context_search_tools.search_metrics(
                 query_text=input_text,
-                domain=domain,
-                layer1=layer1,
-                layer2=layer2,
+                subject_path=subject_path,
                 top_n=int(top_n.strip()),
             )
         if result.success and result.result:
@@ -498,11 +494,18 @@ class AgentCommands:
         else:
             self.console.print("[yellow]No metrics found.[/]")
 
-    def _prompt_logic_layer(self) -> Tuple[str, str, str]:
-        domain = self.cli.prompt_input("Enter domain (optional)")
-        layer1 = self.cli.prompt_input("Enter layer1 (optional)")
-        layer2 = self.cli.prompt_input("Enter layer2 (optional)")
-        return domain, layer1, layer2
+    def _prompt_subject_path(self) -> Optional[List[str]]:
+        """Prompt user for subject path input.
+
+        Returns:
+            List of subject path components or None if empty
+        """
+        subject_path_str = self.cli.prompt_input(
+            "Enter subject path (e.g., 'Finance/Revenue/Q1', or leave empty for no filter)"
+        )
+        if not subject_path_str or not subject_path_str.strip():
+            return None
+        return [component.strip() for component in subject_path_str.split("/") if component.strip()]
 
     def cmd_search_reference_sql(self, args: str):
         """
@@ -514,11 +517,11 @@ class AgentCommands:
             self.console.print("[bold red]Error:[/] Input text cannot be empty.")
             return
 
-        domain, layer1, layer2 = self._prompt_logic_layer()
+        subject_path = self._prompt_subject_path()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
         with self.console.status("[bold green]Searching reference SQL...[/]"):
             result = self.context_search_tools.search_reference_sql(
-                query_text=input_text, domain=domain, layer1=layer1, layer2=layer2, top_n=int(top_n.strip())
+                query_text=input_text, subject_path=subject_path, top_n=int(top_n.strip())
             )
 
         if result.success and result.result:
@@ -536,22 +539,20 @@ class AgentCommands:
             table.add_column("Summary", style="default")
             table.add_column("Comment", style="default")
             table.add_column("Tags", style="blue")
-            table.add_column("Domain", style="yellow")
-            table.add_column("Layer1", style="yellow")
-            table.add_column("Layer2", style="yellow")
+            table.add_column("Subject Path", style="yellow")
             table.add_column("File Path", style="dim", overflow="fold")
             table.add_column("Distance", style="dim")
             #
             for item in history:
+                # Format subject_path as string
+                subject_path_display = "/".join(item.get("subject_path", []))
                 table.add_row(
                     item.get("name"),
                     Syntax(item.get("sql"), lexer="sql", line_numbers=True, word_wrap=True),
                     item.get("summary"),
                     item.get("comment"),
                     build_historical_sql_tags(item.get("tags", ""), "\n"),
-                    item.get("domain"),
-                    item.get("layer1"),
-                    item.get("layer2"),
+                    subject_path_display,
                     item.get("filepath"),
                     str(item.get("_distance", "")),
                 )
@@ -660,14 +661,15 @@ class AgentCommands:
             schema_name = self.cli.prompt_input("Enter schema name", default=input.sql_task.schema_name)
             input.sql_task.schema_name = schema_name.strip()
 
-            layer1 = self.cli.prompt_input("Enter layer1 (business layer)", default=input.sql_task.layer1)
-            input.sql_task.layer1 = layer1.strip()
-
-            layer2 = self.cli.prompt_input("Enter layer2 (sub-layer)", default=input.sql_task.layer2)
-            input.sql_task.layer2 = layer2.strip()
-
-            domain = self.cli.prompt_input("Enter domain", default=input.sql_task.domain)
-            input.sql_task.domain = domain.strip()
+            # Subject path input
+            default_subject_path = "/".join(input.sql_task.subject_path) if input.sql_task.subject_path else ""
+            subject_path_str = self.cli.prompt_input(
+                message="Enter subject path (e.g., 'Finance/Revenue/Q1')", default=default_subject_path
+            )
+            if subject_path_str and subject_path_str.strip():
+                input.sql_task.subject_path = [c.strip() for c in subject_path_str.split("/") if c.strip()]
+            else:
+                input.sql_task.subject_path = None
 
             prompt_version = self.cli.prompt_input("Enter prompt version", default=input.prompt_version)
             input.prompt_version = prompt_version.strip()

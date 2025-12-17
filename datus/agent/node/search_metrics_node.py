@@ -171,9 +171,7 @@ class SearchMetricsNode(Node):
         sql_task = self.input.sql_task
         metric_results = self.store.search_hybrid_metrics(
             query_text=sql_task.task,
-            domain=sql_task.domain,
-            layer1=sql_task.layer1,
-            layer2=sql_task.layer2,
+            subject_path=sql_task.subject_path,
             catalog_name=sql_task.catalog_name,
             database_name=sql_task.database_name,
             schema_name=sql_task.schema_name,

@@ -28,7 +28,6 @@ class SelectableTree(Tree):
         Binding("enter", "toggle_or_select", "Choose", show=True),
         Binding("right", "toggle_node", "Toggle", show=True),
         Binding("left", "toggle_node", "Toggle", show=True),
-        Binding("ctrl+a", "add_node", "Add", show=True, priority=True),
     ]
 
     def __init__(self, *args, **kwargs):
@@ -150,67 +149,6 @@ class SelectableTree(Tree):
         while node and node != self.root:
             node.expand()
             node = node.parent
-
-    def action_add_node(self) -> None:
-        """Prompt for a node name and insert it under the current cursor node"""
-        target = self.cursor_node or self.root
-
-        if target is None:
-            return
-
-        if not getattr(target, "allow_expand", True):
-            if self.app:
-                self.app.notify("Cannot add children to a leaf node", severity="warning")
-            return
-
-        prompt = _NodeNamePrompt()
-
-        def _after_submit(result: Optional[str]) -> None:
-            if not result:
-                return
-            self._add_child_node(target, result)
-
-        if self.app:
-            self.app.push_screen(prompt, callback=_after_submit)
-
-    def _add_child_node(self, parent: TreeNode, label: str) -> None:
-        """Create a new child node under the given parent"""
-        clean_label = label.strip()
-        if not clean_label:
-            if self.app:
-                self.app.notify("Node name cannot be empty", severity="warning")
-            return
-
-        # Prevent duplicate names under the same parent
-        for child in parent.children:
-            if str(child.label) == clean_label:
-                if self.app:
-                    self.app.notify("A node with this name already exists", severity="warning")
-                self.move_cursor(child)
-                return
-
-        max_level = self._get_max_level()
-        parent_level = self._get_node_level(parent)
-        new_level = parent_level + 1
-        is_new_leaf = new_level >= max_level
-
-        if is_new_leaf:
-            new_node = parent.add_leaf(clean_label)
-        else:
-            new_node = parent.add(clean_label, expand=False)
-
-        parent.expand()
-        self.move_cursor(new_node)
-        self._on_node_added(parent, new_node, is_new_leaf)
-        self._ensure_selected_leaf_valid()
-        if self.app:
-            self.app.notify(f"Added node: {clean_label}", severity="information")
-        self.refresh(layout=True)
-
-    def _on_node_added(self, parent: TreeNode, new_node: TreeNode, is_leaf: bool) -> None:
-        """Hook for subclasses to react to dynamically added nodes"""
-        # Default implementation does nothing. Subclasses can override.
-        return
 
 
 class _NodeNamePrompt(ModalScreen[Optional[str]]):
@@ -554,21 +492,13 @@ class ParentSelectionTree(SelectableTree):
 
     def is_selectable_node(self, node: TreeNode) -> bool:
         """Check if a node is selectable based on allowed_type"""
-        if not self.is_leaf_node(node):
-            return False
-
+        # Check if the selection_type matches allowed_type
         data = node.data or {}
         return data.get("selection_type") == self.allowed_type
 
     def action_select_node(self) -> None:
         """Override select action to check allowed_type"""
         if self.cursor_node is None:
-            return
-
-        # Check if it's a leaf node
-        if not self.is_leaf_node(self.cursor_node):
-            if self.app:
-                self.app.notify("Only leaf nodes can be selected!", severity="warning")
             return
 
         # Check if the selection_type matches allowed_type
@@ -597,54 +527,24 @@ class ParentSelectionTree(SelectableTree):
                 self.app.notify(f"Only nodes of type '{self.allowed_type}' can be selected!", severity="warning")
             return
 
-        if not self.is_leaf_node(event.node):
-            return
-
         # Trigger the selection action
         self.move_cursor(event.node)
         self.focus()
         self.action_select_node()
 
-    def _on_node_added(self, parent: TreeNode, new_node: TreeNode, is_leaf: bool) -> None:
-        if not hasattr(self, "nodes"):
-            return
-
-        label = str(new_node.label)
-        level = self._get_node_level(new_node)
-        context = self._collect_context(parent)
-
-        if level == 1:
-            new_data = {"selection_type": "domain", "domain": label}
-        elif level == 2:
-            domain_name = context.get("domain") or str(parent.label)
-            selection_type = "layer1" if self.allowed_type == "layer1" else "layer1-context"
-            new_data = {
-                "selection_type": selection_type,
-                "domain": domain_name,
-                "layer1": label,
-            }
-        else:
-            domain_name = context.get("domain")
-            layer1_name = context.get("layer1") or str(parent.label)
-            new_data = {
-                "selection_type": "layer2",
-                "domain": domain_name,
-                "layer1": layer1_name,
-                "layer2": label,
-            }
-
-        new_node.data = new_data
-        self._upsert_node_metadata(parent, label, new_data, is_leaf)
-
     def _collect_context(self, node: TreeNode) -> Dict[str, Any]:
+        """Collect context from ancestor nodes.
+        For subject_tree architecture, context includes node_id.
+        """
         context: Dict[str, Any] = {}
         current = node
         while current and current is not self.root:
             data = current.data or {}
-            if "domain" in data and "domain" not in context:
-                context["domain"] = data["domain"]
-            if "layer1" in data and "layer1" not in context:
-                context["layer1"] = data["layer1"]
+            # Collect relevant context data for subject_tree
+            if "node_id" in data and "node_id" not in context:
+                context["node_id"] = data["node_id"]
+            if "selection_type" in data and "selection_type" not in context:
+                context["selection_type"] = data["selection_type"]
             current = current.parent
         return context
 

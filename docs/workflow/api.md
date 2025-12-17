@@ -90,21 +90,19 @@ Execute a workflow to convert natural language to SQL.
 
 **Common Request Parameters:**
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `workflow` | string | ✅ | Workflow name (nl2sql, reflection, fixed, metric_to_sql) |
-| `namespace` | string | ✅ | Database namespace |
-| `task` | string | ✅ | Natural language task description |
-| `mode` | string | ✅ | Execution mode (sync or async) |
-| `task_id` | string | ❌ | Custom task ID for idempotency |
-| `catalog_name` | string | ❌ | Database catalog |
-| `database_name` | string | ❌ | Database name |
-| `schema_name` | string | ❌ | Schema name |
-| `current_date` | string | ❌ | Reference date for time expressions |
-| `domain` | string | ❌ | Business domain |
-| `layer1` | string | ❌ | Business layer 1 |
-| `layer2` | string | ❌ | Business layer 2 |
-| `ext_knowledge` | string | ❌ | Additional business context |
+| Parameter | Type     | Required | Description |
+|-----------|----------|----------|-------------|
+| `workflow` | string   | ✅ | Workflow name (nl2sql, reflection, fixed, metric_to_sql) |
+| `namespace` | string   | ✅ | Database namespace |
+| `task` | string   | ✅ | Natural language task description |
+| `mode` | string   | ✅ | Execution mode (sync or async) |
+| `task_id` | string   | ❌ | Custom task ID for idempotency |
+| `catalog_name` | string   | ❌ | Database catalog |
+| `database_name` | string   | ❌ | Database name |
+| `schema_name` | string   | ❌ | Schema name |
+| `current_date` | string   | ❌ | Reference date for time expressions |
+| `subject_path` | string[] | ❌ | Business domain |
+| `ext_knowledge` | string   | ❌ | Additional business context |
 
 #### Synchronous Mode (mode: "sync")
 

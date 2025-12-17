@@ -46,10 +46,10 @@ class SqlTask(BaseModel):
     )
     date_ranges: str = Field(default="", description="Parsed date ranges context from date parser for SQL generation")
 
-    # Metrics relative part
-    layer1: str = Field(default="", description="Layer1 name")
-    layer2: str = Field(default="", description="Layer2 name")
-    domain: str = Field(default="", description="domain name")
+    # Metrics relative part - subject path
+    subject_path: Optional[List[str]] = Field(
+        default=None, description="Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])"
+    )
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value by key with an optional default value."""

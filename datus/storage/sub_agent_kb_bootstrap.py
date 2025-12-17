@@ -403,28 +403,29 @@ class SubAgentBootstrapper:
             )
 
         source = SemanticMetricsRAG(self.agent_config)
-        condition_map, invalid_tokens = self._hierarchical_conditions(metrics, ("domain", "layer1", "layer2", "name"))
 
-        if not condition_map:
-            details = {"invalid": invalid_tokens} if invalid_tokens else None
-            return ComponentResult(
-                component="metrics",
-                status="skipped",
-                message="No valid metric filters resolved from scoped context.",
-                details=details,
-            )
-
-        aggregate_condition = self._combine_conditions(condition_map)
-
-        metric_table = source.metric_storage._search_all(where=aggregate_condition)
-
-        metric_rows = metric_table.to_pylist()
-        missing = self._missing_tokens(source.metric_storage, condition_map)
+        metric_rows = []
+        invalid_tokens = []
+        missing = []
+        for metric in metrics:
+            token = normalize_reference_path(metric)
+            if not token:
+                invalid_tokens.append(metric)
+                continue
+            parts = [p.strip() for p in token.split(".") if p.strip()]
+            if not parts:
+                invalid_tokens.append(metric)
+                continue
+            metric_table = source.metric_storage.search_all_metrics(subject_path=parts)
+            if len(metric_table) > 0:
+                metric_rows.extend(metric_table)
+            else:
+                missing.append(metric)
 
         if strategy == "plan":
             details = {
                 "match_count": len(metric_rows),
-                "metrics": [self._format_metric_identifier(row) for row in metric_rows[:20]],
+                "metrics": [self._format_subject_identifier(row) for row in metric_rows[:20]],
                 "missing": missing,
                 "invalid": invalid_tokens,
             }
@@ -471,48 +472,9 @@ class SubAgentBootstrapper:
             details=details,
         )
 
-    def _hierarchical_conditions(
-        self,
-        tokens: Iterable[str],
-        fields: Sequence[str],
-    ) -> tuple[List[tuple[str, Node]], List[str]]:
-        """
-        Applies to Metrics and Historical SQL
-        """
-        mapped: List[tuple[str, Node]] = []
-        invalid: List[str] = []
-        max_depth = len(fields)
-        for raw in tokens:
-            token = normalize_reference_path(raw)
-            if not token:
-                continue
-            parts = [p.strip() for p in token.split(".") if p.strip()]
-            if not parts:
-                continue
-            parts = parts[:max_depth]
-            conditions: List[Node] = []
-            for idx, part in enumerate(parts):
-                conditions.append(self._value_condition(fields[idx], part))
-            if not conditions:
-                invalid.append(token)
-                continue
-            node = conditions[0] if len(conditions) == 1 else and_(*conditions)
-            mapped.append((token, node))
-        return mapped, invalid
-
     @staticmethod
-    def _format_metric_identifier(row: Dict[str, Any]) -> str:
-        return ".".join(
-            filter(
-                None,
-                [
-                    row.get("domain"),
-                    row.get("layer1"),
-                    row.get("layer2"),
-                    row.get("name"),
-                ],
-            )
-        )
+    def _format_subject_identifier(row: Dict[str, Any]) -> str:
+        return f"{'/'.join(row.get('subject_path'))}/{row.get('name')}"
 
     # --------------------------------------------------------------------- #
     # reference SQL
@@ -538,30 +500,29 @@ class SubAgentBootstrapper:
             )
 
         source = ReferenceSqlRAG(self.agent_config)
-        condition_map, invalid_tokens = self._hierarchical_conditions(
-            historical_sql,
-            ("domain", "layer1", "layer2", "name"),
-        )
 
-        if not condition_map:
-            details = {"invalid": invalid_tokens} if invalid_tokens else None
-            return ComponentResult(
-                component="reference_sql",
-                status="skipped",
-                message="No valid reference SQL filters resolved from scoped context.",
-                details=details,
-            )
-
-        aggregate_condition = self._combine_conditions(condition_map)
-        sql_table = source.reference_sql_storage._search_all(where=aggregate_condition)
-        sql_rows = sql_table.to_pylist()
-
-        missing = self._missing_tokens(source.reference_sql_storage, condition_map)
+        invalid_tokens = []
+        missing = []
+        sql_rows = []
+        for sql in historical_sql:
+            token = normalize_reference_path(sql)
+            if not token:
+                invalid_tokens.append(sql)
+                continue
+            parts = [p.strip() for p in token.split(".") if p.strip()]
+            if not parts:
+                invalid_tokens.append(sql)
+                continue
+            sql_table = source.search_all_reference_sql(subject_path=parts)
+            if len(sql_table) > 0:
+                sql_rows.extend(sql_table)
+            else:
+                missing.append(sql)
 
         if strategy == "plan":
             details = {
                 "match_count": len(sql_rows),
-                "entries": [self._format_sql_identifier(row) for row in sql_rows[:20]],
+                "entries": [self._format_subject_identifier(row) for row in sql_rows[:20]],
                 "missing": missing,
                 "invalid": invalid_tokens,
             }
@@ -596,20 +557,6 @@ class SubAgentBootstrapper:
             status="success",
             message=f"Stored {len(sql_rows)} reference SQL entries.",
             details=details,
-        )
-
-    @staticmethod
-    def _format_sql_identifier(row: Dict[str, Any]) -> str:
-        return ".".join(
-            filter(
-                None,
-                [
-                    row.get("domain"),
-                    row.get("layer1"),
-                    row.get("layer2"),
-                    row.get("name"),
-                ],
-            )
         )
 
     # --------------------------------------------------------------------- #

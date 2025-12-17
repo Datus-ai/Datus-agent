@@ -168,17 +168,18 @@ class SqlSummaryAgenticNode(AgenticNode):
 
     def _get_existing_subject_trees(self) -> list:
         """
-        Query existing subject_tree values from reference SQL storage.
+        Query existing subject_path values from reference SQL storage.
 
         Returns:
-            List of unique subject_tree values in "domain/layer1/layer2" format
+            List of unique subject_path values as List[str]
         """
         try:
-            subject_trees = self.reference_sql_rag.reference_sql_storage.get_existing_subject_trees()
-            logger.debug(f"Found {len(subject_trees)} existing reference SQL subject_trees")
-            return subject_trees
+            # Get all metrics with subject_path field
+            subject_paths = sorted(self.reference_sql_rag.reference_sql_storage.get_subject_tree_flat())
+            logger.debug(f"Found {len(subject_paths)} unique reference SQL subject_paths")
+            return subject_paths
         except Exception as e:
-            logger.error(f"Error getting existing subject_trees: {e}")
+            logger.error(f"Error getting existing subject_paths: {e}")
             return []
 
     def _get_similar_sqls(self, query_text: str, top_n: int = 5) -> list:
@@ -202,11 +203,10 @@ class SqlSummaryAgenticNode(AgenticNode):
             # Extract relevant fields and format results
             results = []
             for item in similar_items:
-                # Compose subject_tree from domain/layer1/layer2
-                domain = item.get("domain", "")
-                layer1 = item.get("layer1", "")
-                layer2 = item.get("layer2", "")
-                subject_tree = f"{domain}/{layer1}/{layer2}" if (domain and layer1 and layer2) else ""
+                # Get subject_path from item
+                subject_path = item.get("subject_path", [])
+                # Format as string for display
+                subject_tree = "/".join(subject_path) if subject_path else ""
 
                 results.append(
                     {

@@ -107,17 +107,14 @@ class DatusAPIService:
         # Load default metric_meta (will return default values if not configured)
         metric_meta = agent.global_config.current_metric_meta("default")
         external_knowledge = metric_meta.ext_knowledge
-        domain = metric_meta.domain
-        layer1 = metric_meta.layer1
-        layer2 = metric_meta.layer2
+        if metric_meta.subject_path and metric_meta.subject_path.strip():
+            subject_path = [c.strip() for c in metric_meta.subject_path.split("/") if c.strip()]
+        else:
+            subject_path = None
 
         # Override with request parameters if provided
-        if request.domain is not None:
-            domain = request.domain
-        if request.layer1 is not None:
-            layer1 = request.layer1
-        if request.layer2 is not None:
-            layer2 = request.layer2
+        if request.subject_path is not None:
+            subject_path = request.subject_path
         if request.ext_knowledge is not None:
             external_knowledge = request.ext_knowledge
 
@@ -127,9 +124,7 @@ class DatusAPIService:
             catalog_name=request.catalog_name or "",
             database_name=request.database_name or "default",
             schema_name=request.schema_name or "",
-            domain=domain,
-            layer1=layer1,
-            layer2=layer2,
+            subject_path=subject_path or [],
             external_knowledge=external_knowledge,
             output_dir=agent.global_config.output_dir,
             current_date=request.current_date,

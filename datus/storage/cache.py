@@ -17,6 +17,7 @@ from datus.storage.metric.store import SemanticModelStorage
 from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaValueStorage
+from datus.storage.subject_tree.store import SubjectTreeStore
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -79,6 +80,7 @@ class StorageCache:
         self._semantic_holder = StorageCacheHolder(SemanticModelStorage, agent_config, "metric", "metrics")
         self._reference_sql_holder = StorageCacheHolder(ReferenceSqlStorage, agent_config, "metric", "sqls")
         self._document_holder = StorageCacheHolder(DocumentStore, agent_config, "document", "")
+        self._subject_tree_store = None
 
     def schema_storage(self, sub_agent_name: Optional[str] = None) -> SchemaStorage:
         return self._schema_holder.storage_instance(sub_agent_name)
@@ -97,6 +99,15 @@ class StorageCache:
 
     def document_storage(self, sub_agent_name: Optional[str] = None) -> DocumentStore:
         return self._document_holder.storage_instance(sub_agent_name)
+
+    def subject_tree_storage(self) -> SubjectTreeStore:
+        """Get the subject tree storage instance.
+
+        Note: SubjectTreeStore is a global singleton and does not support sub-agent scoping.
+        """
+        if self._subject_tree_store is None:
+            self._subject_tree_store = SubjectTreeStore(self._agent_config.rag_storage_path())
+        return self._subject_tree_store
 
 
 _CACHE_INSTANCE = None

@@ -9,13 +9,13 @@ from datus.tools.func_tool import ContextSearchTools
 from datus.tools.func_tool.base import FuncToolResult
 
 METRIC_ENTRIES = [
-    {"domain": "Sales", "layer1": "Revenue", "layer2": "Monthly", "name": "monthly_sales"},
-    {"domain": "Sales", "layer1": "Revenue", "layer2": "Quarterly", "name": "quarterly_sales"},
+    {"subject_path": ["Sales", "Revenue", "Monthly"], "name": "monthly_sales"},
+    {"subject_path": ["Sales", "Revenue", "Quarterly"], "name": "quarterly_sales"},
 ]
 
 SQL_ENTRIES = [
-    {"domain": "Sales", "layer1": "Revenue", "layer2": "Monthly", "name": "sales_query"},
-    {"domain": "Support", "layer1": "Tickets", "layer2": "Escalations", "name": "support_query"},
+    {"subject_path": ["Sales", "Revenue", "Monthly"], "name": "sales_query"},
+    {"subject_path": ["Support", "Tickets", "Escalations"], "name": "support_query"},
 ]
 
 
@@ -23,7 +23,22 @@ SQL_ENTRIES = [
 def mock_agent_config() -> AgentConfig:
     config = Mock(spec=AgentConfig)
     config.rag_storage_path.return_value = "/tmp/test_rag_storage"
+    config.sub_agent_config.return_value = None
     return config
+
+
+def _build_tree_structure(entries: list) -> dict:
+    """Build a tree structure from subject path entries.
+    Returns format: {"name": {"node_id": id, "children": {...}}}
+    """
+    tree = {}
+    for entry in entries:
+        current = tree
+        for part in entry["subject_path"]:
+            if part not in current:
+                current[part] = {"node_id": None, "children": {}}
+            current = current[part]["children"]
+    return tree
 
 
 @pytest.fixture
@@ -31,6 +46,10 @@ def build_context_tools(mock_agent_config):
     def _builder(metric_cfg=None, sql_cfg=None):
         metric_cfg = metric_cfg or {}
         sql_cfg = sql_cfg or {}
+
+        # Create mock SubjectTreeStore
+        mock_subject_tree = Mock()
+        mock_subject_tree.find_or_create_path = Mock()
 
         metric_rag = Mock()
         metric_entries = metric_cfg.get("entries", [])
@@ -52,100 +71,75 @@ def build_context_tools(mock_agent_config):
         if "search_sql_side_effect" in sql_cfg:
             sql_rag.search_reference_sql_by_summary.side_effect = sql_cfg["search_sql_side_effect"]
 
+        # Set up get_tree_structure to return tree from all entries
+        all_entries = metric_entries + sql_entries
+        mock_subject_tree.get_tree_structure.return_value = _build_tree_structure(all_entries)
+
         with (
             patch("datus.tools.func_tool.context_search.SemanticMetricsRAG", return_value=metric_rag),
             patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=sql_rag),
+            patch("datus.tools.func_tool.context_search.SubjectTreeStore", return_value=mock_subject_tree),
         ):
             tools = ContextSearchTools(mock_agent_config)
-        return tools, metric_rag, sql_rag
+        return tools, metric_rag, sql_rag, mock_subject_tree
 
     return _builder
 
 
 def test_available_tools_with_metrics_and_sql(build_context_tools):
-    tools, _, _ = build_context_tools(
+    tools, _, _, _ = build_context_tools(
         metric_cfg={"entries": METRIC_ENTRIES, "search_return": [{"name": "monthly_sales"}]},
         sql_cfg={"entries": SQL_ENTRIES, "search_return": [{"name": "sales_query"}]},
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_domain_layers_tree", "search_metrics", "search_reference_sql"}
+    assert tool_names == {"list_subject_tree", "search_metrics", "search_reference_sql"}
 
 
 def test_available_tools_metrics_only(build_context_tools):
-    tools, _, _ = build_context_tools(
+    tools, _, _, _ = build_context_tools(
         metric_cfg={"entries": METRIC_ENTRIES, "search_return": [{"name": "monthly_sales"}]},
         sql_cfg={"entries": [], "size": 0},
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_domain_layers_tree", "search_metrics"}
+    assert tool_names == {"list_subject_tree", "search_metrics"}
 
 
 def test_available_tools_sql_only(build_context_tools):
-    tools, _, _ = build_context_tools(
+    tools, _, _, _ = build_context_tools(
         metric_cfg={"entries": [], "size": 0},
         sql_cfg={"entries": SQL_ENTRIES, "search_return": [{"name": "sales_query"}]},
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_domain_layers_tree", "search_reference_sql"}
+    assert tool_names == {"list_subject_tree", "search_reference_sql"}
 
 
 def test_list_domain_layers_tree_combined(build_context_tools):
-    tools, _, _ = build_context_tools(
+    tools, _, _, _ = build_context_tools(
         metric_cfg={"entries": METRIC_ENTRIES},
         sql_cfg={"entries": SQL_ENTRIES},
     )
 
-    result = tools.list_domain_layers_tree()
+    result = tools.list_subject_tree()
     assert isinstance(result, FuncToolResult)
     assert result.success == 1
     assert result.result == {
         "Sales": {
             "Revenue": {
-                "Monthly": {"metrics_size": 1, "sql_size": 1},
-                "Quarterly": {"metrics_size": 1},
+                "Monthly": {},
+                "Quarterly": {},
             }
         },
-        "Support": {"Tickets": {"Escalations": {"sql_size": 1}}},
+        "Support": {"Tickets": {"Escalations": {}}},
     }
 
 
-def test_list_domain_layers_tree_handles_blank_taxonomy(build_context_tools):
-    tools, _, _ = build_context_tools(
-        metric_cfg={
-            "entries": [
-                {"domain": None, "layer1": "  ", "layer2": None, "name": "undefined_metric"},
-            ]
-        },
-        sql_cfg={
-            "entries": [
-                {"domain": "", "layer1": None, "layer2": "Ops", "name": "ops_sql"},
-            ]
-        },
-    )
-
-    result = tools.list_domain_layers_tree()
-    assert result.success == 1
-    assert result.result == {"": {"": {"": {"metrics_size": 1}, "Ops": {"sql_size": 1}}}}
-
-
-def test_list_domain_layers_tree_value_error(build_context_tools):
-    tools, _, _ = build_context_tools(metric_cfg={"entries": []}, sql_cfg={"entries": []})
-
-    with patch.object(tools, "_collect_metrics_entries", side_effect=ValueError("taxonomy failure")), patch.object(
-        tools, "_collect_sql_entries", return_value=[]
-    ):
-        result = tools.list_domain_layers_tree()
-
-    assert result.success == 0
-    assert "taxonomy failure" in (result.error or "")
-
-
 def test_collect_metrics_entries_handles_exception(build_context_tools):
-    tools, metric_rag, _ = build_context_tools(
-        metric_cfg={"entries": [], "search_all_side_effect": RuntimeError("metrics offline")}
+    # Set size > 0 so that _show_metrics() returns True and the method is called
+    tools, metric_rag, _, _ = build_context_tools(
+        metric_cfg={"entries": [], "size": 1, "search_all_side_effect": RuntimeError("metrics offline")}
     )
 
     entries = tools._collect_metrics_entries()
@@ -154,8 +148,9 @@ def test_collect_metrics_entries_handles_exception(build_context_tools):
 
 
 def test_collect_sql_entries_handles_exception(build_context_tools):
-    tools, _, sql_rag = build_context_tools(
-        sql_cfg={"entries": [], "search_all_side_effect": RuntimeError("sql offline")}
+    # Set size > 0 so that _show_sql() returns True and the method is called
+    tools, _, sql_rag, _ = build_context_tools(
+        sql_cfg={"entries": [], "size": 1, "search_all_side_effect": RuntimeError("sql offline")}
     )
 
     entries = tools._collect_sql_entries()
@@ -164,7 +159,7 @@ def test_collect_sql_entries_handles_exception(build_context_tools):
 
 
 def test_search_metrics_passes_filters(build_context_tools):
-    tools, metric_rag, _ = build_context_tools(
+    tools, metric_rag, _, _ = build_context_tools(
         metric_cfg={
             "entries": METRIC_ENTRIES,
             "search_return": [{"name": "monthly_sales"}],
@@ -173,24 +168,20 @@ def test_search_metrics_passes_filters(build_context_tools):
 
     result = tools.search_metrics(
         query_text="revenue",
-        domain="Sales",
-        layer1="Revenue",
-        layer2="Monthly",
+        subject_path=["Sales", "Revenue", "Monthly"],
         top_n=3,
     )
 
     assert result.success == 1
     metric_rag.search_metrics.assert_called_once_with(
         query_text="revenue",
-        domain="Sales",
-        layer1="Revenue",
-        layer2="Monthly",
+        subject_path=["Sales", "Revenue", "Monthly"],
         top_n=3,
     )
 
 
 def test_search_metrics_handles_failure(build_context_tools):
-    tools, metric_rag, _ = build_context_tools(
+    tools, metric_rag, _, _ = build_context_tools(
         metric_cfg={
             "entries": METRIC_ENTRIES,
             "search_metrics_side_effect": Exception("metric search failed"),
@@ -204,7 +195,7 @@ def test_search_metrics_handles_failure(build_context_tools):
 
 
 def test_search_historical_sql(build_context_tools):
-    tools, _, sql_rag = build_context_tools(
+    tools, _, sql_rag, _ = build_context_tools(
         metric_cfg={"entries": METRIC_ENTRIES},
         sql_cfg={
             "entries": SQL_ENTRIES,
@@ -212,15 +203,15 @@ def test_search_historical_sql(build_context_tools):
         },
     )
 
-    result = tools.search_reference_sql("sales report", domain="Sales", layer1="Revenue", top_n=2)
+    result = tools.search_reference_sql("sales report", subject_path=["Sales", "Revenue"], top_n=2)
     assert result.success == 1
     sql_rag.search_reference_sql_by_summary.assert_called_once_with(
-        query_text="sales report", domain="Sales", layer1="Revenue", layer2="", top_n=2
+        query_text="sales report", subject_path=["Sales", "Revenue"], top_n=2
     )
 
 
 def test_search_historical_sql_handles_failure(build_context_tools):
-    tools, _, sql_rag = build_context_tools(
+    tools, _, sql_rag, _ = build_context_tools(
         sql_cfg={
             "entries": SQL_ENTRIES,
             "search_sql_side_effect": Exception("sql search failed"),

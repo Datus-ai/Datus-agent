@@ -70,13 +70,3 @@ def test_metadata_condition_applies_defaults_and_wildcards(bootstrapper):
     clause = build_where(condition)
     assert "database_name = 'sales'" in clause
     assert "table_name LIKE 'orders%'" in clause
-
-
-def test_hierarchical_condition_partial_segments_use_prefix(bootstrapper):
-    tokens = ["finance", "finance.layer1", "ops.layer1.layer2.metric*"]
-    conditions, invalid = bootstrapper._hierarchical_conditions(tokens, ("domain", "layer1", "layer2", "name"))
-    assert not invalid
-    clauses = [build_where(node) for _, node in conditions]
-    assert "domain = 'finance'" in clauses[0]
-    assert "layer1 = 'layer1'" in clauses[1]
-    assert "name like 'metric%'" in clauses[2].lower()

@@ -8,13 +8,16 @@ from typing import Any, Dict, List, Optional
 import pyarrow as pa
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
-from datus.storage.lancedb_conditions import And, build_where, eq, like
+from datus.storage.base import EmbeddingModel
+from datus.storage.subject_tree.store import (
+    BaseSubjectEmbeddingStore,
+    base_schema_columns,
+)
 
 logger = logging.getLogger(__file__)
 
 
-class ReferenceSqlStorage(BaseEmbeddingStore):
+class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
     def __init__(self, db_path: str, embedding_model: EmbeddingModel):
         """Initialize the reference SQL store.
 
@@ -27,16 +30,13 @@ class ReferenceSqlStorage(BaseEmbeddingStore):
             table_name="reference_sql",
             embedding_model=embedding_model,
             schema=pa.schema(
-                [
+                base_schema_columns()
+                + [
                     pa.field("id", pa.string()),
-                    pa.field("name", pa.string()),
                     pa.field("sql", pa.string()),
                     pa.field("comment", pa.string()),
                     pa.field("summary", pa.string()),
                     pa.field("filepath", pa.string()),
-                    pa.field("domain", pa.string()),
-                    pa.field("layer1", pa.string()),
-                    pa.field("layer2", pa.string()),
                     pa.field("tags", pa.string()),
                     pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
                 ]
@@ -53,182 +53,87 @@ class ReferenceSqlStorage(BaseEmbeddingStore):
         # Create scalar indices
         self.table.create_scalar_index("id", replace=True)
         self.table.create_scalar_index("name", replace=True)
-        self.table.create_scalar_index("domain", replace=True)
-        self.table.create_scalar_index("layer1", replace=True)
-        self.table.create_scalar_index("layer2", replace=True)
         self.table.create_scalar_index("filepath", replace=True)
 
-        # Create full-text search index
+        # Use base class method for subject index
+        self.create_subject_index()
+
+        # Create FTS index for reference SQL-specific fields
         self.create_fts_index(["sql", "name", "comment", "summary", "tags"])
 
-    def search_all(self, domain: str = "", selected_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """Search all reference SQL entries for a given domain."""
+    def batch_store_sql(self, sql_items: List[Dict[str, Any]], subject_path_field: str = "subject_path") -> None:
+        """Store multiple reference SQL items in batch with subject path processing.
 
-        if not selected_fields:
-            selected_fields = [
-                "id",
-                "name",
-                "sql",
-                "comment",
-                "summary",
-                "filepath",
-                "domain",
-                "layer1",
-                "layer2",
-                "tags",
-            ]
-        search_result = self._search_all(
-            where=None if not domain else eq("domain", domain),
-            select_fields=selected_fields,
-        )
-        result = []
-        for i in range(search_result.num_rows):
-            item_data = {}
-            for field in selected_fields:
-                item_data[field] = search_result[field][i].as_py()
-            result.append(item_data)
-        return result
+        Args:
+            sql_items: List of SQL item dictionaries, each containing:
+                - name: str - SQL name/title
+                - sql: str - SQL query content
+                - comment: str - Optional comment
+                - summary: str - Optional summary for embedding
+                - filepath: str - File path where SQL is stored
+                - subject_path: List[str] - Subject hierarchy path (e.g., ['Finance', 'Revenue'])
+                - tags: str - Optional tags
+                - created_at: str - Creation timestamp (optional, will auto-generate if not provided)
+            subject_path_field: Field name containing subject_path in each item
+        """
+        if not sql_items:
+            return
 
-    def filter_by_id(self, id: str) -> List[Dict[str, Any]]:
-        """Filter reference SQL by ID."""
-        # Ensure table is ready before direct table access
-        self._ensure_table_ready()
+        # Validate required fields
+        valid_items = []
+        for item in sql_items:
+            subject_path = item.get(subject_path_field, [])
+            name = item.get("name", "")
+            sql = item.get("sql", "")
+            summary = item.get("summary", "")
 
-        where_clause = build_where(eq("id", id))
-        search_result = self.table.search().where(where_clause).limit(100).to_list()
-        return search_result
+            # Validate required fields
+            if not all([subject_path, name, sql, summary]):
+                logger.warning(f"Skipping SQL item with missing required fields: {item}")
+                continue
 
-    def filter_by_domain_layers(self, domain: str = "", layer1: str = "", layer2: str = "") -> List[Dict[str, Any]]:
-        """Filter reference SQL by domain and layers."""
-        # Ensure table is ready before direct table access
-        self._ensure_table_ready()
+            valid_items.append(item)
 
-        conditions = []
-        if domain:
-            conditions.append(eq("domain", domain))
-        if layer1:
-            conditions.append(eq("layer1", layer1))
-        if layer2:
-            conditions.append(eq("layer2", layer2))
+        # Use base class batch_store method
+        self.batch_store(valid_items)
 
-        if not conditions:
-            search_result = self.table.search().limit(1000).to_list()
-        else:
-            where_condition = conditions[0] if len(conditions) == 1 else And(conditions)
-            where_clause = build_where(where_condition)
-            search_result = self.table.search().where(where_clause).limit(1000).to_list()
+    def search_reference_sql(
+        self,
+        query_text: Optional[str] = None,
+        subject_path: Optional[List[str]] = None,
+        top_n: Optional[int] = 5,
+    ) -> List[Dict[str, Any]]:
+        """Search reference SQL by query text with optional subject path filtering.
 
-        return search_result
-
-    def get_existing_taxonomy(self) -> Dict[str, Any]:
-        """Get existing taxonomy from stored reference SQL items.
+        Args:
+            query_text: Query text to search for (optional, if None returns all matching subject entries)
+            subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue'])
+            top_n: Number of results to return
 
         Returns:
-            Dict containing existing domains, layer1_categories, layer2_categories, and common_tags
+            List of matching reference SQL entries with subject_path enriched
         """
-        logger.info("Extracting existing taxonomy from stored reference SQL")
-
-        # Ensure table is ready
-        self._ensure_table_ready()
-
-        # Get all existing taxonomy data
-        search_result = self._search_all(select_fields=["domain", "layer1", "layer2", "tags"])
-
-        if not search_result or search_result.num_rows <= 0:
-            logger.info("No existing taxonomy found in database")
-            return {"domains": [], "layer1_categories": [], "layer2_categories": [], "common_tags": []}
-
-        # Extract unique values
-        layer1_categories = set()
-        layer2_categories = set()
-        tags = set()
-        domain_column = search_result["domain"]
-        layer1_column = search_result["layer1"]
-        layer2_column = search_result["layer2"]
-        tags_column = search_result["tags"]
-        domains = set(domain_column.unique().to_pylist())
-        for i in range(search_result.num_rows):
-            layer1 = layer1_column[i].as_py()
-            if layer1:
-                layer1_categories.add((layer1, domain_column[i].as_py() or ""))
-
-            if layer2 := layer2_column[i].as_py():
-                layer2_categories.add((layer2, layer1 or ""))
-            if row_tags := tags_column[i].as_py():
-                # Split tags by comma if they are stored as comma-separated string
-                item_tags = [tag.strip() for tag in str(row_tags).split(",") if tag.strip()]
-                tags.update(item_tags)
-
-        # Format into taxonomy structure
-        taxonomy = {
-            "domains": [{"name": domain, "description": "Existing business domain"} for domain in sorted(domains)],
-            "layer1_categories": [
-                {"name": layer1, "domain": domain, "description": "Existing primary category"}
-                for layer1, domain in sorted(layer1_categories)
-            ],
-            "layer2_categories": [
-                {"name": layer2, "layer1": layer1, "description": "Existing secondary category"}
-                for layer2, layer1 in sorted(layer2_categories)
-            ],
-            "common_tags": [{"tag": tag, "description": "Existing tag"} for tag in sorted(tags)],
-        }
-
-        logger.info(
-            f"Extracted existing taxonomy: {len(taxonomy['domains'])} domains, "
-            f"{len(taxonomy['layer1_categories'])} layer1 categories, "
-            f"{len(taxonomy['layer2_categories'])} layer2 categories, "
-            f"{len(taxonomy['common_tags'])} tags"
+        return self.search_with_subject_filter(
+            query_text=query_text,
+            subject_path=subject_path,
+            top_n=top_n,
         )
 
-        return taxonomy
+    def search_all_reference_sql(
+        self,
+        subject_path: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search all reference SQL entries with optional subject path filtering.
 
-    def get_existing_subject_trees(self) -> List[str]:
-        """Get unique subject_tree values from stored reference SQL items.
+        Args:
+            subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue'])
 
         Returns:
-            List of unique subject_tree strings in "domain/layer1/layer2" format
+            List of matching reference SQL entries
         """
-        logger.info("Extracting existing subject_tree values from stored reference SQL")
-
-        # Ensure table is ready
-        self._ensure_table_ready()
-
-        # Get all existing domain/layer1/layer2 combinations
-        search_result = self._search_all(select_fields=["domain", "layer1", "layer2"])
-
-        if not search_result or search_result.num_rows <= 0:
-            logger.info("No existing subject_tree found in database")
-            return []
-
-        # Collect unique subject_tree combinations
-        subject_trees = set()
-        domain_column = search_result["domain"]
-        layer1_column = search_result["layer1"]
-        layer2_column = search_result["layer2"]
-
-        for i in range(search_result.num_rows):
-            domain = domain_column[i].as_py() or ""
-            layer1 = layer1_column[i].as_py() or ""
-            layer2 = layer2_column[i].as_py() or ""
-
-            # Only include complete subject_tree (all three parts present)
-            if domain and layer1 and layer2:
-                subject_tree = f"{domain}/{layer1}/{layer2}"
-                subject_trees.add(subject_tree)
-
-        result = sorted(subject_trees)
-        logger.info(f"Extracted {len(result)} unique subject_tree values")
-
-        return result
-
-    def search_by_filepath(self, filepath_pattern: str) -> List[Dict[str, Any]]:
-        """Search reference SQL by filepath pattern."""
-        # Ensure table is ready before direct table access
-        self._ensure_table_ready()
-
-        where_clause = build_where(like("filepath", f"%{filepath_pattern}%"))
-        search_result = self.table.search().where(where_clause).limit(1000).to_list()
-        return search_result
+        return self.search_with_subject_filter(
+            subject_path=subject_path,
+        )
 
 
 class ReferenceSqlRAG:
@@ -240,13 +145,18 @@ class ReferenceSqlRAG:
     def store_batch(self, reference_sql_items: List[Dict[str, Any]]):
         """Store batch of reference SQL items."""
         logger.info(f"store reference SQL items: {len(reference_sql_items)} items")
-        self.reference_sql_storage.store_batch(reference_sql_items)
+        self.reference_sql_storage.batch_store_sql(reference_sql_items)
 
-    def search_all_reference_sql(
-        self, domain: str = "", selected_fields: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
-        """Search all reference SQL items."""
-        return self.reference_sql_storage.search_all(domain, selected_fields)
+    def search_all_reference_sql(self, subject_path: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Search all reference SQL items.
+
+        Args:
+            subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue'])
+
+        Returns:
+            List of matching reference SQL entries
+        """
+        return self.reference_sql_storage.search_all_reference_sql(subject_path)
 
     def after_init(self):
         """Initialize indices after data loading."""
@@ -257,46 +167,31 @@ class ReferenceSqlRAG:
         return self.reference_sql_storage.table_size()
 
     def search_reference_sql_by_summary(
-        self, query_text: str, domain: str = "", layer1: str = "", layer2: str = "", top_n: int = 5
+        self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
     ) -> List[Dict[str, Any]]:
-        """Search reference SQL by summary using vector search."""
-        conditions = []
-        if domain:
-            conditions.append(eq("domain", domain))
-        if layer1:
-            conditions.append(eq("layer1", layer1))
-        if layer2:
-            conditions.append(eq("layer2", layer2))
+        """Search reference SQL by summary using vector search.
 
-        if not conditions:
-            where_condition = None
-            where_clause = ""
-        elif len(conditions) == 1:
-            where_condition = conditions[0]
-            where_clause = build_where(where_condition)
-        else:
-            where_condition = And(conditions)
-            where_clause = build_where(where_condition)
+        Args:
+            query_text: Query text to search for
+            subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue'])
+            top_n: Number of results to return
 
-        logger.info(f"Searching reference SQL by summary: {query_text}, where: {where_clause}")
-        search_results = self.reference_sql_storage.search(
-            query_text,
-            top_n=top_n,
-            where=where_condition,
+        Returns:
+            List of matching reference SQL entries with distance scores
+        """
+        return self.reference_sql_storage.search_reference_sql(
+            query_text=query_text, subject_path=subject_path, top_n=top_n
         )
 
-        if search_results:
-            result_list = search_results.select(
-                ["name", "sql", "comment", "summary", "filepath", "domain", "layer1", "layer2", "tags", "_distance"]
-            ).to_pylist()
-            logger.info(f"Found {len(result_list)} reference SQL results for query: {query_text}")
-            return result_list
-        else:
-            logger.info(f"No reference SQL results found for query: {query_text}")
-            return []
+    def get_reference_sql_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
+        """Get reference SQL detail by subject path and name.
 
-    def get_reference_sql_detail(self, domain: str, layer1: str, layer2: str, name: str) -> List[Dict[str, Any]]:
-        return self.reference_sql_storage._search_all(
-            And([eq("domain", domain), eq("layer1", layer1), eq("layer2", layer2), eq("name", name)]),
-            ["name", "summary", "comment", "tags", "sql"],
-        ).to_pylist()
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
+            name: Reference SQL name
+
+        Returns:
+            List containing the matching reference SQL entry details
+        """
+        full_path = list(subject_path) + [name]
+        return self.reference_sql_storage.search_all_reference_sql(full_path)

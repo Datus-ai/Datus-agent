@@ -31,9 +31,7 @@ class TestNode:
             catalog_name="",
             database_name="",
             schema_name="",
-            layer1="",
-            layer2="",
-            domain="RGM_voice",
+            subject_path=["RGM_voice"],
         )
 
         node = Node.new_instance(
@@ -59,9 +57,7 @@ class TestNode:
             catalog_name="",
             database_name="",
             schema_name="",
-            layer1="",
-            layer2="",
-            domain="",
+            subject_path=[],
         )
 
         node = Node.new_instance(

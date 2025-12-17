@@ -603,6 +603,10 @@ class Agent:
             # Use hierarchical save directory structure
             output_dir = self.global_config.get_save_run_dir(run_id) if run_id else self.global_config.output_dir
 
+            if metric_meta.subject_path and metric_meta.subject_path.strip():
+                subject_path = [c.strip() for c in metric_meta.subject_path.split("/") if c.strip()]
+            else:
+                subject_path = None
             self.run(
                 SqlTask(
                     id=task_id,
@@ -610,9 +614,7 @@ class Agent:
                     task=question,
                     database_name=current_db_config.database,
                     schema_name=current_db_config.schema,
-                    domain=metric_meta.domain,
-                    layer1=metric_meta.layer1,
-                    layer2=metric_meta.layer2,
+                    subject_path=subject_path,
                     output_dir=output_dir,
                     external_knowledge=combined_ext_knowledge,
                     current_date=self.args.current_date,

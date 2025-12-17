@@ -48,11 +48,7 @@ class SemanticModelPanel(Vertical):
         self._label_map: Dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
-        pattern = r"^[a-zA-Z0-9_\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+$"
         field_specs = [
-            ("Domain", "domain", 1, None, pattern),
-            ("Layer1", "layer1", 1, None, pattern),
-            ("Layer2", "layer2", 1, None, pattern),
             ("Semantic File", "semantic_file_path", 1, None, None),
             ("Description", "semantic_model_desc", 2, "markdown", None),
             ("Identifiers", "identifiers", 4, "json", None),
@@ -718,9 +714,6 @@ class CatalogScreen(ContextScreen):
         table.add_column("Value", style="yellow", justify="left", ratio=3, no_wrap=False)
 
         table.add_row("Semantic Model Name", record.get("semantic_model_name", "") or "[dim]N/A[/dim]")
-        table.add_row("Domain", record.get("domain", "") or "[dim]N/A[/dim]")
-        table.add_row("Layer1", record.get("layer1", "") or "[dim]N/A[/dim]")
-        table.add_row("Layer2", record.get("layer2", "") or "[dim]N/A[/dim]")
         table.add_row(
             "Semantic File",
             record.get("semantic_file_path", "") or "[dim]N/A[/dim]",

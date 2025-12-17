@@ -52,9 +52,7 @@ Comment-SQL     Validation    Metadata    Vector DB
     "comment": "Query active users for analysis",
     "filepath": "/path/to/source.sql",
     "summary": "Retrieve all active user records for business analysis",
-    "domain": "user_analysis",
-    "layer1": "user_behavior",
-    "layer2": "activity_tracking",
+    "subject_path": ["user_analysis", "user_behavior", "activity_tracking"],
     "tags": "users,active,analysis"
 }
 ```

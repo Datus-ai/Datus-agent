@@ -64,9 +64,7 @@ class DbConfig:
 
 @dataclass
 class MetricMeta:
-    domain: str = field(default="DEFAULT_DOMAIN", init=True)
-    layer1: str = field(default="DEFAULT_LAYER1", init=True)
-    layer2: str = field(default="DEFAULT_LAYER2", init=True)
+    subject_path: str = field(default="DEFAULT_DOMAIN/DEFAULT_LAYER1/DEFAULT_LAYER2", init=True)
     ext_knowledge: str = field(default="DEFAULT_EXT_KNOWLEDGE", init=True)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -540,12 +538,8 @@ class AgentConfig:
                 model_config.save_llm_trace = True
         if kwargs.get("metric_meta", ""):
             current_metric_meta = self.current_metric_meta(metric_meta_name=kwargs["metric_meta"])
-            if kwargs.get("domain", ""):
-                current_metric_meta.domain = kwargs["domain"]
-            if kwargs.get("layer1", ""):
-                current_metric_meta.layer1 = kwargs["layer1"]
-            if kwargs.get("layer2", ""):
-                current_metric_meta.layer2 = kwargs["layer2"]
+            if kwargs.get("subject_path", ""):
+                current_metric_meta.subject_path = kwargs["subject_path"]
             if kwargs.get("ext_knowledge", ""):
                 current_metric_meta.ext_knowledge = kwargs["ext_knowledge"]
 

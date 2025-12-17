@@ -123,7 +123,9 @@ class BaseEmbeddingStore(StorageBase):
             self._table_initialized = True
             logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
 
-    def _search_all(self, where: WhereExpr = None, select_fields: Optional[List[str]] = None) -> pa.Table:
+    def _search_all(
+        self, where: WhereExpr = None, select_fields: Optional[List[str]] = None, limit: Optional[int] = None
+    ) -> pa.Table:
         self._ensure_table_ready()
         where_clause = build_where(where)
         query_builder = self.table.search()
@@ -131,7 +133,10 @@ class BaseEmbeddingStore(StorageBase):
             query_builder = query_builder.where(where_clause)
         if select_fields:
             query_builder = query_builder.select(select_fields)
-        row_limit = self.table.count_rows(where_clause) if where_clause else self.table.count_rows()
+        if limit:
+            row_limit = limit
+        else:
+            row_limit = self.table.count_rows(where_clause) if where_clause else self.table.count_rows()
         result = query_builder.limit(row_limit).to_arrow()
         if self.vector_column_name in result.column_names:
             result = result.drop([self.vector_column_name])

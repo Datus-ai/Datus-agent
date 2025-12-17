@@ -20,6 +20,6 @@ def exists_reference_sql(storage: ReferenceSqlRAG, build_mode: str = "overwrite"
     if build_mode == "overwrite":
         return existing_ids
     if build_mode == "incremental":
-        for item in storage.search_all_reference_sql(""):
+        for item in storage.search_all_reference_sql():
             existing_ids.add(str(item["id"]))
     return existing_ids

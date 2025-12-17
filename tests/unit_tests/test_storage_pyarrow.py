@@ -13,6 +13,7 @@ from datus.storage.document.store import DocumentStore
 from datus.storage.embedding_models import get_db_embedding_model, get_metric_embedding_model
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
 from datus.storage.metric.store import MetricStorage
+from datus.storage.reference_sql.store import ReferenceSqlStorage
 from datus.storage.schema_metadata.store import SchemaStorage
 
 
@@ -83,20 +84,16 @@ def sample_ext_knowledge_data():
     """Sample external knowledge data for testing."""
     return [
         {
-            "domain": "Finance",
-            "layer1": "Banking",
-            "layer2": "Retail",
+            "subject_path": ["Finance", "Banking", "Retail"],
+            "name": "APR",
             "terminology": "APR",
             "explanation": "Annual Percentage Rate - the yearly cost of a loan",
-            "created_at": "2023-01-01T00:00:00Z",
         },
         {
-            "domain": "Finance",
-            "layer1": "Investment",
-            "layer2": "Stocks",
+            "subject_path": ["Finance", "Investment", "Stocks"],
+            "name": "P/E_Ratio",
             "terminology": "P/E Ratio",
             "explanation": "Price-to-earnings ratio - a valuation metric",
-            "created_at": "2023-01-02T00:00:00Z",
         },
     ]
 
@@ -106,28 +103,47 @@ def sample_metric_data():
     """Sample metric data for testing."""
     return [
         {
-            "domain": "Sales",
-            "layer1": "Revenue",
-            "layer2": "Monthly",
+            "subject_path": ["Sales", "Revenue", "Monthly"],
             "name": "monthly_revenue",
             "llm_text": (
                 "Metric: monthly_revenue\nTotal monthly revenue across all channels\n\n"
                 "Constraint: amount > 0\nSQL: SELECT SUM(amount) FROM sales WHERE month = CURRENT_MONTH"
             ),
             "semantic_model_name": "sales_model",
-            "created_at": "2023-01-01T00:00:00Z",
         },
         {
-            "domain": "Sales",
-            "layer1": "Revenue",
-            "layer2": "Daily",
+            "subject_path": ["Sales", "Revenue", "Daily"],
             "name": "daily_revenue",
             "llm_text": (
                 "Metric: daily_revenue\nTotal daily revenue across all channels\n\n"
                 "Constraint: amount > 0\nSQL: SELECT SUM(amount) FROM sales WHERE date = CURRENT_DATE"
             ),
             "semantic_model_name": "sales_model",
-            "created_at": "2023-01-02T00:00:00Z",
+        },
+    ]
+
+
+@pytest.fixture
+def sample_reference_sql_data():
+    """Sample reference SQL data for testing."""
+    return [
+        {
+            "subject_path": ["Analytics", "Reports", "Daily"],
+            "name": "daily_sales_report",
+            "sql": "SELECT date, SUM(amount) as total FROM sales GROUP BY date",
+            "comment": "Daily sales aggregation query",
+            "summary": "Aggregates sales data by date for daily reporting",
+            "filepath": "/queries/daily_sales.sql",
+            "tags": "sales,reporting,daily",
+        },
+        {
+            "subject_path": ["Analytics", "Reports", "Monthly"],
+            "name": "monthly_revenue_report",
+            "sql": "SELECT MONTH(date) as month, SUM(amount) as revenue FROM sales GROUP BY MONTH(date)",
+            "comment": "Monthly revenue summary",
+            "summary": "Summarizes revenue by month for financial reporting",
+            "filepath": "/queries/monthly_revenue.sql",
+            "tags": "revenue,reporting,monthly",
         },
     ]
 
@@ -218,7 +234,7 @@ class TestDocumentStorePyArrow:
 
     def test_search_similar_documents_returns_pyarrow_table(self, temp_db_path, sample_document_data):
         """Test that search_similar_documents returns PyArrow Table."""
-        storage = DocumentStore(db_path=temp_db_path)
+        storage = DocumentStore(db_path=temp_db_path, embedding_model=get_db_embedding_model())
         storage.store(sample_document_data)
 
         result = storage.search_similar_documents(
@@ -235,7 +251,7 @@ class TestDocumentStorePyArrow:
 
     def test_document_search_with_pyarrow_compute(self, temp_db_path, sample_document_data):
         """Test document search with PyArrow compute operations."""
-        storage = DocumentStore(db_path=temp_db_path)
+        storage = DocumentStore(db_path=temp_db_path, embedding_model=get_db_embedding_model())
         storage.store(sample_document_data)
 
         # Search all documents
@@ -255,48 +271,115 @@ class TestDocumentStorePyArrow:
 class TestExtKnowledgeStorePyArrow:
     """Test PyArrow-related functionality in ExtKnowledgeStore."""
 
-    def test_search_similar_knowledge_returns_pyarrow_table(self, temp_db_path, sample_ext_knowledge_data):
+    def test_search_similar_knowledge(self, temp_db_path, sample_ext_knowledge_data):
         """Test that search_similar_knowledge returns PyArrow Table."""
         storage = ExtKnowledgeStore(db_path=temp_db_path, embedding_model=get_db_embedding_model())
-        storage.store(sample_ext_knowledge_data)
+        storage.batch_store_knowledge(sample_ext_knowledge_data)
 
-        result = storage.search_knowledge(query_text="financial metrics", domain="Finance", top_n=2)
+        result = storage.search_knowledge(query_text="financial metrics", subject_path=["Finance"], top_n=2)
 
-        assert isinstance(result, pa.Table)
-        assert result.num_rows <= 2
+        assert len(result) <= 2
 
     def test_get_all_knowledge_returns_pyarrow_table(self, temp_db_path, sample_ext_knowledge_data):
         """Test that get_all_knowledge returns PyArrow Table."""
         storage = ExtKnowledgeStore(db_path=temp_db_path, embedding_model=get_db_embedding_model())
-        storage.store(sample_ext_knowledge_data)
+        storage.batch_store_knowledge(sample_ext_knowledge_data)
 
-        result = storage.search_all_knowledge(domain="Finance")
-
-        assert isinstance(result, pa.Table)
-        assert result.num_rows == 2
+        results = storage.search_all_knowledge(["Finance"])
+        assert len(results) == 2
 
         # Test domain filtering
-        domains = result["domain"].to_pylist()
-        assert all(domain == "Finance" for domain in domains)
+        assert all(res["subject_path"][0] == "Finance" for res in results)
+
+    def test_search_knowledge_wildcard(self, temp_db_path, sample_ext_knowledge_data):
+        """Test search_knowledge wildcard."""
+        storage = ExtKnowledgeStore(db_path=temp_db_path, embedding_model=get_db_embedding_model())
+        storage.batch_store_knowledge(sample_ext_knowledge_data)
+
+        result = storage.search_all_knowledge(["Finance", "Banking", "Retail", "APR"])
+        assert len(result) == 1
 
     def test_knowledge_pyarrow_operations(self, temp_db_path, sample_ext_knowledge_data):
         """Test PyArrow operations on knowledge data."""
         storage = ExtKnowledgeStore(db_path=temp_db_path, embedding_model=get_db_embedding_model())
-        storage.store(sample_ext_knowledge_data)
+        storage.batch_store_knowledge(sample_ext_knowledge_data)
 
-        all_knowledge = storage._search_all()
+        all_knowledge = storage.search_all_knowledge()
 
         # Test grouping by domain
-        domains = pc.unique(all_knowledge["domain"])
-        assert len(domains) >= 1
+        domains = [res["subject_path"][0] == "Finance" for res in all_knowledge]
+        assert len(set(domains)) == 1
 
         # Test concatenation operations (similar to those used in storage)
-        from datus.utils.pyarrow_utils import concat_columns
+        subject_path_list = [knowledge["subject_path"] for knowledge in all_knowledge]
 
-        domain_layer_concat = concat_columns(all_knowledge, columns=["domain", "layer1", "layer2"], separator="_")
+        expected_values = [["Finance", "Banking", "Retail"], ["Finance", "Investment", "Stocks"]]
+        assert subject_path_list == expected_values
 
-        expected_values = ["Finance_Banking_Retail", "Finance_Investment_Stocks"]
-        assert domain_layer_concat.to_pylist() == expected_values
+    def test_rename_subject_node(self, temp_db_path, sample_ext_knowledge_data):
+        """Test renaming a subject node in ExtKnowledgeStore."""
+        storage = ExtKnowledgeStore(db_path=temp_db_path, embedding_model=get_db_embedding_model())
+        storage.batch_store_knowledge(sample_ext_knowledge_data)
+
+        # Rename subject node: Finance -> Banking -> Retail to Finance -> Banking -> Consumer
+        success = storage.rename(old_path=["Finance", "Banking", "Retail"], new_path=["Finance", "Banking", "Consumer"])
+
+        assert success is True
+
+        # Verify the node was renamed in subject_tree
+        old_node = storage.subject_tree.get_node_by_path(["Finance", "Banking", "Retail"])
+        new_node = storage.subject_tree.get_node_by_path(["Finance", "Banking", "Consumer"])
+
+        assert old_node is None
+        assert new_node is not None
+        assert new_node["name"] == "Consumer"
+
+    def test_rename_knowledge_item(self, temp_db_path):
+        """Test renaming a knowledge item in LanceDB."""
+        storage = ExtKnowledgeStore(db_path=temp_db_path, embedding_model=get_db_embedding_model())
+
+        # Store knowledge with subject path that exists
+        knowledge_data = [
+            {
+                "subject_path": ["Finance", "Banking"],
+                "terminology": "old_term",
+                "name": "old_term",
+                "explanation": "This is an explanation for old term",
+            },
+        ]
+        storage.batch_store_knowledge(knowledge_data)
+
+        # Rename the terminology (LanceDB item, not subject node)
+        success = storage.rename(
+            old_path=["Finance", "Banking", "old_term"], new_path=["Finance", "Banking", "new_term"]
+        )
+
+        assert success is True
+
+        # Verify the item was renamed
+        results = storage.search_all_knowledge(["Finance", "Banking"])
+        assert len(results) == 1
+        assert results[0]["name"] == "new_term"
+        assert results[0]["explanation"] == "This is an explanation for old term"
+
+    def test_rename_knowledge_item_different_parent(self, temp_db_path):
+        """Test that renaming with different parent path."""
+        storage = ExtKnowledgeStore(db_path=temp_db_path, embedding_model=get_db_embedding_model())
+
+        knowledge_data = [
+            {
+                "subject_path": ["Finance", "Banking"],
+                "name": "term1",
+                "terminology": "term1",
+                "explanation": "Explanation 1",
+            },
+        ]
+        storage.batch_store_knowledge(knowledge_data)
+        storage.subject_tree.find_or_create_path(["Finance", "Investment"])
+        storage.rename(old_path=["Finance", "Banking", "term1"], new_path=["Finance", "Investment", "term2"])
+        knowledge = storage.search_all_knowledge(["Finance", "Investment"])
+        assert len(knowledge) == 1
+        assert knowledge[0]["name"] == "term2"
 
 
 class TestMetricStoragePyArrow:
@@ -305,18 +388,18 @@ class TestMetricStoragePyArrow:
     def test_search_all_metrics_returns_pyarrow_table(self, temp_db_path, sample_metric_data):
         """Test that search_all_metrics returns PyArrow Table."""
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(sample_metric_data)
+        storage.batch_store_metrics(sample_metric_data)
 
         # Simulate SemanticMetricsRAG usage
         class MockSemanticMetricsRAG:
             def __init__(self):
                 self.metric_storage = storage
 
-            def search_all_metrics(self, semantic_model_name="", select_fields=None):
-                return self.metric_storage.search_all(semantic_model_name, select_fields=select_fields)
+            def search_all_metrics(self):
+                return self.metric_storage.search_all_metrics()
 
         rag = MockSemanticMetricsRAG()
-        result = rag.search_all_metrics(select_fields=["name", "llm_text"])
+        result = rag.search_all_metrics()
 
         assert isinstance(result, list)
         assert len(result) == 2
@@ -326,10 +409,10 @@ class TestMetricStoragePyArrow:
     def test_hybrid_metrics_search_with_pyarrow(self, temp_db_path, sample_metric_data):
         """Test hybrid metrics search using PyArrow operations."""
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(sample_metric_data)
+        storage.batch_store_metrics(sample_metric_data)
 
         # Get all metrics as PyArrow table
-        all_metrics = storage._search_all()
+        all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
 
         # Test PyArrow filtering (simulating the filtering logic in search_hybrid_metrics)
         semantic_names_set = {"sales_model"}
@@ -347,17 +430,79 @@ class TestMetricStoragePyArrow:
     def test_metrics_detail_retrieval(self, temp_db_path, sample_metric_data):
         """Test metrics detail retrieval with PyArrow operations."""
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.store(sample_metric_data)
+        storage.batch_store_metrics(sample_metric_data)
 
         # Test direct table querying
-        result = storage._search_all(
-            where="domain = 'Sales' and layer1 = 'Revenue' and layer2 = 'Monthly' and name = 'monthly_revenue'",
-            select_fields=["name", "llm_text"],
+        result = storage.search_all_metrics(subject_path=["Sales", "Revenue", "Monthly"])
+
+        assert len(result) == 1
+        assert result[0]["name"] == "monthly_revenue"
+
+    def test_rename_subject_node(self, temp_db_path, sample_metric_data):
+        """Test renaming a subject node in MetricStorage."""
+        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage.batch_store_metrics(sample_metric_data)
+
+        # Rename subject node: Sales -> Revenue -> Monthly to Sales -> Revenue -> MonthlyTotal
+        success = storage.rename(
+            old_path=["Sales", "Revenue", "Monthly"], new_path=["Sales", "Revenue", "MonthlyTotal"]
         )
 
-        assert isinstance(result, pa.Table)
-        assert result.num_rows == 1
-        assert result["name"][0].as_py() == "monthly_revenue"
+        assert success is True
+
+        # Verify the node was renamed in subject_tree
+        old_node = storage.subject_tree.get_node_by_path(["Sales", "Revenue", "Monthly"])
+        new_node = storage.subject_tree.get_node_by_path(["Sales", "Revenue", "MonthlyTotal"])
+
+        assert old_node is None
+        assert new_node is not None
+        assert new_node["name"] == "MonthlyTotal"
+
+    def test_rename_metric_item(self, temp_db_path):
+        """Test renaming a metric item in LanceDB."""
+        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+
+        # Store metric with subject path
+        metric_data = [
+            {
+                "subject_path": ["Sales", "Revenue"],
+                "name": "old_metric_name",
+                "llm_text": "This is an old metric description",
+                "semantic_model_name": "sales_model",
+            },
+        ]
+        storage.batch_store_metrics(metric_data)
+
+        # Rename the metric (LanceDB item, not subject node)
+        success = storage.rename(
+            old_path=["Sales", "Revenue", "old_metric_name"], new_path=["Sales", "Revenue", "new_metric_name"]
+        )
+
+        assert success is True
+
+        # Verify the item was renamed
+        results = storage.search_all_metrics(subject_path=["Sales", "Revenue"])
+        assert len(results) == 1
+        assert results[0]["name"] == "new_metric_name"
+        assert results[0]["llm_text"] == "This is an old metric description"
+
+    def test_rename_metric_item_different_parent(self, temp_db_path):
+        """Test that renaming metric with different parent path fails."""
+        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+
+        metric_data = [
+            {
+                "subject_path": ["Sales", "Revenue"],
+                "name": "metric1",
+                "llm_text": "Metric 1 description",
+                "semantic_model_name": "sales_model",
+            },
+        ]
+        storage.batch_store_metrics(metric_data)
+        storage.subject_tree.find_or_create_path(["Sales", "Expense"])
+        storage.rename(old_path=["Sales", "Revenue", "metric1"], new_path=["Sales", "Expense", "metric1"])
+        metrics = storage.search_all_metrics(subject_path=["Sales", "Expense"])
+        assert len(metrics) == 1
 
 
 class TestPyArrowPerformance:
@@ -475,7 +620,7 @@ class TestReturnTypeConsistency:
         assert isinstance(schema_result, pa.Table)
 
         # Document storage
-        doc_storage = DocumentStore(db_path=temp_db_path + "_doc")
+        doc_storage = DocumentStore(db_path=temp_db_path + "_doc", embedding_model=get_db_embedding_model())
         doc_data = [
             {
                 "title": "Test Doc",
@@ -494,18 +639,17 @@ class TestReturnTypeConsistency:
         ext_storage = ExtKnowledgeStore(db_path=temp_db_path + "_ext", embedding_model=get_db_embedding_model())
         ext_data = [
             {
-                "domain": "Test",
-                "layer1": "L1",
-                "layer2": "L2",
+                "subject_path": ["Test", "L1", "L2"],
+                "name": "name",
                 "terminology": "term",
                 "explanation": "explanation",
                 "created_at": "2023-01-01T00:00:00Z",
             }
         ]
-        ext_storage.store(ext_data)
+        ext_storage.batch_store_knowledge(ext_data)
 
         ext_result = ext_storage.search_all_knowledge()
-        assert isinstance(ext_result, pa.Table)
+        assert len(ext_result) == 1
 
     def test_backwards_compatibility_with_to_pylist(self, temp_db_path, sample_schema_data):
         """Test that PyArrow Tables can be easily converted to previous List[Dict] format."""
@@ -524,3 +668,81 @@ class TestReturnTypeConsistency:
         expected_fields = ["catalog_name", "database_name", "schema_name", "table_name"]
         for field in expected_fields:
             assert field in old_format[0]
+
+
+class TestReferenceSqlStoragePyArrow:
+    """Test PyArrow-related functionality and rename operations in ReferenceSqlStorage."""
+
+    def test_rename_subject_node(self, temp_db_path, sample_reference_sql_data):
+        """Test renaming a subject node in ReferenceSqlStorage."""
+        storage = ReferenceSqlStorage(db_path=temp_db_path, embedding_model=get_db_embedding_model())
+        storage.batch_store_sql(sample_reference_sql_data)
+
+        # Rename subject node: Analytics -> Reports -> Daily to Analytics -> Reports -> DailyReports
+        success = storage.rename(
+            old_path=["Analytics", "Reports", "Daily"], new_path=["Analytics", "Reports", "DailyReports"]
+        )
+
+        assert success is True
+
+        # Verify the node was renamed in subject_tree
+        old_node = storage.subject_tree.get_node_by_path(["Analytics", "Reports", "Daily"])
+        new_node = storage.subject_tree.get_node_by_path(["Analytics", "Reports", "DailyReports"])
+
+        assert old_node is None
+        assert new_node is not None
+        assert new_node["name"] == "DailyReports"
+
+    def test_rename_sql_item(self, temp_db_path):
+        """Test renaming a reference SQL item in LanceDB."""
+        storage = ReferenceSqlStorage(db_path=temp_db_path, embedding_model=get_db_embedding_model())
+
+        # Store SQL with subject path
+        sql_data = [
+            {
+                "subject_path": ["Analytics", "Reports"],
+                "name": "old_query_name",
+                "sql": "SELECT * FROM sales",
+                "comment": "Old query comment",
+                "summary": "This is an old query summary",
+                "filepath": "/queries/old_query.sql",
+                "tags": "sales,old",
+            },
+        ]
+        storage.batch_store_sql(sql_data)
+
+        # Rename the SQL (LanceDB item, not subject node)
+        success = storage.rename(
+            old_path=["Analytics", "Reports", "old_query_name"], new_path=["Analytics", "Reports", "new_query_name"]
+        )
+
+        assert success is True
+
+        # Verify the item was renamed
+        results = storage.search_all_reference_sql(subject_path=["Analytics", "Reports"])
+        assert len(results) == 1
+        assert results[0]["name"] == "new_query_name"
+        assert results[0]["sql"] == "SELECT * FROM sales"
+        assert results[0]["summary"] == "This is an old query summary"
+
+    def test_rename_sql_item_different_parent(self, temp_db_path):
+        """Test that renaming SQL with different parent path fails."""
+        storage = ReferenceSqlStorage(db_path=temp_db_path, embedding_model=get_db_embedding_model())
+
+        sql_data = [
+            {
+                "subject_path": ["Analytics", "Reports"],
+                "name": "query1",
+                "sql": "SELECT * FROM orders",
+                "comment": "Query 1 comment",
+                "summary": "Query 1 summary",
+                "filepath": "/queries/query1.sql",
+                "tags": "orders",
+            },
+        ]
+        storage.batch_store_sql(sql_data)
+
+        storage.subject_tree.find_or_create_path(["Analytics", "Dashboards"])
+        storage.rename(old_path=["Analytics", "Reports", "query1"], new_path=["Analytics", "Dashboards", "query1"])
+        sqls = storage.search_all_reference_sql(subject_path=["Analytics", "Dashboards"])
+        assert len(sqls) == 1

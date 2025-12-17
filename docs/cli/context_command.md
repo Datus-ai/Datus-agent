@@ -33,21 +33,10 @@ catalog
 domain
   └── layer1
       └── layer2
-          └── semantic_model
-              └── metrics
+          └── metrics/sql
 ```
 
 ![Subject Screen](../assets/subject_screen.png)
-
-### @sql
-```
-domain
-  └── layer1
-      └── layer2
-          └── sql_history / sql_snippet
-```
-
-![SQL History Screen](../assets/sql_history_screen.png)
 
 When you select an item, it will be injected into the current chat turn as a reference — Datus will know its metadata, lineage, and purpose when generating SQL.
 

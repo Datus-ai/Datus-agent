@@ -90,9 +90,7 @@ Automatically categorizes SQL queries into hierarchical structure:
 
 ```json
 {
-    "domain": "analytics",
-    "layer1": "user_analytics",
-    "layer2": "activity_metrics",
+    "subject_tree": "analytics/user_analytics/activity_metrics",
     "tags": ["daily", "users", "engagement"]
 }
 ```
