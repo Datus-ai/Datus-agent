@@ -481,7 +481,7 @@ def _normalize_for_json(data: Any) -> Any:
             return [_normalize_for_json(item) for item in data.tolist()]
 
     if isinstance(data, pd.DataFrame):
-        return [_normalize_for_json(record) for record in data.to_dict(orient="records")]
+        return [_normalize_for_json(record) for record in data.replace({np.nan: None}).to_dict(orient="records")]
 
     if isinstance(data, pd.Series):
         return [_normalize_for_json(item) for item in data.tolist()]

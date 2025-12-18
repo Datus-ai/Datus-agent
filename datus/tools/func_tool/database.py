@@ -370,7 +370,7 @@ class DBFuncTool:
                     ]
                 ).to_pylist()
             if not metadata_rows:
-                return FuncToolResult(success=1, result=[], error="No metadata rows found.")
+                return FuncToolResult(success=0, error="No metadata rows found.")
 
             current_has_semantic = False
             if self.has_semantic_models:

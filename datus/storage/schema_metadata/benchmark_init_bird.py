@@ -3,7 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # init schema for Bird-Bench
-import csv
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,6 +11,7 @@ from typing import Any, Dict, List, Set, Tuple
 from datus.storage.schema_metadata.init_utils import exists_table_value
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.db_tools.db_manager import DBManager
+from datus.utils.csv_utils import read_csv_and_clean_text
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -292,23 +292,6 @@ def generate_sql_by_desc_file(database_name, table_infos, csv_path) -> Dict[str,
     table_name = os.path.splitext(os.path.basename(csv_path))[0]
     table_info = table_infos[table_name]
 
-    # Read the CSV file with error handling for encoding
-    with open(csv_path, "r", encoding="latin1") as f:
-        reader = csv.reader(f)
-        columns = []
-        # original_column_name', 'column_name', 'column_description', 'data_format',
-        # 'value_description
-        for row in list(reader)[1:]:
-            if len(row) < 5:
-                continue
-            column = {
-                "original_column_name": row[0],
-                "column_name": row[1],
-                "column_description": row[2],
-                "data_format": row[3],
-                "value_description": row[4],
-            }
-            columns.append(column)
     # Generate SQL with comments
     sql_lines = []
     sql_lines.append(f"CREATE TABLE `{table_name}` (")
@@ -317,6 +300,8 @@ def generate_sql_by_desc_file(database_name, table_infos, csv_path) -> Dict[str,
     has_foreign = table_info and "foreign_keys" in table_info and table_info["foreign_keys"]
 
     # Process each column
+    # Read the CSV file with error handling for encoding
+    columns = read_csv_and_clean_text(csv_path)
     for i, col in enumerate(columns):
         # Determine SQL type based on data_format
         sql_type = "TEXT"  # default type
@@ -363,7 +348,6 @@ def generate_sql_by_desc_file(database_name, table_infos, csv_path) -> Dict[str,
             sql_lines.append(line)
 
     sql_lines.append(");")
-
     return {
         "catalog_name": "",
         "database_name": database_name,

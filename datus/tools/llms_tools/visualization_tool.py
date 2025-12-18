@@ -230,7 +230,7 @@ class VisualizationTool(BaseTool):
         return ", ".join(info_parts)
 
     def _format_data_preview(self, df: pd.DataFrame) -> str:
-        preview_df = df.head(self.preview_rows)
+        preview_df = df.head(self.preview_rows).replace({np.nan: None})
         serializable_records = []
         for row in preview_df.to_dict(orient="records"):
             serializable_records.append({key: self._serialize_value(value) for key, value in row.items()})
