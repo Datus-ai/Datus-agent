@@ -50,7 +50,7 @@ class AdapterMetadata:
 
             fields_info = {}
             for field_name, field_info in self.config_class.model_fields.items():
-                fields_info[field_name] = {
+                field_data = {
                     "required": field_info.is_required(),
                     "default": field_info.default if not field_info.is_required() else None,
                     "description": field_info.description or "",
@@ -58,6 +58,12 @@ class AdapterMetadata:
                     if hasattr(field_info.annotation, "__name__")
                     else str(field_info.annotation),
                 }
+
+                # Extract json_schema_extra metadata for special handling
+                if hasattr(field_info, "json_schema_extra") and field_info.json_schema_extra:
+                    field_data.update(field_info.json_schema_extra)
+
+                fields_info[field_name] = field_data
             return fields_info
         except Exception as e:
             logger.debug(f"Failed to extract config fields for {self.db_type}: {e}")

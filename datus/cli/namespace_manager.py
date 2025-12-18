@@ -149,108 +149,60 @@ class NamespaceManager:
         logical_name = namespace_name  # Default logical name
 
         # If adapter provides config schema, use it to prompt for fields
-        if config_fields:
-            for field_name, field_info in config_fields.items():
-                # Skip type field
-                if field_name == "type":
-                    continue
+        if not config_fields:
+            console.print(f"❌ Adapter '{db_type}' does not have a configuration schema registered.")
+            return 1
 
-                # Determine prompt label and default value
-                label = f"- {field_name.replace('_', ' ').capitalize()}"
-                required = field_info.get("required", False)
-                default_value = field_info.get("default")
+        for field_name, field_info in config_fields.items():
+            # Skip type field
+            if field_name == "type":
+                continue
 
-                # Special handling for certain field types
-                if field_name == "password":
-                    value = getpass(f"{label}: ")
-                elif field_name == "uri" and db_type == "duckdb":
-                    default_uri = str(get_path_manager().sample_dir / "duckdb-demo.duckdb")
-                    value = Prompt.ask(label, default=default_uri)
-                elif field_name == "port":
-                    port_str = Prompt.ask(label, default=str(default_value) if default_value else "")
-                    if port_str:
-                        valid, error_msg = _validate_port(port_str)
+            # Determine prompt label and default value
+            label = f"- {field_name.replace('_', ' ').capitalize()}"
+            required = field_info.get("required", False)
+            default_value = field_info.get("default")
+            input_type = field_info.get("input_type", "text")
+
+            # Handle input based on input_type metadata
+            if input_type == "password" or field_name == "password":
+                value = getpass(f"{label}: ")
+            elif input_type == "file_path":
+                # Handle file path inputs
+                sample_file = field_info.get("default_sample")
+                if sample_file:
+                    default_path = str(get_path_manager().sample_dir / sample_file)
+                    value = Prompt.ask(label, default=default_path)
+                else:
+                    value = Prompt.ask(label, default=str(default_value) if default_value else "")
+            elif field_info.get("type") == "int" or field_name == "port":
+                # Handle integer inputs
+                value_str = Prompt.ask(label, default=str(default_value) if default_value else "")
+                if value_str:
+                    if field_name == "port":
+                        valid, error_msg = _validate_port(value_str)
                         if not valid:
                             console.print(f"❌ {error_msg}")
                             return 1
-                        value = int(port_str)
-                    else:
-                        value = default_value
-                elif not required and default_value is not None:
-                    value = Prompt.ask(label, default=str(default_value))
-                elif not required:
-                    value = Prompt.ask(label, default="")
+                    value = int(value_str)
                 else:
-                    value = Prompt.ask(label)
-
-                # Only add non-empty values
-                if value != "" and value is not None:
-                    config_data[field_name] = value
-
-                    # Determine logical name from database or uri
-                    if field_name == "database" and value:
-                        logical_name = value
-                    elif field_name == "uri" and value:
-                        logical_name = file_stem_from_uri(value)
-
-        else:
-            # Fallback: use generic prompts based on db_type
-            if db_type in ["starrocks", "mysql"]:
-                host = Prompt.ask("- Host", default="127.0.0.1")
-                default_port = "9030" if db_type == "starrocks" else "3306"
-                port = Prompt.ask("- Port", default=default_port)
-                valid, error_msg = _validate_port(port)
-                if not valid:
-                    console.print(f"❌ {error_msg}")
-                    return 1
-                username = Prompt.ask("- Username")
-                password = getpass("- Password: ")
-                database = Prompt.ask("- Database")
-
-                config_data.update(
-                    {
-                        "host": host,
-                        "port": int(port),
-                        "username": username,
-                        "password": password,
-                        "database": database,
-                    }
-                )
-                logical_name = database
-
-                if db_type == "starrocks":
-                    config_data["catalog"] = "default_catalog"
-
-            elif db_type == "snowflake":
-                username = Prompt.ask("- Username")
-                account = Prompt.ask("- Account")
-                warehouse = Prompt.ask("- Warehouse")
-                password = getpass("- Password: ")
-                database = Prompt.ask("- Database", default="")
-                schema = Prompt.ask("- Schema", default="")
-
-                config_data.update(
-                    {
-                        "account": account,
-                        "username": username,
-                        "password": password,
-                        "warehouse": warehouse,
-                        "database": database,
-                        "schema": schema,
-                    }
-                )
-                logical_name = database if database else namespace_name
-
+                    value = default_value
+            elif not required and default_value is not None:
+                value = Prompt.ask(label, default=str(default_value))
+            elif not required:
+                value = Prompt.ask(label, default="")
             else:
-                # File-based databases
-                if db_type == "duckdb":
-                    default_uri = str(get_path_manager().sample_dir / "duckdb-demo.duckdb")
-                    conn_string = Prompt.ask("- Connection string", default=default_uri)
-                else:
-                    conn_string = Prompt.ask("- Connection string")
+                value = Prompt.ask(label)
 
-                config_data["uri"] = conn_string
-                logical_name = file_stem_from_uri(conn_string)
+            # Only add non-empty values
+            if value != "" and value is not None:
+                config_data[field_name] = value
+
+                # Determine logical name from database or uri
+                if field_name == "database" and value:
+                    logical_name = value
+                elif field_name == "uri" and value:
+                    logical_name = file_stem_from_uri(value)
 
         # Add logical name to config
         config_data["name"] = logical_name

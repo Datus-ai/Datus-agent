@@ -280,18 +280,23 @@ class InteractiveInit:
             label = f"- {field_name.replace('_', ' ').capitalize()}"
             required = field_info.get("required", False)
             default_value = field_info.get("default")
+            input_type = field_info.get("input_type", "text")
 
-            # Special handling for certain field types
-            if field_name == "password":
+            # Handle input based on input_type metadata
+            if input_type == "password" or field_name == "password":
                 value = getpass(f"{label}: ")
-            elif field_name == "uri" and db_type == "duckdb":
-                # Provide sample default for DuckDB
-                default_uri = str(self.sample_dir / "duckdb-demo.duckdb")
-                value = Prompt.ask(label, default=default_uri)
-            elif field_name == "port":
-                # Port should be integer
-                port_str = Prompt.ask(label, default=str(default_value) if default_value else "")
-                value = int(port_str) if port_str else default_value
+            elif input_type == "file_path":
+                # Handle file path inputs
+                sample_file = field_info.get("default_sample")
+                if sample_file:
+                    default_path = str(self.sample_dir / sample_file)
+                    value = Prompt.ask(label, default=default_path)
+                else:
+                    value = Prompt.ask(label, default=str(default_value) if default_value else "")
+            elif field_info.get("type") == "int" or field_name == "port":
+                # Handle integer inputs
+                value_str = Prompt.ask(label, default=str(default_value) if default_value else "")
+                value = int(value_str) if value_str else default_value
             elif not required and default_value is not None:
                 value = Prompt.ask(label, default=str(default_value))
             elif not required:
