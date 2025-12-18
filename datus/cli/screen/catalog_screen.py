@@ -845,6 +845,7 @@ class CatalogScreen(ContextScreen):
         table.add_column("Null", style="yellow", width=3, justify="left")
         table.add_column("Default", style="green", min_width=5, max_width=12)
         table.add_column("PK", style="red", width=2, justify="left")
+        table.add_column("Comment", style="bright_white", min_width=10, max_width=30)
 
         # Batch add rows for better performance
         # max_columns = min(len(table_schema), 100)  # Limit for very large schemas
@@ -861,8 +862,9 @@ class CatalogScreen(ContextScreen):
             nullable = "✓" if column.get("nullable", True) else "✗"
             default = str(column.get("default_value", ""))[:12] or "-"
             is_key = "✓" if column.get("pk", False) else "-"
+            comment = str(column.get("comment", ""))[:30] or "-"
 
-            table.add_row(str(idx), col_name, col_type, nullable, default, is_key)
+            table.add_row(str(idx), col_name, col_type, nullable, default, is_key, comment)
 
         # Add note if truncated
         # if len(table_schema) > max_columns:
