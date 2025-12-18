@@ -12,7 +12,7 @@ def clean_text(text: str) -> str:
     # NBSP  # zero width  # BOM
     text = text.replace("\u00a0", " ").replace("\u200b", "").replace("\ufeff", "")
 
-    # 3.Remove control characters（retain \n \t）
+    # 3.Remove control characters(retain \n \t)
     text = re.sub(r"[\x00-\x08\x0B-\x1F\x7F]", "", text)
 
     # 4. Uniform line breaks

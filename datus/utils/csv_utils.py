@@ -16,7 +16,6 @@ def read_csv_and_clean_text(csv_path: str | Path) -> List[Dict[str, Any]]:
         return []
     encoding = file_encoding(csv_path)
     df = pd.read_csv(csv_path, encoding=encoding, engine="python")
-    # df.columns = [c.strip().lstrip("\ufeff") if isinstance(c, str) else c for c in df.columns]
     rows = df.replace({np.nan: None}).to_dict(orient="records")
     for row in rows:
         for k, v in row.items():
