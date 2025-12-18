@@ -351,7 +351,7 @@ class ChatCommands:
                     if clean_output:
                         self._display_markdown_response(clean_output)
                     self.last_actions = incremental_actions
-                    self.cli.console.print("[bold bright_black]Use `Ctrl+O` to display trace details.[/]")
+                self.cli.console.print("[bold bright_black]Use `Ctrl+O` to display trace details.[/]")
 
             # Update chat history for potential context in future interactions
             self.chat_history.append(

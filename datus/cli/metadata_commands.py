@@ -9,6 +9,7 @@ This module handles database, table, and schema listing/switching functionality.
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 from rich.box import SIMPLE_HEAD
 from rich.panel import Panel
 from rich.table import Table
@@ -324,13 +325,13 @@ class MetadataCommands:
             # For SQLite, query the sqlite_master table
             if self.cli.db_connector.get_type() == DBType.SQLITE:
                 sql = f"SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='{table_name}'"
-                result = self.cli.db_connector.execute_arrow(sql)
+                result = self.cli.db_connector.execute_pandas(sql)
 
                 if result is None or not result.success:
                     self.cli.console.print("[bold red]Error:[/] Query failed")
                     return
 
-                indexes = result.sql_return.to_pylist()
+                indexes = result.sql_return.replace({np.nan: None}).to_dict(orient="records")
                 if indexes:
                     index_table = Table(title=f"Indexes for {table_name}")
                     index_table.add_column("Index Name")
