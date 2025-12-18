@@ -33,7 +33,10 @@ def file_encoding(file_path: Path) -> str:
     from charset_normalizer import from_bytes
 
     best = from_bytes(raw).best()
-    encoding = best.encoding.lower().replace("-", "_")
+    encoding = best.encoding.lower()
+    if not encoding:
+        return "utf-8"
+    encoding = encoding.lower().replace("-", "_")
     if encoding in {"ascii", "utf_8", "utf8"}:
         return "utf-8"
     return encoding

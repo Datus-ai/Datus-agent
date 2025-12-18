@@ -62,6 +62,7 @@ dependencies = [
     # Optional: install torch manually to enable reranker models.
     "uv>=0.9.9",
     "plotly>=6.5.0",
+    "charset-normalizer>=3.4.4",
 ]
 
 [project.optional-dependencies]
