@@ -184,7 +184,11 @@ class NamespaceManager:
                         if not valid:
                             console.print(f"❌ {error_msg}")
                             return 1
-                    value = int(value_str)
+                    try:
+                        value = int(value_str)
+                    except ValueError:
+                        console.print(f"❌ Invalid integer value: '{value_str}'. Please enter a valid number.")
+                        return 1
                 else:
                     value = default_value
             elif not required and default_value is not None:

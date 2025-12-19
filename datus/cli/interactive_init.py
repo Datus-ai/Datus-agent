@@ -294,9 +294,28 @@ class InteractiveInit:
                 else:
                     value = Prompt.ask(label, default=str(default_value) if default_value else "")
             elif field_info.get("type") == "int" or field_name == "port":
-                # Handle integer inputs
-                value_str = Prompt.ask(label, default=str(default_value) if default_value else "")
-                value = int(value_str) if value_str else default_value
+                # Handle integer inputs with validation
+                while True:
+                    value_str = Prompt.ask(label, default=str(default_value) if default_value else "")
+
+                    # Use default if empty string
+                    if not value_str:
+                        value = default_value
+                        break
+
+                    # Try to convert to int
+                    try:
+                        value = int(value_str)
+
+                        # Validate port range
+                        if field_name == "port":
+                            if not (1 <= value <= 65535):
+                                console.print("[yellow]Port must be between 1 and 65535. Please try again.[/yellow]")
+                                continue
+
+                        break
+                    except ValueError:
+                        console.print("[yellow]Invalid integer value. Please enter a valid number.[/yellow]")
             elif not required and default_value is not None:
                 value = Prompt.ask(label, default=str(default_value))
             elif not required:
