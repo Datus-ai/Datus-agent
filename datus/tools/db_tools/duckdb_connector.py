@@ -623,7 +623,21 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
             result = self.connection.execute(sql)
             rows = result.fetchall()
             columns = [desc[0] for desc in result.description]
-            return [dict(zip(columns, row)) for row in rows]
+            # Normalize field names to match standard schema
+            schema_list = []
+            for row in rows:
+                row_dict = dict(zip(columns, row))
+                # Convert notnull to nullable and dflt_value to default_value
+                normalized = {
+                    "cid": row_dict.get("cid"),
+                    "name": row_dict.get("name"),
+                    "type": row_dict.get("type"),
+                    "nullable": not bool(row_dict.get("notnull", 0)),  # Invert notnull to nullable
+                    "default_value": row_dict.get("dflt_value"),  # Rename dflt_value to default_value
+                    "pk": row_dict.get("pk"),
+                }
+                schema_list.append(normalized)
+            return schema_list
         except DatusException as e:
             if "error_message" in e.message_args:
                 message = e.message_args["error_message"]

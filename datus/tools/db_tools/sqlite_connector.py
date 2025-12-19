@@ -404,8 +404,8 @@ class SQLiteConnector(BaseSqlConnector):
                     "cid": col[0],
                     "name": col[1],
                     "type": col[2],
-                    "notnull": col[3],
-                    "dflt_value": col[4],
+                    "nullable": not bool(col[3]),  # Normalize: invert notnull to nullable
+                    "default_value": col[4],  # Normalize: dflt_value to default_value
                     "pk": col[5],
                 }
                 for col in columns
