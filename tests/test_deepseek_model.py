@@ -247,6 +247,7 @@ class TestDeepSeekModel:
                 output_type=str,
                 tools=tools,
                 instruction=instructions,
+                max_turns=20,
             )
 
             assert result is not None, f"MCP response should not be None for scenario {i+1}"
