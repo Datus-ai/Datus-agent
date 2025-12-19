@@ -40,14 +40,6 @@ class ArgumentParser:
             "--db_path", dest="db_path", type=str, help="Path to database file (for SQLite/DuckDB)"
         )
 
-        # Snowflake specific arguments
-        # self.parser.add_argument("--sf_account", dest="sf_account", type=str, help="Snowflake account")
-        # self.parser.add_argument("--sf_user", dest="sf_user", type=str, help="Snowflake user")
-        # self.parser.add_argument("--sf_password", dest="sf_password", type=str, help="Snowflake password")
-        # self.parser.add_argument("--sf_warehouse", dest="sf_warehouse", type=str, help="Snowflake warehouse")
-        # self.parser.add_argument("--sf_database", dest="sf_database", type=str, help="Snowflake database")
-        # self.parser.add_argument("--sf_schema", dest="sf_schema", type=str, help="Snowflake schema")
-
         # General settings
         self.parser.add_argument(
             "--history_file",

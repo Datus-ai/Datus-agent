@@ -7,22 +7,24 @@ import sys
 import textwrap
 from datetime import date, datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import pyperclip
 from rich.syntax import Syntax
 from rich.table import Table
+from rich.tree import Tree as RichTree
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalGroup, VerticalScroll
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import Button, Collapsible, DataTable, Footer, Header, Label, Static, TextArea
+from textual.widgets import Button, Collapsible, DataTable, Footer, Header, Label, RichLog, Static, TextArea
 
 from datus.cli.action_history_display import BaseActionContentGenerator
 from datus.cli.screen.base_app import BaseApp
 from datus.schemas.action_history import ActionHistory, ActionRole
 from datus.utils.json_utils import llm_result2json, to_pretty_str
 from datus.utils.loggings import get_logger
+from datus.utils.rich_util import dict_to_tree
 
 logger = get_logger(__name__)
 
@@ -117,16 +119,16 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             args = args.strip()
             if args.startswith("{"):
                 json_args = json.loads(args)
-                return self._do_create_params_table(json_args, action_index)
+                return self._build_textual_table(json_args, action_index)
             elif args.startswith("["):
                 return []
-        return self._do_create_params_table(args, action_index)
+        return self._build_textual_table(args, action_index)
 
-    def _do_create_params_table(self, args: dict, action_index: int) -> List[Widget]:
+    def _build_textual_table(self, args: dict, action_index: int, table_name: str = "Parameters") -> List[Widget]:
         result = []
         if "sql" in args and len(args) == 1:
             return self._create_sql_widgets(args, action_index)
-        result.append(Static("[bold]Parameters[/bold]", classes="section-title"))
+        result.append(Static(f"[bold]{table_name}[/bold]" if table_name else "", classes="section-title"))
         table = DataTable(show_header=True, name="Parameters", show_row_labels=False)
         table.add_column("Parameter")
         table.add_column("Value")
@@ -326,8 +328,12 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 else:
                     result.append(self._build_rich_table_by_list("Sample Data", sample_data))
                 return result
-            result.append(TextArea(to_pretty_str(items), language="json", theme="monokai"))
-            return result
+            if function_name == "list_domain_layers_tree":
+                result.append(self._build_rich_tree(items))
+                return result
+            else:
+                result.append(self._build_rich_table_by_dict("", items, show_header=False))
+                return result
         if len(items) == 0:
             result.append(Static("[bold yellow]No Result[/]"))
             return result
@@ -507,6 +513,13 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
             if widget:
                 result.append(widget)
         return result
+
+    def _build_rich_tree(self, items: Dict[str, Any]) -> Widget:
+        tree = RichTree("domain_layers")
+        dict_to_tree(items, tree)
+        rich_log = RichLog()
+        rich_log.write(tree)
+        return rich_log
 
 
 class ChatActionScreen(Screen):

@@ -278,6 +278,17 @@ class DBFuncTool:
             wildcard_allowed = True
         return wildcard_allowed
 
+    @staticmethod
+    def all_tools_name() -> List[str]:
+        from datus.utils.class_utils import get_public_instance_methods
+
+        result = []
+        for name in get_public_instance_methods(DBFuncTool).keys():
+            if name == "available_tools":
+                continue
+            result.append(name)
+        return result
+
     def available_tools(self) -> List[Tool]:
         bound_tools = []
         methods_to_convert: List[Callable] = [self.list_tables, self.describe_table]

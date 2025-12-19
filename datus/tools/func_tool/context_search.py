@@ -18,7 +18,9 @@ logger = get_logger(__name__)
 
 _NAME = "context_search_tools"
 _NAME_METRICS = "context_search_tools.search_metrics"
+_NAME_GET_METRICS = "context_search_tools.get_metrics"
 _NAME_SQL = "context_search_tools.search_reference_sql"
+_NAME_GET_SQL = "context_search_tools.get_reference_sql"
 
 
 class ContextSearchTools:
@@ -50,7 +52,19 @@ class ContextSearchTools:
             not self.sub_agent_config
             or _NAME in self.sub_agent_config.tool_list
             or _NAME_SQL in self.sub_agent_config.tool_list
+            or _NAME_GET_SQL in self.sub_agent_config.tool_list
         )
+
+    @staticmethod
+    def all_tools_name() -> List[str]:
+        from datus.utils.class_utils import get_public_instance_methods
+
+        result = []
+        for name in get_public_instance_methods(ContextSearchTools).keys():
+            if name == "available_tools":
+                continue
+            result.append(name)
+        return result
 
     def available_tools(self) -> List[Tool]:
         tools = []
@@ -62,6 +76,7 @@ class ContextSearchTools:
             if not self.has_metrics:
                 tools.append(trans_to_function_tool(self.list_subject_tree))
             tools.append(trans_to_function_tool(self.search_reference_sql))
+            tools.append(trans_to_function_tool(self.get_reference_sql))
         return tools
 
     def list_subject_tree(self) -> FuncToolResult:
@@ -73,8 +88,8 @@ class ContextSearchTools:
             "<domain>": {
                 "<layer1>": {
                     "<layer2>": {
-                        "metrics_size": <int, optional>,
-                        "sql_size": <int, optional>
+                        "metrics": <[name1, name2, ...], optional>,
+                        "reference_sql: <[name1, name2, ...], optional>
                     },
                     ...
                 },
@@ -201,7 +216,36 @@ class ContextSearchTools:
             logger.debug(f"result of search_metrics: {metrics}")
             return FuncToolResult(success=1, error=None, result=metrics)
         except Exception as e:
-            logger.error(f"Failed to search metrics for table '{query_text}': {str(e)}")
+            logger.error(f"Failed to search metrics for '{query_text}': {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def get_metrics(self, domain: str = "", layer1: str = "", layer2: str = "", name: str = "") -> FuncToolResult:
+        """
+        Search for business metrics and KPIs using natural language queries.
+
+        Args:
+            domain: Optional business domain filter derived from list_domain_layers_tree
+            layer1: Optional first-layer subject filter derived from list_domain_layers_tree
+            layer2: Optional second-layer subject filter derived from list_domain_layers_tree
+            name: The name of the metric
+
+        Returns:
+            FuncToolResult with metrics containing name, description, constraint, and sql_query
+        """
+        try:
+            metrics = self.metric_rag.get_metrics_detail(
+                domain=domain,
+                layer1=layer1,
+                layer2=layer2,
+                name=name,
+            )
+            logger.debug(f"result of search_metrics: {metrics}")
+            if metrics:
+                return FuncToolResult(success=1, error=None, result=metrics[0])
+            else:
+                return FuncToolResult(success=0, error="No matched result", result=None)
+        except Exception as e:
+            logger.error(f"Failed to get metrics details for `{domain}/{layer1}/{layer2}/{name}`: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
     def search_reference_sql(
@@ -236,4 +280,36 @@ class ContextSearchTools:
             return FuncToolResult(success=1, error=None, result=result)
         except Exception as e:
             logger.error(f"Failed to search reference SQL for `{query_text}`: {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def get_reference_sql(self, domain: str = "", layer1: str = "", layer2: str = "", name: str = "") -> FuncToolResult:
+        """
+        Get reference SQL query for a domain and layer combination.
+
+        Args:
+            domain: Domain name for the reference SQL intent. Leave empty if not specified in context.
+            layer1: Semantic Layer1 for the reference SQL intent. Leave empty if not specified in context.
+            layer2: Semantic Layer2 for the reference SQL intent. Leave empty if not specified in context.
+            name: The name of the reference SQL intent.
+
+        Returns:
+            dict: A dictionary with keys:
+                - 'success' (int): 1 if the search succeeded, 0 otherwise.
+                - 'error' (str or None): Error message if any.
+                - 'result' (dict): On success, a list of matching entries, each containing:
+                    - 'sql'
+                    - 'comment'
+                    - 'tags'
+                    - 'summary'
+                    - 'file_path'
+        """
+        try:
+            result = self.reference_sql_store.get_reference_sql_detail(
+                domain=domain, layer1=layer1, layer2=layer2, name=name
+            )
+            if len(result) > 0:
+                return FuncToolResult(success=1, error=None, result=result[0])
+            return FuncToolResult(success=0, error="No matched result", result=None)
+        except Exception as e:
+            logger.error(f"Failed to get reference SQL for `{domain}/{layer1}/{layer2}/{name}`: {e}")
             return FuncToolResult(success=0, error=str(e))

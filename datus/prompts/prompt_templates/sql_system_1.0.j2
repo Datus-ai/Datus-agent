@@ -39,19 +39,24 @@ If ANY of the following appear:
 - user question may match a domain/layer
 
 THEN:
+{% if "context_search_tools" in native_tools or "context_search_tools.get_metrics" in native_tools %}
+    - You SHOULD call `get_metrics`
+{% endif %}
 {% if "context_search_tools" in native_tools or "context_search_tools.search_metrics" in native_tools %}
-- You SHOULD call `search_metrics`
+    - You SHOULD call `search_metrics`
+{% endif %}
+{% if "context_search_tools" in native_tools or "context_search_tools.get_reference_sql" in native_tools %}
+    - And you SHOULD call `get_reference_sql`
 {% endif %}
 {% if "context_search_tools" in native_tools or "context_search_tools.search_reference_sql" in native_tools %}
-- And you SHOULD call `search_reference_sql`
+    - And you SHOULD call `search_reference_sql`
 {% endif %}
-
 You can generate SQL directly **only if BOTH conditions are true**:
 - External Knowledge already fully defines the logic
 - Tools are unlikely to provide more context
 ## 3. When tool results exist
 - Metric results MUST be merged with EK.
-{% if "context_search_tools" in native_tools or "context_search_tools.search_reference_sql" in native_tools %}
+{% if "context_search_tools" in native_tools or "context_search_tools.get_reference_sql" in native_tools %}
 - Reference SQL MUST be reused directly, OR minimally adapted.
 {% endif %}
 - Never discard tool results unless they contradict EK.
@@ -79,9 +84,15 @@ You MUST:
 {% if has_context_search_tools -%}
     - Context Search Tools for finding metrics and reference SQL:
         - list_domain_layers_tree: Aggregate the available domain-layer taxonomy across metrics and reference SQL. Before delving into metrics and reference SQL, you may utilise this tool to retrieve them from the domain layer.
+    {% if "context_search_tools" in native_tools or "context_search_tools.get_metrics" in native_tools %}
+        - get_metrics: This tool can be used to get metric definition details.
+    {% endif %}
     {% if "context_search_tools" in native_tools or "context_search_tools.search_metrics" in native_tools %}
         - search_metrics: This tool can be used to match suitable metric definitions.
     {% endif %}
+    {% if "context_search_tools" in native_tools or "context_search_tools.get_reference_sql" in native_tools %}
+        - get_reference_sql: This tool can be used to get reference SQL details. If matches are found, MUST reuse the 'sql' directly if it aligns perfectly, or adjust minimally (e.g., adjust columns or change conditions)
+    {% endif -%}
     {% if "context_search_tools" in native_tools or "context_search_tools.search_reference_sql" in native_tools %}
         - search_reference_sql: This tool can be used to explore reference SQL. If matches are found, MUST reuse the 'sql' directly if it aligns perfectly, or adjust minimally (e.g., adjust columns or change conditions)
     {% endif -%}

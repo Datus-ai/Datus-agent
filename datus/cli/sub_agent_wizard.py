@@ -1833,13 +1833,11 @@ class SubAgentWizard:
             return self.app.run()
 
     def native_tools_choices(self) -> Dict[str, List[str]]:
-        from datus.tools.func_tool import ContextSearchTools, db_function_tools
+        from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 
         return {
-            "db_tools": [str(item.name) for item in db_function_tools(agent_config=self.cli_instance.agent_config)],
-            "context_search_tools": [
-                str(item.name) for item in ContextSearchTools(self.cli_instance.agent_config).available_tools()
-            ],
+            "db_tools": DBFuncTool.all_tools_name(),
+            "context_search_tools": ContextSearchTools.all_tools_name(),
             "date_parsing_tools": ["parse_temporal_expressions", "get_current_date"],
         }
 
