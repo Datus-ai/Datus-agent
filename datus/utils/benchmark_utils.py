@@ -484,11 +484,11 @@ def _extract_artifacts_from_action_history(
         result_payload = _extract_result_payload(output_payload)
         if function_name in {"write_file", "read_file", "read_multiple_files", "search_files"}:
             _collect_file_artifacts(artifacts, result_payload)
-        elif function_name in {"search_reference_sql", "search_sql"}:
+        elif function_name in {"search_reference_sql", "get_reference_sql"}:
             _collect_reference_sql_artifacts(artifacts, result_payload)
         elif function_name == "search_table":
             _collect_semantic_model_artifacts(artifacts, result_payload)
-        elif function_name == "search_metrics":
+        elif function_name in {"search_metrics", "get_metrics"}:
             _collect_metric_artifacts(artifacts, result_payload)
 
 
