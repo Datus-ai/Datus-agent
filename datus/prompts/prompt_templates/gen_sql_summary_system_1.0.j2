@@ -55,7 +55,8 @@ sql: |                               # Complete query (use | for multi-line)
   SELECT ...
 comment: string                      # user's input message or create a brief one-line description
 summary: >                           # IMPORTANT: Use > for long text to avoid YAML syntax errors
-  Detailed explanation (for vector search), MUST match input language
+  Detailed explanation (for documentation), MUST match input language
+search_text: string                  # Concise search keywords for vector matching: extract representative WHERE conditions, distinctive field values, key column names, aggregation metrics (3-8 key phrases, space-separated)
 filepath: string                     # File name where this YAML is saved
 subject_tree: string                 # Format: "domain/layer1/layer2"
 tags: string                         # Comma-separated tags
@@ -87,11 +88,40 @@ tags: string                         # Comma-separated tags
 
 - **File Saving is Required**: You MUST call `write_file` tool in step 4. Do not skip this - just generating YAML content is not enough
 - **Language Consistency Rule**:
-  - **If ANY Chinese characters in comment or SQL**: Use Chinese for name, summary, and all text fields
+  - **If ANY Chinese characters in comment or SQL**: Use Chinese for name, summary, search_text and all text fields
   - **If BOTH comment AND SQL are pure English**: Use English for name, summary, and all text fields
   - **Never mix**: Pure English input MUST produce pure English output
   - **Validation**: Double-check name language matches input language before generating YAML
-- **Summary Quality**: Summary is used for vector embeddings - be comprehensive and detailed
+- **Summary Generation** (Help LLM understand how to reference this SQL):
+  - **Purpose**: Concise explanation to help LLM understand when and how to reference this SQL for similar queries
+  - **Content** (1-2 sentences, 50-100 words):
+    - What data is queried and main filters (tables, key WHERE conditions)
+    - Key calculation metrics (SUM/COUNT/AVG and what they compute)
+    - Business scenario this SQL solves (based on comment and SQL logic)
+  - **Examples**:
+    - For "SELECT user_id, COUNT(*) FROM orders WHERE status='completed' GROUP BY user_id":
+      Summary: "Counts completed orders per user from orders table. Useful for analyzing user purchase frequency and customer activity patterns."
+    - For "SELECT product, SUM(revenue) FROM sales WHERE region='APAC' AND date>CURRENT_DATE-30":
+      Summary: "Aggregates recent 30-day revenue by product in APAC region. Helps track product performance and regional sales trends."
+  - **Language**: MUST match input language (Chinese input = Chinese summary)
+- **Search Text Generation** (CRITICAL for vector search quality):
+  - **Purpose**: Enable users to find this SQL by searching with business terms and metric types
+  - **Extract from SQL** (use business concepts, NOT technical column names):
+    - Business entities and metrics (e.g., "orders", "revenue", "users", "products")
+    - Key WHERE condition values with business meaning (e.g., "completed", "active", "APAC region")
+    - Aggregation types (e.g., "sum", "count", "average", "daily", "monthly")
+  - **EXCLUDE from search_text** (these are variable parameters):
+    - Specific time values (dates like "2024-01-01", use "recent"/"daily" instead)
+    - Specific numeric values (like "100", ">18", "LIMIT 10" - omit these entirely)
+    - Technical column names (use business concepts instead)
+  - **Examples**:
+    - For "SELECT user_id, COUNT(*) FROM orders WHERE status='completed' GROUP BY user_id": "orders completed count user"
+    - For "SELECT product, SUM(revenue) FROM sales WHERE region='APAC' AND date>'2024-01-01'": "product revenue sum APAC region recent"
+    - For "SELECT * FROM users WHERE age>18 AND score>100 LIMIT 10": "users age score"
+  - **Keep it concise**: 3-8 business terms, space-separated, MUST match input language (Chinese SQL = Chinese search_text)
+- **Summary vs Search Text**:
+  - **summary**: Brief explanation (1-2 sentences, 50-100 words) of what data is queried, key metrics, and business scenario
+  - **search_text**: Concise keywords for vector matching (3-8 key phrases only)
 - **Subject Tree**: Follow the "Classification Strategy" section for subject_tree selection
 - **File Path**: Use the same file name for both `write_file` call and YAML `filepath` field
 - **YAML Format**: ALWAYS use `summary: >` (folded style) for the summary field to prevent YAML parsing errors. Long text with special characters (colons, quotes) MUST use this format

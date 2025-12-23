@@ -198,7 +198,7 @@ class SqlSummaryAgenticNode(AgenticNode):
                 return []
 
             # Search using vector similarity on summary field
-            similar_items = self.reference_sql_rag.search_reference_sql_by_summary(query_text=query_text, top_n=top_n)
+            similar_items = self.reference_sql_rag.search_reference_sql(query_text=query_text, top_n=top_n)
 
             # Extract relevant fields and format results
             results = []

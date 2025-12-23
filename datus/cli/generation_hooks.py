@@ -616,6 +616,7 @@ class GenerationHooks(AgentHooks):
                 "sql": sql_query,
                 "comment": comment,
                 "summary": reference_sql_data.get("summary", ""),
+                "search_text": reference_sql_data.get("search_text", ""),
                 "filepath": file_path,
                 "subject_path": subject_path,
                 "tags": reference_sql_data.get("tags", ""),
