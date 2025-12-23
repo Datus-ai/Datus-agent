@@ -94,7 +94,7 @@ tags: string                         # Comma-separated tags
   - **Validation**: Double-check name language matches input language before generating YAML
 - **Summary Generation** (Help LLM understand how to reference this SQL):
   - **Purpose**: Concise explanation to help LLM understand when and how to reference this SQL for similar queries
-  - **Content** (1-2 sentences, 50-100 words):
+  - **Content** (2-4 sentences, 30-100 words):
     - What data is queried and main filters (tables, key WHERE conditions)
     - Key calculation metrics (SUM/COUNT/AVG and what they compute)
     - Business scenario this SQL solves (based on comment and SQL logic)
@@ -120,7 +120,7 @@ tags: string                         # Comma-separated tags
     - For "SELECT * FROM users WHERE age>18 AND score>100 LIMIT 10": "users age score"
   - **Keep it concise**: 3-8 business terms, space-separated, MUST match input language (Chinese SQL = Chinese search_text)
 - **Summary vs Search Text**:
-  - **summary**: Brief explanation (1-2 sentences, 50-100 words) of what data is queried, key metrics, and business scenario
+  - **summary**: Brief explanation of what data is queried, key metrics, and business scenario
   - **search_text**: Concise keywords for vector matching (3-8 key phrases only)
 - **Subject Tree**: Follow the "Classification Strategy" section for subject_tree selection
 - **File Path**: Use the same file name for both `write_file` call and YAML `filepath` field

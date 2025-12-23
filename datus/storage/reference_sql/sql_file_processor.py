@@ -39,11 +39,11 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
         # Check if this line contains a statement-ending semicolon (not in comment)
         has_semicolon = False
         if ";" in line:
-            # Check if semicolon is outside of comment
+            # Find first semicolon and comment position
             comment_pos = line.find("--")
-            semicolon_pos = line.rfind(";")
+            semicolon_pos = line.find(";")
 
-            # Semicolon is valid if:
+            # Semicolon is valid statement terminator if:
             # 1. No comment on this line, OR
             # 2. Semicolon appears before the comment
             if comment_pos == -1 or semicolon_pos < comment_pos:
@@ -78,16 +78,19 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
                 comment_text = re.sub(r"^-+\s*", "", stripped)
                 comment_lines.append(comment_text)
             elif stripped:
-                # SQL line - remove trailing semicolon if present
-                sql_line = line.rstrip(";").rstrip()
-                if sql_line:
-                    sql_lines.append(sql_line)
+                # SQL line - keep as-is (don't remove semicolons per-line to preserve string literals)
+                sql_lines.append(line)
 
         # Build comment and SQL
         comment = " ".join(comment_lines).strip() if comment_lines else ""
-        sql = "\n".join(sql_lines).strip()
+        sql = "\n".join(sql_lines)
 
-        # Clean up SQL
+        # Clean up SQL: remove trailing whitespace and statement-terminating semicolon
+        sql = sql.rstrip()  # Remove trailing whitespace
+        if sql.endswith(";"):
+            sql = sql[:-1].rstrip()  # Remove trailing semicolon and any whitespace before it
+
+        # Remove excessive blank lines
         sql = re.sub(r"\n\s*\n", "\n", sql)
         sql = sql.strip()
 
