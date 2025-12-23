@@ -25,35 +25,63 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
         with open(file_path, "r", encoding="gbk") as f:
             content = f.read()
 
-    # First, split by semicolons to get SQL statements
-    sql_blocks = content.split(";")
+    # Split into lines first to handle comments properly
+    lines = content.split("\n")
 
+    # Build blocks by tracking comments and SQL, splitting only on non-comment semicolons
+    blocks = []
+    current_block_lines = []
+    block_start_line = 1
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        # Check if this line contains a statement-ending semicolon (not in comment)
+        has_semicolon = False
+        if ";" in line:
+            # Check if semicolon is outside of comment
+            comment_pos = line.find("--")
+            semicolon_pos = line.rfind(";")
+
+            # Semicolon is valid if:
+            # 1. No comment on this line, OR
+            # 2. Semicolon appears before the comment
+            if comment_pos == -1 or semicolon_pos < comment_pos:
+                has_semicolon = True
+
+        current_block_lines.append(line)
+
+        # If we found a statement-ending semicolon, finalize this block
+        if has_semicolon:
+            block_content = "\n".join(current_block_lines)
+            blocks.append((block_content, block_start_line))
+            current_block_lines = []
+            block_start_line = line_num + 1
+
+    # Handle any remaining lines as a final block
+    if current_block_lines:
+        block_content = "\n".join(current_block_lines)
+        if block_content.strip():
+            blocks.append((block_content, block_start_line))
+
+    # Now process each block to extract comments and SQL
     pairs = []
-    current_line = 1
 
-    for block in sql_blocks:
-        block = block.strip()
-        if not block:
-            continue
-
-        # Split block into lines to extract comments and SQL
-        lines = block.split("\n")
+    for block_content, block_line_num in blocks:
         comment_lines = []
         sql_lines = []
-        block_start_line = current_line
 
-        for line in lines:
+        for line in block_content.split("\n"):
             stripped = line.strip()
             if stripped.startswith("--"):
                 # Comment line - remove all leading dashes
                 comment_text = re.sub(r"^-+\s*", "", stripped)
                 comment_lines.append(comment_text)
             elif stripped:
-                # SQL line
-                sql_lines.append(line)
-
-        # Update line counter
-        current_line += len(lines)
+                # SQL line - remove trailing semicolon if present
+                sql_line = line.rstrip(";").rstrip()
+                if sql_line:
+                    sql_lines.append(sql_line)
 
         # Build comment and SQL
         comment = " ".join(comment_lines).strip() if comment_lines else ""
@@ -65,7 +93,7 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
 
         # Add to pairs if SQL is not empty
         if sql:
-            pairs.append((comment, sql, block_start_line))
+            pairs.append((comment, sql, block_line_num))
 
     return pairs
 

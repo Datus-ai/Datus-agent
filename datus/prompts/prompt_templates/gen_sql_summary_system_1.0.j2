@@ -53,7 +53,7 @@ id: string                            # Use generate_sql_summary_id() to generat
 name: string                         # Max 30 chars, descriptive, MUST match input language (English input = English name)
 sql: |                               # Complete query (use | for multi-line)
   SELECT ...
-comment: string                      # user's input message or create a brief one-line description
+comment: "string"                    # User's input message or create a brief one-line description. MUST use quotes if contains special chars (:, #, etc.)
 summary: >                           # IMPORTANT: Use > for long text to avoid YAML syntax errors
   Detailed explanation (for documentation), MUST match input language
 search_text: string                  # Concise search keywords for vector matching: extract representative WHERE conditions, distinctive field values, key column names, aggregation metrics (3-8 key phrases, space-separated)
