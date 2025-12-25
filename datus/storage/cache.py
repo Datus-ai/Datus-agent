@@ -99,6 +99,7 @@ class StorageCache:
     def document_storage(self, sub_agent_name: Optional[str] = None) -> DocumentStore:
         return self._document_holder.storage_instance(sub_agent_name)
 
+
 _CACHE_INSTANCE = None
 
 
