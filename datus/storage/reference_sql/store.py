@@ -64,13 +64,13 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
 
         Args:
             sql_items: List of SQL item dictionaries, each containing:
-                - name: str - SQL name/title
-                - sql: str - SQL query content
+                - name: str - SQL name/title (required)
+                - sql: str - SQL query content (required)
                 - comment: str - Optional comment
-                - summary: str - Optional summary for embedding
-                - search_text: str - Text for search
+                - summary: str - Summary for embedding (required)
+                - search_text: str - Text for vector search (required, used for embedding generation)
                 - filepath: str - File path where SQL is stored
-                - subject_path: List[str] - Subject hierarchy path (e.g., ['Finance', 'Revenue'])
+                - subject_path: List[str] - Subject hierarchy path (required, e.g., ['Finance', 'Revenue'])
                 - tags: str - Optional tags
                 - created_at: str - Creation timestamp (optional, will auto-generate if not provided)
             subject_path_field: Field name containing subject_path in each item
@@ -85,10 +85,14 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
             name = item.get("name", "")
             sql = item.get("sql", "")
             summary = item.get("summary", "")
+            search_text = item.get("search_text", "")
 
-            # Validate required fields
-            if not all([subject_path, name, sql, summary]):
-                logger.warning(f"Skipping SQL item with missing required fields: {item}")
+            # Validate required fields including search_text (used for embedding generation)
+            if not all([subject_path, name, sql, summary, search_text]):
+                logger.warning(
+                    f"Skipping SQL item with missing required fields "
+                    f"(subject_path, name, sql, summary, search_text): {item.get('name', 'unknown')}"
+                )
                 continue
 
             valid_items.append(item)
