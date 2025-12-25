@@ -37,7 +37,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     pa.field("dimensions", pa.list_(pa.string())),  # Available dimensions: ["platform", "country"]
                     pa.field("entities", pa.list_(pa.string())),  # Related entities: ["user", "order"]
                     # -- Database Context (for compatibility) --
-                    pa.field("table_name", pa.string()),  # Associated table
                     pa.field("catalog_name", pa.string()),
                     pa.field("database_name", pa.string()),
                     pa.field("schema_name", pa.string()),
@@ -57,7 +56,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         # Create metric-specific scalar indices
         self.table.create_scalar_index("semantic_model_name", replace=True)
         self.table.create_scalar_index("id", replace=True)
-        self.table.create_scalar_index("table_name", replace=True)
         self.table.create_scalar_index("catalog_name", replace=True)
         self.table.create_scalar_index("database_name", replace=True)
         self.table.create_scalar_index("schema_name", replace=True)

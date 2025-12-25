@@ -109,8 +109,9 @@ locked_metadata:
    - If validation fails, fix the error by updating the metric file using `edit_file`
 
 8. **Complete generation** (REQUIRED):
-   - After validation succeeds, MUST call `end_generation` tool with the absolute filepath
-   - This registers the metric and triggers user confirmation workflow
+   - After validation succeeds, MUST call `end_generation` tool with both file paths
+   - Example: `end_generation(filepaths=[semantic_model_file_path, metric_file_path])`
+   - This triggers user confirmation workflow for syncing both files to Knowledge Base
 
 ## Workspace
 - Semantic model directory: {{ semantic_model_dir }}
@@ -127,7 +128,7 @@ Output format: Return a JSON object with the following structure, *only JSON*:
 }
 
 Where:
-- "semantic_model_file" is the path to the semantic model YAML file you generated or updated (required)
+- "semantic_model_file" is the path to the semantic model YAML file that **contains the measure(s)** used by this metric (required). This should be the PRIMARY table's semantic model - the one that defines the aggregation/measure for the metric.
 - "metric_file" is the path to the metric YAML file you generated or updated (required)
 - "output" should be a BRIEF summary in markdown format describing the ONE metric you generated
 

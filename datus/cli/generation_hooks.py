@@ -95,15 +95,22 @@ class GenerationHooks(AgentHooks):
         try:
             # Extract filepaths from result (dict or FuncToolResult object)
             file_paths = []
+            semantic_model_file = None
+            metric_file = None
 
             if isinstance(result, dict):
                 # Handle dict result
                 result_dict = result.get("result", {})
                 if isinstance(result_dict, dict):
-                    # Try new format first (filepaths: List[str])
-                    filepaths = result_dict.get("filepaths", [])
-                    if filepaths and isinstance(filepaths, list):
-                        file_paths = filepaths
+                    # Check for new format with separate semantic_model_file and metric_file
+                    if "semantic_model_file" in result_dict and "metric_file" in result_dict:
+                        semantic_model_file = result_dict.get("semantic_model_file")
+                        metric_file = result_dict.get("metric_file")
+                    # Try filepaths list format
+                    elif "filepaths" in result_dict:
+                        filepaths = result_dict.get("filepaths", [])
+                        if filepaths and isinstance(filepaths, list):
+                            file_paths = filepaths
                     # Fallback to old format (filepath: str)
                     elif "filepath" in result_dict:
                         file_paths = [result_dict["filepath"]]
@@ -111,23 +118,40 @@ class GenerationHooks(AgentHooks):
                 # Handle FuncToolResult object
                 result_dict = result.result
                 if isinstance(result_dict, dict):
-                    # Try new format first
-                    filepaths = result_dict.get("filepaths", [])
-                    if filepaths and isinstance(filepaths, list):
-                        file_paths = filepaths
+                    # Check for new format with separate semantic_model_file and metric_file
+                    if "semantic_model_file" in result_dict and "metric_file" in result_dict:
+                        semantic_model_file = result_dict.get("semantic_model_file")
+                        metric_file = result_dict.get("metric_file")
+                    # Try filepaths list format
+                    elif "filepaths" in result_dict:
+                        filepaths = result_dict.get("filepaths", [])
+                        if filepaths and isinstance(filepaths, list):
+                            file_paths = filepaths
                     # Fallback to old format
                     elif "filepath" in result_dict:
                         file_paths = [result_dict["filepath"]]
 
-            logger.debug(f"Extracted file_paths: {file_paths}")
+            logger.debug(
+                f"Extracted file_paths: {file_paths}, "
+                f"semantic_model_file: {semantic_model_file}, metric_file: {metric_file}"
+            )
 
-            if not file_paths:
+            # Process new format with both semantic model and metric files
+            if semantic_model_file and metric_file:
+                await self._process_metric_with_semantic_model(semantic_model_file, metric_file)
+            elif file_paths:
+                # Check if we have exactly 2 files (semantic model + metric)
+                if len(file_paths) == 2:
+                    # Heuristic: first file is semantic model, second is metric
+                    # This matches the pattern: end_generation(filepaths=[semantic_model_file, metric_file])
+                    await self._process_metric_with_semantic_model(file_paths[0], file_paths[1])
+                else:
+                    # Process each file sequentially (old format or single file)
+                    for file_path in file_paths:
+                        await self._process_single_file(file_path)
+            else:
                 logger.warning(f"Could not extract file paths from end_generation result: {result}")
                 return
-
-            # Process each file sequentially
-            for file_path in file_paths:
-                await self._process_single_file(file_path)
 
         except GenerationCancelledException:
             self.console.print("[yellow]Generation workflow cancelled[/]")
@@ -180,6 +204,74 @@ class GenerationHooks(AgentHooks):
 
         # Get user confirmation to sync (end_generation is for semantic models/metrics)
         await self._get_sync_confirmation(yaml_content, file_path, "semantic")
+
+    async def _process_metric_with_semantic_model(self, semantic_model_file: str, metric_file: str):
+        """
+        Process metric file along with its semantic model file.
+        Display both files and sync them together so metrics can reference semantic model data.
+
+        Args:
+            semantic_model_file: Path to the semantic model YAML file
+            metric_file: Path to the metric YAML file
+        """
+        # Check if files exist
+        if not os.path.exists(semantic_model_file):
+            logger.warning(f"Semantic model file {semantic_model_file} does not exist")
+            # Still try to process metric file alone
+            if os.path.exists(metric_file):
+                await self._process_single_file(metric_file)
+            return
+
+        if not os.path.exists(metric_file):
+            logger.warning(f"Metric file {metric_file} does not exist")
+            # Still try to process semantic model file alone
+            await self._process_single_file(semantic_model_file)
+            return
+
+        # Skip if both files have already been processed
+        if semantic_model_file in self.processed_files and metric_file in self.processed_files:
+            logger.info("Both files already processed, skipping")
+            return
+
+        # Mark both files as processed
+        self.processed_files.add(semantic_model_file)
+        self.processed_files.add(metric_file)
+
+        # Read both files
+        with open(semantic_model_file, "r", encoding="utf-8") as f:
+            semantic_content = f.read()
+        with open(metric_file, "r", encoding="utf-8") as f:
+            metric_content = f.read()
+
+        if not semantic_content or not metric_content:
+            logger.warning("Empty content in semantic model or metric file")
+            return
+
+        # Stop live display BEFORE showing YAML content
+        execution_controller.stop_live_display()
+        await asyncio.sleep(0.1)
+
+        # Display both files
+        self.console.print("\n" + "=" * 60)
+        self.console.print(f"[bold green]Generated Semantic Model: {os.path.basename(semantic_model_file)}[/]")
+        self.console.print(f"[dim]Path: {semantic_model_file}[/]")
+        self.console.print("=" * 60)
+
+        syntax = Syntax(semantic_content, "yaml", theme="monokai", line_numbers=True)
+        self.console.print(syntax)
+        await asyncio.sleep(0.2)
+
+        self.console.print("\n" + "=" * 60)
+        self.console.print(f"[bold green]Generated Metric: {os.path.basename(metric_file)}[/]")
+        self.console.print(f"[dim]Path: {metric_file}[/]")
+        self.console.print("=" * 60)
+
+        syntax = Syntax(metric_content, "yaml", theme="monokai", line_numbers=True)
+        self.console.print(syntax)
+        await asyncio.sleep(0.2)
+
+        # Get user confirmation to sync both files together
+        await self._get_sync_confirmation_for_pair(semantic_model_file, metric_file)
 
     async def _clear_output_and_show_sync_prompt(self):
         """Show sync confirmation prompt."""
@@ -271,6 +363,60 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error handling write_file_reference_sql result: {e}", exc_info=True)
             self.console.print(f"[red]Error: {e}[/]")
+
+    async def _get_sync_confirmation_for_pair(self, semantic_model_file: str, metric_file: str):
+        """
+        Get user confirmation to sync semantic model and metric files together to Knowledge Base.
+
+        Args:
+            semantic_model_file: Path to semantic model YAML file
+            metric_file: Path to metric YAML file
+        """
+        try:
+            # Stop the live display if active
+            execution_controller.stop_live_display()
+
+            # Use execution control to prevent output interference
+            async with execution_controller.pause_execution():
+                await self._clear_output_and_show_sync_prompt()
+
+                self.console.print("[bold yellow]Please enter your choice:[/bold yellow] ", end="")
+
+                def get_user_input():
+                    return blocking_input_manager.get_blocking_input(lambda: input("[1/2] ").strip() or "1")
+
+                choice = await execution_controller.request_user_input(get_user_input)
+
+                if choice == "1":
+                    # Sync both files to Knowledge Base
+                    self.console.print("[bold green]✓ Syncing to Knowledge Base...[/]")
+                    await self._sync_semantic_and_metric(semantic_model_file, metric_file)
+                elif choice == "2":
+                    # Keep files only
+                    self.console.print("[yellow]✓ YAMLs saved to files only:[/]")
+                    self.console.print(f"  - {semantic_model_file}")
+                    self.console.print(f"  - {metric_file}")
+                else:
+                    self.console.print("[red]✗ Invalid choice. Please enter 1 or 2.[/]")
+                    self.console.print("[dim]Please try again...[/]\n")
+                    await self._get_sync_confirmation_for_pair(semantic_model_file, metric_file)
+
+            # Print completion separator to prevent action stream from overwriting
+            self.console.print("\n" + "=" * 80)
+            self.console.print("[bold green]✓ Generation workflow completed, generating report...[/]", justify="center")
+            self.console.print("=" * 80 + "\n")
+
+            # Add delay to ensure message is visible before any new output
+            await asyncio.sleep(0.1)
+
+        except (KeyboardInterrupt, EOFError):
+            self.console.print("\n[yellow]✗ Sync cancelled by user[/]")
+            raise GenerationCancelledException("User interrupted")
+        except GenerationCancelledException:
+            raise
+        except Exception as e:
+            logger.error(f"Error in sync confirmation: {e}", exc_info=True)
+            raise e
 
     async def _get_sync_confirmation(self, yaml_content: str, file_path: str, yaml_type: str):
         """
@@ -373,6 +519,75 @@ class GenerationHooks(AgentHooks):
             logger.error(f"Error syncing to storage: {e}")
             self.console.print(f"[red]Sync error: {e}[/]")
             self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
+
+    @optional_traceable(name="_sync_semantic_and_metric", run_type="chain")
+    async def _sync_semantic_and_metric(self, semantic_model_file: str, metric_file: str):
+        """
+        Sync both semantic model and metric files to RAG storage.
+        Creates a combined YAML for syncing so metrics can reference semantic model data.
+
+        Args:
+            semantic_model_file: Path to semantic model YAML file
+            metric_file: Path to metric YAML file
+        """
+        if not self.agent_config:
+            self.console.print("[red]Agent configuration not available, cannot sync to RAG[/]")
+            self.console.print("[yellow]YAMLs saved to files:[/]")
+            self.console.print(f"  - {semantic_model_file}")
+            self.console.print(f"  - {metric_file}")
+            return
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            # Load both YAML files
+            with open(semantic_model_file, "r", encoding="utf-8") as f:
+                semantic_docs = list(yaml.safe_load_all(f))
+            with open(metric_file, "r", encoding="utf-8") as f:
+                metric_docs = list(yaml.safe_load_all(f))
+
+            # Create a temporary combined YAML content
+            combined_docs = semantic_docs + metric_docs
+            temp_file = semantic_model_file + ".combined.tmp"
+
+            try:
+                # Write combined YAML to temp file
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
+
+                # Sync the combined file
+                result = await loop.run_in_executor(
+                    None, GenerationHooks._sync_semantic_to_db, temp_file, self.agent_config
+                )
+
+                if result.get("success"):
+                    self.console.print(
+                        "[bold green]✓ Successfully synced semantic model and metrics to Knowledge Base[/]"
+                    )
+                    message = result.get("message", "")
+                    if message:
+                        self.console.print(f"[dim]{message}[/]")
+                    self.console.print("[dim]Files:[/]")
+                    self.console.print(f"  - {semantic_model_file}")
+                    self.console.print(f"  - {metric_file}")
+                else:
+                    error = result.get("error", "Unknown error")
+                    self.console.print(f"[red]Sync failed: {error}[/]")
+                    self.console.print("[yellow]YAMLs saved to files:[/]")
+                    self.console.print(f"  - {semantic_model_file}")
+                    self.console.print(f"  - {metric_file}")
+
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+
+        except Exception as e:
+            logger.error(f"Error syncing semantic and metric: {e}", exc_info=True)
+            self.console.print(f"[red]Sync error: {e}[/]")
+            self.console.print("[yellow]YAMLs saved to files:[/]")
+            self.console.print(f"  - {semantic_model_file}")
+            self.console.print(f"  - {metric_file}")
 
     def _is_sql_summary_tool_call(self, context) -> bool:
         """
@@ -608,6 +823,10 @@ class GenerationHooks(AgentHooks):
                         if parsed_path:
                             subject_path = parsed_path
 
+                    # If no subject_path found, use default path with semantic_model_name
+                    if not subject_path:
+                        subject_path = ["Metrics", table_name if table_name else "Unknown"]
+
                     # Extract type_params for measure_expr, base_measures
                     type_params = metric.get("type_params", {})
                     measure_expr = ""
@@ -704,7 +923,6 @@ class GenerationHooks(AgentHooks):
                         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "updated_at": datetime.now().replace(microsecond=0),
                         # Database hierarchy
-                        "table_name": table_name,
                         "catalog_name": catalog_name,
                         "database_name": database_name,
                         "schema_name": schema_name,

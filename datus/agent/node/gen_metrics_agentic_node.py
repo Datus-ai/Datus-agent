@@ -442,12 +442,15 @@ class GenMetricsAgenticNode(AgenticNode):
                 else:
                     response_content = str(last_successful_output)  # Fallback to string representation
 
-            # Extract metric_file and output from the final response_content
-            metric_file, extracted_output = self._extract_metric_and_output_from_response({"content": response_content})
+            # Extract semantic_model_file, metric_file and output from the final response_content
+            semantic_model_file, metric_file, extracted_output = self._extract_metric_and_output_from_response(
+                {"content": response_content}
+            )
             if extracted_output:
                 response_content = extracted_output
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
+            logger.debug(f"Extracted files: semantic_model={semantic_model_file}, metric={metric_file}")
 
             # Extract token usage (only in interactive mode with session)
             tokens_used = 0
@@ -475,12 +478,13 @@ class GenMetricsAgenticNode(AgenticNode):
             if self.execution_mode == "workflow" and metric_file:
                 try:
                     self._save_to_db(
-                        metric_file,
+                        semantic_model_file=semantic_model_file,
+                        metric_file=metric_file,
                         catalog=user_input.catalog,
                         database=user_input.database,
                         db_schema=user_input.db_schema,
                     )
-                    logger.info(f"Auto-saved metric to database: {metric_file}")
+                    logger.info(f"Auto-saved to database: semantic_model={semantic_model_file}, metric={metric_file}")
                 except Exception as e:
                     logger.error(f"Failed to auto-save to database: {e}")
 
@@ -537,18 +541,20 @@ class GenMetricsAgenticNode(AgenticNode):
             action_history_manager.add_action(error_action)
             yield error_action
 
-    def _extract_metric_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
+    def _extract_metric_and_output_from_response(
+        self, output: dict
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """
-        Extract metric file and formatted output from model response.
+        Extract semantic model file, metric file and formatted output from model response.
 
         Per prompt template requirements, LLM should return JSON format:
-        {"metric_file": "path.yml", "output": "markdown text"}
+        {"semantic_model_file": "path.yml", "metric_file": "path.yml", "output": "markdown text"}
 
         Args:
             output: Output dictionary from model generation
 
         Returns:
-            Tuple of (metric_file: Optional[str], output_string: Optional[str])
+            Tuple of (semantic_model_file: Optional[str], metric_file: Optional[str], output_string: Optional[str])
         """
         try:
             from datus.utils.json_utils import strip_json_str
@@ -559,11 +565,14 @@ class GenMetricsAgenticNode(AgenticNode):
             # Case 1: content is already a dict (most common)
             if isinstance(content, dict):
                 output_text = content.get("output")
+                semantic_model_file = content.get("semantic_model_file")
                 metric_file = content.get("metric_file")
 
                 if metric_file and isinstance(metric_file, str):
-                    logger.debug(f"Extracted from dict: metric_file={metric_file}")
-                    return metric_file, output_text
+                    logger.debug(
+                        f"Extracted from dict: semantic_model_file={semantic_model_file}, metric_file={metric_file}"
+                    )
+                    return semantic_model_file, metric_file, output_text
 
                 logger.warning(f"Dict format but missing expected keys or invalid format: {content.keys()}")
 
@@ -578,28 +587,40 @@ class GenMetricsAgenticNode(AgenticNode):
                         parsed = json_repair.loads(cleaned_json)
                         if isinstance(parsed, dict):
                             output_text = parsed.get("output")
+                            semantic_model_file = parsed.get("semantic_model_file")
                             metric_file = parsed.get("metric_file")
 
                             if metric_file and isinstance(metric_file, str):
-                                logger.debug(f"Extracted from JSON string: metric_file={metric_file}")
-                                return metric_file, output_text
+                                logger.debug(
+                                    f"Extracted from JSON string: "
+                                    f"semantic_model_file={semantic_model_file}, metric_file={metric_file}"
+                                )
+                                return semantic_model_file, metric_file, output_text
 
                             logger.warning(f"Parsed JSON but missing expected keys or invalid format: {parsed.keys()}")
                     except Exception as e:
                         logger.warning(f"Failed to parse cleaned JSON: {e}. Cleaned content: {cleaned_json[:200]}")
 
             logger.warning(f"Could not extract metric_file from response. Content type: {type(content)}")
-            return None, None
+            return None, None, None
 
         except Exception as e:
             logger.error(f"Unexpected error extracting metric_file: {e}", exc_info=True)
-            return None, None
+            return None, None, None
 
-    def _save_to_db(self, metric_file: str, catalog=None, database=None, db_schema=None):
+    def _save_to_db(
+        self,
+        semantic_model_file: Optional[str] = None,
+        metric_file: Optional[str] = None,
+        catalog=None,
+        database=None,
+        db_schema=None,
+    ):
         """
         Save generated metrics to database (synchronous).
 
         Args:
+            semantic_model_file: Optional name/path of the semantic model file
             metric_file: Name of the metric file (e.g., "sales_metrics.yaml")
             catalog: Optional catalog override
             database: Optional database override
@@ -608,18 +629,61 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             import os
 
-            # Construct full path
-            full_path = os.path.join(self.metrics_dir, metric_file)
+            import yaml
 
-            if not os.path.exists(full_path):
-                logger.warning(f"Metrics file not found: {full_path}")
+            if not metric_file:
+                logger.warning("No metric file provided for saving to database")
                 return
 
-            # Call static method to save to database
-            # Deduplication is handled inside _sync_semantic_to_db
-            result = GenerationHooks._sync_semantic_to_db(
-                full_path, self.agent_config, catalog=catalog, database=database, schema=db_schema
-            )
+            # Construct full path for metric file
+            metric_full_path = os.path.join(self.metrics_dir, metric_file)
+
+            if not os.path.exists(metric_full_path):
+                logger.warning(f"Metrics file not found: {metric_full_path}")
+                return
+
+            # If semantic_model_file is provided, combine them before syncing
+            if semantic_model_file:
+                semantic_full_path = os.path.join(self.metrics_dir, semantic_model_file)
+
+                if os.path.exists(semantic_full_path):
+                    logger.info("Combining semantic model and metric files for sync")
+
+                    # Load both YAML files
+                    with open(semantic_full_path, "r", encoding="utf-8") as f:
+                        semantic_docs = list(yaml.safe_load_all(f))
+                    with open(metric_full_path, "r", encoding="utf-8") as f:
+                        metric_docs = list(yaml.safe_load_all(f))
+
+                    # Create a temporary combined YAML content
+                    combined_docs = semantic_docs + metric_docs
+                    temp_file = semantic_full_path + ".combined.tmp"
+
+                    try:
+                        # Write combined YAML to temp file
+                        with open(temp_file, "w", encoding="utf-8") as f:
+                            yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
+
+                        # Sync the combined file
+                        result = GenerationHooks._sync_semantic_to_db(
+                            temp_file, self.agent_config, catalog=catalog, database=database, schema=db_schema
+                        )
+                    finally:
+                        # Clean up temp file
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+                else:
+                    logger.warning(f"Semantic model file not found: {semantic_full_path}, syncing metric only")
+                    # Fall back to syncing metric file alone
+                    result = GenerationHooks._sync_semantic_to_db(
+                        metric_full_path, self.agent_config, catalog=catalog, database=database, schema=db_schema
+                    )
+            else:
+                # No semantic model file provided, sync metric file alone
+                logger.info("No semantic model file provided, syncing metric file alone")
+                result = GenerationHooks._sync_semantic_to_db(
+                    metric_full_path, self.agent_config, catalog=catalog, database=database, schema=db_schema
+                )
 
             if result.get("success"):
                 logger.info(f"Successfully saved to database: {result.get('message')}")
