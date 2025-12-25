@@ -11,7 +11,6 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
-from datus.storage.subject_tree.store import SubjectTreeStore
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
