@@ -17,7 +17,6 @@ from datus.storage.metric.store import SemanticModelStorage
 from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaValueStorage
-from datus.storage.subject_tree.store import SubjectTreeStore
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
