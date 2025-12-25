@@ -839,6 +839,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         query_text: Optional[str] = None,
         subject_path: Optional[List[str]] = None,
         top_n: Optional[int] = 5,
+        selected_fields: Optional[List[str]] = None,
         name_field: Optional[str] = "name",
         additional_conditions: Optional[List] = None,
     ) -> List[Dict[str, Any]]:
@@ -848,6 +849,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             query_text: Query text for vector search
             subject_path: Subject hierarchy path
             top_n: Number of results to return
+            selected_fields: List of fields to return
             name_field: Field name for parent+name matching (e.g., "terminology", "name")
             additional_conditions: Additional filter conditions
 
@@ -888,6 +890,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             if query_text:
                 search_result = self.search(
                     query_txt=query_text,
+                    select_fields=selected_fields,
                     top_n=top_n,
                     where=where,
                 )
