@@ -300,28 +300,13 @@ class ReferenceSqlRAG:
         logger.debug(f"Searching reference SQL by summary: {query_text}, where: {where_clause}")
         search_results = self.reference_sql_storage.search(
             query_text,
+            select_fields=selected_fields,
             top_n=top_n,
             where=where_condition,
         )
 
         if search_results:
-            # Use provided selected_fields or default fields
-            if selected_fields is None:
-                selected_fields = [
-                    "name",
-                    "sql",
-                    "comment",
-                    "summary",
-                    "search_text",
-                    "filepath",
-                    "domain",
-                    "layer1",
-                    "layer2",
-                    "tags",
-                    "_distance",
-                ]
-
-            result_list = search_results.select(selected_fields).to_pylist()
+            result_list = search_results.to_pylist()
             logger.debug(f"Found {len(result_list)} reference SQL results for query: {query_text}")
             return result_list
         else:
