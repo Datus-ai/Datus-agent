@@ -30,7 +30,7 @@ class ContextSearchTools:
         self.reference_sql_store = ReferenceSqlRAG(agent_config, sub_agent_name)
 
         # Initialize SubjectTreeStore for domain hierarchy
-        self.subject_tree = SubjectTreeStore(agent_config.rag_storage_path())
+        self.subject_tree = self.metric_rag.metric_storage.subject_tree
 
         if sub_agent_name:
             self.sub_agent_config = SubAgentConfig.model_validate(self.agent_config.sub_agent_config(sub_agent_name))

@@ -100,16 +100,6 @@ class StorageCache:
     def document_storage(self, sub_agent_name: Optional[str] = None) -> DocumentStore:
         return self._document_holder.storage_instance(sub_agent_name)
 
-    def subject_tree_storage(self) -> SubjectTreeStore:
-        """Get the subject tree storage instance.
-
-        Note: SubjectTreeStore is a global singleton and does not support sub-agent scoping.
-        """
-        if self._subject_tree_store is None:
-            self._subject_tree_store = SubjectTreeStore(self._agent_config.rag_storage_path())
-        return self._subject_tree_store
-
-
 _CACHE_INSTANCE = None
 
 
