@@ -154,6 +154,87 @@ The `analyze_table_relationships` tool uses a three-tier strategy:
 2. **Historical SQL JOIN Patterns (Medium Confidence)**: Common join patterns from query logs.
 3. **Column Name Inference (Low Confidence)**: Naming conventions (e.g., `customer_id` -> `customers.id`).
 
+## Multi-Table Generation Workflow
+
+When the user requests semantic models for multiple tables, follow this workflow:
+
+### Step 1: Extract Table List
+Parse the user message to identify all target tables:
+- Example: "generate for orders, customers, products" → ["orders", "customers", "products"]
+
+### Step 2: Batch Retrieve DDL
+Use `get_multiple_tables_ddl` to get all table DDLs.
+- **CRITICAL**: Extract `description` from DDL column comments (COMMENT) for ALL fields.
+- **IMPORTANT**: Keep column comments in their ORIGINAL language. DO NOT TRANSLATE.
+
+### Step 2.5: Analyze Column Usage Patterns (STRONGLY RECOMMENDED)
+For each table, call `analyze_column_usage_patterns(table_name)` to discover:
+- Filter operators commonly used (LIKE, IN, FIND_IN_SET, etc.)
+- Functions applied to columns (JSON_EXTRACT, REGEXP, etc.)
+- **Actual historical filter examples** (e.g. "tags LIKE '%vip%'")
+- This helps generate much better dimension descriptions with concrete usage hints
+
+### Step 3: Discover Table Relationships (CRITICAL)
+Call `analyze_table_relationships` to discover join relationships.
+
+**Expected Response Format**:
+```json
+{
+  "relationships": [
+    {
+      "source_table": "orders",
+      "source_column": "customer_id",
+      "target_table": "customers",
+      "target_column": "id",
+      "confidence": "high",
+      "evidence": "foreign_key"
+    }
+  ]
+}
+```
+
+### Step 4: Check Existing Models
+For each table, call `check_semantic_object_exists` to avoid duplicates.
+
+### Step 5: Generate YAML Files
+Create one YAML file per table with proper identifier definitions:
+- **CRITICAL**: Extract `description` from DDL column comments for ALL fields. **DO NOT TRANSLATE**.
+- **RECOMMENDED**: Enrich dimension descriptions with usage patterns from `analyze_column_usage_patterns`:
+  - Append usage hints like "Use FIND_IN_SET() for filtering" or "Commonly filtered with LIKE"
+  - Example: "Product tags (comma-separated). Use FIND_IN_SET() for tag membership checks"
+- Use `entity` field to reference other tables (singular form: customer, not customers).
+- `type: PRIMARY` for the table's primary key.
+- `type: FOREIGN` for columns that join to other tables.
+
+**Example: orders.yml**
+```yaml
+data_source:
+  name: orders
+  description: Order transactions table  # Extract from table comment
+
+
+  identifiers:
+    - name: order
+      description: Unique order identifier  # Extract from column comment
+      type: PRIMARY
+      expr: id
+  ...
+```
+
+### Step 6: Validate All Files Together
+- Call `validate_configs` tool.
+- **Max 3 retry attempts**.
+
+### Step 7: Complete Generation
+- Call `end_generation` with **ALL generated filepaths**.
+
+## Relationship Discovery Strategy
+
+The `analyze_table_relationships` tool uses a three-tier strategy:
+1. **DDL Foreign Keys (High Confidence)**: Explicit constraints.
+2. **Historical SQL JOIN Patterns (Medium Confidence)**: Common join patterns from query logs.
+3. **Column Name Inference (Low Confidence)**: Naming conventions (e.g., `customer_id` -> `customers.id`).
+
 ## Additional Notes
 
 - **Required Fields**: Pay attention to fields marked as (required).
