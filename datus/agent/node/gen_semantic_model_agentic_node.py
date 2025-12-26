@@ -240,7 +240,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         """
         try:
             # Get all metrics with subject_path field
-            subject_paths = sorted(self.metrics_rag.metric_storage.get_subject_tree_flat())
+            subject_paths = sorted(self.metrics_rag.storage.get_subject_tree_flat())
             logger.debug(f"Found {len(subject_paths)} unique metric subject_paths")
             return subject_paths
 

@@ -479,7 +479,7 @@ class SubjectScreen(ContextScreen):
         self.agent_config: AgentConfig = context_data.get("agent_config")
         self.metrics_rag: MetricRAG = MetricRAG(self.agent_config)
         self.sql_rag: ReferenceSqlRAG = ReferenceSqlRAG(self.agent_config)
-        self.subject_tree_store = self.metrics_rag.metric_storage.subject_tree
+        self.subject_tree_store = self.metrics_rag.storage.subject_tree
         self.inject_callback = inject_callback
         self.selected_path = ""
         self.readonly = True
@@ -647,7 +647,7 @@ class SubjectScreen(ContextScreen):
                 return
 
             # Get metrics for this exact node (not descendants)
-            metrics_results = self.metrics_rag.metric_storage.list_entries(node_id)
+            metrics_results = self.metrics_rag.storage.list_entries(node_id)
             for metric in metrics_results:
                 name = metric.get("name", "")
                 if name:
@@ -1235,7 +1235,7 @@ class SubjectScreen(ContextScreen):
                 if entry_type == "metric":
                     # Only rename in metric storage
                     try:
-                        self.metrics_rag.metric_storage.rename(old_path, new_path)
+                        self.metrics_rag.storage.rename(old_path, new_path)
                         _fetch_metrics_with_cache.cache_clear()
                     except Exception as e:
                         logger.warning(f"Failed to rename metric entry: {e}")
@@ -1249,7 +1249,7 @@ class SubjectScreen(ContextScreen):
                 else:
                     # Fallback: rename in both storages for backward compatibility
                     try:
-                        self.metrics_rag.metric_storage.rename(old_path, new_path)
+                        self.metrics_rag.storage.rename(old_path, new_path)
                         _fetch_metrics_with_cache.cache_clear()
                     except Exception as e:
                         logger.warning(f"Failed to rename metric entry: {e}")
@@ -1794,7 +1794,7 @@ class SubjectScreen(ContextScreen):
         Returns:
             List of metric entries matching the criteria
         """
-        return self.metrics_rag.metric_storage.list_entries(node_id=node_id, name=name)
+        return self.metrics_rag.storage.list_entries(node_id=node_id, name=name)
 
     def _fetch_sql_by_path_and_name(self, node_id: int, name: str) -> List[Dict[str, Any]]:
         """Fetch SQL entries by subject node ID and entry name.

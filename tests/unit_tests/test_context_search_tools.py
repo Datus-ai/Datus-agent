@@ -64,12 +64,12 @@ def build_context_tools(mock_agent_config):
         sql_rag = Mock()
         sql_entries = sql_cfg.get("entries", [])
         sql_rag.search_all_reference_sql.return_value = sql_entries
-        sql_rag.search_reference_sql_by_summary.return_value = sql_cfg.get("search_return", [])
+        sql_rag.search_reference_sql.return_value = sql_cfg.get("search_return", [])
         sql_rag.get_reference_sql_size.return_value = sql_cfg.get("size", len(sql_entries))
         if "search_all_side_effect" in sql_cfg:
             sql_rag.search_all_reference_sql.side_effect = sql_cfg["search_all_side_effect"]
         if "search_sql_side_effect" in sql_cfg:
-            sql_rag.search_reference_sql_by_summary.side_effect = sql_cfg["search_sql_side_effect"]
+            sql_rag.search_reference_sql.side_effect = sql_cfg["search_sql_side_effect"]
 
         # Set up get_tree_structure to return tree from all entries
         all_entries = metric_entries + sql_entries
@@ -206,8 +206,11 @@ def test_search_historical_sql(build_context_tools):
 
     result = tools.search_reference_sql("sales report", subject_path=["Sales", "Revenue"], top_n=2)
     assert result.success == 1
-    sql_rag.search_reference_sql_by_summary.assert_called_once_with(
-        query_text="sales report", subject_path=["Sales", "Revenue"], top_n=2
+    sql_rag.search_reference_sql.assert_called_once_with(
+        query_text="sales report",
+        subject_path=["Sales", "Revenue"],
+        top_n=2,
+        selected_fields=["name", "sql", "comment", "summary", "tags"],
     )
 
 
@@ -222,4 +225,4 @@ def test_search_historical_sql_handles_failure(build_context_tools):
     result = tools.search_reference_sql("sales report")
     assert result.success == 0
     assert "sql search failed" in (result.error or "")
-    sql_rag.search_reference_sql_by_summary.assert_called_once()
+    sql_rag.search_reference_sql.assert_called_once()

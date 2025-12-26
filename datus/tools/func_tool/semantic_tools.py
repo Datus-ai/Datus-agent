@@ -249,7 +249,7 @@ class SemanticModelTools:
 
             # Search for SQL queries containing the table
             sql_rag = ReferenceSqlRAG(self.agent_config, self.sub_agent_name)
-            search_results = sql_rag.search_reference_sql_by_summary(
+            search_results = sql_rag.search_reference_sql(
                 query_text=f"SELECT FROM {table_name}", top_n=sample_sql_queries
             )
 
@@ -401,7 +401,7 @@ class SemanticModelTools:
         # Search for SQL queries containing each table
         for table in tables:
             try:
-                search_results = sql_rag.search_reference_sql_by_summary(query_text=f"JOIN {table}", top_n=sample_size)
+                search_results = sql_rag.search_reference_sql(query_text=f"JOIN {table}", top_n=sample_size)
 
                 for sql_entry in search_results:
                     sql_text = sql_entry.get("sql", "")
