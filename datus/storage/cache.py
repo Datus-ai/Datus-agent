@@ -12,11 +12,11 @@ from datus.schemas.agent_models import SubAgentConfig
 from datus.storage import BaseEmbeddingStore
 from datus.storage.document import DocumentStore
 from datus.storage.embedding_models import EmbeddingModel, get_embedding_model
-from datus.storage.metric import MetricStorage
-from datus.storage.metric.store import SemanticModelStorage
+from datus.storage.metric.store import MetricStorage
 from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaValueStorage
+from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -75,8 +75,8 @@ class StorageCache:
         self._agent_config = agent_config
         self._schema_holder = StorageCacheHolder(SchemaStorage, agent_config, "database", "tables")
         self._sample_data_holder = StorageCacheHolder(SchemaValueStorage, agent_config, "database", "tables")
-        self._metrics_holder = StorageCacheHolder(MetricStorage, agent_config, "metric", "metrics")
-        self._semantic_holder = StorageCacheHolder(SemanticModelStorage, agent_config, "metric", "metrics")
+        self._metric_holder = StorageCacheHolder(MetricStorage, agent_config, "metric", "metrics")
+        self._semantic_holder = StorageCacheHolder(SemanticModelStorage, agent_config, "metric", "semantic_models")
         self._reference_sql_holder = StorageCacheHolder(ReferenceSqlStorage, agent_config, "metric", "sqls")
         self._document_holder = StorageCacheHolder(DocumentStore, agent_config, "document", "")
         self._subject_tree_store = None
@@ -87,8 +87,9 @@ class StorageCache:
     def schema_value_storage(self, sub_agent_name: Optional[str] = None) -> SchemaValueStorage:
         return self._sample_data_holder.storage_instance(sub_agent_name)
 
-    def metrics_storage(self, sub_agent_name: Optional[str] = None) -> MetricStorage:
-        return self._metrics_holder.storage_instance(sub_agent_name)
+    def metric_storage(self, sub_agent_name: Optional[str] = None) -> MetricStorage:
+        """Access dedicated MetricStorage for metrics only."""
+        return self._metric_holder.storage_instance(sub_agent_name)
 
     def semantic_storage(self, sub_agent_name: Optional[str] = None) -> SemanticModelStorage:
         return self._semantic_holder.storage_instance(sub_agent_name)

@@ -10,7 +10,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import Metric
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
-from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.metric.store import MetricRAG
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -32,7 +32,7 @@ class SearchMetricsNode(Node):
             input_data=input_data,
             agent_config=agent_config,
         )
-        self._store: SemanticMetricsRAG | None = None
+        self._store: MetricRAG | None = None
 
     def setup_input(self, workflow: Workflow) -> Dict:
         logger.info("Setup search metrics input")
@@ -55,9 +55,9 @@ class SearchMetricsNode(Node):
         return {"success": True, "message": "Search Metrics appears valid"}
 
     @property
-    def store(self) -> SemanticMetricsRAG:
+    def store(self) -> MetricRAG:
         if not self._store:
-            self._store = SemanticMetricsRAG(self.agent_config)
+            self._store = MetricRAG(self.agent_config)
         return self._store
 
     def execute(self):
@@ -73,12 +73,11 @@ class SearchMetricsNode(Node):
     def _execute_search_metrics(self) -> SearchMetricsResult:
         """Execute schema linking action to analyze database schema.
         Input:
-             query - The input query to analyze.
-             catalog_name - The catalog name to use.
-             database_name - The database name to use.
-             schema_name - The schema name to use.
+             query_text - The input query to analyze.
+             subject_path - The subject path to use.
+             top_n - The number of results to return.
         Returns:
-             A validated SchemaLinkingResult containing table schemas and values.
+             A validated SearchMetricsResult containing metrics.
         """
         import os
 
@@ -89,7 +88,7 @@ class SearchMetricsNode(Node):
             return self.get_bad_result("RAG storage path does not exist.")
         else:
             try:
-                result = self._search_hybrid_metrics()
+                result = self._search_metrics()
 
                 logger.info(f"Search metrics result: found {result.metrics_count} items")
                 if not result.success:
@@ -167,14 +166,11 @@ class SearchMetricsNode(Node):
             logger.error(f"Metrics search streaming error: {str(e)}")
             raise
 
-    def _search_hybrid_metrics(self) -> SearchMetricsResult:
+    def _search_metrics(self) -> SearchMetricsResult:
         sql_task = self.input.sql_task
-        metric_results = self.store.search_hybrid_metrics(
+        metric_results = self.store.search_metrics(
             query_text=sql_task.task,
             subject_path=sql_task.subject_path,
-            catalog_name=sql_task.catalog_name,
-            database_name=sql_task.database_name,
-            schema_name=sql_task.schema_name,
             top_n=self.input.top_n_by_rate(),
         )
 

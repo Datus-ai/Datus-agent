@@ -23,12 +23,17 @@ from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.node_models import SqlTask
 from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
-from datus.storage.metric.metrics_init import init_semantic_yaml_metrics, init_success_story_metrics
-from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.metric.metric_init import init_semantic_yaml_metrics, init_success_story_metrics
+from datus.storage.metric.store import MetricRAG
 from datus.storage.schema_metadata import SchemaWithValueRAG
 from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
 from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
 from datus.storage.schema_metadata.local_init import init_local_schema
+from datus.storage.semantic_model.semantic_model_init import (
+    init_semantic_yaml_semantic_model,
+    init_success_story_semantic_model,
+)
+from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS as SUB_AGENT_COMPONENTS
 from datus.storage.sub_agent_kb_bootstrap import SubAgentBootstrapper
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
@@ -460,17 +465,44 @@ class Agent:
                 self._refresh_scoped_agents("metadata", kb_update_strategy)
                 return result
 
-            elif component == "metrics":
+            elif component == "semantic_model":
                 semantic_model_path = os.path.join(dir_path, "semantic_model.lance")
-                metrics_path = os.path.join(dir_path, "metrics.lance")
                 if kb_update_strategy == "overwrite":
                     if os.path.exists(semantic_model_path):
                         shutil.rmtree(semantic_model_path)
                         logger.info(f"Deleted existing directory {semantic_model_path}")
+                    self.global_config.save_storage_config("semantic_model")
+                else:
+                    self.global_config.check_init_storage_config("semantic_model")
+
+                # Initialize semantic model
+                if hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
+                    successful, error_message = init_semantic_yaml_semantic_model(
+                        self.args.semantic_yaml, self.global_config
+                    )
+                else:
+                    successful, error_message = init_success_story_semantic_model(self.args, self.global_config)
+
+                if successful:
+                    temp_rag = SemanticModelRAG(self.global_config)
+                    result = {
+                        "status": "success",
+                        "message": f"semantic_model bootstrap completed, "
+                        f"semantic_object_count={temp_rag.get_size()}",
+                        "error": error_message,
+                    }
+                    self._refresh_scoped_agents("semantic_model", kb_update_strategy)
+                else:
+                    result = {"status": "failed", "message": error_message}
+                return result
+
+            elif component == "metrics":
+                metrics_path = os.path.join(dir_path, "metrics.lance")
+                if kb_update_strategy == "overwrite":
                     if os.path.exists(metrics_path):
                         shutil.rmtree(metrics_path)
                         logger.info(f"Deleted existing directory {metrics_path}")
-                    self.global_config.save_storage_config("metric")
+                    self.global_config.save_storage_config("metric")  # Keep compatibility
                 else:
                     self.global_config.check_init_storage_config("metric")
                 self._reset_metrics_stream_state()
@@ -489,22 +521,17 @@ class Agent:
                         # pool_size=pool_size,
                     )
 
-                # Create metrics_store for statistics
                 if successful:
-                    self.metrics_store = SemanticMetricsRAG(self.global_config)
+                    self.metrics_store = MetricRAG(self.global_config)
                     result = {
                         "status": "success",
-                        "message": f"metrics bootstrap completed,"
-                        f"semantic_model_size={self.metrics_store.get_semantic_model_size()}, "
-                        f"metrics_size={self.metrics_store.get_metrics_size()}",
+                        "message": f"metrics bootstrap completed, "
+                        f"metrics_count={self.metrics_store.get_metrics_size()}",
                         "error": error_message,
                     }
                     self._refresh_scoped_agents("metrics", kb_update_strategy)
                 else:
-                    result = {
-                        "status": "failed",
-                        "message": error_message,
-                    }
+                    result = {"status": "failed", "message": error_message}
                 return result
             elif component == "document":
                 from datus.storage.document.store import document_store

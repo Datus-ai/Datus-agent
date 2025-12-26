@@ -6,9 +6,12 @@
 """Generation hooks implementation for intercepting generation tool execution flow."""
 
 import asyncio
+import json
 import os
+from datetime import datetime
 from typing import Optional
 
+import yaml
 from agents.lifecycle import AgentHooks
 from rich.console import Console
 from rich.syntax import Syntax
@@ -16,9 +19,10 @@ from rich.syntax import Syntax
 from datus.cli.blocking_input_manager import blocking_input_manager
 from datus.cli.execution_state import execution_controller
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.llm_text_generator import generate_metric_llm_text
+from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
-from datus.utils.json_utils import to_str
+from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 
@@ -89,70 +93,93 @@ class GenerationHooks(AgentHooks):
             result: Tool result from end_generation
         """
         try:
-            # Extract filepath from result (dict or FuncToolResult object)
-            file_path = ""
+            # Extract filepaths from result (dict or FuncToolResult object)
+            file_paths = []
 
             if isinstance(result, dict):
                 # Handle dict result
                 result_dict = result.get("result", {})
                 if isinstance(result_dict, dict):
-                    file_path = result_dict.get("filepath", "")
+                    # Try new format first (filepaths: List[str])
+                    filepaths = result_dict.get("filepaths", [])
+                    if filepaths and isinstance(filepaths, list):
+                        file_paths = filepaths
+                    # Fallback to old format (filepath: str)
+                    elif "filepath" in result_dict:
+                        file_paths = [result_dict["filepath"]]
             elif hasattr(result, "result") and hasattr(result, "success"):
                 # Handle FuncToolResult object
                 result_dict = result.result
                 if isinstance(result_dict, dict):
-                    file_path = result_dict.get("filepath", "")
+                    # Try new format first
+                    filepaths = result_dict.get("filepaths", [])
+                    if filepaths and isinstance(filepaths, list):
+                        file_paths = filepaths
+                    # Fallback to old format
+                    elif "filepath" in result_dict:
+                        file_paths = [result_dict["filepath"]]
 
-            logger.debug(f"Extracted file_path: {file_path}")
+            logger.debug(f"Extracted file_paths: {file_paths}")
 
-            if not file_path:
-                logger.warning(f"Could not extract file path from end_generation result: {result}")
+            if not file_paths:
+                logger.warning(f"Could not extract file paths from end_generation result: {result}")
                 return
 
-            # Check if file exists
-            if not os.path.exists(file_path):
-                logger.warning(f"File {file_path} does not exist")
-                return
-
-            # Read the file content
-            with open(file_path, "r", encoding="utf-8") as f:
-                yaml_content = f.read()
-
-            if not yaml_content:
-                logger.warning(f"Empty YAML content in {file_path}")
-                return
-
-            # Skip processing if this file has already been processed
-            if file_path in self.processed_files:
-                logger.info(f"File {file_path} already processed, skipping end_generation")
-                return
-
-            # Mark file as processed
-            self.processed_files.add(file_path)
-
-            # Stop live display BEFORE showing YAML content
-            execution_controller.stop_live_display()
-            await asyncio.sleep(0.1)
-
-            # Display generated YAML for all file types
-            self.console.print("\n" + "=" * 60)
-            self.console.print(f"[bold green]Generated YAML: {os.path.basename(file_path)}[/]")
-            self.console.print(f"[dim]Path: {file_path}[/]")
-            self.console.print("=" * 60)
-
-            # Display YAML with syntax highlighting
-            syntax = Syntax(yaml_content, "yaml", theme="monokai", line_numbers=True)
-            self.console.print(syntax)
-            await asyncio.sleep(0.2)
-
-            # Get user confirmation to sync (end_generation is for semantic models/metrics)
-            await self._get_sync_confirmation(yaml_content, file_path, "semantic")
+            # Process each file sequentially
+            for file_path in file_paths:
+                await self._process_single_file(file_path)
 
         except GenerationCancelledException:
             self.console.print("[yellow]Generation workflow cancelled[/]")
         except Exception as e:
             logger.error(f"Error handling end_generation: {e}", exc_info=True)
             self.console.print(f"[red]Error: {e}[/]")
+
+    async def _process_single_file(self, file_path: str):
+        """
+        Process a single YAML file: display and get user confirmation.
+
+        Args:
+            file_path: Path to the YAML file
+        """
+        # Check if file exists
+        if not os.path.exists(file_path):
+            logger.warning(f"File {file_path} does not exist")
+            return
+
+        # Read the file content
+        with open(file_path, "r", encoding="utf-8") as f:
+            yaml_content = f.read()
+
+        if not yaml_content:
+            logger.warning(f"Empty YAML content in {file_path}")
+            return
+
+        # Skip processing if this file has already been processed
+        if file_path in self.processed_files:
+            logger.info(f"File {file_path} already processed, skipping")
+            return
+
+        # Mark file as processed
+        self.processed_files.add(file_path)
+
+        # Stop live display BEFORE showing YAML content
+        execution_controller.stop_live_display()
+        await asyncio.sleep(0.1)
+
+        # Display generated YAML for all file types
+        self.console.print("\n" + "=" * 60)
+        self.console.print(f"[bold green]Generated YAML: {os.path.basename(file_path)}[/]")
+        self.console.print(f"[dim]Path: {file_path}[/]")
+        self.console.print("=" * 60)
+
+        # Display YAML with syntax highlighting
+        syntax = Syntax(yaml_content, "yaml", theme="monokai", line_numbers=True)
+        self.console.print(syntax)
+        await asyncio.sleep(0.2)
+
+        # Get user confirmation to sync (end_generation is for semantic models/metrics)
+        await self._get_sync_confirmation(yaml_content, file_path, "semantic")
 
     async def _clear_output_and_show_sync_prompt(self):
         """Show sync confirmation prompt."""
@@ -320,7 +347,7 @@ class GenerationHooks(AgentHooks):
                 result = await loop.run_in_executor(
                     None, GenerationHooks._sync_semantic_to_db, file_path, self.agent_config
                 )
-                item_type = "semantic model and metrics"
+                item_type = "semantic model"
             elif yaml_type == "sql_summary":
                 result = await loop.run_in_executor(
                     None, GenerationHooks._sync_reference_sql_to_db, file_path, self.agent_config
@@ -350,31 +377,16 @@ class GenerationHooks(AgentHooks):
     def _is_sql_summary_tool_call(self, context) -> bool:
         """
         Check if write_file tool call is for SQL summary.
-
-        Examines tool arguments to determine if this is a SQL summary file write.
-
-        Args:
-            context: ToolContext with tool_arguments field (JSON string)
-
-        Returns:
-            bool: True if this is a SQL summary write operation
         """
         try:
-            import json
-
             if hasattr(context, "tool_arguments"):
                 if context.tool_arguments:
                     tool_args = json.loads(context.tool_arguments)
-
-                    # Check if file_type indicates SQL summary
                     if isinstance(tool_args, dict):
                         if tool_args.get("file_type") == "sql_summary":
                             logger.debug(f"Detected SQL summary write_file call with args: {tool_args}")
                             return True
-
-            logger.debug("Not a SQL summary write_file call")
             return False
-
         except Exception as e:
             logger.debug(f"Error checking tool arguments: {e}")
             return False
@@ -408,33 +420,31 @@ class GenerationHooks(AgentHooks):
         return None
 
     @staticmethod
-    def _sync_semantic_to_db(file_path: str, agent_config: AgentConfig) -> dict:
+    def _sync_semantic_to_db(
+        file_path: str,
+        agent_config: AgentConfig,
+        catalog: Optional[str] = None,
+        database: Optional[str] = None,
+        schema: Optional[str] = None,
+        include_semantic_objects: bool = True,
+        include_metrics: bool = True,
+    ) -> dict:
         """
-        Sync semantic model and metrics from YAML file to Knowledge Base.
-
-        This function handles both data_source (semantic model) and metric definitions
-        in the same file. It checks for existing entries and only stores new ones.
+        Sync semantic objects and/or metrics from YAML file to Knowledge Base.
 
         Args:
-            file_path: Path to the YAML file containing semantic model and/or metrics
+            file_path: Path to YAML file
             agent_config: Agent configuration
+            include_semantic_objects: Whether to sync tables/columns/entities
+            include_metrics: Whether to sync metrics
 
-        Returns:
-            dict: Sync result with success, error, and message fields
+        Now parses tables, columns, metrics, and entities as individual 'semantic_objects'.
         """
         try:
-            from datetime import datetime
-
-            import yaml
-
-            from datus.storage.metric.init_utils import existing_semantic_metrics, gen_metric_id, gen_semantic_model_id
-            from datus.storage.metric.store import SemanticMetricsRAG
-
             # Load YAML file
             with open(file_path, "r", encoding="utf-8") as f:
                 docs = list(yaml.safe_load_all(f))
 
-            # Extract data_source and metrics
             data_source = None
             metrics_list = []
             for doc in docs:
@@ -446,128 +456,293 @@ class GenerationHooks(AgentHooks):
             if not data_source and not metrics_list:
                 return {"success": False, "error": "No data_source or metrics found in YAML file"}
 
-            # Get storage
-            storage = SemanticMetricsRAG(agent_config)
+            metric_rag = MetricRAG(agent_config)
+            semantic_rag = SemanticModelRAG(agent_config)
 
-            existing_semantic_models, existing_metrics = existing_semantic_metrics(storage)
+            semantic_objects = []  # For tables, columns (goes to SemanticModelStorage)
+            metric_objects = []  # For metrics (goes to MetricStorage)
+            synced_items = []
 
-            # Get database config
             current_db_config = agent_config.current_db_config()
+            table_name = ""
 
-            synced_count = 0
-            skipped_count = 0
-            message_parts = []
+            # Get database hierarchy info
+            # Prioritize explicitly passed parameters, then fallback to current db config
+            catalog_name = catalog or getattr(current_db_config, "catalog", "")
+            database_name = database or getattr(current_db_config, "database", "")
+            schema_name = schema or getattr(current_db_config, "schema", "")
 
-            # Process semantic model (data_source)
-            if data_source:
-                # Extract table name from sql_table or infer from data_source name
+            # For StarRocks, use default_catalog if it's empty
+            if agent_config.db_type == DBType.STARROCKS and not catalog_name:
+                catalog_name = "default_catalog"
+
+            # 1. Process Table & Columns (from data_source)
+            if data_source and include_semantic_objects:
                 table_name = data_source.get("name", "")
-                if "sql_table" in data_source:
-                    # Parse table name from sql_table (e.g., "schema.table" or "table")
-                    sql_table = data_source["sql_table"]
-                    table_name = sql_table.split(".")[-1] if "." in sql_table else sql_table
+                sql_table = data_source.get("sql_table", "")
 
-                semantic_model_id = gen_semantic_model_id(
-                    current_db_config.catalog, current_db_config.database, current_db_config.schema, table_name
-                )
+                # Try to parse hierarchy from sql_table if it's fully qualified
+                if sql_table:
+                    parts = [p.strip() for p in sql_table.split(".") if p.strip()]
+                    if len(parts) > 0:
+                        table_name = parts[-1]
 
-                # Check if semantic model already exists
-                if semantic_model_id not in existing_semantic_models:
-                    # Build semantic model dict
-                    semantic_model_dict = {
-                        "id": semantic_model_id,
-                        "catalog_name": current_db_config.catalog or "",
-                        "database_name": current_db_config.database or "",
-                        "schema_name": current_db_config.schema or "",
+                        # Replicate DBFuncTool._determine_field_order logic for parsing
+                        dialect = agent_config.db_type
+                        possible_fields = []
+                        if DBType.support_catalog(dialect):
+                            possible_fields.append("catalog")
+                        if DBType.support_database(dialect) or dialect == DBType.SQLITE:
+                            possible_fields.append("database")
+                        if DBType.support_schema(dialect):
+                            possible_fields.append("schema")
+
+                        # Assign parts from right to left (excluding the table name itself)
+                        idx = len(parts) - 2
+                        for field in reversed(possible_fields):
+                            if idx < 0:
+                                break
+                            if field == "schema":
+                                schema_name = parts[idx]
+                            elif field == "database":
+                                database_name = parts[idx]
+                            elif field == "catalog":
+                                catalog_name = parts[idx]
+                            idx -= 1
+
+                # Clear schema_name if dialect doesn't support it (e.g. StarRocks, MySQL)
+                if not DBType.support_schema(agent_config.db_type):
+                    schema_name = ""
+
+                # Build fully qualified name (excluding empty parts)
+                fq_parts = [p for p in [catalog_name, database_name, schema_name, table_name] if p]
+                table_fq_name = ".".join(fq_parts)
+
+                # --- A. Table Object ---
+                table_obj = {
+                    "id": f"table:{table_name}",
+                    "kind": "table",
+                    "name": table_name,
+                    "fq_name": table_fq_name,
+                    "table_name": table_name,
+                    "description": data_source.get("description", ""),
+                    "source": "metricflow_yaml",
+                    "yaml_path": file_path,
+                    "updated_at": datetime.now().replace(microsecond=0),
+                    # Database hierarchy
+                    "catalog_name": catalog_name,
+                    "database_name": database_name,
+                    "schema_name": schema_name,
+                    "semantic_model_name": table_name,
+                    # Required boolean fields
+                    "is_dimension": False,
+                    "is_measure": False,
+                    "is_entity_key": False,
+                    "is_deprecated": False,
+                }
+                semantic_objects.append(table_obj)
+                synced_items.append(f"table:{table_name}")
+
+                # --- B. Column Objects (Measures & Dimensions & Identifiers) ---
+
+                # Helper to process columns
+                def process_column(col_def, kind, is_dim=False, is_meas=False, is_ent=False):
+                    col_name = col_def.get("name")
+                    if not col_name:
+                        return
+
+                    col_desc = col_def.get("description", "")
+
+                    col_obj = {
+                        "id": f"column:{table_name}.{col_name}",
+                        "kind": "column",
+                        "name": col_name,
+                        "fq_name": f"{table_fq_name}.{col_name}",
                         "table_name": table_name,
-                        "semantic_file_path": file_path,
-                        "semantic_model_name": data_source.get("name", ""),
-                        "semantic_model_desc": data_source.get("description", ""),
-                        "identifiers": to_str(data_source.get("identifiers", [])),
-                        "dimensions": to_str(data_source.get("dimensions", [])),
-                        "measures": to_str(data_source.get("measures", [])),
-                        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "description": col_desc,
+                        "is_dimension": is_dim,
+                        "is_measure": is_meas,
+                        "is_entity_key": is_ent,
+                        "is_deprecated": False,
+                        "source": "metricflow_yaml",
+                        "yaml_path": file_path,
+                        "updated_at": datetime.now().replace(microsecond=0),
+                        # Database hierarchy
+                        "catalog_name": catalog_name,
+                        "database_name": database_name,
+                        "schema_name": schema_name,
+                        "semantic_model_name": table_name,
                     }
+                    semantic_objects.append(col_obj)
 
-                    storage.semantic_model_storage.store([semantic_model_dict])
-                    existing_semantic_models.add(semantic_model_id)
-                    synced_count += 1
-                    logger.info(f"Synced semantic model: {table_name}")
-                    message_parts.append(f"semantic model '{table_name}'")
-                else:
-                    skipped_count += 1
-                    logger.info(f"Semantic model {table_name} already exists, skipped")
+                # Process Dimensions
+                for dim in data_source.get("dimensions", []):
+                    process_column(dim, "column", is_dim=True)
 
-            # Process metrics
-            semantic_model_name = data_source.get("name", "") if data_source else ""
-            for metric_doc in metrics_list:
-                metric_name = metric_doc.get("name", "")
+                # Process Measures
+                for meas in data_source.get("measures", []):
+                    # Measures in MF are defined on columns but act as aggregations
+                    # For semantic search, we treat them as 'fields' you can query
+                    process_column(meas, "column", is_meas=True)
 
-                metric_subject_path = None
+                # Process Identifiers
+                for ident in data_source.get("identifiers", []):
+                    process_column(ident, "column", is_ent=True)
 
-                if "locked_metadata" in metric_doc:
-                    locked_meta = metric_doc["locked_metadata"]
-                    if isinstance(locked_meta, dict) and "tags" in locked_meta:
-                        metric_subject_path = GenerationHooks._parse_subject_tree_from_tags(locked_meta["tags"])
+            # 2. Process Metrics (Standard Metrics) - These go to MetricStorage
+            if include_metrics:
+                for metric in metrics_list:
+                    m_name = metric.get("name")
+                    if not m_name:
+                        continue
 
-                # Use empty list if no subject_path found
-                if not metric_subject_path:
-                    metric_subject_path = []
+                    m_desc = metric.get("description", "")
+                    m_type = metric.get("type", "")
 
-                metric_id = gen_metric_id(metric_subject_path, semantic_model_name, metric_name)
+                    # Parse tags for subject_path (domain/layer1/layer2)
+                    subject_path = []
+                    locked_meta = metric.get("locked_metadata", {})
+                    if locked_meta:
+                        tags = locked_meta.get("tags", [])
+                        parsed_path = GenerationHooks._parse_subject_tree_from_tags(tags)
+                        if parsed_path:
+                            subject_path = parsed_path
 
-                # Check if metric already exists
-                if metric_id not in existing_metrics:
-                    # Generate LLM-friendly text
-                    llm_text = generate_metric_llm_text(metric_doc, data_source)
+                    # Extract type_params for measure_expr, base_measures
+                    type_params = metric.get("type_params", {})
+                    measure_expr = ""
+                    base_measures = []
 
-                    metric_dict = {
-                        "semantic_model_name": semantic_model_name,
-                        "subject_path": metric_subject_path,
-                        "name": metric_name,
-                        "llm_text": llm_text,
+                    if m_type == "measure_proxy":
+                        # Single measure reference
+                        measure = type_params.get("measure")
+                        if measure:
+                            measure_expr = measure
+                            base_measures = [measure]
+                        # Or multiple measures
+                        measures_list = type_params.get("measures", [])
+                        for m in measures_list:
+                            if isinstance(m, str):
+                                base_measures.append(m)
+                            elif isinstance(m, dict):
+                                m_name_val = m.get("name", "")
+                                if m_name_val:
+                                    base_measures.append(m_name_val)
+                    elif m_type == "ratio":
+                        # Ratio has numerator and denominator
+                        num = type_params.get("numerator", {})
+                        denom = type_params.get("denominator", {})
+                        if isinstance(num, str):
+                            base_measures.append(num)
+                        elif isinstance(num, dict):
+                            num_name = num.get("name", "")
+                            if num_name:
+                                base_measures.append(num_name)
+                        if isinstance(denom, str):
+                            base_measures.append(denom)
+                        elif isinstance(denom, dict):
+                            denom_name = denom.get("name", "")
+                            if denom_name:
+                                base_measures.append(denom_name)
+                    elif m_type in ["expr", "cumulative"]:
+                        # Extract measures from measures list
+                        measures_list = type_params.get("measures", [])
+                        for m in measures_list:
+                            if isinstance(m, str):
+                                base_measures.append(m)
+                            elif isinstance(m, dict):
+                                m_name_val = m.get("name", "")
+                                if m_name_val:
+                                    base_measures.append(m_name_val)
+                        # For expr type, also save the expression
+                        if m_type == "expr":
+                            expr_val = type_params.get("expr")
+                            if expr_val:
+                                measure_expr = str(expr_val)
+                    elif m_type == "derived":
+                        # Derived metrics reference other metrics
+                        metrics_list_param = type_params.get("metrics", [])
+                        for m in metrics_list_param:
+                            if isinstance(m, str):
+                                base_measures.append(m)
+                            elif isinstance(m, dict):
+                                m_name_val = m.get("name", "")
+                                if m_name_val:
+                                    base_measures.append(m_name_val)
+                        # Save the derived expression
+                        expr_val = type_params.get("expr")
+                        if expr_val:
+                            measure_expr = str(expr_val)
+
+                    # Extract dimensions and entities from data_source if available
+                    dimensions = []
+                    entities = []
+                    if data_source:
+                        # Get dimension names
+                        for dim in data_source.get("dimensions", []):
+                            dim_name = dim.get("name")
+                            if dim_name:
+                                dimensions.append(dim_name)
+                        # Get entity names
+                        for ident in data_source.get("identifiers", []):
+                            ident_name = ident.get("name")
+                            if ident_name:
+                                entities.append(ident_name)
+
+                    # Build metric object for MetricStorage
+                    metric_obj = {
+                        "name": m_name,
+                        "subject_path": subject_path,
+                        "semantic_model_name": table_name,
+                        "id": f"metric:{m_name}",
+                        "description": m_desc,
+                        "metric_type": m_type,
+                        "measure_expr": measure_expr,
+                        "base_measures": base_measures,
+                        "dimensions": dimensions,
+                        "entities": entities,
                         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "updated_at": datetime.now().replace(microsecond=0),
+                        # Database hierarchy
+                        "table_name": table_name,
+                        "catalog_name": catalog_name,
+                        "database_name": database_name,
+                        "schema_name": schema_name,
                     }
-                    storage.metric_storage.batch_store_metrics([metric_dict])
-                    existing_metrics.add(metric_id)
-                    synced_count += 1
-                    logger.info(f"Synced metric: {metric_name}")
-                    message_parts.append(f"metric '{metric_name}'")
-                else:
-                    skipped_count += 1
-                    logger.info(f"Metric {metric_name} already exists, skipped")
+                    metric_objects.append(metric_obj)
+                    synced_items.append(f"metric:{m_name}")
 
-            # Build result message
-            if synced_count > 0:
-                message = f"Synced {synced_count} item(s): {', '.join(message_parts)}"
-                if skipped_count > 0:
-                    message += f" (skipped {skipped_count} existing item(s))"
-                return {"success": True, "message": message}
-            elif skipped_count > 0:
-                return {"success": True, "message": f"All {skipped_count} item(s) already exist, nothing to sync"}
+            # Store all objects using the unified interface
+            all_objects = semantic_objects + metric_objects
+            if all_objects:
+                if semantic_objects:
+                    semantic_rag.store_batch(semantic_objects)
+                    semantic_rag.create_indices()
+
+                if metric_objects:
+                    metric_rag.store_batch(metric_objects)
+                    metric_rag.create_indices()
+                return {
+                    "success": True,
+                    "message": (
+                        f"Synced {len(all_objects)} objects "
+                        f"({len(semantic_objects)} semantic, {len(metric_objects)} metrics): "
+                        f"{', '.join(synced_items[:5])}..."
+                    ),
+                }
             else:
-                return {"success": False, "error": "No items to sync"}
+                return {"success": False, "error": "No valid objects found to sync"}
 
         except Exception as e:
-            logger.error(f"Error syncing semantic model and metrics to DB: {e}", exc_info=True)
+            logger.error(f"Error syncing semantic objects to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
     @staticmethod
     def _sync_reference_sql_to_db(file_path: str, agent_config: AgentConfig, build_mode: str = "incremental") -> dict:
         """
         Sync reference SQL YAML file to Knowledge Base.
-
-        Args:
-            file_path: Path to the reference SQL YAML file
-            agent_config: Agent configuration
-            build_mode: "overwrite" or "incremental" (default: "incremental")
-
-        Returns:
-            dict: Sync result with success, error, and message fields
         """
         try:
-            import yaml
-
             from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_reference_sql_id
 
             # Load YAML file

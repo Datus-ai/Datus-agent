@@ -76,7 +76,8 @@ def build_context_tools(mock_agent_config):
         mock_subject_tree.get_tree_structure.return_value = _build_tree_structure(all_entries)
 
         with (
-            patch("datus.tools.func_tool.context_search.SemanticMetricsRAG", return_value=metric_rag),
+            patch("datus.tools.func_tool.context_search.MetricRAG", return_value=metric_rag),
+            patch("datus.tools.func_tool.context_search.SemanticModelRAG", return_value=Mock()),
             patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=sql_rag),
             patch("datus.tools.func_tool.context_search.SubjectTreeStore", return_value=mock_subject_tree),
         ):

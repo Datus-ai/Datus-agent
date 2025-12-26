@@ -5,13 +5,13 @@ from datetime import datetime
 from typing import Any, Dict, Set
 
 import pytest
-from conftest import PROJECT_ROOT
 from pandas import DataFrame
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.utils.json_utils import load_jsonl
+from tests.conftest import PROJECT_ROOT
 
 
 @pytest.fixture

@@ -455,7 +455,7 @@ def _collect_metric_artifacts(artifacts: WorkflowArtifacts, result_payload: Any)
         name = item.get("name")
         if name:
             _append_unique(artifacts.metrics_names, name)
-        text = item.get("llm_text")
+        text = item.get("description")
         if text:
             _append_unique(artifacts.metrics_texts, text)
 

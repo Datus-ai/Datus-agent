@@ -6,7 +6,7 @@ import os
 import threading
 from pathlib import Path
 
-from agents.mcp import MCPServerStdio, MCPServerStdioParams, create_static_tool_filter
+from agents.mcp import MCPServerStdio, MCPServerStdioParams
 
 from datus.utils.loggings import get_logger
 
@@ -107,23 +107,8 @@ def find_mcp_directory(mcp_name: str) -> str:
     )
 
 
-def check_filesystem_mcp_installed() -> bool:
-    """Check if @modelcontextprotocol/server-filesystem is installed and available."""
-    import shutil
-
-    # Simply check if the binary is available in PATH
-    # If npm package is correctly installed, the binary should be available
-    if shutil.which("mcp-server-filesystem"):
-        logger.info("Found mcp-server-filesystem executable in PATH")
-        return True
-
-    logger.debug("mcp-server-filesystem executable not found in PATH")
-    return False
-
-
 class MCPServer:
     _metricflow_mcp_server = None
-    _filesystem_mcp_server = None
     _lock = threading.Lock()
 
     @classmethod
@@ -139,6 +124,19 @@ class MCPServer:
                             logger.error(f"Could not find MetricFlow MCP directory: {e}")
                             return None
                     logger.info(f"Using MetricFlow MCP server with directory: {directory}")
+
+                    # Verify directory exists
+                    if not os.path.exists(directory):
+                        logger.error(f"MetricFlow MCP directory does not exist: {directory}")
+                        return None
+
+                    # Verify mcp-metricflow-server exists
+                    pyproject_path = os.path.join(directory, "pyproject.toml")
+                    if not os.path.exists(pyproject_path):
+                        logger.error(f"MetricFlow MCP pyproject.toml not found: {pyproject_path}")
+                        return None
+
+                    logger.info(f"MetricFlow MCP server directory verified: {directory}")
 
                     # MetricFlow can now read Datus config directly via DatusConfigHandler
                     # Pass the namespace via --namespace command line argument
@@ -162,72 +160,3 @@ class MCPServer:
                         params=mcp_server_params, client_session_timeout_seconds=20
                     )
         return cls._metricflow_mcp_server
-
-    @classmethod
-    def get_filesystem_mcp_server(cls, path=None):
-        if cls._filesystem_mcp_server is None:
-            with cls._lock:
-                if cls._filesystem_mcp_server is None:
-                    filesystem_mcp_directory = path or os.getenv("FILESYSTEM_MCP_DIRECTORY", "/tmp")
-
-                    # Convert to absolute path
-                    if not os.path.isabs(filesystem_mcp_directory):
-                        filesystem_mcp_directory = os.path.abspath(filesystem_mcp_directory)
-
-                    # Check if directory exists
-                    if not os.path.exists(filesystem_mcp_directory):
-                        logger.error(f"Filesystem MCP directory does not exist: {filesystem_mcp_directory}")
-                        return None
-
-                    logger.info(f"Creating filesystem MCP server for directory: {filesystem_mcp_directory}")
-
-                    # Check if filesystem MCP server is already installed
-                    if check_filesystem_mcp_installed():
-                        # Option 1: Use direct executable if available (fastest)
-                        logger.info("Using pre-installed mcp-server-filesystem executable")
-                        mcp_server_params = MCPServerStdioParams(
-                            command="mcp-server-filesystem",
-                            args=[filesystem_mcp_directory],
-                            env={
-                                "NODE_OPTIONS": "--no-warnings",
-                                "MCP_SERVER_QUIET": "1",
-                            },
-                        )
-                    else:
-                        # Option 2: Use npx to download and run if not installed
-                        logger.info("Using npx to download and run @modelcontextprotocol/server-filesystem")
-                        mcp_server_params = MCPServerStdioParams(
-                            command="npx",
-                            args=[
-                                "--silent",
-                                "-y",
-                                "@modelcontextprotocol/server-filesystem",
-                                filesystem_mcp_directory,
-                            ],
-                            env={
-                                "NODE_OPTIONS": "--no-warnings",
-                                "NPM_CONFIG_LOGLEVEL": "silent",
-                                "NPM_CONFIG_PROGRESS": "false",
-                                "NPX_SILENT": "true",
-                                "SUPPRESS_NO_CONFIG_WARNING": "1",
-                                "MCP_SERVER_QUIET": "1",  # Custom flag for MCP servers
-                            },
-                        )
-
-                    # Create tool filter for filesystem operations
-                    tool_filter = create_static_tool_filter(
-                        allowed_tool_names=[
-                            "read_text_file",
-                            "read_multiple_files",
-                            "write_file",
-                            "edit_file",
-                            "search_files",
-                            "list_directory",
-                            "list_allowed_directories",
-                        ]
-                    )
-
-                    cls._filesystem_mcp_server = SilentMCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=30, tool_filter=tool_filter
-                    )
-        return cls._filesystem_mcp_server

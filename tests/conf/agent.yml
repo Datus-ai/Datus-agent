@@ -86,8 +86,7 @@ agent:
       system_prompt: gen_sql
       prompt_version: "1.0"
       prompt_language: en
-      tools: db_tools.*, context_search_tools.*
-      mcp: filesystem_mcp.*
+      tools: db_tools.*, context_search_tools.*, filesystem_tools.*
       agent_description: "You are a specialized AI assistant for SQL generation"
       rules:
         - Use filesystem tools to read SQL files from the current directory (*/*.sql) as reference examples

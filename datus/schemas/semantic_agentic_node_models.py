@@ -9,7 +9,7 @@ This module defines the input and output models for the SemanticAgenticNode,
 providing structured validation for semantic model generation interactions.
 """
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import Field
 
@@ -48,8 +48,8 @@ class SemanticNodeResult(BaseResult):
     """
 
     response: str = Field(..., description="AI assistant's response")
-    semantic_model: Optional[str] = Field(
-        default=None, description="Semantic model YAML generated or referenced in response"
+    semantic_models: List[str] = Field(
+        default_factory=list, description="List of generated semantic model file paths (single table or multi-table)"
     )
     tokens_used: int = Field(default=0, description="Total tokens used in this interaction")
     error: Optional[str] = Field(default=None, description="Error message if interaction failed")

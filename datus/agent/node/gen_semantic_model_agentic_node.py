@@ -3,126 +3,128 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-SqlSummaryAgenticNode implementation for SQL summary generation workflow.
+GenSemanticModelAgenticNode implementation for semantic model generation.
 
 This module provides a specialized implementation of AgenticNode focused on
-SQL query summarization and classification with support for filesystem tools,
-generation tools, and hooks.
+semantic model generation with support for filesystem tools, generation tools,
+database tools, hooks, and metricflow MCP server integration.
 """
 
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
+from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.tools.func_tool.semantic_tools import SemanticModelTools
+from datus.tools.mcp_tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 
 
-class SqlSummaryAgenticNode(AgenticNode):
+class GenSemanticModelAgenticNode(AgenticNode):
     """
-    SQL summary generation agentic node with enhanced configuration.
+    Semantic model generation agentic node.
 
-    This node provides specialized SQL query summarization and classification with:
+    This node provides specialized semantic model generation capabilities with:
     - Enhanced system prompt with template variables
+    - Database tools for schema exploration
     - Filesystem tools for file operations
-    - Generation tools for SQL summary context preparation
+    - Generation tools for model generation
     - Hooks support for custom behavior
-    - Configurable tool sets
+    - Metricflow MCP server integration
     - Session-based conversation management
     """
 
+    NODE_NAME = "gen_semantic_model"
+
     def __init__(
         self,
-        node_name: str,
-        agent_config: Optional[AgentConfig] = None,
-        execution_mode: str = "interactive",
-        build_mode: str = "incremental",
-        subject_tree: Optional[list] = None,
+        agent_config: AgentConfig,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
     ):
         """
-        Initialize the SqlSummaryAgenticNode.
+        Initialize the GenSemanticModelAgenticNode.
 
         Args:
-            node_name: Name of the node configuration in agent.yml (should be "gen_sql_summary")
             agent_config: Agent configuration
             execution_mode: Execution mode - "interactive" (default) or "workflow"
-            build_mode: "overwrite" or "incremental" (default: "incremental")
-            subject_tree: Optional predefined subject tree categories
         """
-        self.configured_node_name = node_name
         self.execution_mode = execution_mode
-        self.build_mode = build_mode
-        self.subject_tree = subject_tree
 
-        # Get max_turns from agentic_nodes configuration
+        # Get max_turns from agentic_nodes configuration, default to 30
         self.max_turns = 30
-        if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
-            agentic_node_config = agent_config.agentic_nodes[node_name]
+        if agent_config and hasattr(agent_config, "agentic_nodes") and self.NODE_NAME in agent_config.agentic_nodes:
+            agentic_node_config = agent_config.agentic_nodes[self.NODE_NAME]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
         path_manager = get_path_manager()
-        self.sql_summary_dir = str(path_manager.sql_summary_path(agent_config.current_namespace))
+        self.semantic_model_dir = str(path_manager.semantic_model_path(agent_config.current_namespace))
 
         from datus.configuration.node_type import NodeType
 
-        node_type = NodeType.TYPE_SQL_SUMMARY
+        node_type = NodeType.TYPE_SEMANTIC
 
         # Call parent constructor first to set up node_config
         super().__init__(
-            node_id="sql_summary_node",
-            description="SQL summary generation node",
+            node_id=f"{self.NODE_NAME}_node",
+            description=f"Semantic model generation node: {self.NODE_NAME}",
             node_type=node_type,
             input_data=None,
             agent_config=agent_config,
             tools=[],
-            mcp_servers={},
+            mcp_servers={},  # Initialize empty, will setup after parent init
         )
 
-        # Initialize reference SQL storage for context queries
-        from datus.storage.reference_sql.store import ReferenceSqlRAG
+        # Initialize MCP servers
+        self.mcp_servers = self._setup_mcp_servers()
 
-        self.reference_sql_rag = ReferenceSqlRAG(agent_config)
+        logger.debug(
+            f"GenSemanticModelAgenticNode final mcp_servers: "
+            f"{len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
+        )
 
-        # Setup tools based on hardcoded configuration
+        # Setup tools
+        self.db_func_tool: Optional[DBFuncTool] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
+        self.semantic_model_tools: Optional[SemanticModelTools] = None
         self.hooks = None
         self.setup_tools()
 
+        # Debug: log hooks status after setup
         logger.debug(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
 
     def get_node_name(self) -> str:
         """
-        Get the configured node name for this SQL summary agentic node.
+        Get the configured node name for this semantic model generation node.
 
         Returns:
-            The configured node name from agent.yml
+            The configured node name
         """
-        return self.configured_node_name
+        return self.NODE_NAME
 
     def setup_tools(self):
-        """Setup tools based on hardcoded configuration."""
+        """Setup tools for semantic model generation."""
         if not self.agent_config:
             return
 
         self.tools = []
 
-        # Hardcoded tool configuration: specific methods from generation_tools and filesystem_tools
-        # tools: generation_tools.generate_sql_summary_id,
-        # filesystem_tools.read_file, filesystem_tools.read_multiple_files, filesystem_tools.write_file,
-        # filesystem_tools.edit_file, filesystem_tools.list_directory
-        self._setup_specific_generation_tools()
-        self._setup_specific_filesystem_tool()
+        self._setup_db_tools()
+        self._setup_semantic_tools()
+        self._setup_generation_tools()
+        self._setup_filesystem_tools()
 
-        logger.info(
+        logger.debug(
             f"Setup {len(self.tools)} tools for {self.configured_node_name}: {[tool.name for tool in self.tools]}"
         )
 
@@ -130,33 +132,68 @@ class SqlSummaryAgenticNode(AgenticNode):
         if self.execution_mode == "interactive":
             self._setup_hooks()
 
-    def _setup_specific_generation_tools(self):
-        """Setup specific generation tools: generate_sql_summary_id."""
+    def _setup_db_tools(self):
+        """Setup database tools."""
         try:
-            from datus.tools.func_tool import trans_to_function_tool
-
-            self.generation_tools = GenerationTools(self.agent_config)
-            self.tools.append(trans_to_function_tool(self.generation_tools.generate_sql_summary_id))
+            db_manager = db_manager_instance(self.agent_config.namespaces)
+            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            self.db_func_tool = DBFuncTool(
+                conn,
+                agent_config=self.agent_config,
+            )
+            # Add standard database tools
+            self.tools.extend(self.db_func_tool.available_tools())
+            logger.debug("Added database tools from DBFuncTool")
         except Exception as e:
-            logger.error(f"Failed to setup specific generation tools: {e}")
+            logger.error(f"Failed to setup database tools: {e}")
 
-    def _setup_specific_filesystem_tool(self):
-        """Setup specific filesystem tools"""
+    def _setup_semantic_tools(self):
+        """Setup semantic model specific tools."""
+        try:
+            if not self.db_func_tool:
+                logger.warning("DBFuncTool not initialized, skipping semantic tools setup")
+                return
+
+            self.semantic_model_tools = SemanticModelTools(self.db_func_tool)
+            self.tools.extend(self.semantic_model_tools.available_tools())
+            logger.debug("Added semantic model tools from SemanticModelTools")
+        except Exception as e:
+            logger.error(f"Failed to setup semantic tools: {e}")
+
+    def _setup_filesystem_tools(self):
+        """Setup filesystem tools."""
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=self.sql_summary_dir)
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=self.semantic_model_dir)
 
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_multiple_files))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.list_directory))
+            logger.debug(
+                "Added filesystem tools: read_file, read_multiple_files, write_file, edit_file, list_directory"
+            )
         except Exception as e:
-            logger.error(f"Failed to setup specific filesystem tool: {e}")
+            logger.error(f"Failed to setup filesystem tools: {e}")
+
+    def _setup_generation_tools(self):
+        """Setup generation tools."""
+        try:
+            from datus.tools.func_tool import trans_to_function_tool
+
+            self.generation_tools = GenerationTools(self.agent_config)
+
+            self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
+            self.tools.append(trans_to_function_tool(self.generation_tools.end_generation))
+            logger.debug("Added tools: check_semantic_object_exists, end_generation")
+
+        except Exception as e:
+            logger.error(f"Failed to setup generation tools: {e}")
 
     def _setup_hooks(self):
-        """Setup hooks (hardcoded to generation_hooks)."""
+        """Setup hooks for interactive mode."""
         try:
             from rich.console import Console
 
@@ -166,68 +203,54 @@ class SqlSummaryAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
 
+    def _setup_mcp_servers(self) -> Dict[str, Any]:
+        """Set up MCP servers (metricflow_mcp)."""
+        mcp_servers = {}
+
+        try:
+            if not self.agent_config:
+                logger.warning("Agent config not available for metricflow MCP setup")
+                return mcp_servers
+
+            # Get current database config
+            db_config = self.agent_config.current_db_config()
+            if not db_config:
+                logger.warning("Database config not found")
+                return mcp_servers
+
+            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_namespace)
+            if metricflow_server:
+                mcp_servers["metricflow_mcp"] = metricflow_server
+                logger.info(f"Setup metricflow_mcp MCP server for database: {db_config.database}")
+            else:
+                logger.warning(f"Failed to create metricflow MCP server for db_config: {db_config}")
+        except Exception as e:
+            logger.error(f"Failed to setup metricflow_mcp: {e}")
+
+        logger.info(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
+
+        return mcp_servers
+
     def _get_existing_subject_trees(self) -> list:
         """
-        Query existing subject_path values from reference SQL storage.
+        Query existing subject_tree values from metrics storage.
 
         Returns:
             List of unique subject_path values as List[str]
         """
         try:
             # Get all metrics with subject_path field
-            subject_paths = sorted(self.reference_sql_rag.reference_sql_storage.get_subject_tree_flat())
-            logger.debug(f"Found {len(subject_paths)} unique reference SQL subject_paths")
+            subject_paths = sorted(self.metrics_rag.metric_storage.get_subject_tree_flat())
+            logger.debug(f"Found {len(subject_paths)} unique metric subject_paths")
             return subject_paths
-        except Exception as e:
-            logger.error(f"Error getting existing subject_paths: {e}")
-            return []
-
-    def _get_similar_sqls(self, query_text: str, top_n: int = 5) -> list:
-        """
-        Find similar reference SQLs based on query text.
-
-        Args:
-            query_text: Text to use for similarity search (comment or SQL)
-            top_n: Number of similar results to return
-
-        Returns:
-            List of similar reference SQLs with fields: name, subject_tree, tags, comment, summary
-        """
-        try:
-            if not query_text:
-                return []
-
-            # Search using vector similarity on summary field
-            similar_items = self.reference_sql_rag.search_reference_sql(query_text=query_text, top_n=top_n)
-
-            # Extract relevant fields and format results
-            results = []
-            for item in similar_items:
-                # Get subject_path from item
-                subject_path = item.get("subject_path", [])
-                # Format as string for display
-                subject_tree = "/".join(subject_path) if subject_path else ""
-
-                results.append(
-                    {
-                        "name": item.get("name", ""),
-                        "subject_tree": subject_tree,
-                        "tags": item.get("tags", ""),
-                        "comment": item.get("comment", ""),
-                        "summary": item.get("summary", ""),
-                    }
-                )
-
-            logger.debug(f"Found {len(results)} similar reference SQLs")
-            return results
 
         except Exception as e:
-            logger.error(f"Error getting similar reference SQLs: {e}")
+            logger.error(f"Error getting existing metric subject_trees: {e}")
             return []
 
-    def _prepare_template_context(self, user_input: SqlSummaryNodeInput) -> dict:
+    def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         """
-        Prepare template context variables for the SQL summary generation template.
+        Prepare template context variables for the semantic model generation template.
 
         Args:
             user_input: User input
@@ -237,32 +260,10 @@ class SqlSummaryAgenticNode(AgenticNode):
         """
         context = {}
 
+        # Tool name lists for template display
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
-        context["sql_summary_dir"] = self.sql_summary_dir
-
-        # Handle subject_tree context based on whether predefined or query from storage
-        if self.subject_tree:
-            # Predefined mode: use provided subject_tree
-            context["has_subject_tree"] = True
-            context["subject_tree"] = self.subject_tree
-        else:
-            # Learning mode: query existing subject_trees from LanceDB
-            context["has_subject_tree"] = False
-            existing_trees = self._get_existing_subject_trees()
-            context["existing_subject_trees"] = existing_trees
-            if existing_trees:
-                logger.info(f"Found {len(existing_trees)} existing reference SQL subject_trees for context")
-
-        # Query similar reference SQLs for classification reference
-        # Use comment as primary query text, fallback to first 200 chars of SQL
-        query_text = user_input.comment if user_input.comment else ""
-        if not query_text and user_input.sql_query:
-            query_text = user_input.sql_query[:200]
-
-        similar_items = self._get_similar_sqls(query_text, top_n=5)
-        context["similar_items"] = similar_items
-        if similar_items:
-            logger.info(f"Found {len(similar_items)} similar reference SQLs for context")
+        context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
+        context["semantic_model_dir"] = self.semantic_model_dir
 
         logger.debug(f"Prepared template context: {context}")
         return context
@@ -270,15 +271,13 @@ class SqlSummaryAgenticNode(AgenticNode):
     def _get_system_prompt(
         self,
         conversation_summary: Optional[str] = None,
-        prompt_version: Optional[str] = None,
         template_context: Optional[dict] = None,
     ) -> str:
         """
-        Get the system prompt for this SQL summary node using enhanced template context.
+        Get the system prompt for semantic model generation using enhanced template context.
 
         Args:
             conversation_summary: Optional summary from previous conversation compact
-            prompt_version: Optional prompt version to use (ignored, hardcoded to "1.0")
             template_context: Optional template context variables
 
         Returns:
@@ -287,8 +286,8 @@ class SqlSummaryAgenticNode(AgenticNode):
         # Hardcoded prompt version
         version = "1.0"
 
-        # Hardcoded system_prompt based on node name
-        template_name = f"{self.configured_node_name}_system"
+        # Hardcoded system_prompt template name
+        template_name = f"{self.NODE_NAME}_system"
 
         try:
             # Prepare template variables
@@ -329,7 +328,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         action_history_manager: Optional[ActionHistoryManager] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
-        Execute the SQL summary node interaction with streaming support.
+        Execute the semantic model generation with streaming support.
 
         Args:
             action_history_manager: Optional action history manager
@@ -342,7 +341,7 @@ class SqlSummaryAgenticNode(AgenticNode):
 
         # Get input from self.input
         if self.input is None:
-            raise ValueError("SQL summary input not set. Set self.input before calling execute_stream.")
+            raise ValueError("Semantic input not set. Set self.input before calling execute_stream.")
 
         user_input = self.input
 
@@ -372,19 +371,11 @@ class SqlSummaryAgenticNode(AgenticNode):
             template_context = self._prepare_template_context(user_input)
 
             # Get system instruction from template with enhanced context
-            # prompt_version is now hardcoded to "1.0" in _get_system_prompt
-            system_instruction = self._get_system_prompt(conversation_summary, None, template_context)
+            system_instruction = self._get_system_prompt(conversation_summary, template_context)
 
             # Add context to user message if provided
             enhanced_message = user_input.user_message
             enhanced_parts = []
-
-            # Add SQL query context if provided
-            if user_input.sql_query:
-                enhanced_parts.append(f"SQL Query:\n```sql\n{user_input.sql_query}\n```")
-
-            if user_input.comment:
-                enhanced_parts.append(f"Comment: {user_input.comment}")
 
             if user_input.catalog or user_input.database or user_input.db_schema:
                 context_parts = []
@@ -404,19 +395,20 @@ class SqlSummaryAgenticNode(AgenticNode):
             assistant_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type="llm_generation",
-                messages="Generating SQL summary with tools...",
+                messages="Generating response with tools...",
                 input_data={"prompt": enhanced_message, "system": system_instruction},
                 status=ActionStatus.PROCESSING,
             )
             action_history_manager.add_action(assistant_action)
             yield assistant_action
 
-            logger.debug(f"Tools available: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
+            logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
+            logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
             logger.debug(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
 
             # Initialize response collection variables
             response_content = ""
-            sql_summary_file = None
+            semantic_model_files = []
             tokens_used = 0
             last_successful_output = None
 
@@ -457,8 +449,8 @@ class SqlSummaryAgenticNode(AgenticNode):
                 else:
                     response_content = str(last_successful_output)  # Fallback to string representation
 
-            # Extract sql_summary_file and output from the final response_content
-            sql_summary_file, extracted_output = self._extract_sql_summary_and_output_from_response(
+            # Extract semantic_model_files and output from the final response_content
+            semantic_model_files, extracted_output = self._extract_semantic_model_and_output_from_response(
                 {"content": response_content}
             )
             if extracted_output:
@@ -469,6 +461,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             # Extract token usage (only in interactive mode with session)
             tokens_used = 0
             if self.execution_mode == "interactive":
+                # With our streaming token fix, only the final assistant action will have accurate usage
                 final_actions = action_history_manager.get_actions()
 
                 # Find the final assistant action with token usage
@@ -484,22 +477,28 @@ class SqlSummaryAgenticNode(AgenticNode):
                                     tokens_used = conversation_tokens
                                     logger.info(f"Added {conversation_tokens} tokens to session")
                                     break
-                            else:
-                                logger.warning(f"no usage token found in this action {action.messages}")
+                                else:
+                                    logger.warning(f"no usage token found in this action {action.messages}")
 
-            # Auto-save to database in workflow mode
-            if self.execution_mode == "workflow" and sql_summary_file:
+            # Auto-save to database in workflow mode (support multiple files)
+            if self.execution_mode == "workflow" and semantic_model_files:
                 try:
-                    self._save_to_db(sql_summary_file)
-                    logger.info(f"Auto-saved to database: {sql_summary_file}")
+                    for semantic_model_file in semantic_model_files:
+                        self._save_to_db(
+                            semantic_model_file,
+                            catalog=user_input.catalog,
+                            database=user_input.database,
+                            db_schema=user_input.db_schema,
+                        )
+                    logger.info(f"Auto-saved {len(semantic_model_files)} semantic models to database")
                 except Exception as e:
                     logger.error(f"Failed to auto-save to database: {e}")
 
             # Create final result
-            result = SqlSummaryNodeResult(
+            result = SemanticNodeResult(
                 success=True,
                 response=response_content,
-                sql_summary_file=sql_summary_file,
+                semantic_models=semantic_model_files,
                 tokens_used=int(tokens_used),
             )
 
@@ -509,7 +508,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             # Create final action
             final_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
-                action_type="sql_summary_response",
+                action_type="semantic_response",
                 messages=f"{self.get_node_name()} interaction completed successfully",
                 input_data=user_input.model_dump(),
                 output_data=result.model_dump(),
@@ -522,7 +521,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             logger.error(f"{self.get_node_name()} execution error: {e}")
 
             # Create error result
-            error_result = SqlSummaryNodeResult(
+            error_result = SemanticNodeResult(
                 success=False,
                 error=str(e),
                 response="Sorry, I encountered an error while processing your request.",
@@ -548,34 +547,34 @@ class SqlSummaryAgenticNode(AgenticNode):
             action_history_manager.add_action(error_action)
             yield error_action
 
-    def _extract_sql_summary_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
+    def _extract_semantic_model_and_output_from_response(self, output: dict) -> tuple[list[str], Optional[str]]:
         """
-        Extract sql_summary_file and formatted output from model response.
+        Extract semantic_model_files and formatted output from model response.
 
         Per prompt template requirements, LLM should return JSON format:
-        {"sql_summary_file": "path", "output": "markdown text"}
+        {"semantic_model_files": ["path1.yml", "path2.yml"], "output": "markdown text"}
 
         Args:
             output: Output dictionary from model generation
 
         Returns:
-            Tuple of (sql_summary_file, output_string) - both can be None if not found
+            Tuple of (semantic_model_files: List[str], output_string: Optional[str])
         """
         try:
             from datus.utils.json_utils import strip_json_str
 
             content = output.get("content", "")
-            logger.info(f"extract_sql_summary_and_output_from_final_resp: {content} (type: {type(content)})")
+            logger.info(f"extract_semantic_model_and_output_from_final_resp: {content} (type: {type(content)})")
 
             # Case 1: content is already a dict (most common)
             if isinstance(content, dict):
-                sql_summary_file = content.get("sql_summary_file")
+                semantic_model_files = content.get("semantic_model_files")
                 output_text = content.get("output")
-                if sql_summary_file or output_text:
-                    logger.debug(f"Extracted from dict: sql_summary_file={sql_summary_file}")
-                    return sql_summary_file, output_text
+                if semantic_model_files and isinstance(semantic_model_files, list):
+                    logger.debug(f"Extracted from dict: semantic_model_files={semantic_model_files}")
+                    return semantic_model_files, output_text
                 else:
-                    logger.warning(f"Dict format but missing expected keys: {content.keys()}")
+                    logger.warning(f"Dict format but missing expected keys or invalid format: {content.keys()}")
 
             # Case 2: content is a JSON string (possibly wrapped in markdown code blocks)
             elif isinstance(content, str) and content.strip():
@@ -587,42 +586,50 @@ class SqlSummaryAgenticNode(AgenticNode):
 
                         parsed = json_repair.loads(cleaned_json)
                         if isinstance(parsed, dict):
-                            sql_summary_file = parsed.get("sql_summary_file")
+                            semantic_model_files = parsed.get("semantic_model_files")
                             output_text = parsed.get("output")
-                            if sql_summary_file or output_text:
-                                logger.debug(f"Extracted from JSON string: sql_summary_file={sql_summary_file}")
-                                return sql_summary_file, output_text
+                            if semantic_model_files and isinstance(semantic_model_files, list):
+                                logger.debug(f"Extracted from JSON string: semantic_model_files={semantic_model_files}")
+                                return semantic_model_files, output_text
                             else:
-                                logger.warning(f"Parsed JSON but missing expected keys: {parsed.keys()}")
+                                logger.warning(
+                                    f"Parsed JSON but missing expected keys or invalid format: {parsed.keys()}"
+                                )
                     except Exception as e:
                         logger.warning(f"Failed to parse cleaned JSON: {e}. Cleaned content: {cleaned_json[:200]}")
 
-            logger.warning(f"Could not extract sql_summary_file from response. Content type: {type(content)}")
-            return None, None
+            logger.warning(f"Could not extract semantic_model_files from response. Content type: {type(content)}")
+            return [], None
 
         except Exception as e:
-            logger.error(f"Unexpected error extracting sql_summary_file: {e}", exc_info=True)
-            return None, None
+            logger.error(f"Unexpected error extracting semantic_model_files: {e}", exc_info=True)
+            return [], None
 
-    def _save_to_db(self, sql_summary_file: str):
+    def _save_to_db(self, semantic_model_file: str, catalog=None, database=None, db_schema=None):
         """
-        Save generated SQL summary to database (synchronous).
+        Save generated semantic model to database (synchronous).
 
         Args:
-            sql_summary_file: Name of the SQL summary file (e.g., "query_001.yaml")
+            semantic_model_file: Name of the semantic model file (e.g., "orders.yaml")
+            catalog: Optional catalog override
+            database: Optional database override
+            db_schema: Optional schema override
         """
         try:
             import os
 
             # Construct full path
-            full_path = os.path.join(self.sql_summary_dir, sql_summary_file)
+            full_path = os.path.join(self.semantic_model_dir, semantic_model_file)
 
             if not os.path.exists(full_path):
-                logger.warning(f"SQL summary file not found: {full_path}")
+                logger.warning(f"Semantic model file not found: {full_path}")
                 return
 
-            # Call static method to save to database with build_mode
-            result = GenerationHooks._sync_reference_sql_to_db(full_path, self.agent_config, self.build_mode)
+            # Call static method to save to database
+            # Deduplication is handled inside _sync_semantic_to_db
+            result = GenerationHooks._sync_semantic_to_db(
+                full_path, self.agent_config, catalog=catalog, database=database, schema=db_schema
+            )
 
             if result.get("success"):
                 logger.info(f"Successfully saved to database: {result.get('message')}")

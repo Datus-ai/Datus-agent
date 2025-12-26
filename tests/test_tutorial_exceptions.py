@@ -7,7 +7,7 @@ import pytest
 from rich.console import Console
 
 import datus.cli.tutorial as tutorial_module
-import datus.storage.metric.metrics_init as metrics_init
+import datus.storage.metric.metric_init as metric_init
 import datus.storage.reference_sql.reference_sql_init as reference_sql_init
 from datus.schemas.action_history import ActionStatus
 
@@ -61,8 +61,9 @@ def patch_node_class(monkeypatch, module, class_name: str, behavior_map: dict[st
     """Patch an Agentic node class so each node_name follows the provided behavior."""
 
     class _NodeStub:
-        def __init__(self, node_name=None, *args, **kwargs):
-            self.node_name = node_name
+        def __init__(self, *args, **kwargs):
+            # For new node classes, determine node_name from the class itself
+            self.node_name = getattr(self, "NODE_NAME", kwargs.get("node_name"))
             self.input = None
 
         def execute_stream(self, action_history_manager):
@@ -109,31 +110,32 @@ def _make_tutorial(tmp_path):
 async def test_process_line_returns_error_without_table(monkeypatch):
     row = {"sql": "SELECT 1", "question": "q"}
     agent_config = DummyAgentConfig()
-    monkeypatch.setattr(metrics_init, "extract_table_names", lambda sql, db_type: [])
+    monkeypatch.setattr(metric_init, "extract_table_names", lambda sql, db_type: [])
 
-    result = await metrics_init.process_line(row, agent_config)
+    result = await metric_init.process_line_metrics_only(row, agent_config)
 
     assert result["successful"] is False
     assert result["error"] == "No table name found in SQL query"
 
 
 @pytest.mark.asyncio
-async def test_process_line_reports_semantic_generation_exception(monkeypatch):
+async def test_process_line_reports_metrics_generation_exception_old(monkeypatch):
+    # This test is now deprecated since we split semantic model and metrics generation
+    # Keeping for reference but it doesn't test the new flow
     row = {"sql": "SELECT * FROM schools", "question": "Describe schools"}
     agent_config = DummyAgentConfig()
 
     behavior_map = {
-        "gen_semantic_model": RuntimeError("semantic model failure"),
-        "gen_metrics": [],
+        "gen_metrics": RuntimeError("metrics failure"),
     }
-    patch_node_class(monkeypatch, metrics_init, "SemanticAgenticNode", behavior_map)
-    monkeypatch.setattr(metrics_init, "extract_table_names", lambda sql, db_type: ["schools"])
+    patch_node_class(monkeypatch, metric_init, "GenMetricsAgenticNode", behavior_map)
+    monkeypatch.setattr(metric_init, "extract_table_names", lambda sql, db_type: ["schools"])
 
-    result = await metrics_init.process_line(row, agent_config)
+    result = await metric_init.process_line_metrics_only(row, agent_config)
 
     assert result["successful"] is False
-    assert "Error generating semantic model" in result["error"]
-    assert "semantic model failure" in result["error"]
+    assert "Error generating metrics" in result["error"]
+    assert "metrics failure" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -141,20 +143,16 @@ async def test_process_line_reports_metrics_generation_exception(monkeypatch):
     row = {"sql": "SELECT * FROM metrics", "question": "Describe metrics"}
     agent_config = DummyAgentConfig()
 
-    semantic_action = SimpleNamespace(
-        status=ActionStatus.SUCCESS, output={"semantic_model": "semantic.yaml"}, messages=""
-    )
     behavior_map = {
-        "gen_semantic_model": [semantic_action],
         "gen_metrics": RuntimeError("metrics failure"),
     }
-    patch_node_class(monkeypatch, metrics_init, "SemanticAgenticNode", behavior_map)
-    monkeypatch.setattr(metrics_init, "extract_table_names", lambda sql, db_type: ["metrics"])
+    patch_node_class(monkeypatch, metric_init, "GenMetricsAgenticNode", behavior_map)
+    monkeypatch.setattr(metric_init, "extract_table_names", lambda sql, db_type: ["metrics"])
 
-    result = await metrics_init.process_line(row, agent_config)
+    result = await metric_init.process_line_metrics_only(row, agent_config)
 
     assert result["successful"] is False
-    assert "Error generating metrics for this question" in result["error"]
+    assert "Error generating metrics" in result["error"]
     assert "metrics failure" in result["error"]
 
 
@@ -165,7 +163,7 @@ def test_init_success_story_metrics_collects_all_errors(monkeypatch):
             {"sql": "SELECT * FROM students", "question": "Q2"},
         ]
     )
-    monkeypatch.setattr(metrics_init.pd, "read_csv", lambda path: df)
+    monkeypatch.setattr(metric_init.pd, "read_csv", lambda path: df)
 
     responses = [
         {"successful": False, "error": "LLM refused to run"},
@@ -178,14 +176,14 @@ def test_init_success_story_metrics_collects_all_errors(monkeypatch):
             raise result
         return result
 
-    monkeypatch.setattr(metrics_init, "process_line", fake_process_line)
+    monkeypatch.setattr(metric_init, "process_line_metrics_only", fake_process_line)
 
     args = Namespace(success_story="anything.csv")
-    success, error_message = metrics_init.init_success_story_metrics(args, DummyAgentConfig())
+    success, error_message = metric_init.init_success_story_metrics(args, DummyAgentConfig())
 
     assert success is False
-    assert "Error processing row 1: LLM refused to run" in error_message
-    assert "Error processing row 2: agent blew up" in error_message
+    assert "Row 1: LLM refused to run" in error_message
+    assert "Row 2: agent blew up" in error_message
 
 
 @pytest.mark.asyncio

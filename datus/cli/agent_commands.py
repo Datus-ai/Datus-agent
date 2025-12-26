@@ -486,7 +486,7 @@ class AgentCommands:
             for metric in metrics:
                 table.add_row(
                     metric.get("name"),
-                    metric.get("llm_text"),
+                    metric.get("description"),
                 )
             self.console.print(table)
         elif not result.success:

@@ -23,13 +23,13 @@ class SubjectUpdater:
     def __init__(self, agent_config: AgentConfig):
         self._agent_config = agent_config
         self.storage_cache = get_storage_cache_instance(self._agent_config)
-        self.metrics_storage: MetricStorage = self.storage_cache.metrics_storage()
+        self.metrics_storage: MetricStorage = self.storage_cache.metric_storage()
         self.reference_sql_storage: ReferenceSqlStorage = self.storage_cache.reference_sql_storage()
 
     def _sub_agent_storage_metrics(self, sub_agent_config: SubAgentConfig) -> MetricStorage:
         name = sub_agent_config.system_prompt
 
-        return self.storage_cache.metrics_storage(name)
+        return self.storage_cache.metric_storage(name)
 
     def _sub_agent_storage_sql(self, sub_agent_config: SubAgentConfig) -> ReferenceSqlStorage:
         name = sub_agent_config.system_prompt

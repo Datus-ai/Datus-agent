@@ -86,7 +86,6 @@ class FilesystemFuncTool(BaseTool):
         try:
             root = Path(self.config.root_path).resolve()
             target = (root / path).resolve()
-
             if not str(target).startswith(str(root)):
                 return None
 
@@ -330,7 +329,8 @@ class FilesystemFuncTool(BaseTool):
         List the contents of a directory.
 
         Args:
-            path: The path of the directory to list
+            path: The path of the directory to list. Use "." to list the workspace root directory.
+                  Note: Only relative paths are allowed for security.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -340,6 +340,7 @@ class FilesystemFuncTool(BaseTool):
         """
         try:
             target_path = self._get_safe_path(path)
+            logger.info(f"target_path: {target_path}")
 
             if not target_path or not target_path.exists():
                 return FuncToolResult(success=0, error=f"Directory not found: {path}")
@@ -361,12 +362,14 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error listing directory {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def directory_tree(self, path: str) -> FuncToolResult:
+    def directory_tree(self, path: str, max_depth: int = 3, max_items: int = 1000) -> FuncToolResult:
         """
-        Get a tree view of a directory.
+        Get a tree view of a directory with depth and item limits.
 
         Args:
-            path: The path of the directory to analyze
+            path: The path of the directory to analyze. Use "." for workspace root.
+            max_depth: Maximum depth to traverse (default: 3). Use -1 for unlimited depth.
+            max_items: Maximum number of items to display (default: 1000). Prevents context overflow.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -384,31 +387,60 @@ class FilesystemFuncTool(BaseTool):
                 return FuncToolResult(success=0, error=f"Path is not a directory: {path}")
 
             try:
+                item_count = {"count": 0}  # Mutable counter to track across recursion
+                truncated = {"flag": False}  # Track if output was truncated
 
-                def build_tree(dir_path: Path, prefix: str = "") -> List[str]:
+                def build_tree(dir_path: Path, prefix: str = "", depth: int = 0) -> List[str]:
+                    # Check depth limit
+                    if max_depth >= 0 and depth >= max_depth:
+                        return [f"{prefix}    ... (max depth {max_depth} reached)"]
+
+                    # Check item limit
+                    if item_count["count"] >= max_items:
+                        truncated["flag"] = True
+                        return [f"{prefix}    ... (max items {max_items} reached)"]
+
                     lines = []
-                    items = sorted(dir_path.iterdir())
+                    try:
+                        items = sorted(dir_path.iterdir())
+                    except PermissionError:
+                        return [f"{prefix}    ... (permission denied)"]
 
                     for i, item in enumerate(items):
+                        # Check item limit before processing
+                        if item_count["count"] >= max_items:
+                            truncated["flag"] = True
+                            lines.append(f"{prefix}    ... (truncated at {max_items} items)")
+                            break
+
                         is_last = i == len(items) - 1
                         current_prefix = "└── " if is_last else "├── "
 
                         if item.is_dir():
                             lines.append(f"{prefix}{current_prefix}{item.name}/")
+                            item_count["count"] += 1
                             next_prefix = prefix + ("    " if is_last else "│   ")
-                            lines.extend(build_tree(item, next_prefix))
+                            lines.extend(build_tree(item, next_prefix, depth + 1))
                         else:
                             try:
                                 size = item.stat().st_size
                                 lines.append(f"{prefix}{current_prefix}{item.name} ({size} bytes)")
                             except Exception:
                                 lines.append(f"{prefix}{current_prefix}{item.name}")
+                            item_count["count"] += 1
 
                     return lines
 
                 tree_lines = [f"{target_path.name}/"]
                 tree_lines.extend(build_tree(target_path))
                 tree_output = "\n".join(tree_lines)
+
+                # Add warning if truncated
+                if truncated["flag"]:
+                    tree_output += (
+                        f"\n\nOutput truncated: Reached limit of {max_items} items. "
+                        "Use smaller max_items or specify a subdirectory."
+                    )
 
                 return FuncToolResult(result=tree_output)
             except PermissionError:

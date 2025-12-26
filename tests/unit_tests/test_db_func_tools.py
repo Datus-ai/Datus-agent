@@ -481,7 +481,7 @@ class TestDBFuncTool:
         db_func_tool.has_semantic_models = True
         db_func_tool._get_semantic_model = Mock(
             return_value={
-                "semantic_model_desc": "Orders semantic model",
+                "description": "Orders semantic model",
                 "dimensions": ["customer_id"],
                 "measures": ["total_sales"],
             }
@@ -649,11 +649,11 @@ class TestDBFuncTool:
             def __init__(self, *args, **kwargs):
                 pass
 
-            def get_semantic_model_size(self):
+            def get_size(self):
                 return 0
 
-        monkeypatch.setattr("datus.tools.tools.SchemaWithValueRAG", StubSchemaRAG)
-        monkeypatch.setattr("datus.tools.tools.SemanticMetricsRAG", StubSemanticRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
 
         class DummyAgentConfig:
             def __init__(self):
@@ -816,7 +816,7 @@ class TestDBFuncToolIntegration:
         db_func_tool.has_semantic_models = True
         db_func_tool._get_semantic_model = Mock(
             return_value={
-                "semantic_model_desc": "Orders summary",
+                "description": "Orders summary",
                 "dimensions": ["order_id"],
                 "measures": ["total_amount"],
             }

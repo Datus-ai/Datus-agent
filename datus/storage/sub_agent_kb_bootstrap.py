@@ -13,10 +13,11 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import ScopedContextLists, SubAgentConfig
-from datus.storage.lancedb_conditions import Node, and_, build_where, eq, in_, like, or_
-from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.lancedb_conditions import Node, and_, build_where, eq, like, or_
+from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -24,10 +25,11 @@ from datus.utils.reference_paths import normalize_reference_path
 
 logger = get_logger(__name__)
 
-SUPPORTED_COMPONENTS = ("metadata", "metrics", "reference_sql")
+SUPPORTED_COMPONENTS = ("metadata", "semantic_model", "metrics", "reference_sql")
 COMPONENT_DIRECTORIES = {
     "metadata": ("schema_metadata.lance", "schema_value.lance"),
-    "metrics": ("semantic_model.lance", "metrics.lance"),
+    "semantic_model": ("semantic_model.lance",),
+    "metrics": ("metrics.lance",),
     "reference_sql": ("reference_sql.lance",),
 }
 # TODO: Implement incremental strategy for partial updates
@@ -141,6 +143,10 @@ class SubAgentBootstrapper:
 
         handlers = {
             "metadata": ("tables", self._handle_metadata),
+            "semantic_model": (
+                "tables",
+                self._handle_semantic_model,
+            ),  # Use tables, semantic models are bound to tables
             "metrics": ("metrics", self._handle_metrics),
             "reference_sql": ("sqls", self._handle_reference_sql),
         }
@@ -380,6 +386,91 @@ class SubAgentBootstrapper:
         )
 
     # --------------------------------------------------------------------- #
+    # Semantic Model
+    # --------------------------------------------------------------------- #
+    def _handle_semantic_model(
+        self,
+        semantic_models: List[str],
+        strategy: SubAgentBootstrapStrategy,
+    ) -> ComponentResult:
+        """Handle semantic model component (tables/columns/entities only)."""
+        if not semantic_models:
+            return ComponentResult(
+                component="semantic_model",
+                status="skipped",
+                message="No semantic models defined in scoped context.",
+            )
+
+        # Check global storage exists
+        global_path = self.agent_config.rag_storage_path()
+        if not self._ensure_source_ready(global_path, "semantic_model"):
+            return ComponentResult(
+                component="semantic_model",
+                status="error",
+                message="Global semantic model store is not initialized.",
+            )
+
+        # Build filter conditions from semantic_models list (table names)
+        condition_map, invalid_tokens = self._metadata_conditions(semantic_models)
+        if not condition_map:
+            details = {"invalid": invalid_tokens} if invalid_tokens else None
+            return ComponentResult(
+                component="semantic_model",
+                status="skipped",
+                message="No valid semantic model filters resolved.",
+                details=details,
+            )
+
+        # Query global storage
+        source = SemanticModelRAG(self.agent_config)
+        aggregate_condition = self._combine_conditions(condition_map)
+        semantic_table = source.storage._search_all(where=aggregate_condition)
+        semantic_rows = semantic_table.to_pylist()
+        missing = self._missing_tokens(source.storage, condition_map)
+
+        # Plan mode: return statistics
+        if strategy == "plan":
+            details = {
+                "match_count": len(semantic_rows),
+                "semantic_objects": [row.get("id") for row in semantic_rows[:20]],
+                "missing": missing,
+                "invalid": invalid_tokens,
+            }
+            return ComponentResult(
+                component="semantic_model",
+                status="plan",
+                message="Semantic model plan generated.",
+                details=details,
+            )
+
+        # No matches: skip
+        if not semantic_rows:
+            return ComponentResult(
+                component="semantic_model",
+                status="skipped",
+                message="No semantic objects matched scoped context.",
+                details={"missing": missing, "invalid": invalid_tokens},
+            )
+
+        # Store to sub-agent scoped KB
+        self._clear_component("semantic_model")
+        target = SemanticModelRAG(self.agent_config, self.sub_agent.system_prompt)
+        target.storage.store_batch(semantic_rows)
+        target.storage.create_indices()
+
+        details = {
+            "stored_semantic_objects": len(semantic_rows),
+            "missing": missing,
+            "invalid": invalid_tokens,
+        }
+        return ComponentResult(
+            component="semantic_model",
+            status="success",
+            message=f"Stored {len(semantic_rows)} semantic objects.",
+            details=details,
+        )
+
+    # --------------------------------------------------------------------- #
     # Metrics
     # --------------------------------------------------------------------- #
     def _handle_metrics(
@@ -402,7 +493,7 @@ class SubAgentBootstrapper:
                 message="Global metrics store is not initialized.",
             )
 
-        source = SemanticMetricsRAG(self.agent_config)
+        source = MetricRAG(self.agent_config)
 
         metric_rows = []
         invalid_tokens = []
@@ -416,7 +507,7 @@ class SubAgentBootstrapper:
             if not parts:
                 invalid_tokens.append(metric)
                 continue
-            metric_table = source.metric_storage.search_all_metrics(subject_path=parts)
+            metric_table = source.search_all_metrics(subject_path=parts)
             if len(metric_table) > 0:
                 metric_rows.extend(metric_table)
             else:
@@ -444,31 +535,22 @@ class SubAgentBootstrapper:
                 details={"missing": missing, "invalid": invalid_tokens},
             )
 
-        semantic_names = sorted(
-            {row.get("semantic_model_name") for row in metric_rows if row.get("semantic_model_name")}
-        )
-        semantic_rows: List[Dict[str, Any]] = []
-        if semantic_names:
-            semantic_condition = in_("semantic_model_name", semantic_names)
-            semantic_table = source.semantic_model_storage._search_all(where=semantic_condition)
-            semantic_rows = semantic_table.to_pylist()
-
+        # Only store metrics (semantic models handled by semantic_model component)
         self._clear_component("metrics")
 
-        target = SemanticMetricsRAG(self.agent_config, self.sub_agent.system_prompt)
-        target.store_batch(semantic_rows, metric_rows)
-        target.after_init()
+        target = MetricRAG(self.agent_config, self.sub_agent.system_prompt)
+        target.storage.store_batch(metric_rows)
+        target.storage.create_indices()
 
         details = {
             "stored_metrics": len(metric_rows),
-            "stored_semantic_models": len(semantic_rows),
             "missing": missing,
             "invalid": invalid_tokens,
         }
         return ComponentResult(
             component="metrics",
             status="success",
-            message=f"Stored {len(metric_rows)} metrics and {len(semantic_rows)} semantic models.",
+            message=f"Stored {len(metric_rows)} metrics.",
             details=details,
         )
 

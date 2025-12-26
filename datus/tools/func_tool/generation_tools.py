@@ -8,7 +8,8 @@ from typing import List
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.metric.store import MetricRAG
+from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -25,7 +26,8 @@ class GenerationTools:
 
     def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
-        self.metrics_rag = SemanticMetricsRAG(agent_config)
+        self.metric_rag = MetricRAG(agent_config)
+        self.semantic_rag = SemanticModelRAG(agent_config)
 
     def available_tools(self) -> List[Tool]:
         """
@@ -37,13 +39,76 @@ class GenerationTools:
         return [
             trans_to_function_tool(func)
             for func in (
-                self.check_semantic_model_exists,
-                self.check_metric_exists,
+                self.check_semantic_object_exists,  # Updated name to reflect broader scope
+                self.check_metric_exists,  # Kept for backward compat or specific metric checks
                 self.generate_sql_summary_id,
                 self.end_generation,
             )
         ]
 
+    def check_semantic_object_exists(
+        self,
+        object_name: str,
+        kind: str = "table",  # table, column, metric
+        table_context: str = "",
+    ) -> FuncToolResult:
+        """
+        Check if a semantic object (table, column, metric) already exists in LanceDB.
+
+        Use this tool to avoid duplicating work.
+
+        Args:
+            object_name: Name of the object (e.g. "orders", "orders.amount")
+            kind: Type of object ("table", "column", "metric")
+            table_context: If checking a column/metric, providing the table name helps narrow search.
+
+        Returns:
+            dict: Check results containing existence status and details.
+        """
+        try:
+            # Route search based on kind
+            if kind == "metric":
+                storage = self.metric_rag.storage
+                # MetricStorage doesn't have kinds=[], it only stores metrics
+                results = storage.search_all(
+                    select_fields=["id", "name"],
+                )
+            else:
+                storage = self.semantic_rag.storage
+                results = storage.search_objects(
+                    query_text=object_name,
+                    kinds=[kind],
+                    table_name=table_context if table_context else None,
+                    top_n=5,
+                )
+
+            # Post-filter for exact name match
+            target_name = object_name.lower()
+            found_object = None
+
+            for obj in results:
+                if obj.get("name", "").lower() == target_name:
+                    found_object = obj
+                    break
+
+            if found_object:
+                return FuncToolResult(
+                    result={
+                        "exists": True,
+                        "id": found_object.get("id"),
+                        "name": found_object.get("name"),
+                        "kind": found_object.get("kind") or kind,
+                        "message": f"Object '{object_name}' ({kind}) already exists.",
+                    }
+                )
+
+            return FuncToolResult(result={"exists": False, "message": f"No {kind} found for '{object_name}'"})
+
+        except Exception as e:
+            logger.error(f"Error checking semantic object existence: {e}")
+            return FuncToolResult(success=0, error=f"Failed to check object: {str(e)}")
+
+    # Backward compatibility wrapper
     def check_semantic_model_exists(
         self,
         table_name: str,
@@ -51,142 +116,38 @@ class GenerationTools:
         database_name: str = "",
         schema_name: str = "",
     ) -> FuncToolResult:
-        """
-        Check if semantic model already exists in LanceDB.
-
-        Use this tool when you need to:
-        - Avoid generating duplicate semantic models
-        - Check if a table already has semantic model definition
-        - Get existing semantic model content for reference
-
-        Args:
-            table_name: Name of the database table
-            catalog_name: Catalog name (optional)
-            database_name: Database name (optional)
-            schema_name: Schema name (optional)
-
-        Returns:
-            dict: Check results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'exists' (bool): Whether semantic model exists
-                    - 'file_path' (str): Path to existing semantic model file if exists
-                    - 'semantic_model' (dict): Existing semantic model content if found
-        """
-        try:
-            # Search for existing semantic models by database name
-            # Use search_all_semantic_models which exists in SemanticMetricsRAG
-            all_models = self.metrics_rag.search_all_semantic_models(database_name=database_name or "")
-
-            # Filter by exact table name match
-            for model in all_models:
-                model_table = model.get("table_name", "").lower()
-                target_table = table_name.lower()
-
-                # Check exact match
-                if model_table == target_table:
-                    # Also check schema and catalog if provided
-                    if schema_name and model.get("schema_name", "").lower() != schema_name.lower():
-                        continue
-                    if catalog_name and model.get("catalog_name", "").lower() != catalog_name.lower():
-                        continue
-
-                    return FuncToolResult(
-                        result={
-                            "exists": True,
-                            "file_path": model.get("semantic_file_path", ""),
-                            "semantic_model_name": model.get("semantic_model_name", ""),
-                            "table_name": model.get("table_name", ""),
-                            "message": f"Semantic model already exists for table '{table_name}'",
-                        }
-                    )
-
-            # No match found
-            return FuncToolResult(
-                result={"exists": False, "message": f"No semantic model found for table '{table_name}'"}
-            )
-
-        except Exception as e:
-            logger.error(f"Error checking semantic model existence: {e}")
-            return FuncToolResult(success=0, error=f"Failed to check semantic model: {str(e)}")
+        """Legacy wrapper for checking table existence."""
+        return self.check_semantic_object_exists(table_name, kind="table")
 
     def check_metric_exists(self, metric_name: str) -> FuncToolResult:
         """
-        Check if metric already exists in LanceDB.
-
-        Use this tool when you need to:
-        - Avoid generating duplicate metrics
-        - Check if a metric already has definition
-        - Get existing metric content for reference
-
-        Args:
-            metric_name: Name of the metric
-
-        Returns:
-            dict: Check results containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains:
-                    - 'exists' (bool): Whether metric exists
-                    - 'metric_name' (str): Metric name if exists
-                    - 'llm_text' (str): Metric definition text if found
+        Check if metric already exists.
         """
-        try:
-            # Search for existing metrics by name
-            all_metrics_table = self.metrics_rag.metric_storage.search(
-                query_txt=metric_name, select_fields=["name", "llm_text"], top_n=3
-            )
+        return self.check_semantic_object_exists(metric_name, kind="metric")
 
-            # Convert PyArrow Table to list of dicts
-            all_metrics = all_metrics_table.to_pylist()
-
-            # Filter by exact metric name match
-            for metric in all_metrics:
-                stored_name = metric.get("name", "").lower()
-                target_name = metric_name.lower()
-
-                # Check exact match
-                if stored_name == target_name:
-                    return FuncToolResult(
-                        result={
-                            "exists": True,
-                            "metric_name": metric.get("name", ""),
-                            "llm_text": metric.get("llm_text", ""),
-                            "message": f"Metric already exists: '{metric_name}'",
-                        }
-                    )
-
-            # No match found
-            return FuncToolResult(result={"exists": False, "message": f"No metric found with name '{metric_name}'"})
-
-        except Exception as e:
-            logger.error(f"Error checking metric existence: {e}")
-            return FuncToolResult(success=0, error=f"Failed to check metric: {str(e)}")
-
-    def end_generation(self, filepath: str) -> FuncToolResult:
+    def end_generation(self, filepaths: List[str]) -> FuncToolResult:
         """
         Complete the generation process.
 
-        Call this tool when you have finished generating a YAML file (semantic model, metric, etc.).
+        Call this tool when you have finished generating YAML files (semantic models, metrics, etc.).
         This tool triggers user confirmation workflow for syncing to LanceDB.
 
         Args:
-            filepath: Absolute path to the generated YAML file
+            filepaths: List of absolute paths to generated YAML files
 
         Returns:
             dict: Result containing:
                 - 'success' (int): 1 if successful, 0 if failed
                 - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains confirmation message and filepath
+                - 'result' (dict): Contains confirmation message and filepaths
         """
         try:
-            logger.info(f"Generation completed for file: {filepath}")
+            logger.info(f"Generation completed for {len(filepaths)} files: {filepaths}")
 
             return FuncToolResult(
                 result={
-                    "message": "Generation completed successfully",
-                    "filepath": filepath,
+                    "message": f"Generation completed successfully for {len(filepaths)} file(s)",
+                    "filepaths": filepaths,
                 }
             )
 
@@ -197,25 +158,6 @@ class GenerationTools:
     def generate_sql_summary_id(self, sql_query: str, comment: str = "") -> FuncToolResult:
         """
         Generate a unique ID for SQL summary based on SQL query and comment.
-
-        This tool helps create consistent, unique IDs for SQL summary entries.
-        Use this tool when you need to generate an ID for a new SQL summary entry.
-
-        Args:
-            sql_query: The SQL query that will be used to generate the ID
-            comment: Optional comment/description that helps make the ID more unique
-
-        Returns:
-            dict: A dictionary with the execution result, containing these keys:
-                  - 'success' (int): 1 for success, 0 for failure
-                  - 'error' (Optional[str]): Error message on failure
-                  - 'result' (str): The generated unique ID
-
-        Example:
-            result = generate_sql_summary_id(
-                sql_query="SELECT * FROM users WHERE active = 1",
-                comment="Active users query"
-            )
         """
         try:
             from datus.storage.reference_sql.init_utils import gen_reference_sql_id

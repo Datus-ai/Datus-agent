@@ -98,18 +98,17 @@ def register_metricflow_tools(server: Server, namespace: Optional[str] = None) -
             ),
             types.Tool(
                 name="get_dimension_values",
-                description="Get possible values for a specific dimension",
+                description="Get possible values for a specific dimension associated with a metric",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "dimension_name": {"type": "string", "description": "Name of the dimension to get values for"},
-                        "metrics": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Optional list of metrics to scope the dimension values",
+                        "metric_name": {
+                            "type": "string",
+                            "description": "Metric that is associated with the dimension (required)",
                         },
                     },
-                    "required": ["dimension_name"],
+                    "required": ["dimension_name", "metric_name"],
                 },
             ),
         ]
@@ -160,9 +159,11 @@ def register_metricflow_tools(server: Server, namespace: Optional[str] = None) -
             elif name == "get_dimension_values":
                 if "dimension_name" not in arguments:
                     raise ValueError("dimension_name parameter is required")
+                if "metric_name" not in arguments:
+                    raise ValueError("metric_name parameter is required")
 
                 result = metricflow_server.get_dimension_values(
-                    dimension_name=arguments["dimension_name"], metrics=arguments.get("metrics")
+                    dimension_name=arguments["dimension_name"], metric_name=arguments["metric_name"]
                 )
                 return [types.TextContent(type="text", text=result)]
 

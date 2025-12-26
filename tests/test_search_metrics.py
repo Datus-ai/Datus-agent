@@ -7,7 +7,8 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.node_models import Metric, SqlTask
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
-from datus.storage.metric.store import SemanticMetricsRAG, qualify_name
+from datus.storage.metric.store import MetricRAG
+from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
@@ -79,25 +80,21 @@ class TestNode:
 
 class TestRag:
     @pytest.fixture
-    def metrics_rag(self, agent_config: AgentConfig) -> SemanticMetricsRAG:
-        return SemanticMetricsRAG(agent_config)
+    def metrics_rag(self, agent_config: AgentConfig) -> MetricRAG:
+        return MetricRAG(agent_config)
 
-    def test_pure_scalar_query(self, metrics_rag: SemanticMetricsRAG):
-        metrics_rag.semantic_model_storage._ensure_table_ready()
-        result = metrics_rag.semantic_model_storage.table.search().to_list()
+    @pytest.fixture
+    def semantic_rag(self, agent_config: AgentConfig) -> SemanticModelRAG:
+        return SemanticModelRAG(agent_config)
+
+    def test_pure_scalar_query(self, metrics_rag: MetricRAG, semantic_rag: SemanticModelRAG):
+        semantic_rag.storage._ensure_table_ready()
+        result = semantic_rag.storage.table.search().to_list()
         assert len(result) > 0
-        metrics_rag.metric_storage._ensure_table_ready()
+        metrics_rag.storage._ensure_table_ready()
 
-        result = metrics_rag.metric_storage.table.search().to_list()
+        result = metrics_rag.storage.table.search().to_list()
         assert len(result) > 0
-
-
-def test_qualify_name_with_none_or_blank():
-    first = None
-    second = ""
-    three = "23456"
-    full_name = qualify_name([first, second, three])
-    assert "%_%_23456" == full_name
 
 
 def test_json():

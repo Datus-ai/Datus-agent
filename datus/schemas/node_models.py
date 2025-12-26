@@ -317,16 +317,16 @@ class Metric(BaseModel):
     """
 
     name: str = Field(..., description="Name of the metric")
-    llm_text: str = Field(default="", description="LLM-friendly text representation of the metric")
+    description: str = Field(default="", description="Description of the metric")
 
     def to_prompt(self, dialect: str = "snowflake") -> str:
-        return self.llm_text if self.llm_text else f"Metric: {self.name}"
+        return self.description if self.description else f"Metric: {self.name}"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Metric:
         return cls(
             name=data.get("name", ""),
-            llm_text=data.get("llm_text", ""),
+            description=data.get("description", ""),
         )
 
 

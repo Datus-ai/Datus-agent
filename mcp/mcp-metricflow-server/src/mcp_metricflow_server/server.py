@@ -158,11 +158,17 @@ class MetricFlowServer:
         else:
             return f"Error validating configs: {result.error}"
 
-    def get_dimension_values(self, dimension_name: str, metrics: Optional[List[str]] = None) -> str:
-        """Get possible values for a dimension."""
-        command = ["get-dimension-values", dimension_name]
-        if metrics:
-            command.extend(["--metric-names", ",".join(metrics)])
+    def get_dimension_values(self, dimension_name: str, metric_name: str) -> str:
+        """Get possible values for a dimension associated with a specific metric.
+
+        Args:
+            dimension_name: Name of the dimension to get values for
+            metric_name: Metric that is associated with the dimension (required)
+
+        Returns:
+            Dimension values as string
+        """
+        command = ["get-dimension-values", "--dimension-name", dimension_name, "--metric-name", metric_name]
 
         result = self._run_mf_command(command)
         if result.success:

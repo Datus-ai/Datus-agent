@@ -98,13 +98,21 @@ class ChatCommands:
     def _create_new_node(self, subagent_name: str = None):
         """Create new node based on subagent_name."""
         if subagent_name:
-            # Use SemanticAgenticNode for gen_semantic_model and gen_metrics
-            if subagent_name in ["gen_semantic_model", "gen_metrics"]:
-                from datus.agent.node.semantic_agentic_node import SemanticAgenticNode
+            # Use GenSemanticModelAgenticNode for gen_semantic_model
+            if subagent_name == "gen_semantic_model":
+                from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
                 self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
-                return SemanticAgenticNode(
-                    node_name=subagent_name,
+                return GenSemanticModelAgenticNode(
+                    agent_config=self.cli.agent_config,
+                    execution_mode="interactive",
+                )
+            # Use GenMetricsAgenticNode for gen_metrics
+            elif subagent_name == "gen_metrics":
+                from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+                self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
+                return GenMetricsAgenticNode(
                     agent_config=self.cli.agent_config,
                     execution_mode="interactive",
                 )
@@ -148,11 +156,12 @@ class ChatCommands:
         self, user_message: str, current_node, at_tables, at_metrics, at_sqls, plan_mode: bool = False
     ):
         """Create node input based on node type - shared logic for CLI and web"""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
-        from datus.agent.node.semantic_agentic_node import SemanticAgenticNode
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
-        if isinstance(current_node, SemanticAgenticNode):
+        if isinstance(current_node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
             from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
             return (

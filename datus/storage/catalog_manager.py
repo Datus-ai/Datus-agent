@@ -11,7 +11,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.cache import get_storage_cache_instance
 from datus.storage.lancedb_conditions import And, eq
-from datus.storage.metric.store import SemanticModelStorage
+from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

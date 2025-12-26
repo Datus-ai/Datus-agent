@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-from conftest import load_acceptance_config
 from rich.table import Table
 from textual.widgets import Static, Tree
 
@@ -10,6 +9,7 @@ from datus.cli.screen.context_app import ScreenType
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.constants import DBType
+from tests.conftest import load_acceptance_config
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@ import pytest
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
-from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql import ReferenceSqlRAG
 from datus.storage.schema_metadata import SchemaWithValueRAG
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS, SubAgentBootstrapper
@@ -80,9 +80,9 @@ class TestBootstrap:
         # metadata
         assert component_results[0].details.get("stored_tables", 0) == table_schema_rag.schema_store.table_size()
 
-        metrics_rag = SemanticMetricsRAG(agent_config, sub_agent_name="test")
+        metrics_rag = MetricRAG(agent_config, sub_agent_name="test")
         # metrics
-        assert component_results[1].details.get("stored_metrics", 0) == metrics_rag.metric_storage.table_size()
+        assert component_results[1].details.get("stored_metrics", 0) == metrics_rag.storage.table_size()
         # sql
         sql_rag = ReferenceSqlRAG(agent_config, sub_agent_name="test")
         assert component_results[2].details.get("stored_sqls", 0) == sql_rag.reference_sql_storage.table_size()

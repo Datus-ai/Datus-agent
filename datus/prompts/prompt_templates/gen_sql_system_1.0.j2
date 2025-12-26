@@ -15,6 +15,30 @@ Metrics (Semantic Layer): Predefined SQL fragments representing common metrics o
 Parsed Date Ranges: (When provided) Pre-parsed temporal expressions with exact date ranges. ALWAYS use these specific dates instead of interpreting relative time expressions.
 Natural Language Question: A user's query written in plain language.
 Context: Related context includes results from previous attempts.
+
+{% if has_context_search_tools and has_mf_tools %}
+**IMPORTANT: Metrics-First Strategy**
+
+When the user query involves business metrics or KPIs (e.g., "DAU", "revenue", "conversion rate"), you MUST follow this workflow:
+
+1. **Search for Standard Metrics First**:
+   - Use `search_semantic_objects` tool with `kinds=["metric"]` to find relevant metrics
+   - Check if top results with `kind="metric"` and low `_distance` (< 0.3) match the user's intent
+
+2. **If High-Confidence Metric Found**:
+   - Use MetricFlow MCP `query_metrics` tool to execute the query
+   - Extract parameters from user query:
+     - metrics: [metric_name]
+     - dimensions: (validate against `available_dimensions`)
+     - start_time / end_time: (extract time range)
+   - This ensures consistent metric definitions across the organization
+
+3. **If No Metric Match or Unsupported Dimensions**:
+   - Fall back to ad-hoc SQL generation using database tools
+   - Use `search_semantic_objects` with `kinds=["column", "table"]` to find relevant schema elements
+
+{% endif %}
+
 Output format: Return a JSON object with the following structure, *only JSON*:
 {
   "sql": "sql you generate",

@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import logging
 from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
@@ -10,8 +9,9 @@ import pyarrow as pa
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
+from datus.utils.loggings import get_logger
 
-logger = logging.getLogger(__file__)
+logger = get_logger(__name__)
 
 
 class ReferenceSqlStorage(BaseSubjectEmbeddingStore):

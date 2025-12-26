@@ -390,42 +390,21 @@ class TestMetricStoragePyArrow:
         storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(sample_metric_data)
 
-        # Simulate SemanticMetricsRAG usage
-        class MockSemanticMetricsRAG:
+        # Simulate MetricRAG usage
+        class MockMetricRAG:
             def __init__(self):
-                self.metric_storage = storage
+                self.storage = storage
 
             def search_all_metrics(self):
                 return self.metric_storage.search_all_metrics()
 
-        rag = MockSemanticMetricsRAG()
+        rag = MockMetricRAG()
         result = rag.search_all_metrics()
 
         assert isinstance(result, list)
         assert len(result) == 2
         assert all("name" in item for item in result)
         assert all("llm_text" in item for item in result)
-
-    def test_hybrid_metrics_search_with_pyarrow(self, temp_db_path, sample_metric_data):
-        """Test hybrid metrics search using PyArrow operations."""
-        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
-        storage.batch_store_metrics(sample_metric_data)
-
-        # Get all metrics as PyArrow table
-        all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
-
-        # Test PyArrow filtering (simulating the filtering logic in search_hybrid_metrics)
-        semantic_names_set = {"sales_model"}
-        filtered_metrics = all_metrics.filter(
-            pc.is_in(all_metrics["semantic_model_name"], pa.array(semantic_names_set))
-        )
-
-        assert isinstance(filtered_metrics, pa.Table)
-        assert filtered_metrics.num_rows == 2
-
-        # Test column selection
-        selected_fields = filtered_metrics.select(["name", "llm_text"])
-        assert len(selected_fields.column_names) == 2
 
     def test_metrics_detail_retrieval(self, temp_db_path, sample_metric_data):
         """Test metrics detail retrieval with PyArrow operations."""

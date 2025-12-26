@@ -764,24 +764,24 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
         from datus.storage.cache import get_storage_cache_instance
 
-        storage = get_storage_cache_instance(self.agent_config).metrics_storage()
+        storage = get_storage_cache_instance(self.agent_config).metric_storage()
         data = storage.search_all_metrics()
 
         result = {}
         for metric in data:
             subject_path = metric.get("subject_path", [])
             name = metric.get("name", "unknown")
-            llm_text = metric.get("llm_text", "")
+            description = metric.get("description", "")
 
             # Build nested dict using subject_path
             if subject_path:
-                insert_into_dict_with_dict(result, subject_path, name, llm_text)
+                insert_into_dict_with_dict(result, subject_path, name, description)
 
             # Flatten key uses "/" separator
             flatten_key = "/".join(subject_path + [name]) if subject_path else name
             self.flatten_data[flatten_key] = {
                 "name": name,
-                "llm_text": llm_text,
+                "description": description,
             }
         return result
 

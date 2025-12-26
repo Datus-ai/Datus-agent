@@ -12,7 +12,7 @@ import pytest
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.embedding_models import get_metric_embedding_model
-from datus.storage.metric.store import MetricStorage, SemanticMetricsRAG
+from datus.storage.metric.store import MetricRAG, MetricStorage
 
 
 @pytest.fixture
@@ -84,20 +84,17 @@ def sample_metrics_with_domain_layers():
     ]
 
 
-class TestSemanticMetricsRAGPyArrow:
-    """Test PyArrow integration in SemanticMetricsRAG."""
+class TestMetricRAGPyArrow:
+    """Test PyArrow integration in MetricRAG."""
 
     def test_search_all_metrics_returns_pyarrow_table(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test that search_all_metrics returns PyArrow Table."""
         metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
         metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
-        # Mock semantic storage
-        mock_semantic_storage = Mock()
-
-        rag = SemanticMetricsRAG.__new__(SemanticMetricsRAG)
-        rag.metric_storage = metric_storage
-        rag.semantic_model_storage = mock_semantic_storage
+        # Mock cache for MetricRAG
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = metric_storage
 
         result = rag.search_all_metrics()
 
@@ -118,14 +115,13 @@ class TestSemanticMetricsRAGPyArrow:
         semantic_storage.search.return_value = semantic_search_result
 
         # Setup RAG
-        rag = SemanticMetricsRAG.__new__(SemanticMetricsRAG)
-        rag.metric_storage = metric_storage
-        rag.semantic_model_storage = semantic_storage
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = metric_storage
 
         # Test the filtering logic that uses PyArrow compute
         all_metrics = pa.Table.from_pylist(metric_storage.search_all_metrics())
 
-        # Simulate the filtering done in search_hybrid_metrics
+        # Simulate the filtering done in search_metrics
         semantic_names_set = semantic_search_result["semantic_model_name"].unique()
 
         filtered_metrics = all_metrics.select(["name", "llm_text"]).filter(
@@ -147,8 +143,8 @@ class TestSemanticMetricsRAGPyArrow:
         metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
         metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
-        rag = SemanticMetricsRAG.__new__(SemanticMetricsRAG)
-        rag.metric_storage = metric_storage
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = metric_storage
 
         # Test the get_metrics_detail method functionality
         result = rag.get_metrics_detail(subject_path=["Sales", "Revenue", "Monthly"], name="monthly_revenue")

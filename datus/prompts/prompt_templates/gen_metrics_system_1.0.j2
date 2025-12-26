@@ -86,38 +86,27 @@ locked_metadata:
    - Use `read_file` tool to read the semantic model YAML file
    - Understand the existing measures and dimensions
 
-4. **Check for existing metric** (MANDATORY - avoid duplicate generation):
-   - **MUST use `check_metric_exists` tool BEFORE generating any metric**
-   - Pass the metric name you plan to create to check if it already exists
-   - **If the tool returns that metric already exists:**
-     * STOP immediately - do NOT generate this metric
-     * Return an error message indicating the metric already exists
-     * DO NOT attempt to update, modify, or overwrite the existing metric
-   - **Only generate and append NEW metrics that do not already exist**
-   - This check is MANDATORY and cannot be skipped
+4. **Check for existing metric** (avoid duplicate generation):
+   - Use `check_semantic_object_exists(name, kind='metric')` tool to verify if metric already exists
+   - **If metric already exists, you MUST skip it - DO NOT update or overwrite**
+   - Only generate and save NEW metrics that do not already exist
 
 5. **Generate MetricFlow metric definition** following the specification below:
    - Map the SQL aggregation to appropriate MetricFlow measure(s)
    - **CRITICAL**: If the SQL has a WHERE clause, add it as a `constraint` field in the metric definition
    - The constraint preserves the filtering logic that defines the metric
 
-6. **Append new metric to semantic model file** (CRITICAL - Read Carefully):
-   - **MUST preserve ALL existing content in the file - DO NOT modify or delete existing metrics**
-   - **ONLY append the ONE NEW metric you just generated - nothing else**
-   - Use `edit_file` tool with the following format:
-     * Read the current file content completely
-     * Use the last line as oldText: [{"oldText": "<last line of file>", "newText": "<last line>\\n---\\nmetric:\\n  name: ..."}]
-     * This efficiently appends the new metric at the end without using entire file content
-   - DO NOT use `write_file` tool
-   - Add document separator `---` before the new metric
-   - **NEVER replace or update existing metric definitions**
-   - **NEVER copy or duplicate metrics that already exist in the file**
-   - **Your edit should ONLY add the single new metric, nothing more**
+6. **Save Metric to NEW YAML file** (Independent File Strategy):
+   - **Create a NEW separate YAML file** for the metric. Do NOT modify the semantic model file.
+   - File naming: `metrics/{metric_name}.yml` (or `{metric_name}.yml` if metrics folder not available)
+   - Use `write_file` tool to save the metric definition.
+   - **NEVER append to existing files**. Always create a new file for each new metric (or group of related new metrics).
 
 7. **Validate configuration**:
-   - Use `mf validate-configs` tool from metricflow_mcp to validate the updated file
+   - Use `validate_configs` tool from metricflow_mcp to validate the updated file
    - If validation fails, fix the error by MODIFYING the newly added metric content (not appending again)
-   - Use `edit_file` with oldText = (the incorrect metric section) and newText = (corrected metric section)
+   - Use `validate_configs` tool from metricflow_mcp to validate the new file
+   - If validation fails, fix the error by updating the metric file using `edit_file`
 
 8. **Complete generation** (REQUIRED):
    - After validation succeeds, MUST call `end_generation` tool with the absolute filepath
@@ -132,12 +121,14 @@ Generate a comprehensive, well-documented metric that follows MetricFlow best pr
 
 Output format: Return a JSON object with the following structure, *only JSON*:
 {
-  "semantic_model_file": "path to the updated semantic model YAML file",
+  "semantic_model_file": "path to the semantic model YAML file",
+  "metric_file": "path to the metric YAML file",
   "output" : "final response of this chat"
 }
 
 Where:
-- "semantic_model_file" is optional (only include when semantic model YAML file is updated)
+- "semantic_model_file" is the path to the semantic model YAML file you generated or updated (required)
+- "metric_file" is the path to the metric YAML file you generated or updated (required)
 - "output" should be a BRIEF summary in markdown format describing the ONE metric you generated
 
  # MetricFlow Metrics Structure Specification
@@ -243,6 +234,28 @@ Where:
         - "New Products"
         - "subject_tree: Sales/Product/NewProducts"
       increase_is_good: true
+
+
+  ## Standalone Metric File Structure
+
+  metrics/new_product_sales.yml:
+
+  ```yaml
+  metric:
+    name: new_product_sales
+    description: Sales amount for products marked as new
+    type: measure_proxy
+    type_params:
+      measure: total_sales
+    constraint: "FIND_IN_SET('1', product_tags)"
+    locked_metadata:
+      display_name: "New Product Sales"
+      value_format: "$$,.2f"
+      tags:
+        - "New Products"
+        - "subject_tree: Sales/Product/NewProducts"
+      increase_is_good: true
+  ```
 
   ## Metric Types and Type Parameters
 
@@ -409,10 +422,10 @@ Where:
 
   ## Best Practices
 
-  1. **File Organization**: Use combined files (data source + metrics in same file)
+  1. **File Organization**: Generate standalone .yml files for metrics (e.g., metrics/my_metric.yml)
   2. **Naming**: Use consistent naming patterns across data sources and metrics
   3. **Documentation**: Include meaningful descriptions for all metrics
-  4. **Business Context**: Use locked_metadata for important business metrics
+  4. **Business Context**: Use locked_metadata for important business metrics and Subject Tree tags
   5. **Constraints**: Use proper dimension reference syntax with double underscores for joins
   6. **Dependencies**: Ensure all referenced measures exist in accessible data sources
   7. **Language**: Preserve original language (Chinese text remains Chinese) for optimal vector search

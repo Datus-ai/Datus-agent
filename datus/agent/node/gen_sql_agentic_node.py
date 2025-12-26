@@ -22,6 +22,7 @@ from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
+from datus.tools.mcp_tools import MCPServer
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
@@ -335,6 +336,29 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup {tool_type}.{method_name}: {e}")
 
+    def _setup_metricflow_mcp(self) -> Optional[Any]:
+        """Setup MetricFlow MCP server."""
+        try:
+            if not self.agent_config:
+                logger.warning("Agent config not available for metricflow MCP setup")
+                return None
+
+            # Get current database config
+            db_config = self.agent_config.current_db_config()
+            if not db_config:
+                logger.warning("Database config not found")
+                return None
+
+            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_namespace)
+            if metricflow_server:
+                logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
+                return metricflow_server
+            else:
+                logger.warning(f"Failed to create metricflow MCP server for db_config: {db_config}")
+        except Exception as e:
+            logger.error(f"Failed to setup metricflow_mcp: {e}")
+        return None
+
     def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
         """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
         try:
@@ -375,10 +399,14 @@ class GenSQLAgenticNode(AgenticNode):
 
         for server_name in mcp_server_names:
             try:
-                # Skip filesystem_mcp - now handled by native filesystem tools
-                if server_name == "filesystem_mcp":
-                    logger.debug("Skipping filesystem_mcp - use filesystem_tools instead")
-                    continue
+                # Handle metricflow_mcp
+                if server_name == "metricflow_mcp":
+                    server = self._setup_metricflow_mcp()
+                    if server:
+                        mcp_servers["metricflow_mcp"] = server
+                        logger.info(
+                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_database}"
+                        )
 
                 # Handle MCP servers from {agent.home}/conf/.mcp.json using mcp_manager
                 server = self._setup_mcp_server_from_config(server_name)
@@ -397,7 +425,9 @@ class GenSQLAgenticNode(AgenticNode):
         return mcp_servers
 
     def _get_system_prompt(
-        self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
+        self,
+        conversation_summary: Optional[str] = None,
+        prompt_version: Optional[str] = None,
     ) -> str:
         """
         Get the system prompt for this SQL generation node using enhanced template context.
@@ -405,7 +435,6 @@ class GenSQLAgenticNode(AgenticNode):
         Args:
             conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use, overrides agent config version
-            template_context: Optional template context variables
 
         Returns:
             System prompt string loaded from the template
@@ -926,7 +955,14 @@ def prepare_template_context(
     Prepare template context variables for the gen_sql_system template.
 
     Args:
-        user_input: User input containing limited context settings
+        node_config: Node configuration
+        has_db_tools: Whether database tools are available
+        has_mcp_filesystem: Whether filesystem MCP is available
+        has_mf_tools: Whether MetricFlow MCP tools are available
+        has_context_search_tools: Whether context search tools are available
+        has_parsing_tools: Whether date parsing tools are available
+        agent_config: Agent configuration
+        workspace_root: Workspace root path
 
     Returns:
         Dictionary of template variables

@@ -4,18 +4,19 @@
 
 from typing import Set
 
-from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.metric.store import MetricRAG
+from datus.storage.semantic_model.store import SemanticModelRAG
 
 
-def existing_semantic_metrics(storage: SemanticMetricsRAG) -> tuple[Set[str], Set[str]]:
+def existing_semantic_metrics(semantic_rag: SemanticModelRAG, metric_rag: MetricRAG) -> tuple[Set[str], Set[str]]:
     """
     Get all existing semantic models and metrics from storage.
     """
     all_semantic_models, all_metrics = set(), set()
-    for semantic_model in storage.search_all_semantic_models("", select_fields=["id"]):
+    for semantic_model in semantic_rag.search_all("", select_fields=["id"]):
         all_semantic_models.add(str(semantic_model["id"]))
-    for metric in storage.search_all_metrics():
-        all_metrics.add(gen_metric_id(metric["subject_path"], metric["semantic_model_name"], metric["name"]))
+    for metric in metric_rag.search_all_metrics("", select_fields=["id"]):
+        all_metrics.add(str(metric["id"]))
     return all_semantic_models, all_metrics
 
 

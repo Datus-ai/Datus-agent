@@ -106,7 +106,15 @@ def create_parser() -> argparse.ArgumentParser:
         "--components",
         type=str,
         nargs="+",
-        choices=["metrics", "metadata", "table_lineage", "document", "ext_knowledge", "reference_sql"],
+        choices=[
+            "metrics",
+            "metadata",
+            "semantic_model",
+            "table_lineage",
+            "document",
+            "ext_knowledge",
+            "reference_sql",
+        ],
         default=["metadata"],
         help="Knowledge base components to initialize",
     )

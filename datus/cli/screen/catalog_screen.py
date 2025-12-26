@@ -24,7 +24,7 @@ from textual.worker import get_current_worker
 from datus.cli.screen.base_widgets import FocusableStatic, InputWithLabel
 from datus.cli.screen.context_screen import ContextScreen
 from datus.storage.catalog_manager import CatalogUpdater
-from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -314,7 +314,7 @@ class CatalogScreen(ContextScreen):
         self.is_fullscreen = False
         self.db_connector: BaseSqlConnector = context_data.get("db_connector")
 
-        self.semantic_storage: SemanticMetricsRAG = SemanticMetricsRAG(self._agent_config)
+        self.semantic_storage: SemanticModelRAG = SemanticModelRAG(self._agent_config)
 
         self.loading_nodes = set()  # Track which nodes are currently loading
         self._current_loading_task = None  # Track current async task
@@ -693,16 +693,14 @@ class CatalogScreen(ContextScreen):
         self._semantic_readonly = True
         self._replace_semantic_panel(Static(text))
 
-    def _render_readonly_panel(self, semantic_records: List[Dict[str, Any]]) -> Group:
+    def _render_readonly_panel(self, semantic_record: Dict[str, Any]) -> Group:
         """Build the semantic model panel content."""
         from rich import box
 
         sections: List[Table] = []
 
-        total = len(semantic_records)
-        record = semantic_records[0]
         table = Table(
-            title=(f"[bold cyan]📋 Semantic Model #1 of {total}: " f"{record.get('semantic_model_name', 'Unnamed')}[/]"),
+            title=(f"[bold cyan]📋 Semantic Model: " f"{semantic_record.get('semantic_model_name', 'Unnamed')}[/]"),
             show_header=False,
             box=box.SIMPLE,
             border_style="blue",
@@ -713,42 +711,41 @@ class CatalogScreen(ContextScreen):
         table.add_column("Key", style="bright_cyan", ratio=1)
         table.add_column("Value", style="yellow", justify="left", ratio=3, no_wrap=False)
 
-        table.add_row("Semantic Model Name", record.get("semantic_model_name", "") or "[dim]N/A[/dim]")
+        table.add_row("Semantic Model Name", semantic_record.get("semantic_model_name", "") or "[dim]N/A[/dim]")
         table.add_row(
             "Semantic File",
-            record.get("semantic_file_path", "") or "[dim]N/A[/dim]",
+            semantic_record.get("semantic_file_path", "") or "[dim]N/A[/dim]",
         )
-        table.add_row("Description", record.get("semantic_model_desc", "") or "[dim]N/A[/dim]")
-        table.add_row("Identifiers", self._create_nested_table_for_json(record.get("identifiers")))
-        table.add_row("Dimensions", self._create_nested_table_for_json(record.get("dimensions")))
-        table.add_row("Measures", self._create_nested_table_for_json(record.get("measures")))
+        table.add_row("Description", semantic_record.get("semantic_model_desc", "") or "[dim]N/A[/dim]")
+        table.add_row("Identifiers", self._create_nested_table_for_json(semantic_record.get("identifiers")))
+        table.add_row("Dimensions", self._create_nested_table_for_json(semantic_record.get("dimensions")))
+        table.add_row("Measures", self._create_nested_table_for_json(semantic_record.get("measures")))
 
         sections.append(table)
 
         return Group(*sections)
 
-    def _render_editable_panel(self, records: List[Dict[str, Any]]) -> Widget:
-        first_record = records[0]
-        panel = SemanticModelPanel(first_record, readonly=False, id="semantic-model-panel")
-        self._semantic_current_record = dict(first_record)
+    def _render_editable_panel(self, semantic_record: Dict[str, Any]) -> Widget:
+        panel = SemanticModelPanel(semantic_record, readonly=False, id="semantic-model-panel")
+        self._semantic_current_record = dict(semantic_record)
         return panel
 
     def _show_semantic_panel(
-        self, records: List[Dict[str, Any]], message: Optional[str] = None, message_style: Optional[str] = None
+        self, record: Optional[Dict[str, Any]], message: Optional[str] = None, message_style: Optional[str] = None
     ) -> None:
-        if not records:
+        if not record:
             self._show_semantic_message(message or "No semantic model information available.", style=message_style)
             return
-        self._semantic_original_values = records[0]
+        self._semantic_original_values = record
         if self._semantic_readonly:
             panel = FocusableStatic(
-                self._render_readonly_panel(semantic_records=records),
+                self._render_readonly_panel(semantic_record=record),
                 classes="semantic-panel",
                 id="semantic-panel",
             )
 
         else:
-            panel = self._render_editable_panel(records)
+            panel = self._render_editable_panel(record)
             self._editing_semantic_panel = panel
 
             def focus_panel_inputs() -> None:
@@ -872,10 +869,10 @@ class CatalogScreen(ContextScreen):
         database_name: str = "",
         schema_name: str = "",
         table_name: str = "",
-    ) -> List[Dict[str, Any]]:
-        """Fetch all semantic model records for the given table identifiers."""
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch semantic model record for the given table identifiers."""
         if not self.semantic_storage:
-            return []
+            return None
 
         return self.semantic_storage.get_semantic_model(
             catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
@@ -1220,7 +1217,7 @@ class CatalogScreen(ContextScreen):
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
     ):
         # Load semantic model details, if storage is available
-        semantic_records: List[Dict[str, Any]] = []
+        semantic_record: Optional[Dict[str, Any]] = None
         message: Optional[str] = None
         message_style = "dim"
 
@@ -1228,13 +1225,13 @@ class CatalogScreen(ContextScreen):
             message = "Semantic model storage is not configured."
         else:
             try:
-                semantic_records = self._fetch_semantic_model_record(
+                semantic_record = self._fetch_semantic_model_record(
                     catalog_name=catalog_name,
                     database_name=database_name,
                     schema_name=schema_name,
                     table_name=table_name,
                 )
-                if not semantic_records:
+                if not semantic_record:
                     message = "No semantic model found for this table."
             except Exception as storage_error:  # pragma: no cover - defensive logging
                 message = f"Failed to load semantic model: {storage_error}"
@@ -1247,7 +1244,7 @@ class CatalogScreen(ContextScreen):
                     )
                 )
 
-        self._show_semantic_panel(semantic_records, message, message_style)
+        self._show_semantic_panel(semantic_record, message, message_style)
 
 
 class NavigationHelpScreen(ModalScreen):

@@ -384,12 +384,21 @@ class ClaudeModel(LLMBaseModel):
                         run_context = RunContextWrapper(context=None, usage=Usage())
                         mcp_tools = await connected_server.list_tools(run_context, agent)
                         all_tools.extend(mcp_tools)
-                        logger.debug(f"Retrieved {len(mcp_tools)} tools from {server_name}")
+                        logger.info(f"Retrieved {len(mcp_tools)} tools from {server_name}")
+
+                        # Debug: Log tool names for MetricFlow server
+                        if "metricflow" in server_name.lower():
+                            tool_names = [tool.name for tool in mcp_tools]
+                            logger.info(f"MetricFlow MCP tools: {tool_names}")
+
                     except Exception as e:
                         logger.error(f"Error getting tools from {server_name}: {str(e)}")
                         continue
 
-                logger.debug(f"Retrieved {len(all_tools)} tools from MCP servers")
+                logger.info(f"Retrieved {len(all_tools)} total tools from MCP servers")
+                if all_tools:
+                    all_tool_names = [tool.name for tool in all_tools]
+                    logger.info(f"All MCP tool names: {all_tool_names}")
 
                 tools = convert_tools_for_anthropic(all_tools)
                 messages = [

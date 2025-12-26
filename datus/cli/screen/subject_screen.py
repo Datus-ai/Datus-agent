@@ -24,7 +24,7 @@ from datus.cli.screen.base_widgets import EditableTree, FocusableStatic, InputWi
 from datus.cli.screen.context_screen import ContextScreen
 from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import SemanticMetricsRAG
+from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.subject_manager import SubjectUpdater
 from datus.utils.loggings import get_logger
@@ -196,19 +196,19 @@ class MetricsPanel(Vertical):
         self.fields.append(semantic_model_field)
         yield semantic_model_field
 
-        llm_text_field = InputWithLabel(
-            "LLM Text",
-            self.entry.get("llm_text", ""),
+        description_field = InputWithLabel(
+            "Description",
+            self.entry.get("description", ""),
             lines=10,
             readonly=self.readonly,
             language="markdown",
         )
-        self.fields.append(llm_text_field)
-        yield llm_text_field
+        self.fields.append(description_field)
+        yield description_field
 
     def _fill_data(self):
         self.fields[0].set_value(self.entry.get("semantic_model_name", ""))
-        self.fields[1].set_value(self.entry.get("llm_text", ""))
+        self.fields[1].set_value(self.entry.get("description", ""))
 
     def set_readonly(self, readonly: bool) -> None:
         """
@@ -235,8 +235,7 @@ class MetricsPanel(Vertical):
             key = field.label_text.lower()
             if key == "semantic model name":
                 key = "semantic_model_name"
-            if key == "llm text":
-                key = "llm_text"
+            # description remains as "description"
             values[key] = field.get_value()
         return values
 
@@ -335,13 +334,11 @@ class ReferenceSqlPanel(Vertical):
 
 
 @lru_cache(maxsize=128)
-def _fetch_metrics_with_cache(
-    metrics_rag: SemanticMetricsRAG, subject_path_tuple: tuple, name: str
-) -> List[Dict[str, Any]]:
+def _fetch_metrics_with_cache(metric_rag: MetricRAG, subject_path_tuple: tuple, name: str) -> List[Dict[str, Any]]:
     """Fetch metrics with caching. subject_path_tuple is a tuple to allow hashing for lru_cache."""
     try:
         subject_path = list(subject_path_tuple) if subject_path_tuple else []
-        table = metrics_rag.get_metrics_detail(
+        table = metric_rag.get_metrics_detail(
             subject_path=subject_path,
             name=name,
         )
@@ -480,7 +477,7 @@ class SubjectScreen(ContextScreen):
         """
         super().__init__(title=title, context_data=context_data, inject_callback=inject_callback)
         self.agent_config: AgentConfig = context_data.get("agent_config")
-        self.metrics_rag: SemanticMetricsRAG = SemanticMetricsRAG(self.agent_config)
+        self.metrics_rag: MetricRAG = MetricRAG(self.agent_config)
         self.sql_rag: ReferenceSqlRAG = ReferenceSqlRAG(self.agent_config)
         self.subject_tree_store = self.metrics_rag.metric_storage.subject_tree
         self.inject_callback = inject_callback
@@ -724,7 +721,7 @@ class SubjectScreen(ContextScreen):
             self._add_tree_node_recursive(tree_node, child_name, child_data)
 
         # Add subject_entries as leaf nodes
-        for entry_key, entry_data in sorted(node_data.get("subject_entries", {}).items()):
+        for _entry_key, entry_data in sorted(node_data.get("subject_entries", {}).items()):
             # Get entry type and name from entry_data
             entry_type = entry_data.get("entry_type", "")
             entry_name = entry_data.get("name", "")
@@ -1104,7 +1101,7 @@ class SubjectScreen(ContextScreen):
             )
 
         # Add all subject nodes except excluded ones
-        for name, node_info in sorted(self.tree_data.items()):
+        for _name, node_info in sorted(self.tree_data.items()):
             if node_info["node_id"] not in excluded_ids:
                 selection_node = self._build_selection_node_recursive(node_info, excluded_ids, current_parent)
                 nodes.append(selection_node)
@@ -1136,7 +1133,7 @@ class SubjectScreen(ContextScreen):
 
         # Recursively add children
         children = []
-        for child_name, child_info in sorted(node_info.get("children", {}).items()):
+        for _child_name, child_info in sorted(node_info.get("children", {}).items()):
             if child_info["node_id"] not in excluded_ids:
                 child_node = self._build_selection_node_recursive(child_info, excluded_ids, current_parent)
                 children.append(child_node)
@@ -1415,7 +1412,7 @@ class SubjectScreen(ContextScreen):
 
             metric_name = str(metric.get("name", ""))
             semantic_model_name = str(metric.get("semantic_model_name", ""))
-            llm_text = str(metric.get("llm_text", ""))
+            description = str(metric.get("description", ""))
 
             table = Table(
                 title=f"[bold cyan]📊 Metric #{idx}: {metric_name}[/bold cyan]",
@@ -1432,8 +1429,8 @@ class SubjectScreen(ContextScreen):
                 table.add_row("Name", metrics_name)
             if semantic_model_name:
                 table.add_row("Semantic Model Name", semantic_model_name)
-            if llm_text:
-                table.add_row("LLM Text", llm_text)
+            if description:
+                table.add_row("Description", description)
 
             sections.append(table)
 
@@ -1562,7 +1559,7 @@ class SubjectScreen(ContextScreen):
         )
 
         # Add all subject nodes as potential parents
-        for name, node_info in sorted(self.tree_data.items()):
+        for _name, node_info in sorted(self.tree_data.items()):
             selection_node = self._build_selection_node_recursive(node_info, set(), current_parent)
             nodes.append(selection_node)
 

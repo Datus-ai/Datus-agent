@@ -11,13 +11,16 @@ from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
-from datus.storage.metric.store import SemanticMetricsRAG
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -66,9 +69,9 @@ class DBFuncTool:
         self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
-        self._semantic_storage = SemanticMetricsRAG(agent_config, sub_agent_name) if agent_config else None
+        self._semantic_storage = SemanticModelRAG(agent_config, sub_agent_name) if agent_config else None
         self.has_schema = self.schema_rag and self.schema_rag.schema_store.table_size() > 0
-        self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_semantic_model_size() > 0
+        self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_size() > 0
 
     def _reset_database_for_rag(self, database_name: str = "") -> str:
         if self.connector.dialect in (DBType.SQLITE, DBType.DUCKDB):
@@ -155,9 +158,84 @@ class DBFuncTool:
             database_name=database,
             schema_name=schema,
             table_name=table_name,
-            select_fields=["semantic_model_name", "dimensions", "measures", "semantic_model_desc"],
+            select_fields=[
+                "semantic_model_name",
+                "dimensions",
+                "measures",
+                "description",
+                "identifiers",
+            ],
         )
-        return {} if not result else result[0]
+        logger.info(f"get_semantic_model result: {result}")
+        return result if result is not None else {}
+
+    def _enrich_fields_with_descriptions(
+        self, field_list_json: str, ddl_columns: List[Dict[str, Any]], field_type: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Enrich field list with descriptions from YAML (priority) and DDL (fallback).
+
+        Args:
+            field_list_json: JSON string of field definitions from semantic model
+            ddl_columns: Column metadata from DDL
+            field_type: Type of fields ("dimensions", "measures", "identifiers")
+
+        Returns:
+            List of enriched field dictionaries with name and description
+        """
+        import json
+
+        try:
+            # Parse field list from JSON string
+            if not field_list_json:
+                return []
+
+            field_list = json.loads(field_list_json) if isinstance(field_list_json, str) else field_list_json
+
+            # Handle simple list of field names
+            if isinstance(field_list, list) and all(isinstance(f, str) for f in field_list):
+                field_list = [{"name": f} for f in field_list]
+            elif not isinstance(field_list, list):
+                return []
+
+            # Build DDL column lookup by name
+            ddl_lookup = {col.get("name", "").lower(): col for col in ddl_columns if "name" in col}
+
+            # Enrich each field
+            enriched_fields = []
+            for field in field_list:
+                if isinstance(field, str):
+                    field = {"name": field}
+                elif not isinstance(field, dict):
+                    continue
+
+                field_name = field.get("name", "")
+                if not field_name:
+                    continue
+
+                enriched_field = {"name": field_name}
+
+                # Priority 1: Use description from YAML if exists
+                if "description" in field and field["description"]:
+                    enriched_field["description"] = field["description"]
+                else:
+                    # Priority 2: Fallback to DDL column comment
+                    ddl_col = ddl_lookup.get(field_name.lower())
+                    if ddl_col and ddl_col.get("comment"):
+                        enriched_field["description"] = ddl_col["comment"]
+
+                # Preserve other field attributes (type, expr, entity, etc.)
+                for key, value in field.items():
+                    if key not in ("name", "description"):
+                        enriched_field[key] = value
+
+                enriched_fields.append(enriched_field)
+
+            return enriched_fields
+
+        except Exception as e:
+            logger.warning(f"Failed to enrich {field_type} with descriptions: {e}")
+            return []
 
     @staticmethod
     def _normalize_identifier_part(value: Optional[str]) -> str:
@@ -395,9 +473,10 @@ class DBFuncTool:
                     if semantic_model:
                         current_has_semantic = True
                         metadata_row["semantic_model_name"] = semantic_model["semantic_model_name"]
-                        metadata_row["description"] = semantic_model["semantic_model_desc"]
+                        metadata_row["description"] = semantic_model["description"]
                         metadata_row["dimensions"] = semantic_model["dimensions"]
                         metadata_row["measures"] = semantic_model["measures"]
+                        metadata_row["identifiers"] = semantic_model["identifiers"]
                         # Only enrich the top match to prioritize the most relevant table
                         break
 
@@ -524,19 +603,26 @@ class DBFuncTool:
         schema_name: Optional[str] = "",
     ) -> FuncToolResult:
         """
-        Fetch detailed column metadata (and optional semantic model info) for the given table.
-        When semantic models exist for the table, `table_info`
-        includes additional description/dimension/measure fields.
+        Fetch detailed column metadata, enriched with Semantic Model information.
+        Use this tool to understand the table schema and business meanings.
 
         Args:
-            table_name: Table identifier to describe; can be partially qualified.
-            catalog: Optional catalog override. Leave blank to rely on connector defaults.
-            database: Optional database override. Leave blank to rely on connector defaults.
-            schema_name: Optional schema override. Leave blank to rely on connector defaults.
+            table_name: Table identifier to describe.
+            catalog: Optional catalog override.
+            database: Optional database override.
+            schema_name: Optional schema override.
 
         Returns:
-            FuncToolResult with result={"table_info": {...}, "columns": [...]}. Scope violations or connector errors
-            surface as success=0 with an explanatory message.
+            FuncToolResult with a dictionary containing:
+            - columns (list): List of column dictionaries, each containing:
+              - name (str): Column name (required)
+              - type (str): Column data type (required)
+              - comment (str): Column description/comment (required, empty string if not available)
+              - is_dimension (bool): Whether this column is a dimension in semantic model
+                (optional, only present if semantic model exists and has dimensions defined)
+            - table (dict, optional): Table-level metadata from semantic model (only if model exists):
+              - name (str): Name of the table
+              - description (str): Table description from semantic model
         """
         try:
             coordinate = self._build_table_coordinate(
@@ -545,25 +631,88 @@ class DBFuncTool:
                 database=database,
                 schema=schema_name,
             )
+
             if not self._table_matches_scope(coordinate):
+                error_msg = f"Table '{table_name}' is outside the scoped context."
+                logger.warning(error_msg)
                 return FuncToolResult(
                     success=0,
-                    error=f"Table '{table_name}' is outside the scoped context.",
+                    error=error_msg,
                 )
+
+            # 1. Get Physical Schema
             column_result = self.connector.get_schema(
                 catalog_name=catalog, database_name=database, schema_name=schema_name, table_name=table_name
             )
-            table_info = {}
+            logger.debug(f"Got {len(column_result)} columns from connector")
+
+            # 2. Normalize columns to ensure required fields
+            columns = []
+            for col in column_result:
+                normalized_col = {
+                    "name": col.get("name", ""),
+                    "type": col.get("type", ""),
+                    "comment": col.get("comment", "") or "",  # Ensure empty string if None
+                }
+                columns.append(normalized_col)
+
+            # 3. Enrich with Semantic Model Info if available
+            result_data = {"columns": columns}
+
             if self.has_semantic_models:
-                semantic_model = self._get_semantic_model(catalog, database, schema_name, table_name)
-                if semantic_model:
-                    table_info["semantic_model_name"] = semantic_model["semantic_model_name"]
-                    table_info["description"] = semantic_model["semantic_model_desc"]
-                    table_info["dimensions"] = semantic_model["dimensions"]
-                    table_info["measures"] = semantic_model["measures"]
-            return FuncToolResult(result={"table_info": table_info, "columns": column_result})
+                try:
+                    logger.debug("Checking for semantic models")
+                    # Use coordinate values (resolved and stripped) for lookup
+                    model = self._get_semantic_model(
+                        coordinate.catalog, coordinate.database, coordinate.schema, coordinate.table
+                    )
+
+                    if model:
+                        logger.debug(f"Found semantic model: {model.get('semantic_model_name', 'unknown')}")
+
+                        # Add table-level metadata
+                        result_data["table"] = {
+                            "name": model.get("semantic_model_name", ""),
+                            "description": model.get("description", ""),
+                        }
+
+                        # Create dimension lookup map
+                        dimensions = model.get("dimensions", [])
+                        dim_map = {d["name"].lower(): d for d in dimensions}
+                        logger.debug(f"Dimension map has {len(dim_map)} entries")
+
+                        # Only add is_dimension field if there are dimensions defined
+                        if dim_map:
+                            for col in columns:
+                                col_name = col["name"].lower()
+
+                                if col_name in dim_map:
+                                    dim_data = dim_map[col_name]
+                                    col["is_dimension"] = True
+
+                                    # Use semantic description if available
+                                    if dim_data.get("description"):
+                                        col["comment"] = dim_data.get("description")
+                                else:
+                                    col["is_dimension"] = False
+                        else:
+                            logger.debug("No dimensions defined in semantic model, skipping is_dimension field")
+                    else:
+                        logger.debug("No semantic model found for this table")
+                except Exception as e:
+                    # If semantic model lookup fails, just log and continue with physical schema only
+                    logger.warning(f"Failed to get semantic model for {table_name}: {e}")
+
+            logger.info(f"describe_table succeeded for {table_name}, returning {len(columns)} columns")
+            return FuncToolResult(result=result_data)
+
         except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
+            import traceback
+
+            error_msg = f"Error describing table {table_name}: {str(e)}"
+            logger.error(error_msg)
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return FuncToolResult(success=0, error=error_msg)
 
     def read_query(self, sql: str) -> FuncToolResult:
         """
@@ -577,6 +726,7 @@ class DBFuncTool:
             underlying error message from the connector.
         """
         try:
+            logger.info(f"read_query sql: {sql}")
             result = self.connector.execute_query(
                 sql, result_format="arrow" if self.connector.dialect == DBType.SNOWFLAKE else "list"
             )
