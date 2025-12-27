@@ -286,7 +286,12 @@ class UIComponents:
 
     def display_success_button(self, sql: str, user_message: str, sql_id, save_callback):
         # Create unique ID for this SQL block
-        if st.button("👍 Success", key=f"save_{sql_id}", help="Save this query as a success story"):
+        if st.button(
+            "👍 Success",
+            key=f"save_{sql_id}",
+            help="Save this query as a success story",
+            use_container_width=True,
+        ):
             save_callback(sql, user_message)
 
     @staticmethod
@@ -547,7 +552,12 @@ class UIComponents:
     ):
         if not sql:
             return
-        if st.button("⏬ Download", key=f"download_{sql_id}", help="Prepare data for download"):
+        if st.button(
+            "⏬ Download",
+            key=f"download_{sql_id}",
+            help="Prepare data for download",
+            use_container_width=True,
+        ):
             download_callback(sql, output_md, execute_result, sql_id, display_column)
 
     def display_markdown_response(self, response: str) -> None:

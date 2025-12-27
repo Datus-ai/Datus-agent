@@ -850,7 +850,7 @@ class StreamlitChatbot:
                                     user_msg = user_msgs[-1]
                             data = self.cli.db_connector.execute_pandas(sql)
                             sql_id = self.ui.display_sql(sql, data)
-                            col1, col2, col3 = st.columns([1, 1, 12])
+                            col1, col2, col3 = st.columns([2, 2, 10])
                             with col1:
                                 self.ui.display_success_button(sql, user_msg, sql_id, self.save_success_story)
                             with col2:
