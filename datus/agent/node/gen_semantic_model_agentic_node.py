@@ -10,7 +10,7 @@ semantic model generation with support for filesystem tools, generation tools,
 database tools, hooks, and metricflow MCP server integration.
 """
 
-from typing import Any, AsyncGenerator, Dict, Literal, Optional
+from typing import AsyncGenerator, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.generation_hooks import GenerationHooks
@@ -20,9 +20,8 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, Semant
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
 from datus.tools.func_tool.generation_tools import GenerationTools
-from datus.tools.func_tool.semantic_tools import SemanticModelTools
-from datus.tools.mcp_tools.mcp_server import MCPServer
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
@@ -81,22 +80,14 @@ class GenSemanticModelAgenticNode(AgenticNode):
             input_data=None,
             agent_config=agent_config,
             tools=[],
-            mcp_servers={},  # Initialize empty, will setup after parent init
-        )
-
-        # Initialize MCP servers
-        self.mcp_servers = self._setup_mcp_servers()
-
-        logger.debug(
-            f"GenSemanticModelAgenticNode final mcp_servers: "
-            f"{len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
+            mcp_servers={},
         )
 
         # Setup tools
         self.db_func_tool: Optional[DBFuncTool] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
-        self.semantic_model_tools: Optional[SemanticModelTools] = None
+        self.gen_semantic_model_tools: Optional[GenSemanticModelTools] = None
         self.hooks = None
         self.setup_tools()
 
@@ -120,6 +111,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         self.tools = []
 
         self._setup_db_tools()
+        self._setup_gen_semantic_model_tools()
         self._setup_semantic_tools()
         self._setup_generation_tools()
         self._setup_filesystem_tools()
@@ -145,18 +137,62 @@ class GenSemanticModelAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
 
-    def _setup_semantic_tools(self):
-        """Setup semantic model specific tools."""
+    def _setup_gen_semantic_model_tools(self):
+        """Setup semantic model specific tools (for generating semantic models)."""
         try:
             if not self.db_func_tool:
-                logger.warning("DBFuncTool not initialized, skipping semantic tools setup")
+                logger.warning("DBFuncTool not initialized, skipping semantic model tools setup")
                 return
 
-            self.semantic_model_tools = SemanticModelTools(self.db_func_tool)
-            self.tools.extend(self.semantic_model_tools.available_tools())
-            logger.debug("Added semantic model tools from SemanticModelTools")
+            self.gen_semantic_model_tools = GenSemanticModelTools(self.db_func_tool)
+            self.tools.extend(self.gen_semantic_model_tools.available_tools())
+            logger.debug("Added semantic model tools from GenSemanticModelTools")
         except Exception as e:
-            logger.error(f"Failed to setup semantic tools: {e}")
+            logger.error(f"Failed to setup semantic model tools: {e}")
+
+    def _setup_semantic_tools(self):
+        """Setup semantic function tools (for querying metrics via adapters)."""
+        try:
+            from datus.tools.func_tool.semantic_tools import SemanticTools
+            from datus.tools.semantic_tools.registry import semantic_adapter_registry
+
+            # Determine adapter type from config or auto-discover
+            adapter_type = None
+
+            # 1. Check if configured in agentic_nodes config
+            if hasattr(self.agent_config, "agentic_nodes") and self.NODE_NAME in self.agent_config.agentic_nodes:
+                node_config = self.agent_config.agentic_nodes[self.NODE_NAME]
+                if isinstance(node_config, dict):
+                    adapter_type = node_config.get("semantic_adapter")
+
+            # 2. Auto-discover if not configured
+            if adapter_type is None:
+                available_adapters = semantic_adapter_registry.list_adapters()
+                if available_adapters:
+                    # Use the first available adapter (prefer metricflow if available)
+                    if "metricflow" in available_adapters:
+                        adapter_type = "metricflow"
+                    else:
+                        adapter_type = next(iter(available_adapters.keys()))
+                    logger.info(f"Auto-discovered semantic adapter: {adapter_type}")
+
+            # Initialize semantic func tool
+            self.semantic_func_tool = SemanticTools(
+                agent_config=self.agent_config,
+                sub_agent_name=self.NODE_NAME,
+                adapter_type=adapter_type,
+            )
+
+            # Add all available tools from semantic func tool
+            semantic_tools = self.semantic_func_tool.available_tools()
+            self.tools.extend(semantic_tools)
+
+            tool_names = [tool.name for tool in semantic_tools]
+            adapter_info = f" (adapter: {adapter_type})" if adapter_type else " (storage only)"
+            logger.info(f"Added semantic func tools{adapter_info}: {', '.join(tool_names)}")
+
+        except Exception as e:
+            logger.error(f"Failed to setup semantic func tools: {e}")
 
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
@@ -200,34 +236,6 @@ class GenSemanticModelAgenticNode(AgenticNode):
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
-
-    def _setup_mcp_servers(self) -> Dict[str, Any]:
-        """Set up MCP servers (metricflow_mcp)."""
-        mcp_servers = {}
-
-        try:
-            if not self.agent_config:
-                logger.warning("Agent config not available for metricflow MCP setup")
-                return mcp_servers
-
-            # Get current database config
-            db_config = self.agent_config.current_db_config()
-            if not db_config:
-                logger.warning("Database config not found")
-                return mcp_servers
-
-            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_namespace)
-            if metricflow_server:
-                mcp_servers["metricflow_mcp"] = metricflow_server
-                logger.info(f"Setup metricflow_mcp MCP server for database: {db_config.database}")
-            else:
-                logger.warning(f"Failed to create metricflow MCP server for db_config: {db_config}")
-        except Exception as e:
-            logger.error(f"Failed to setup metricflow_mcp: {e}")
-
-        logger.info(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
-
-        return mcp_servers
 
     def _get_existing_subject_trees(self) -> list:
         """

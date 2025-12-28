@@ -361,6 +361,7 @@ class AgenticNode(Node):
             "workspace_root",
             "scoped_context",
             "scoped_kb_path",
+            "adapter_type",
         ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns

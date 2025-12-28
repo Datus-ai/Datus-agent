@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import argparse
+import asyncio
 import csv
 import os
 import shutil
@@ -476,7 +477,14 @@ class Agent:
                     self.global_config.check_init_storage_config("semantic_model")
 
                 # Initialize semantic model
-                if hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
+                if hasattr(self.args, "from_adapter") and self.args.from_adapter:
+                    # Pull from semantic adapter
+                    from datus.storage.semantic_model.adapter_init import init_from_adapter
+
+                    successful, error_message = asyncio.run(
+                        init_from_adapter(self.global_config, self.args.from_adapter)
+                    )
+                elif hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
                     successful, error_message = init_semantic_yaml_semantic_model(
                         self.args.semantic_yaml, self.global_config
                     )
@@ -506,12 +514,22 @@ class Agent:
                 else:
                     self.global_config.check_init_storage_config("metric")
                 self._reset_metrics_stream_state()
-                # Initialize metrics using unified SemanticAgenticNode approach
-                if hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
-                    successful, error_message = init_semantic_yaml_metrics(
-                        self.args.semantic_yaml,
-                        self.global_config,
+
+                # Check semantic_model dependency (warning only)
+                semantic_model_path = os.path.join(dir_path, "semantic_model.lance")
+                if not os.path.exists(semantic_model_path):
+                    logger.warning("semantic_model not initialized, metrics may lack context")
+
+                # Initialize metrics
+                if hasattr(self.args, "from_adapter") and self.args.from_adapter:
+                    # Pull from semantic adapter
+                    from datus.storage.metric.adapter_init import init_from_adapter
+
+                    successful, error_message = asyncio.run(
+                        init_from_adapter(self.global_config, self.args.from_adapter, subject_path=subject_tree)
                     )
+                elif hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
+                    successful, error_message = init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
                 else:
                     successful, error_message = init_success_story_metrics(
                         self.args,

@@ -96,9 +96,25 @@ class ChatCommands:
                 self.console.print(f"[bold red]Compact error:[/] {str(e)}")
 
     def _create_new_node(self, subagent_name: str = None):
-        """Create new node based on subagent_name."""
+        """Create new node based on subagent_name and configuration.
+
+        Node class selection priority:
+        1. Hardcoded special cases (gen_semantic_model, gen_metrics, gen_sql_summary)
+        2. node_class field from configuration
+        3. Default to gensql
+        """
         if subagent_name:
-            # Use GenSemanticModelAgenticNode for gen_semantic_model
+            # Get node configuration
+            node_config = {}
+            if hasattr(self.cli.agent_config, "agentic_nodes") and self.cli.agent_config.agentic_nodes:
+                node_config = self.cli.agent_config.agentic_nodes.get(subagent_name, {})
+                if hasattr(node_config, "model_dump"):
+                    node_config = node_config.model_dump()
+
+            # Get node_class from config, default to None
+            node_class_type = node_config.get("node_class") if isinstance(node_config, dict) else None
+
+            # Hardcoded special cases (existing nodes with special constructors)
             if subagent_name == "gen_semantic_model":
                 from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
@@ -107,7 +123,6 @@ class ChatCommands:
                     agent_config=self.cli.agent_config,
                     execution_mode="interactive",
                 )
-            # Use GenMetricsAgenticNode for gen_metrics
             elif subagent_name == "gen_metrics":
                 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
@@ -116,7 +131,6 @@ class ChatCommands:
                     agent_config=self.cli.agent_config,
                     execution_mode="interactive",
                 )
-            # Use SqlSummaryAgenticNode for gen_sql_summary
             elif subagent_name == "gen_sql_summary":
                 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
@@ -126,8 +140,23 @@ class ChatCommands:
                     agent_config=self.cli.agent_config,
                     execution_mode="interactive",
                 )
+            # Config-based node class for custom subagents
+            # node_class only has two types: "gen_sql" (default) and "gen_report"
+            elif node_class_type == "gen_report":
+                from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+                self.console.print(f"[dim]Creating new {subagent_name} session (gen_report)...[/]")
+                return GenReportAgenticNode(
+                    node_id=f"{subagent_name}_cli",
+                    description=f"Report generation node for {subagent_name}",
+                    node_type="gen_report",
+                    input_data=None,
+                    agent_config=self.cli.agent_config,
+                    tools=None,
+                    node_name=subagent_name,
+                )
             else:
-                # Create GenSQLAgenticNode for other subagents
+                # Default: Create GenSQLAgenticNode
                 from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
                 self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
@@ -157,6 +186,7 @@ class ChatCommands:
     ):
         """Create node input based on node type - shared logic for CLI and web"""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -206,6 +236,19 @@ class ChatCommands:
                     plan_mode=plan_mode,
                 ),
                 "gensql",
+            )
+        elif isinstance(current_node, GenReportAgenticNode):
+            from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
+
+            return (
+                GenReportNodeInput(
+                    user_message=user_message,
+                    catalog=self.cli.cli_context.current_catalog if self.cli.cli_context.current_catalog else None,
+                    database=self.cli.cli_context.current_db_name if self.cli.cli_context.current_db_name else None,
+                    db_schema=self.cli.cli_context.current_schema if self.cli.cli_context.current_schema else None,
+                    prompt_version="1.0",
+                ),
+                "gen_report",
             )
         else:
             from datus.schemas.chat_agentic_node_models import ChatNodeInput

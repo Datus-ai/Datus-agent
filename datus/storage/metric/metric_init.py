@@ -5,21 +5,14 @@
 import argparse
 import asyncio
 import os
-<<<<<<< HEAD
 from typing import Any, Dict, List, Optional
-=======
-from typing import Dict, List, Optional
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
 
 import pandas as pd
 
 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
-<<<<<<< HEAD
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
-=======
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
@@ -27,7 +20,6 @@ from datus.utils.sql_utils import extract_table_names
 
 logger = get_logger(__name__)
 
-<<<<<<< HEAD
 BIZ_NAME = "metric_init"
 
 
@@ -37,18 +29,13 @@ def _action_status_value(action: Any) -> Optional[str]:
         return None
     return status.value if hasattr(status, "value") else str(status)
 
-=======
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
 
 def init_success_story_metrics(
     args: argparse.Namespace,
     agent_config: AgentConfig,
     subject_tree: Optional[list] = None,
-<<<<<<< HEAD
     emit: Optional[BatchEventEmitter] = None,
     pool_size: int = 1,
-=======
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
 ) -> tuple[bool, str]:
     """
     Initialize ONLY metrics from success story CSV.
@@ -60,7 +47,6 @@ def init_success_story_metrics(
         args: Command line arguments
         agent_config: Agent configuration
         subject_tree: Optional predefined subject tree categories
-<<<<<<< HEAD
         emit: Optional callback to stream BatchEvent progress events
         pool_size: Number of concurrent tasks (default: 1 for sequential processing)
     """
@@ -112,26 +98,6 @@ def init_success_story_metrics(
         failed_items=len(errors),
     )
 
-=======
-    """
-    df = pd.read_csv(args.success_story)
-
-    async def process_all() -> tuple[bool, List[str]]:
-        errors: List[str] = []
-        for idx, row in df.iterrows():
-            row_idx = idx + 1
-            logger.info(f"Processing row {row_idx}/{len(df)} - generating metrics only")
-            try:
-                result = await process_line_metrics_only(row.to_dict(), agent_config, subject_tree)
-                if not result.get("successful"):
-                    errors.append(f"Row {row_idx}: {result.get('error')}")
-            except Exception as e:
-                errors.append(f"Row {row_idx}: {e}")
-                logger.error(f"Error processing row {row_idx}: {e}")
-        return (len(df) - len(errors)) > 0, errors
-
-    successful, errors = asyncio.run(process_all())
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
     error_message = "\n    ".join(errors) if errors else ""
     return successful, error_message
 
@@ -140,13 +106,9 @@ async def process_line_metrics_only(
     row: dict,
     agent_config: AgentConfig,
     subject_tree: Optional[list] = None,
-<<<<<<< HEAD
     row_idx: Optional[int] = None,
     event_helper: Optional[BatchEventHelper] = None,
 ) -> Dict[str, Any]:
-=======
-) -> Dict[str, any]:
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
     """
     Process a single row to generate ONLY metrics (Step 2).
     Assumes semantic model YAML already exists.
@@ -155,16 +117,12 @@ async def process_line_metrics_only(
         row: CSV row data containing question and sql
         agent_config: Agent configuration
         subject_tree: Optional predefined subject tree categories
-<<<<<<< HEAD
         row_idx: Optional row index for progress events
         event_helper: Optional BatchEventHelper to stream progress events
-=======
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
     """
     logger.info(f"Generating metrics for: {row}")
 
     current_db_config = agent_config.current_db_config()
-<<<<<<< HEAD
     sql = row["sql"]
     question = row["question"]
     item_id = str(row_idx) if row_idx is not None else "unknown"
@@ -194,17 +152,6 @@ async def process_line_metrics_only(
             )
         return {"successful": False, "error": "No table name found in SQL query"}
 
-=======
-    table_names = extract_table_names(row["sql"], agent_config.db_type)
-    full_table_name = table_names[0] if table_names else ""
-
-    if not full_table_name:
-        return {"successful": False, "error": "No table name found in SQL query"}
-
-    # Extract the pure table name (last part of fully qualified name)
-    table_name = full_table_name.split(".")[-1]
-
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
     # Look for existing semantic_model YAML file
     path_manager = get_path_manager()
     semantic_model_dir = str(path_manager.semantic_model_path(agent_config.current_namespace))
@@ -216,13 +163,8 @@ async def process_line_metrics_only(
 
     # Generate metrics using gen_metrics node
     metrics_user_message = (
-<<<<<<< HEAD
         f"Generate metrics for the following SQL query:\n\nSQL:\n{sql}\n\n"
         f"Question: {question}\n\nTable: {table_name}"
-=======
-        f"Generate metrics for the following SQL query:\n\nSQL:\n{row['sql']}\n\n"
-        f"Question: {row['question']}\n\nTable: {table_name}"
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
     )
     if semantic_model_file:
         metrics_user_message += f"\n\nUse the following semantic model: {semantic_model_file}"
@@ -245,7 +187,6 @@ async def process_line_metrics_only(
 
     try:
         async for action in metrics_node.execute_stream(action_history_manager):
-<<<<<<< HEAD
             if event_helper:
                 event_helper.item_processing(
                     item_id=item_id,
@@ -280,15 +221,6 @@ async def process_line_metrics_only(
                 question=question,
                 table_name=table_name,
             )
-=======
-            if action.status == ActionStatus.SUCCESS and action.output:
-                logger.debug(f"Metrics generation action: {action.messages}")
-
-        logger.info(f"Generated metrics for {row['question']}")
-        return {"successful": True, "error": ""}
-    except Exception as e:
-        logger.error(f"Error generating metrics: {e}")
->>>>>>> 1abf174 (efactor semantic model and metrics generation and query)
         return {"successful": False, "error": str(e)}
 
 

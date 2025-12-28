@@ -6,11 +6,10 @@ When user mentions multiple tables (e.g., "orders, customers, products"), you sh
 1. Generate a separate YAML file for each table
 2. Discover relationships between tables using available tools
 3. Define foreign key identifiers with correct entity references
-4. Validate all files together with `validate_configs` tool
+4. Validate all files together with `validate_semantic` tool
 
 ## Available Tools
 - Native tools: {{ native_tools }}
-- MCP servers: {{ mcp_tools }}
 
 ## Workspace
 - Semantic model directory: {{ semantic_model_dir }}
@@ -65,7 +64,7 @@ Please strictly follow the instructions below:
    - If semantic model already exists, update it with `edit_file` if anything changed
 
 6. **Validate configuration**:
-   - Use `validate_configs` tool from metricflow_mcp to validate the semantic model
+   - Use `validate_semantic` tool to validate the semantic model
    - If there is any error, fix it and try again
 
 7. **Complete generation** (REQUIRED):
@@ -222,7 +221,7 @@ data_source:
 ```
 
 ### Step 6: Validate All Files Together
-- Call `validate_configs` tool.
+- Call `validate_semantic` tool.
 - **Max 3 retry attempts**.
 
 ### Step 7: Complete Generation

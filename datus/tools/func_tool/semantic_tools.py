@@ -3,482 +3,528 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Semantic Model Generation Tools
+Semantic Function Tools
 
-This module provides specialized tools for semantic model generation,
-including table relationship analysis and column usage pattern detection.
-These tools are only used during semantic model generation.
+Provides unified interface to semantic layer services through adapters.
+Tools delegate to registered semantic adapters while leveraging unified storage for performance.
 """
 
-from typing import Any, Dict, List, Optional
+import asyncio
+from typing import List, Optional
 
 from agents import Tool
 
-from datus.tools.func_tool.base import FuncToolResult
-from datus.tools.func_tool.database import DBFuncTool
+from datus.configuration.agent_config import AgentConfig
+from datus.storage.metric.store import MetricRAG
+from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.tools.func_tool.attribution_utils import DimensionAttributionUtil
+from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.semantic_tools.base import BaseSemanticAdapter
+from datus.tools.semantic_tools.models import AnomalyContext
+from datus.tools.semantic_tools.registry import semantic_adapter_registry
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 
-class SemanticModelTools:
+def _run_async(coro):
     """
-    Specialized tools for semantic model generation.
+    Run async coroutine safely, handling both sync and async contexts.
 
-    These tools analyze database structures and historical query patterns
-    to help generate comprehensive semantic models.
+    Args:
+        coro: Coroutine to run
+
+    Returns:
+        Result of the coroutine
     """
+    try:
+        # Try to get the running event loop
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No event loop running, use asyncio.run()
+        return asyncio.run(coro)
 
-    def __init__(self, db_tool: DBFuncTool):
+    # Event loop is running, create a new thread to run the coroutine
+    import threading
+
+    result = None
+    exception = None
+
+    def run_in_thread():
+        nonlocal result, exception
+        try:
+            result = asyncio.run(coro)
+        except Exception as e:
+            exception = e
+
+    thread = threading.Thread(target=run_in_thread)
+    thread.start()
+    thread.join()
+
+    if exception:
+        raise exception
+    return result
+
+
+class SemanticTools:
+    """Function tool wrapper for semantic layer operations."""
+
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        sub_agent_name: Optional[str] = None,
+        adapter_type: Optional[str] = None,
+    ):
         """
-        Initialize semantic model tools.
+        Initialize semantic function tool.
 
         Args:
-            db_tool: Database function tool instance for accessing database info
+            agent_config: Agent configuration
+            sub_agent_name: Optional sub-agent name for scoped storage
+            adapter_type: Optional adapter type (e.g., "metricflow"). If not provided, tools will use storage only.
         """
-        self.db_tool = db_tool
-        self.agent_config = db_tool.agent_config
-        self.sub_agent_name = db_tool.sub_agent_name
+        self.agent_config = agent_config
+        self.sub_agent_name = sub_agent_name
+        self.adapter_type = adapter_type
+
+        # Initialize storage RAG interfaces
+        self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name)
+        self.metric_rag = MetricRAG(agent_config, sub_agent_name)
+
+        # Lazy load adapter and attribution tool
+        self._adapter: Optional[BaseSemanticAdapter] = None
+        self._attribution_tool: Optional[DimensionAttributionUtil] = None
+
+    @property
+    def adapter(self) -> Optional[BaseSemanticAdapter]:
+        """Lazy load semantic adapter if configured."""
+        if self._adapter is None and self.adapter_type:
+            try:
+                # Try to get adapter-specific config from agent_config
+                adapter_config = getattr(self.agent_config, f"{self.adapter_type}_config", None)
+                if adapter_config is None:
+                    # Get namespace from agent_config
+                    namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_namespace
+
+                    # Get the registered config class for this adapter type
+                    metadata = semantic_adapter_registry.get_metadata(self.adapter_type)
+                    if metadata and metadata.config_class:
+                        # Use the adapter's config class
+                        adapter_config = metadata.config_class(namespace=namespace)
+                    else:
+                        # Fallback to base config
+                        from datus.tools.semantic_tools.config import SemanticAdapterConfig
+
+                        adapter_config = SemanticAdapterConfig(namespace=namespace)
+
+                self._adapter = semantic_adapter_registry.create_adapter(self.adapter_type, adapter_config)
+                logger.info(f"Loaded semantic adapter: {self.adapter_type}")
+            except Exception as e:
+                logger.warning(f"Failed to load semantic adapter '{self.adapter_type}': {e}")
+                self._adapter = None
+        return self._adapter
+
+    @property
+    def attribution_tool(self) -> Optional[DimensionAttributionUtil]:
+        """Lazy load attribution tool when adapter is available."""
+        if self._attribution_tool is None and self.adapter is not None:
+            self._attribution_tool = DimensionAttributionUtil(self.adapter)
+        return self._attribution_tool
 
     def available_tools(self) -> List[Tool]:
-        """Get all available semantic model tools."""
-        from datus.tools.func_tool import trans_to_function_tool
+        """
+        Get list of available tools.
 
-        bound_tools = []
-        methods_to_convert = [
-            self.analyze_table_relationships,
-            self.get_multiple_tables_ddl,
-            self.analyze_column_usage_patterns,
+        Returns:
+            List of Tool objects for LLM function calling
+        """
+        tools = [
+            trans_to_function_tool(self.search_metrics),
+            trans_to_function_tool(self.list_metrics),
+            trans_to_function_tool(self.get_dimensions),
+            trans_to_function_tool(self.query_metrics),
         ]
 
-        for bound_method in methods_to_convert:
-            bound_tools.append(trans_to_function_tool(bound_method))
-        return bound_tools
+        # Add adapter-dependent tools
+        if self.adapter:
+            tools.append(trans_to_function_tool(self.validate_semantic))
 
-    def analyze_table_relationships(
+        # Add attribution tools if attribution_tool is available
+        if self.attribution_tool:
+            tools.append(trans_to_function_tool(self.attribution_analyze))
+
+        return tools
+
+    def search_metrics(
         self,
-        tables: List[str],
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-        sample_sql_queries: int = 20,
+        query_text: str,
+        subject_path: Optional[List[str]] = None,
+        top_n: int = 5,
     ) -> FuncToolResult:
         """
-        Analyze relationships between tables using multiple strategies.
-
-        Discovers foreign key relationships by examining:
-        1. DDL FOREIGN KEY constraints (highest confidence)
-        2. Historical JOIN patterns from stored SQL queries (medium confidence)
-        3. Column name similarity analysis (low confidence fallback)
-
-        Use this tool when generating multi-table semantic models to discover
-        how tables are related through foreign key relationships.
+        Search metrics using vector search in unified storage.
 
         Args:
-            tables: List of table names to analyze relationships for
-            catalog: Optional catalog override
-            database: Optional database override
-            schema_name: Optional schema override
-            sample_sql_queries: Number of historical SQL queries to analyze for JOIN patterns
+            query_text: Natural language query for metric search
+            subject_path: Optional subject tree path filter (e.g., ["Finance", "Revenue"])
+            top_n: Maximum number of results to return
 
         Returns:
-            FuncToolResult with result containing:
-            {
-                "relationships": [
-                    {
-                        "source_table": "orders",
-                        "source_column": "customer_id",
-                        "target_table": "customers",
-                        "target_column": "id",
-                        "confidence": "high|medium|low",
-                        "evidence": "foreign_key|join_pattern|column_name"
-                    },
-                    ...
-                ],
-                "summary": "Found 3 relationships across 3 tables"
-            }
+            FuncToolResult with matching metrics
         """
         try:
-            relationships = []
-
-            # Strategy 1: Extract FOREIGN KEY from DDL
-            fk_relationships = self._extract_foreign_keys_from_ddl(tables, catalog, database, schema_name)
-            relationships.extend(fk_relationships)
-
-            # Strategy 2: Analyze historical SQL JOIN patterns
-            join_relationships = self._analyze_join_patterns_from_history(tables, sample_sql_queries)
-            relationships.extend(join_relationships)
-
-            # Strategy 3: Infer from column names (fallback)
-            if not relationships:
-                name_relationships = self._infer_from_column_names(tables, catalog, database, schema_name)
-                relationships.extend(name_relationships)
-
-            # Deduplicate and sort by confidence
-            deduplicated = self._deduplicate_relationships(relationships)
-
-            return FuncToolResult(
-                result={
-                    "relationships": deduplicated,
-                    "summary": f"Found {len(deduplicated)} relationships across {len(tables)} tables",
-                }
+            results = self.metric_rag.search_metrics(
+                query_text=query_text,
+                subject_path=subject_path,
+                top_n=top_n,
             )
 
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
-
-    def get_multiple_tables_ddl(
-        self,
-        tables: List[str],
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-    ) -> FuncToolResult:
-        """
-        Batch retrieve DDL for multiple tables.
-
-        More efficient than calling get_table_ddl multiple times.
-
-        Args:
-            tables: List of table names
-            catalog: Optional catalog override
-            database: Optional database override
-            schema_name: Optional schema override
-
-        Returns:
-            FuncToolResult with result as list of table DDL info:
-            [
-                {"table_name": "orders", "definition": "CREATE TABLE ...", ...},
-                {"table_name": "customers", "definition": "CREATE TABLE ...", ...}
-            ]
-        """
-        try:
-            results = []
-            for table in tables:
-                ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
-                if ddl_result.success and ddl_result.result:
-                    results.append({"table_name": table, **ddl_result.result})
-                else:
-                    results.append({"table_name": table, "error": ddl_result.error})
-
-            return FuncToolResult(result=results)
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
-
-    def analyze_column_usage_patterns(
-        self,
-        table_name: str,
-        columns: Optional[List[str]] = None,
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-        sample_sql_queries: int = 50,
-    ) -> FuncToolResult:
-        """
-        Analyze how columns are used in historical SQL queries.
-
-        Discovers column usage patterns including:
-        1. Filter operators (LIKE, IN, FIND_IN_SET, =, >, <, BETWEEN, etc.)
-        2. Common filter values or patterns
-        3. Usage frequency
-
-        Use this tool when generating semantic models to understand
-        how columns are typically queried and filtered.
-
-        Args:
-            table_name: Table name to analyze
-            columns: Optional list of specific columns to analyze (None = all columns)
-            catalog: Optional catalog override
-            database: Optional database override
-            schema_name: Optional schema override
-            sample_sql_queries: Number of historical SQL queries to analyze
-
-        Returns:
-            FuncToolResult with result containing:
-            {
-                "column_patterns": {
-                    "status": {
-                        "operators": ["=", "IN"],
-                        "functions": [],
-                        "common_filters": ["status = 1", "status IN (1,2,3)"],
-                        "usage_count": 45,
-                        "usage_description": "Commonly filtered with =, IN"
-                    },
-                    "tags": {
-                        "operators": ["LIKE"],
-                        "functions": ["FIND_IN_SET"],
-                        "common_filters": ["FIND_IN_SET('vip', tags)"],
-                        "usage_count": 23,
-                        "usage_description": "Use FIND_IN_SET() for filtering"
-                    }
-                },
-                "summary": "Analyzed 2 columns from 50 SQL queries"
-            }
-        """
-        try:
-            if not self.agent_config:
+            if not results:
                 return FuncToolResult(
-                    success=0, error="Cannot analyze column patterns without agent_config (no SQL history available)"
+                    success=0,
+                    error=f"No metrics found matching '{query_text}'",
+                    result=[],
                 )
 
-            import re
-
-            from datus.storage.reference_sql.store import ReferenceSqlRAG
-
-            # Get table schema to know which columns exist
-            schema_result = self.db_tool.describe_table(table_name, catalog, database, schema_name)
-            if not schema_result.success:
-                return FuncToolResult(success=0, error=f"Failed to get table schema: {schema_result.error}")
-
-            # describe_table returns {"columns": [...], "table": {...}}
-            table_columns = schema_result.result.get("columns", [])
-            all_columns = [col["name"] for col in table_columns]
-            target_columns = columns if columns else all_columns
-
-            # Initialize pattern tracking
-            column_patterns = {
-                col: {
-                    "operators": set(),
-                    "functions": set(),
-                    "common_filters": [],
-                    "usage_count": 0,
-                    "filter_examples": [],
-                }
-                for col in target_columns
-            }
-
-            # Search for SQL queries containing the table
-            sql_rag = ReferenceSqlRAG(self.agent_config, self.sub_agent_name)
-            search_results = sql_rag.search_reference_sql(
-                query_text=f"SELECT FROM {table_name}", top_n=sample_sql_queries
-            )
-
-            logger.info(f"Found {len(search_results)} historical SQL queries for table {table_name}")
-
-            # Pattern definitions for different operators and functions
-            operator_patterns = {
-                "LIKE": r"\b{col}\b\s+LIKE\s+",
-                "IN": r"\b{col}\b\s+IN\s*\(",
-                "BETWEEN": r"\b{col}\b\s+BETWEEN\s+",
-                "=": r"\b{col}\b\s*=\s*",
-                ">": r"\b{col}\b\s*>\s*",
-                "<": r"\b{col}\b\s*<\s*",
-                ">=": r"\b{col}\b\s*>=\s*",
-                "<=": r"\b{col}\b\s*<=\s*",
-                "!=": r"\b{col}\b\s*(?:!=|<>)\s*",
-            }
-
-            function_patterns = {
-                "FIND_IN_SET": r"FIND_IN_SET\s*\([^,]+,\s*\b{col}\b\s*\)",
-                "JSON_EXTRACT": r"JSON_EXTRACT\s*\(\s*\b{col}\b\s*,",
-                "JSON_CONTAINS": r"JSON_CONTAINS\s*\(\s*\b{col}\b\s*,",
-                "REGEXP": r"\b{col}\b\s+REGEXP\s+",
-                "MATCH": r"MATCH\s*\(\s*\b{col}\b\s*\)",
-            }
-
-            # Analyze each SQL query
-            for sql_entry in search_results:
-                sql_text = sql_entry.get("sql", "")
-
-                # Check if this SQL actually uses our target table
-                if not sql_text or table_name.lower() not in sql_text.lower():
-                    continue
-
-                for col in target_columns:
-                    # Check for operators
-                    for op, pattern_template in operator_patterns.items():
-                        pattern = pattern_template.replace("{col}", re.escape(col))
-                        if re.search(pattern, sql_text, re.IGNORECASE):
-                            column_patterns[col]["operators"].add(op)
-                            column_patterns[col]["usage_count"] += 1
-
-                            # Extract example filter (limit to 150 chars)
-                            match = re.search(rf"\b{re.escape(col)}\b[^,;)]*", sql_text, re.IGNORECASE)
-                            if match and len(column_patterns[col]["filter_examples"]) < 3:
-                                example = match.group(0).strip()[:150]
-                                if example not in column_patterns[col]["filter_examples"]:
-                                    column_patterns[col]["filter_examples"].append(example)
-
-                    # Check for functions
-                    for func, pattern_template in function_patterns.items():
-                        pattern = pattern_template.replace("{col}", re.escape(col))
-                        if re.search(pattern, sql_text, re.IGNORECASE):
-                            column_patterns[col]["functions"].add(func)
-                            column_patterns[col]["usage_count"] += 1
-
-                            # Extract example function call
-                            match = re.search(rf"{func}\s*\([^)]*\b{re.escape(col)}\b[^)]*\)", sql_text, re.IGNORECASE)
-                            if match and len(column_patterns[col]["filter_examples"]) < 3:
-                                example = match.group(0).strip()[:150]
-                                if example not in column_patterns[col]["filter_examples"]:
-                                    column_patterns[col]["filter_examples"].append(example)
-
-            # Generate usage descriptions
-            result_patterns = {}
-            for col, patterns in column_patterns.items():
-                if patterns["usage_count"] == 0:
-                    continue
-
-                # Convert sets to sorted lists
-                operators = sorted(patterns["operators"])
-                functions = sorted(patterns["functions"])
-
-                # Generate natural language description
-                desc_parts = []
-                if functions:
-                    desc_parts.append(f"Use {', '.join(functions)}() for queries")
-                if operators:
-                    op_desc = "Commonly filtered with " + ", ".join(operators)
-                    desc_parts.append(op_desc)
-
-                if patterns["filter_examples"]:
-                    examples = " | ".join(patterns["filter_examples"][:2])
-                    desc_parts.append(f"Example filters: {examples}")
-
-                usage_description = ". ".join(desc_parts) if desc_parts else "Used in queries"
-
-                result_patterns[col] = {
-                    "operators": operators,
-                    "functions": functions,
-                    "common_filters": patterns["filter_examples"][:3],
-                    "usage_count": patterns["usage_count"],
-                    "usage_description": usage_description,
-                }
-
-            logger.info(f"Analyzed {len(result_patterns)} columns with usage patterns")
+            # Format results for LLM
+            formatted_metrics = []
+            for metric in results:
+                formatted_metrics.append(
+                    {
+                        "name": metric.get("name"),
+                        "description": metric.get("description"),
+                        "type": metric.get("metric_type"),
+                        "dimensions": metric.get("dimensions", []),
+                        "measures": metric.get("base_measures", []),
+                        "subject_path": metric.get("subject_path", []),
+                    }
+                )
 
             return FuncToolResult(
-                result={
-                    "column_patterns": result_patterns,
-                    "summary": f"Analyzed {len(result_patterns)} columns from {len(search_results)} SQL queries",
-                }
+                success=1,
+                result=formatted_metrics,
             )
 
         except Exception as e:
-            logger.error(f"Error analyzing column usage patterns: {e}")
-            return FuncToolResult(success=0, error=str(e))
+            logger.error(f"Error searching metrics: {e}")
+            return FuncToolResult(
+                success=0,
+                error=f"Failed to search metrics: {str(e)}",
+            )
 
-    # ========== Private helper methods ==========
+    def list_metrics(
+        self,
+        path: Optional[List[str]] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> FuncToolResult:
+        """
+        List available metrics from storage (or adapter if storage is empty).
 
-    def _extract_foreign_keys_from_ddl(
-        self, tables: List[str], catalog: str, database: str, schema_name: str
-    ) -> List[Dict[str, Any]]:
-        """Extract FOREIGN KEY constraints from DDL definitions."""
-        import re
+        Args:
+            path: Optional subject tree path filter (e.g., ["Finance", "Revenue"])
+            limit: Maximum number of metrics to return
+            offset: Number of metrics to skip
 
-        relationships = []
-        for table in tables:
-            ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
-            if ddl_result.success and ddl_result.result:
-                ddl_text = ddl_result.result.get("definition", "")
-                # Match: FOREIGN KEY (column) REFERENCES target_table(target_column)
-                fk_pattern = r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+(\w+)\s*\(([^)]+)\)"
-                for match in re.finditer(fk_pattern, ddl_text, re.IGNORECASE):
-                    relationships.append(
-                        {
-                            "source_table": table,
-                            "source_column": match.group(1).strip(),
-                            "target_table": match.group(2).strip(),
-                            "target_column": match.group(3).strip(),
-                            "confidence": "high",
-                            "evidence": "foreign_key",
-                        }
-                    )
-        return relationships
+        Returns:
+            FuncToolResult with list of metrics
+        """
+        try:
+            # Try storage first
+            all_metrics = self.metric_rag.search_all_metrics()
 
-    def _analyze_join_patterns_from_history(self, tables: List[str], sample_size: int) -> List[Dict[str, Any]]:
-        """Search historical SQL queries for JOIN patterns."""
-        if not self.agent_config:
-            return []
+            # Filter by subject path if provided
+            if path:
+                all_metrics = [m for m in all_metrics if m.get("subject_path", [])[: len(path)] == path]
 
-        import re
+            # Apply pagination
+            paginated_metrics = all_metrics[offset : offset + limit]
 
-        from datus.storage.reference_sql.store import ReferenceSqlRAG
+            if not paginated_metrics and self.adapter:
+                # Fallback to adapter if storage is empty
+                logger.info("Storage empty, falling back to adapter")
+                async_result = _run_async(self.adapter.list_metrics(path=path, limit=limit, offset=offset))
+                paginated_metrics = [
+                    {
+                        "name": m.name,
+                        "description": m.description,
+                        "type": m.type,
+                        "dimensions": m.dimensions,
+                        "measures": m.measures,
+                        "unit": m.unit,
+                        "format": m.format,
+                        "path": m.path,
+                    }
+                    for m in async_result
+                ]
 
-        sql_rag = ReferenceSqlRAG(self.agent_config, self.sub_agent_name)
-        relationships = []
+            return FuncToolResult(
+                success=1,
+                result=paginated_metrics,
+            )
 
-        # Search for SQL queries containing each table
-        for table in tables:
-            try:
-                search_results = sql_rag.search_reference_sql(query_text=f"JOIN {table}", top_n=sample_size)
+        except Exception as e:
+            logger.error(f"Error listing metrics: {e}")
+            return FuncToolResult(
+                success=0,
+                error=f"Failed to list metrics: {str(e)}",
+            )
 
-                for sql_entry in search_results:
-                    sql_text = sql_entry.get("sql", "")
-                    # Match: table1.column1 = table2.column2
-                    join_pattern = r"(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)"
-                    for match in re.finditer(join_pattern, sql_text, re.IGNORECASE):
-                        left_table, left_col, right_table, right_col = match.groups()
+    def get_dimensions(
+        self,
+        metric_name: str,
+        path: Optional[List[str]] = None,
+    ) -> FuncToolResult:
+        """
+        Get available dimensions for a specific metric.
 
-                        # Only keep joins involving target tables
-                        if left_table in tables and right_table in tables:
-                            relationships.append(
-                                {
-                                    "source_table": left_table,
-                                    "source_column": left_col,
-                                    "target_table": right_table,
-                                    "target_column": right_col,
-                                    "confidence": "medium",
-                                    "evidence": "join_pattern",
-                                }
-                            )
-            except Exception as e:
-                logger.warning(f"Failed to search SQL history for table {table}: {e}")
+        Args:
+            metric_name: Name of the metric
+            path: Optional subject tree path (e.g., ["Finance", "Revenue"])
 
-        return relationships
+        Returns:
+            FuncToolResult with list of dimension names
+        """
+        try:
+            # Try to get from storage first
+            metric_details = None
+            if path:
+                metric_details_list = self.metric_rag.storage.search_all_metrics(subject_path=path)
+                metric_details_list = [m for m in metric_details_list if m.get("name") == metric_name]
+                if metric_details_list:
+                    metric_details = metric_details_list[0]
+            else:
+                # Search all metrics
+                all_metrics = self.metric_rag.search_all_metrics()
+                matching = [m for m in all_metrics if m.get("name") == metric_name]
+                if matching:
+                    metric_details = matching[0]
 
-    def _infer_from_column_names(
-        self, tables: List[str], catalog: str, database: str, schema_name: str
-    ) -> List[Dict[str, Any]]:
-        """Infer relationships from column naming patterns."""
-        relationships = []
-        table_schemas = {}
+            if metric_details:
+                dimensions = metric_details.get("dimensions", [])
+                return FuncToolResult(
+                    success=1,
+                    result=dimensions,
+                )
 
-        # Get all table schemas
-        for table in tables:
-            schema_result = self.db_tool.describe_table(table, catalog, database, schema_name)
-            if schema_result.success and schema_result.result:
-                table_schemas[table] = schema_result.result.get("columns", [])
+            # Fallback to adapter
+            if self.adapter:
+                logger.info(f"Metric '{metric_name}' not in storage, querying adapter")
+                dimensions = _run_async(self.adapter.get_dimensions(metric_name=metric_name, path=path))
+                return FuncToolResult(
+                    success=1,
+                    result=dimensions,
+                )
 
-        # Check for {table_name}_id -> {table_name}.id patterns
-        for source_table, columns in table_schemas.items():
-            for column in columns:
-                col_name = column.get("name", "").lower()
+            return FuncToolResult(
+                success=0,
+                error=f"Metric '{metric_name}' not found",
+                result=[],
+            )
 
-                # Match pattern: {target}_id
-                if col_name.endswith("_id"):
-                    target_table = col_name[:-3]  # Remove "_id"
+        except Exception as e:
+            logger.error(f"Error getting dimensions: {e}")
+            return FuncToolResult(
+                success=0,
+                error=f"Failed to get dimensions: {str(e)}",
+            )
 
-                    if target_table in tables:
-                        # Check if target table has "id" column
-                        target_columns = table_schemas.get(target_table, [])
-                        if any(c.get("name", "").lower() == "id" for c in target_columns):
-                            relationships.append(
-                                {
-                                    "source_table": source_table,
-                                    "source_column": col_name,
-                                    "target_table": target_table,
-                                    "target_column": "id",
-                                    "confidence": "low",
-                                    "evidence": "column_name",
-                                }
-                            )
+    def query_metrics(
+        self,
+        metrics: List[str],
+        dimensions: Optional[List[str]] = None,
+        path: Optional[List[str]] = None,
+        time_start: Optional[str] = None,
+        time_end: Optional[str] = None,
+        time_granularity: Optional[str] = None,
+        where: Optional[str] = None,
+        limit: Optional[int] = None,
+        order_by: Optional[List[str]] = None,
+        dry_run: bool = False,
+    ) -> FuncToolResult:
+        """
+        Query metrics data (requires adapter).
 
-        return relationships
+        Args:
+            metrics: List of metric names to query
+            dimensions: Optional list of dimensions to group by
+            path: Optional subject tree path
+            time_start: Optional start time (ISO format like '2024-01-01' or relative like '-7d')
+            time_end: Optional end time (ISO format like '2024-01-31' or relative like 'now')
+            time_granularity: Optional time granularity for aggregation ('day', 'week', 'month', 'quarter', 'year')
+            where: Optional SQL WHERE clause (without WHERE keyword)
+            limit: Optional maximum number of rows
+            order_by: Optional list of fields to sort by
+            dry_run: If True, only validate and return query plan
 
-    def _deduplicate_relationships(self, relationships: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Deduplicate and sort relationships by confidence."""
-        seen = set()
-        deduplicated = []
+        Returns:
+            FuncToolResult with query results or explain plan
+        """
+        if not self.adapter:
+            return FuncToolResult(
+                success=0,
+                error="No semantic adapter configured. Cannot execute queries without adapter.",
+            )
 
-        # Sort by confidence (high > medium > low)
-        confidence_order = {"high": 0, "medium": 1, "low": 2}
-        sorted_rels = sorted(relationships, key=lambda r: confidence_order.get(r["confidence"], 3))
+        try:
+            # Execute query via adapter
+            result = _run_async(
+                self.adapter.query_metrics(
+                    metrics=metrics,
+                    dimensions=dimensions or [],
+                    path=path,
+                    time_start=time_start,
+                    time_end=time_end,
+                    time_granularity=time_granularity,
+                    where=where,
+                    limit=limit,
+                    order_by=order_by,
+                    dry_run=dry_run,
+                )
+            )
 
-        for rel in sorted_rels:
-            key = (rel["source_table"], rel["source_column"], rel["target_table"], rel["target_column"])
-            if key not in seen:
-                seen.add(key)
-                deduplicated.append(rel)
+            # Format result
+            result_dict = {
+                "columns": result.columns,
+                "data": result.data,
+                "metadata": result.metadata,
+            }
 
-        return deduplicated
+            return FuncToolResult(
+                success=1,
+                result=result_dict,
+            )
+
+        except Exception as e:
+            logger.error(f"Error querying metrics: {e}")
+            return FuncToolResult(
+                success=0,
+                error=f"Failed to query metrics: {str(e)}",
+            )
+
+    def validate_semantic(self) -> FuncToolResult:
+        """
+        Validate semantic layer configuration (requires adapter).
+
+        Returns:
+            FuncToolResult with validation status and issues
+        """
+        if not self.adapter:
+            return FuncToolResult(
+                success=0,
+                error="No semantic adapter configured. Cannot validate without adapter.",
+                result=None,
+            )
+
+        try:
+            validation_result = _run_async(self.adapter.validate_semantic())
+
+            # Serialize ValidationIssue objects to dicts
+            issues_data = [
+                issue.model_dump() if hasattr(issue, "model_dump") else {"severity": "error", "message": str(issue)}
+                for issue in validation_result.issues
+            ]
+
+            return FuncToolResult(
+                success=1 if validation_result.valid else 0,
+                result={"valid": validation_result.valid, "issues": issues_data},
+                error=None if validation_result.valid else f"{len(validation_result.issues)} validation errors",
+            )
+
+        except Exception as e:
+            logger.error(f"Error validating semantic config: {e}", exc_info=True)
+            return FuncToolResult(
+                success=0,
+                error=f"Failed to validate semantic config: {str(e)}",
+                result=None,
+            )
+
+    def attribution_analyze(
+        self,
+        metric_name: str,
+        candidate_dimensions: List[str],
+        baseline_start: str,
+        baseline_end: str,
+        current_start: str,
+        current_end: str,
+        anomaly_context: Optional[AnomalyContext] = None,
+        max_selected_dimensions: int = 3,
+        top_n_values: int = 10,
+    ) -> FuncToolResult:
+        """
+        Unified attribution analysis for anomaly investigation.
+
+        Automatically ranks candidate dimensions by explanatory power and calculates
+        delta contributions for the most important dimensions. Perfect for LLM-driven
+        root cause analysis of metric anomalies.
+
+        Args:
+            metric_name: Metric to analyze (e.g., "payment_amount", "revenue")
+            candidate_dimensions: List of dimensions to evaluate (e.g., ["region", "product", "channel"])
+            baseline_start: Baseline period start date (e.g., "2026-01-01")
+            baseline_end: Baseline period end date (e.g., "2026-01-01")
+            current_start: Current period start date (e.g., "2026-01-08")
+            current_end: Current period end date (e.g., "2026-01-08")
+            anomaly_context: Optional anomaly detection context (AnomalyContext with rule and observed_change_pct)
+            max_selected_dimensions: Maximum dimensions to select (default 3)
+            top_n_values: Number of top dimension values to return (default 10)
+
+        Returns:
+            FuncToolResult with:
+            - dimension_ranking: All dimensions ranked by importance score
+            - selected_dimensions: Top dimensions selected for analysis
+            - top_dimension_values: Delta contributions of dimension values
+
+        Example:
+            attribution_analyze(
+                metric_name="payment_amount",
+                candidate_dimensions=["project_title", "region", "channel"],
+                baseline_start="2026-01-01",
+                baseline_end="2026-01-01",
+                current_start="2026-01-08",
+                current_end="2026-01-08",
+                anomaly_context=AnomalyContext(rule="wow_growth_gt_20pct", observed_change_pct=0.8017)
+            )
+            -> Identifies which dimension (e.g., project_title) explains the 80% spike
+        """
+        if not self.attribution_tool:
+            return FuncToolResult(
+                success=0,
+                error="Attribution tool not available. Requires semantic adapter.",
+            )
+
+        try:
+            # Convert AnomalyContext to dict for attribution_tool
+            # Handle both dict (from LLM) and AnomalyContext object
+            if anomaly_context is None:
+                anomaly_context_dict = None
+            elif isinstance(anomaly_context, dict):
+                anomaly_context_dict = anomaly_context
+            else:
+                anomaly_context_dict = anomaly_context.model_dump()
+
+            result = _run_async(
+                self.attribution_tool.attribution_analyze(
+                    metric_name=metric_name,
+                    candidate_dimensions=candidate_dimensions,
+                    baseline_start=baseline_start,
+                    baseline_end=baseline_end,
+                    current_start=current_start,
+                    current_end=current_end,
+                    anomaly_context=anomaly_context_dict,
+                    max_selected_dimensions=max_selected_dimensions,
+                    top_n_values=top_n_values,
+                )
+            )
+
+            return FuncToolResult(
+                success=1,
+                result=result.model_dump(),
+            )
+
+        except Exception as e:
+            logger.error(f"Error in attribution analysis: {e}")
+            return FuncToolResult(
+                success=0,
+                error=f"Failed to analyze attribution: {str(e)}",
+            )

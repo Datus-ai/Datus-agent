@@ -374,13 +374,13 @@ class ActionContentGenerator(BaseActionContentGenerator):
             sample_count = len(items.get("sample_data") or [])
             return f"✓ {metadata_count} tables and {sample_count} sample rows"
         if function_name == "search_metrics":
-            return f"✓ {len(items)} metrics"
+            return f"✓ {len(items) if items else 0} metrics"
         if function_name == "search_reference_sql":
-            return f"✓ {len(items)} reference SQLs"
+            return f"✓ {len(items) if items else 0} reference SQLs"
         if function_name == "search_external_knowledge":
-            return f"✓ {len(items)} extensions of knowledge"
+            return f"✓ {len(items) if items else 0} extensions of knowledge"
         if function_name == "search_documents":
-            return f"✓ {len(items)} documents"
+            return f"✓ {len(items) if items else 0} documents"
         # Generic fallback
         if "success" in output_data:
             return "✓ Success" if output_data["success"] else "✗ Failed"
