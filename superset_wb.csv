@@ -1,0 +1,84 @@
+uvquestion,sql
+Growth Rate,"SELECT year AS __timestamp, country_name AS country_name, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population INNER JOIN (SELECT country_name AS country_name__, sum(SP_POP_TOTL) AS mme_inner__ 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2014-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY country_name ORDER BY mme_inner__ DESC 
+ LIMIT 25) AS series_limit ON country_name = country_name__ 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2014-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY country_name, year ORDER BY `sum__SP_POP_TOTL` DESC 
+ LIMIT 50000;"
+Life Expectancy VS Rural %,"SELECT region AS region, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL`, sum(SP_RUR_TOTL_ZS) AS `sum__SP_RUR_TOTL_ZS`, sum(SP_DYN_LE00_IN) AS `sum__SP_DYN_LE00_IN` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('2011-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2011-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND (country_code NOT IN ('TCA', 'MNP', 'DMA', 'MHL', 'MCO', 'SXM', 'CYM', 'TUV', 'IMY', 'KNA', 'ASM', 'ADO', 'AMA', 'PLW')) GROUP BY region 
+ LIMIT 50000;"
+Box plot,"SELECT year AS year, region AS region, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population INNER JOIN (SELECT region AS region__, sum(SP_POP_TOTL) AS mme_inner__ 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2025-12-14 08:50:57.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY region ORDER BY mme_inner__ DESC 
+ LIMIT 25) AS series_limit ON region = region__ 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2025-12-14 08:50:57.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY year, region 
+ LIMIT 50000;"
+World's Population,"SELECT year AS __timestamp, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('2000-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2014-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY year 
+ LIMIT 50000;"
+Most Populated Countries,"SELECT country_name AS country_name, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('2014-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2014-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY country_name ORDER BY `sum__SP_POP_TOTL` DESC 
+ LIMIT 50000;"
+Most Populated Countries,"SELECT country_name AS country_name, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('2014-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2014-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY country_name ORDER BY `sum__SP_POP_TOTL` DESC 
+ LIMIT 50000;"
+% Rural,"SELECT sum(SP_RUR_TOTL_ZS) AS `sum__SP_RUR_TOTL_ZS`, sum(`SP_RUR_TOTL`) AS `Rural Population` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('2014-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2014-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') 
+ LIMIT 50000;"
+% Rural,"SELECT sum(SP_RUR_TOTL_ZS) AS `sum__SP_RUR_TOTL_ZS`, sum(`SP_RUR_TOTL`) AS `Rural Population` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('2014-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2014-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') 
+ LIMIT 50000;"
+Growth Rate,"SELECT year AS year, country_name AS country_name, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population INNER JOIN (SELECT country_name AS country_name__, sum(SP_POP_TOTL) AS mme_inner__ 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2014-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY country_name ORDER BY mme_inner__ DESC 
+ LIMIT 25) AS series_limit ON country_name = country_name__ 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2014-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY year, country_name ORDER BY `sum__SP_POP_TOTL` DESC 
+ LIMIT 50000;"
+Treemap,"SELECT region AS region, country_code AS country_code, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2025-12-14 08:55:27.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY region, country_code 
+ LIMIT 50000;"
+Treemap,"SELECT region AS region, country_code AS country_code, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2025-12-14 08:55:27.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY region, country_code 
+ LIMIT 50000;"
+Life Expectancy VS Rural %,"SELECT region AS region, sum(SP_RUR_TOTL_ZS) AS `sum__SP_RUR_TOTL_ZS`, sum(SP_DYN_LE00_IN) AS `sum__SP_DYN_LE00_IN`, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population 
+WHERE (country_code NOT IN ('TCA', 'MNP', 'DMA', 'MHL', 'MCO', 'SXM', 'CYM', 'TUV', 'IMY', 'KNA', 'ASM', 'ADO', 'AMA', 'PLW')) AND year >= STR_TO_DATE('2011-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2011-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY region 
+ LIMIT 50000;"
+Rural Breakdown,"SELECT region AS region, country_name AS country_name, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL`, sum(`SP_RUR_TOTL`) AS `Rural Population` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('2011-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2011-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY region, country_name 
+ LIMIT 50000;"
+Rural Breakdown,"SELECT region AS region, country_name AS country_name, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL`, sum(`SP_RUR_TOTL`) AS `Rural Population` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('2011-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2011-01-02 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY region, country_name 
+ LIMIT 50000;"
+Box plot,"SELECT year AS year, region AS region, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2025-12-14 08:50:35.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY year, region 
+ LIMIT 50000;"
+World's Pop Growth,"SELECT year AS __timestamp, region AS region, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population INNER JOIN (SELECT region AS region__, sum(SP_POP_TOTL) AS mme_inner__ 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2025-12-14 08:51:10.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY region ORDER BY mme_inner__ DESC 
+ LIMIT 25) AS series_limit ON region = region__ 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2025-12-14 08:51:10.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY region, year ORDER BY `sum__SP_POP_TOTL` DESC 
+ LIMIT 50000;"
+World's Pop Growth,"SELECT year AS year, region AS region, sum(SP_POP_TOTL) AS `sum__SP_POP_TOTL` 
+FROM examples.wb_health_population INNER JOIN (SELECT region AS region__, sum(SP_POP_TOTL) AS mme_inner__ 
+FROM examples.wb_health_population 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2025-12-14 08:51:05.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY region ORDER BY mme_inner__ DESC 
+ LIMIT 25) AS series_limit ON region = region__ 
+WHERE year >= STR_TO_DATE('1960-01-01 00:00:00.000000', '%Y-%m-%d %H:%i:%s.%f') AND year < STR_TO_DATE('2025-12-14 08:51:05.000000', '%Y-%m-%d %H:%i:%s.%f') GROUP BY year, region ORDER BY `sum__SP_POP_TOTL` DESC 
+ LIMIT 50000;"

@@ -306,6 +306,14 @@ def create_parser() -> argparse.ArgumentParser:
         help="Path to summary report file. Reports will be appended to this file.",
     )
 
+    bi_subparser = subparsers.add_parser(
+        "bi-bootstrap",
+        help="Benchmarking tutorial using a dataset from California schools",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    bi_subparser.add_argument("--namespace", type=str, required=True, help="Database namespace")
+
     # tutorial command
     subparsers.add_parser(
         "tutorial",
@@ -371,7 +379,7 @@ def main():
 
     if args.action == "tutorial":
         configure_logging(args.debug, console_output=False)
-        tutorial = BenchmarkTutorial(args.config or "~/.datus/conf/agent.yml")
+        tutorial = BenchmarkTutorial(args.config)
         return tutorial.run()
 
     if args.action == "namespace":
@@ -384,6 +392,11 @@ def main():
 
     # Load agent configuration
     agent_config = load_agent_config(**vars(args))
+    if args.action == "bi-bootstrap":
+        configure_logging(args.debug, console_output=False)
+        from datus.cli.bi_dashboard import BiDashboardCommands
+
+        return BiDashboardCommands(agent_config).cmd()
 
     # Initialize agent with both args and config
     agent = Agent(args, agent_config)

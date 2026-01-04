@@ -1,12 +1,24 @@
 import json
 import time
-from typing import Any, Dict, Generator, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-from datus.tools.bi_tools.base_adaptor import AuthType, BiAdaptorBase, QuestionSqlPair
+from datus.tools.bi_tools.base_adaptor import (
+    AuthParam,
+    AuthType,
+    BIAdaptorBase,
+    ChartInfo,
+    ColumnInfo,
+    DashboardInfo,
+    DatasetInfo,
+    DimensionDef,
+    MetricDef,
+    QuerySpec,
+)
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import extract_table_names
 
 logger = get_logger(__name__)
 
@@ -15,120 +27,52 @@ class SupersetAdaptorError(RuntimeError):
     """Errors raised by the Superset adaptor."""
 
 
-class SupersetAdaptor(BiAdaptorBase):
-    """Adaptor that extracts chart SQL from a Superset dashboard."""
+class SupersetAdaptor(BIAdaptorBase):
+    """Adaptor that extracts chart SQL and metadata from Superset."""
 
     def __init__(
         self,
-        base_url: str,
-        auth_params: Union[str, Dict[str, Any]],
-        auth_type: AuthType = AuthType.LOGIN,
-        *,
-        verify_ssl: bool = True,
-        timeout: Union[float, httpx.Timeout] = 30.0,
-        session: Optional[httpx.Client] = None,
+        api_base_url: str,
+        auth_params: AuthParam,
+        dialect: str,
+        timeout: float = 30.0,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
-        self._api_base = self.base_url
-        if not self._api_base.endswith("/api/v1"):
-            self._api_base = f"{self._api_base}/api/v1"
+        super().__init__(api_base_url, auth_params, dialect, timeout)
 
-        self.auth_type = auth_type
         self.auth_params = auth_params
-
-        self._client = session or httpx.Client(timeout=timeout, verify=verify_ssl, follow_redirects=True)
-        self._owns_client = session is None
+        self._api_base = self._normalize_api_base(self.api_base_url)
+        self._client = httpx.Client(
+            timeout=timeout, verify=self.api_base_url.startswith("https://"), follow_redirects=True
+        )
+        self._owns_client = True
 
         self._auth_header_value: Optional[str] = None
         self._token_expiration: Optional[float] = None
+        self._dataset_cache: Dict[str, DatasetInfo] = {}
 
     def close(self) -> None:
         if self._owns_client:
             self._client.close()
 
-    def parse_sql_pair(self, dashboard_url: str) -> Generator[QuestionSqlPair, None, None]:
-        dashboard_id = self._extract_dashboard_id(dashboard_url)
-        dashboard_meta = self._get_dashboard(dashboard_id)
-        charts = self._get_dashboard_charts(dashboard_id)
+    def platform_name(self) -> str:
+        return "superset"
 
-        for chart_meta in charts:
-            form_data = chart_meta.get("form_data", {})
-            chart_id = (
-                form_data.get("slice_id")
-                or chart_meta.get("slice_id")
-                or chart_meta.get("chart_id")
-                or chart_meta.get("id")
-            )
-            if chart_id is None:
-                logger.warning(f"Skip chart without chart_id: {chart_meta}")
-                continue
+    def auth_type(self) -> AuthType:
+        return AuthType.LOGIN
 
-            try:
-                chart_detail = self._get_chart(chart_id)
-                query_context = self._extract_query_context(chart_detail)
-                sql_candidates = self._collect_sql_from_chart(chart_id, query_context)
-            except SupersetAdaptorError as exc:
-                logger.warning(f"Failed to fetch SQL for chart {chart_id}: {exc}")
-                yield QuestionSqlPair(
-                    chart_id=str(chart_id),
-                    title=self._chart_title(chart_meta, chart_detail=None),
-                    description=self._chart_description(chart_meta, chart_detail=None),
-                    sql="",
-                    origin="error",
-                    extra={
-                        "dashboard_id": dashboard_id,
-                        "chart_meta": chart_meta,
-                        "error": str(exc),
-                    },
-                )
-                continue
-
-            if not sql_candidates:
-                yield QuestionSqlPair(
-                    chart_id=str(chart_id),
-                    title=self._chart_title(chart_meta, chart_detail=chart_detail),
-                    description=self._chart_description(chart_meta, chart_detail=chart_detail),
-                    sql="",
-                    origin="missing",
-                    extra={
-                        "dashboard_id": dashboard_id,
-                        "chart_meta": chart_meta,
-                        "chart_detail": chart_detail,
-                        "reason": "Superset API did not return SQL for this chart",
-                    },
-                )
-                continue
-
-            for idx, sql_text in enumerate(sql_candidates):
-                pair_id = str(chart_id) if idx == 0 else f"{chart_id}:{idx + 1}"
-                yield QuestionSqlPair(
-                    chart_id=pair_id,
-                    title=self._chart_title(chart_meta, chart_detail=chart_detail, query_index=idx),
-                    description=self._chart_description(chart_meta, chart_detail=chart_detail),
-                    sql=sql_text,
-                    origin="native",
-                    extra={
-                        "dashboard_id": dashboard_id,
-                        "dashboard": {
-                            "id": dashboard_id,
-                            "metadata": dashboard_meta,
-                        },
-                        "chart_meta": chart_meta,
-                        "chart_detail": chart_detail,
-                        "query_index": idx,
-                    },
-                )
-
-    def _extract_dashboard_id(self, dashboard_url: str) -> str:
+    def parse_dashboard_id(self, dashboard_url: str) -> Union[int, str]:
         stripped = (dashboard_url or "").strip()
+        if not stripped:
+            return ""
+
         if stripped.isdigit():
-            return stripped
+            return int(stripped)
 
         parsed = urlparse(stripped)
         if parsed.scheme and parsed.netloc:
             segments = [segment for segment in parsed.path.split("/") if segment]
             for segment in reversed(segments):
-                if segment.isdigit():
+                if segment:
                     return segment
 
             query_params = parse_qs(parsed.query)
@@ -139,18 +83,282 @@ class SupersetAdaptor(BiAdaptorBase):
 
         return stripped
 
-    def _chart_title(
-        self, chart_meta: Dict[str, Any], chart_detail: Optional[Dict[str, Any]], query_index: int = 0
-    ) -> str:
-        base_title = (chart_meta.get("slice_name") or "") if chart_meta else ""
-        if not base_title and chart_detail:
-            base_title = chart_detail.get("slice_name") or ""
+    def get_dashboard_base_info(self, dashboard_url: str) -> DashboardInfo:
+        dashboard_id = self.parse_dashboard_id(dashboard_url)
+        dashboard_info = self.get_dashboard_info(dashboard_id)
+        if dashboard_info is None:
+            raise SupersetAdaptorError(f"Dashboard {dashboard_id} not found")
+        return dashboard_info
 
-        if query_index > 0:
-            suffix = f" (query {query_index + 1})"
-            return f"{base_title}{suffix}" if base_title else suffix.strip()
+    def get_dashboard_info(self, dashboard_id: Union[int, str]) -> Optional[DashboardInfo]:
+        try:
+            dashboard = self._get_dashboard(dashboard_id)
+        except SupersetAdaptorError as exc:
+            logger.warning(f"Failed to fetch dashboard {dashboard_id}: {exc}")
+            raise exc
 
-        return base_title
+        name = dashboard.get("dashboard_title") or dashboard.get("title") or dashboard.get("slug") or str(dashboard_id)
+        description = dashboard.get("description") or dashboard.get("description_markeddown")
+
+        chart_ids: List[Union[int, str]] = []
+        try:
+            charts = self._get_dashboard_charts(dashboard_id)
+            for chart_meta in charts:
+                chart_id = self._extract_chart_id(chart_meta)
+                if chart_id is not None:
+                    chart_ids.append(chart_id)
+        except SupersetAdaptorError as exc:
+            logger.warning(f"Failed to fetch charts for dashboard {dashboard_id}: {exc}")
+
+        if chart_ids:
+            seen = set()
+            deduped: List[Union[int, str]] = []
+            for chart_id in chart_ids:
+                if chart_id in seen:
+                    continue
+                seen.add(chart_id)
+                deduped.append(chart_id)
+            chart_ids = deduped
+
+        return DashboardInfo(
+            id=dashboard.get("id", dashboard_id),
+            name=name,
+            description=description,
+            chart_ids=chart_ids,
+            extra={"raw": dashboard},
+        )
+
+    def list_charts(self, dashboard_id: Union[int, str]) -> List[ChartInfo]:
+        try:
+            charts = self._get_dashboard_charts(dashboard_id)
+        except SupersetAdaptorError as exc:
+            logger.warning(f"Failed to list charts for dashboard {dashboard_id}: {exc}")
+            return []
+
+        results: List[ChartInfo] = []
+        for chart_meta in charts:
+            chart_id = self._extract_chart_id(chart_meta)
+            if chart_id is None:
+                logger.warning(f"Skip chart without chart_id: {chart_meta}")
+                continue
+
+            results.append(
+                ChartInfo(
+                    id=chart_id,
+                    name=chart_meta.get("slice_name") or chart_meta.get("name") or str(chart_id),
+                    description=self._chart_description(chart_meta, chart_detail=None),
+                    chart_type=chart_meta.get("viz_type") or chart_meta.get("form_data", {}).get("viz_type"),
+                )
+            )
+        return results
+
+    def list_datasets(self, dashboard_id: Union[int, str]) -> List[DatasetInfo]:
+        try:
+            charts = self._get_dashboard_charts(dashboard_id)
+        except SupersetAdaptorError as exc:
+            logger.warning(f"Failed to list datasets for dashboard {dashboard_id}: {exc}")
+            return []
+
+        dataset_map: Dict[str, Dict[str, Any]] = {}
+        for chart_meta in charts:
+            form_data = _load_json_field(chart_meta.get("form_data")) or {}
+            query_context = _load_json_field(chart_meta.get("query_context"))
+            ref = self._extract_datasource_ref(
+                form_data=form_data,
+                chart_meta=chart_meta,
+                query_context=query_context if isinstance(query_context, dict) else None,
+            )
+            if not ref:
+                continue
+            key = str(ref["id"])
+            entry = dataset_map.setdefault(
+                key,
+                {
+                    "ref": dict(ref),
+                    "tables": [],
+                    "metrics": [],
+                    "dimensions": [],
+                    "dialect": self.dialect,
+                },
+            )
+            if ref.get("name") and not entry["ref"].get("name"):
+                entry["ref"]["name"] = ref["name"]
+
+            table_name = entry["ref"].get("name") or ref.get("name")
+
+            dataset_block = chart_meta.get("dataset") if isinstance(chart_meta.get("dataset"), dict) else None
+            if dataset_block:
+                if not table_name:
+                    table_name = dataset_block.get("table_name") or dataset_block.get("datasource_name")
+                columns = self._parse_dataset_columns(dataset_block, table_name)
+                entry["metrics"].extend(self._parse_dataset_metrics(dataset_block, table_name))
+                entry["dimensions"].extend(self._parse_dataset_dimensions(dataset_block, table_name, columns))
+                entry["tables"].extend(self._tables_from_sql(dataset_block.get("sql")))
+
+            if isinstance(query_context, dict):
+                query_metrics, query_dimensions = self._extract_query_metrics_dimensions(query_context, table_name)
+                entry["metrics"].extend(query_metrics)
+                entry["dimensions"].extend(query_dimensions)
+
+            form_metrics, form_dimensions = self._extract_form_data_metrics_dimensions(form_data, table_name)
+            entry["metrics"].extend(form_metrics)
+            entry["dimensions"].extend(form_dimensions)
+
+        datasets: List[DatasetInfo] = []
+        for entry in dataset_map.values():
+            ref = entry["ref"]
+            dataset_id = ref["id"]
+            dataset_name = ref.get("name") or str(dataset_id)
+            tables = self._dedupe_tables(entry["tables"])
+            metrics = self._dedupe_metrics(entry["metrics"])
+            dimensions = self._dedupe_dimensions(entry["dimensions"])
+            datasets.append(
+                DatasetInfo(
+                    id=dataset_id,
+                    name=dataset_name,
+                    dialect=entry["dialect"],
+                    tables=tables or None,
+                    metrics=metrics or None,
+                    dimensions=dimensions or None,
+                    extra={"datasource": ref},
+                )
+            )
+        return datasets
+
+    def get_chart(self, chart_id: Union[int, str], dashboard_id: Union[int, str, None] = None) -> Optional[ChartInfo]:
+        try:
+            chart_detail = self._get_chart(chart_id)
+        except SupersetAdaptorError as exc:
+            logger.warning(f"Failed to fetch chart {chart_id}: {exc}")
+            return None
+        dataset_info = chart_detail.get("dataset_info")
+        if not isinstance(dataset_info, dict):
+            dataset_info = None
+        if slice := chart_detail.get("slice"):
+            chart_detail = slice
+
+        query_context = self._extract_query_context(chart_detail)
+        form_data = (
+            _load_json_field(chart_detail.get("params")) or _load_json_field(chart_detail.get("form_data")) or {}
+        )
+
+        if not dataset_info:
+            datasource_ref = self._extract_datasource_ref(
+                form_data=form_data, chart_detail=chart_detail, query_context=query_context
+            )
+            tables = self._resolve_tables(datasource_ref)
+        else:
+            datasource_ref = None
+            tables = self._tables_from_sql(dataset_info.get("sql"))
+        # IMPORTANT: avoid hard-binding metrics/dimensions to a physical table name.
+        # Superset datasets can be virtual (SQL-based) and datasource names/aliases may drift.
+        table_name_for_tagging: Optional[str] = None
+
+        sqls: List[str] = []
+        used_query_indexes: Optional[set[int]] = None
+        if query_context:
+            try:
+                sqls, used_query_indexes = self._collect_sql_from_chart(chart_id, query_context)
+            except SupersetAdaptorError as exc:
+                logger.warning(f"Failed to fetch SQL for chart {chart_id}: {exc}")
+
+        metrics: List[MetricDef] = []
+        dimensions: List[DimensionDef] = []
+        if query_context:
+            metrics, dimensions = self._extract_query_metrics_dimensions(
+                query_context, table_name_for_tagging, only_query_indexes=used_query_indexes
+            )
+
+        if sqls:
+            for sql_text in sqls:
+                tables.extend(self._tables_from_sql(sql_text))
+        tables = self._dedupe_tables(tables)
+
+        query_spec: Optional[QuerySpec] = None
+        if query_context or sqls:
+            payload: Dict[str, Any] = {}
+            if query_context:
+                payload["query_context"] = query_context
+            if form_data:
+                payload["form_data"] = form_data
+            if datasource_ref:
+                payload["datasource"] = datasource_ref
+
+            query_spec = QuerySpec(
+                kind="sql" if sqls else "semantic",
+                payload=payload,
+                sql=sqls,
+                tables=tables or None,
+                metrics=metrics or None,
+                dimensions=dimensions or None,
+            )
+
+        return ChartInfo(
+            id=chart_detail.get("id", chart_id),
+            name=chart_detail.get("slice_name") or chart_detail.get("name") or str(chart_id),
+            description=self._chart_description(None, chart_detail=chart_detail),
+            query=query_spec,
+            chart_type=chart_detail.get("viz_type") or chart_detail.get("chart_type"),
+            extra={"raw": chart_detail, "datasource": datasource_ref},
+        )
+
+    def get_dataset(
+        self, dataset_id: Union[int, str], dashboard_id: Union[int, str, None] = None
+    ) -> Optional[DatasetInfo]:
+        if dataset_id is None:
+            return None
+        cache_key = str(dataset_id)
+        cached = self._dataset_cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            data = self._request_json("GET", f"dataset/{dataset_id}")
+        except SupersetAdaptorError as exc:
+            logger.warning(f"Failed to fetch dataset {dataset_id}: {exc}")
+            return None
+
+        dataset = data.get("result", data)
+        resolved_id = dataset.get("id", dataset_id)
+        name = (
+            dataset.get("table_name")
+            or dataset.get("datasource_name")
+            or dataset.get("name")
+            or dataset.get("verbose_name")
+            or str(resolved_id)
+        )
+        description = dataset.get("description") or dataset.get("description_markeddown")
+
+        table_name = dataset.get("table_name") or dataset.get("datasource_name") or name
+        columns = self._parse_dataset_columns(dataset, table_name)
+        metrics = self._parse_dataset_metrics(dataset, table_name)
+        dimensions = self._parse_dataset_dimensions(dataset, table_name, columns)
+        tables = self._tables_from_sql(dataset.get("sql"))
+        tables = self._dedupe_tables(tables)
+
+        extra = {
+            "database": dataset.get("database"),
+            "schema": dataset.get("schema"),
+            "sql": dataset.get("sql"),
+            "extra": dataset.get("extra"),
+        }
+
+        dataset_info = DatasetInfo(
+            id=resolved_id,
+            name=name,
+            dialect=self.dialect,
+            description=description,
+            tables=tables or None,
+            columns=columns or None,
+            metrics=metrics or None,
+            dimensions=dimensions or None,
+            extra=extra,
+        )
+        self._dataset_cache[cache_key] = dataset_info
+        return dataset_info
+
+    def extract_dashboard_id(self, dashboard_url: str) -> Union[int, str]:
+        return self.parse_dashboard_id(dashboard_url)
 
     def _chart_description(
         self, chart_meta: Optional[Dict[str, Any]], chart_detail: Optional[Dict[str, Any]]
@@ -164,7 +372,7 @@ class SupersetAdaptor(BiAdaptorBase):
 
     def _extract_query_context(self, chart_detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         raw_context = chart_detail.get("query_context")
-        parsed_context = self._load_json_field(raw_context)
+        parsed_context = _load_json_field(raw_context)
         if isinstance(parsed_context, dict):
             return parsed_context
         return None
@@ -173,10 +381,10 @@ class SupersetAdaptor(BiAdaptorBase):
         self,
         chart_id: Union[str, int],
         query_context: Optional[Dict[str, Any]],
-    ) -> List[str]:
+    ) -> tuple[List[str], Optional[set[int]]]:
         if not query_context:
             logger.debug(f"No query_context for chart {chart_id}")
-            return []
+            return [], None
 
         payload = dict(query_context)
         payload.setdefault("result_format", "json")
@@ -188,14 +396,22 @@ class SupersetAdaptor(BiAdaptorBase):
             raise SupersetAdaptorError(f"chart/data failed for {chart_id}: {exc}") from exc
 
         sqls: List[str] = []
+        used_query_indexes: set[int] = set()
         results = response_data.get("result")
 
         if isinstance(results, list):
-            for block in results:
+            for idx, block in enumerate(results):
+                before = len(sqls)
                 self._append_sql_from_block(block, sqls)
+                if len(sqls) > before:
+                    used_query_indexes.add(idx)
         elif isinstance(results, dict):
+            before = len(sqls)
             self._append_sql_from_block(results, sqls)
-        return sqls
+            if len(sqls) > before:
+                used_query_indexes.add(0)
+
+        return sqls, (used_query_indexes or None)
 
     def _append_sql_from_block(self, block: Dict[str, Any], sqls: List[str]) -> None:
         queries = block.get("queries") or []
@@ -222,19 +438,388 @@ class SupersetAdaptor(BiAdaptorBase):
         return charts
 
     def _get_chart(self, chart_id: Union[str, int]) -> Dict[str, Any]:
-        data = self._request_json("GET", f"chart/{chart_id}")
+        """
+        call `/api/v1/explore` ->
+            result ->
+                dataset
+                form_data
+                metadata
+                slice ->
+                    form_data
+                    query_context
+                    slice_name
+        :param chart_id:
+        :return:
+        """
+        data = self._request_json("GET", f"explore/?slice_id={chart_id}")
         chart = data.get("result", data)
         return chart
 
-    def _load_json_field(self, value: Any) -> Any:
-        if isinstance(value, (dict, list)):
+    def _normalize_api_base(self, api_base_url: str) -> str:
+        base = (api_base_url or "").rstrip("/")
+        if base.endswith("/api/v1"):
+            return base
+        return f"{base}/api/v1"
+
+    def _coerce_id(self, value: Any) -> Optional[Union[int, str]]:
+        if value is None:
+            return None
+        if isinstance(value, int):
             return value
-        if isinstance(value, str) and value:
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                logger.debug(f"Failed to decode JSON field: {value[:128]}")
-        return None
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return value
+
+    def _parse_datasource_value(self, value: Any) -> tuple[Optional[Union[int, str]], Optional[str]]:
+        if value is None:
+            return None, None
+        if isinstance(value, dict):
+            return self._coerce_id(value.get("id")), value.get("type")
+        if isinstance(value, int):
+            return value, None
+        if isinstance(value, str):
+            if "__" in value:
+                id_part, type_part = value.split("__", 1)
+                return self._coerce_id(id_part), type_part
+            if value.isdigit():
+                return int(value), None
+        return None, None
+
+    def _extract_chart_id(self, chart_meta: Dict[str, Any]) -> Optional[Union[int, str]]:
+        form_data = _load_json_field(chart_meta.get("form_data")) or {}
+        chart_id = (
+            form_data.get("slice_id")
+            or chart_meta.get("slice_id")
+            or chart_meta.get("chart_id")
+            or chart_meta.get("id")
+        )
+        return chart_id
+
+    def _extract_datasource_ref(
+        self,
+        form_data: Optional[Dict[str, Any]] = None,
+        chart_meta: Optional[Dict[str, Any]] = None,
+        chart_detail: Optional[Dict[str, Any]] = None,
+        query_context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        ds_id: Optional[Union[int, str]] = None
+        ds_type: Optional[str] = None
+        name: Optional[str] = None
+
+        if query_context:
+            datasource = query_context.get("datasource")
+            if isinstance(datasource, dict):
+                # parse dataset id
+                ds_id = ds_id or self._coerce_id(datasource.get("id"))
+                ds_type = ds_type or datasource.get("type") or datasource.get("datasource_type")
+                name = (
+                    name or datasource.get("name") or datasource.get("datasource_name") or datasource.get("table_name")
+                )
+
+        if chart_detail:
+            if not ds_id:
+                ds_id = chart_detail.get("datasource_id") or chart_detail.get("dataset_id")
+                ds_type = ds_type or chart_detail.get("datasource_type")
+            if not name:
+                dataset_block = chart_detail.get("dataset") if isinstance(chart_detail.get("dataset"), dict) else {}
+                for candidate in (
+                    chart_detail.get("datasource_name"),
+                    chart_detail.get("table_name"),
+                    dataset_block.get("datasource_name"),
+                    dataset_block.get("table_name"),
+                ):
+                    if candidate:
+                        name = candidate
+                        break
+
+        if chart_meta:
+            ds_id = ds_id or chart_meta.get("datasource_id") or chart_meta.get("dataset_id")
+            ds_type = ds_type or chart_meta.get("datasource_type")
+            name = name or chart_meta.get("datasource_name")
+
+        if form_data:
+            ds_id = ds_id or form_data.get("datasource_id") or form_data.get("dataset_id")
+            ds_type = ds_type or form_data.get("datasource_type")
+            name = name or form_data.get("datasource_name") or form_data.get("dataset_name")
+            if not ds_id and "datasource" in form_data:
+                parsed_id, parsed_type = self._parse_datasource_value(form_data.get("datasource"))
+                ds_id = parsed_id or ds_id
+                ds_type = parsed_type or ds_type
+
+        ds_id = self._coerce_id(ds_id)
+        if ds_id is None:
+            return None
+
+        return {"id": ds_id, "type": ds_type, "name": name}
+
+    def _resolve_tables(self, datasource_ref: Optional[Dict[str, Any]]) -> List[str]:
+        if not datasource_ref:
+            return []
+
+        dataset_id = datasource_ref.get("id")
+        dataset_info = self.get_dataset(dataset_id) if dataset_id is not None else None
+        return list(dataset_info.tables or []) if dataset_info else []
+
+    def _tables_from_sql(self, sql: Optional[str]) -> List[str]:
+        if not sql:
+            return []
+        read_dialect = self.dialect
+        return [name for name in extract_table_names(sql, read_dialect, ignore_empty=True) if name]
+
+    def _extract_query_metrics_dimensions(
+        self,
+        query_context: Dict[str, Any],
+        table_name: Optional[str],
+        only_query_indexes: Optional[set[int]] = None,
+    ) -> tuple[List[MetricDef], List[DimensionDef]]:
+        metrics: List[MetricDef] = []
+        dimensions: List[DimensionDef] = []
+
+        queries = query_context.get("queries") or []
+        if not isinstance(queries, list):
+            return metrics, dimensions
+
+        for idx, query in enumerate(queries):
+            if only_query_indexes is not None and idx not in only_query_indexes:
+                continue
+            if not isinstance(query, dict):
+                continue
+            metrics.extend(self._metrics_from_query(query, table_name))
+            dimensions.extend(self._dimensions_from_query(query, table_name))
+
+        return self._dedupe_metrics(metrics), self._dedupe_dimensions(dimensions)
+
+    def _extract_form_data_metrics_dimensions(
+        self, form_data: Dict[str, Any], table_name: Optional[str]
+    ) -> tuple[List[MetricDef], List[DimensionDef]]:
+        metrics: List[MetricDef] = []
+        dimensions: List[DimensionDef] = []
+
+        raw_metrics = form_data.get("metrics")
+        if raw_metrics is None and "metric" in form_data:
+            raw_metrics = [form_data.get("metric")]
+        if isinstance(raw_metrics, list):
+            for metric in raw_metrics:
+                metric_def = self._normalize_metric(metric, table_name, origin="chart")
+                if metric_def:
+                    metrics.append(metric_def)
+        elif raw_metrics:
+            metric_def = self._normalize_metric(raw_metrics, table_name, origin="chart")
+            if metric_def:
+                metrics.append(metric_def)
+
+        raw_dimensions: List[Any] = []
+        for key in ("groupby", "columns", "all_columns"):
+            items = form_data.get(key)
+            if isinstance(items, list):
+                raw_dimensions.extend(items)
+        for key in ("granularity", "granularity_sqla", "time_column", "time_col"):
+            value = form_data.get(key)
+            if value:
+                raw_dimensions.append(value)
+
+        for item in raw_dimensions:
+            dim = self._normalize_dimension(item, table_name, origin="chart")
+            if dim:
+                dimensions.append(dim)
+
+        return self._dedupe_metrics(metrics), self._dedupe_dimensions(dimensions)
+
+    def _metrics_from_query(self, query: Dict[str, Any], table_name: Optional[str]) -> List[MetricDef]:
+        metrics: List[MetricDef] = []
+        for metric in query.get("metrics") or []:
+            metric_def = self._normalize_metric(metric, table_name, origin="chart")
+            if metric_def:
+                metrics.append(metric_def)
+        return metrics
+
+    def _dimensions_from_query(self, query: Dict[str, Any], table_name: Optional[str]) -> List[DimensionDef]:
+        dimensions: List[DimensionDef] = []
+        for key in ("groupby", "columns"):
+            items = query.get(key) or []
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                dim = self._normalize_dimension(item, table_name, origin="chart")
+                if dim:
+                    dimensions.append(dim)
+
+        time_column = query.get("time_column") or query.get("time_col")
+        if time_column:
+            dim = self._normalize_dimension(time_column, table_name, origin="chart")
+            if dim:
+                dimensions.append(dim)
+
+        return dimensions
+
+    def _normalize_metric(self, metric: Any, table_name: Optional[str], origin: str) -> Optional[MetricDef]:
+        if isinstance(metric, str):
+            name = metric.strip()
+            if not name:
+                return None
+            return MetricDef(name=name, expression=name, table=table_name, origin=origin)
+
+        if not isinstance(metric, dict):
+            return None
+
+        name = metric.get("label") or metric.get("metric_name") or metric.get("name")
+        description = metric.get("description") or metric.get("verbose_name")
+
+        expression = metric.get("expression") or metric.get("sqlExpression") or metric.get("sql_expression")
+        if not expression and metric.get("expressionType") == "SIMPLE":
+            aggregate = metric.get("aggregate") or metric.get("aggregation")
+            column = metric.get("column") or {}
+            column_name = None
+            if isinstance(column, dict):
+                column_name = column.get("column_name") or column.get("name")
+            elif isinstance(column, str):
+                column_name = column
+            if aggregate and column_name:
+                expression = f"{aggregate}({column_name})"
+
+        if not expression and metric.get("expressionType") == "SQL":
+            expression = metric.get("sqlExpression")
+
+        if not name and expression:
+            name = expression
+        if not name:
+            return None
+
+        return MetricDef(
+            name=str(name),
+            expression=str(expression or name),
+            table=table_name,
+            description=description,
+            origin=origin,
+            extra=metric,
+        )
+
+    def _normalize_dimension(self, item: Any, table_name: Optional[str], origin: str) -> Optional[DimensionDef]:
+        if isinstance(item, str):
+            name = item.strip()
+            if not name:
+                return None
+            return DimensionDef(name=name, table=table_name, origin=origin)
+
+        if not isinstance(item, dict):
+            return None
+
+        name = item.get("column_name") or item.get("name") or item.get("label") or item.get("verbose_name")
+        if not name:
+            return None
+
+        title = item.get("verbose_name") or item.get("label")
+        data_type = item.get("type") or item.get("data_type") or item.get("datatype")
+        description = item.get("description")
+
+        return DimensionDef(
+            name=str(name),
+            title=title,
+            data_type=data_type,
+            table=table_name,
+            description=description,
+            origin=origin,
+            extra=item,
+        )
+
+    def _dedupe_metrics(self, metrics: List[MetricDef]) -> List[MetricDef]:
+        seen = set()
+        unique: List[MetricDef] = []
+        for metric in metrics:
+            # Table binding is often ambiguous in Superset (virtual datasets / aliases), so dedupe by semantic identity.
+            key = (metric.name, metric.expression)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(metric)
+        return unique
+
+    def _dedupe_dimensions(self, dimensions: List[DimensionDef]) -> List[DimensionDef]:
+        seen = set()
+        unique: List[DimensionDef] = []
+        for dimension in dimensions:
+            # Dedupe primarily by column name; table binding may be unstable for virtual datasets.
+            key = (dimension.name,)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(dimension)
+        return unique
+
+    def _dedupe_tables(self, tables: List[str]) -> List[str]:
+        seen = set()
+        unique: List[str] = []
+        for table in tables:
+            if not table:
+                continue
+            name = str(table)
+            if name in seen:
+                continue
+            seen.add(name)
+            unique.append(name)
+        return unique
+
+    def _parse_dataset_columns(self, dataset: Dict[str, Any], table_name: Optional[str]) -> List[ColumnInfo]:
+        columns: List[ColumnInfo] = []
+        for column in dataset.get("columns") or []:
+            if not isinstance(column, dict):
+                continue
+            name = column.get("column_name") or column.get("name")
+            if not name:
+                continue
+            columns.append(
+                ColumnInfo(
+                    name=str(name),
+                    data_type=column.get("type") or column.get("data_type"),
+                    description=column.get("description"),
+                    table=table_name,
+                    extra=column,
+                )
+            )
+        return columns
+
+    def _parse_dataset_metrics(self, dataset: Dict[str, Any], table_name: Optional[str]) -> List[MetricDef]:
+        metrics: List[MetricDef] = []
+        for metric in dataset.get("metrics") or []:
+            metric_def = self._normalize_metric(metric, table_name, origin="dataset")
+            if metric_def:
+                metrics.append(metric_def)
+        return self._dedupe_metrics(metrics)
+
+    def _parse_dataset_dimensions(
+        self, dataset: Dict[str, Any], table_name: Optional[str], columns: List[ColumnInfo]
+    ) -> List[DimensionDef]:
+        raw_columns = dataset.get("columns") or []
+        has_flags = any(
+            isinstance(col, dict) and any(key in col for key in ("groupby", "filterable", "is_dttm"))
+            for col in raw_columns
+        )
+
+        dimensions: List[DimensionDef] = []
+        if raw_columns:
+            for column in raw_columns:
+                if not isinstance(column, dict):
+                    continue
+                if has_flags and not (column.get("groupby") or column.get("filterable") or column.get("is_dttm")):
+                    continue
+                dim = self._normalize_dimension(column, table_name, origin="dataset")
+                if dim:
+                    dimensions.append(dim)
+
+        if not dimensions and columns:
+            for column in columns:
+                dimensions.append(
+                    DimensionDef(
+                        name=column.name,
+                        title=column.name,
+                        data_type=column.data_type,
+                        table=column.table,
+                        description=column.description,
+                        origin="dataset",
+                    )
+                )
+
+        return self._dedupe_dimensions(dimensions)
 
     def _request_json(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         response = self._request(method, endpoint, **kwargs)
@@ -248,12 +833,7 @@ class SupersetAdaptor(BiAdaptorBase):
         headers = kwargs.pop("headers", {})
         if require_auth:
             self._ensure_authenticated()
-            if self._auth_header_value:
-                if self.auth_type == AuthType.LOGIN:
-                    headers.setdefault("Authorization", self._auth_header_value)
-                else:
-                    # For test
-                    headers.setdefault("x-csrftoken", self._auth_header_value)
+            headers.update(self._auth_headers())
 
         try:
             response = self._client.request(method, url, headers=headers, **kwargs)
@@ -266,20 +846,36 @@ class SupersetAdaptor(BiAdaptorBase):
         except httpx.HTTPError as exc:
             raise SupersetAdaptorError(f"Superset API {method} {endpoint} failed: {exc}") from exc
 
+    def _auth_headers(self) -> Dict[str, str]:
+        if not self._auth_header_value:
+            return {}
+        if self.auth_type == AuthType.LOGIN:
+            return {"Authorization": self._auth_header_value}
+
+        header_name = "X-API-Key"
+        token = self._auth_header_value
+        if isinstance(self.auth_params, dict):
+            header_name = self.auth_params.get("header") or self.auth_params.get("header_name") or header_name
+            prefix = self.auth_params.get("prefix")
+            if prefix and not token.startswith(prefix):
+                token = f"{prefix} {token}".strip()
+
+        if token.lower().startswith("bearer "):
+            header_name = "Authorization"
+        return {header_name: token}
+
     def _ensure_authenticated(self) -> None:
         if self._auth_header_value and self._token_expiration and time.time() < self._token_expiration:
             return
         self._authenticate()
 
     def _authenticate(self) -> None:
-        if self.auth_type == AuthType.LOGIN:
-            if not isinstance(self.auth_params, dict):
-                raise SupersetAdaptorError("auth_params must be a mapping when using LOGIN auth_type")
+        if self.auth_type() == AuthType.LOGIN:
             payload = {
-                "username": self.auth_params.get("username"),
-                "password": self.auth_params.get("password"),
-                "provider": self.auth_params.get("provider", "db"),
+                "username": self.auth_params.username,
+                "password": self.auth_params.password,
                 "refresh": True,
+                "provider": "db",
             }
             try:
                 response = self._request("POST", "security/login", require_auth=False, json=payload)
@@ -301,6 +897,24 @@ class SupersetAdaptor(BiAdaptorBase):
             else:
                 self._token_expiration = time.time() + 3600
         else:
-            self._auth_header_value = str(self.auth_params)
-            # Treat API keys as long-lived credentials
+            api_key = self.auth_params.api_key
+
+            if not api_key:
+                raise SupersetAdaptorError("auth_params must include an API key value for API_KEY auth_type")
+
+            self._auth_header_value = str(api_key)
             self._token_expiration = time.time() + 365 * 24 * 60 * 60
+
+
+SupersetAdaptor.register("superset", auth_type=AuthType.LOGIN, display_name="Superset")
+
+
+def _load_json_field(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            logger.debug(f"Failed to decode JSON field: {value[:128]}")
+    return None

@@ -424,8 +424,9 @@ class Agent:
                 self.reference_sql_store = ReferenceSqlRAG(self.global_config)
                 result = init_reference_sql(
                     self.reference_sql_store,
-                    self.args,
                     self.global_config,
+                    self.args.sql_dir,
+                    validate_only=self.args.validate_only or False,
                     build_mode=kb_update_strategy,
                     pool_size=pool_size,
                     subject_tree=subject_tree,

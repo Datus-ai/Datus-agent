@@ -24,8 +24,10 @@ from rich.console import Console
 from rich.table import Table
 
 from datus.agent.workflow_runner import WorkflowRunner
+from datus.cli._cli_utils import prompt_input
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
+from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
 from datus.cli.metadata_commands import MetadataCommands
@@ -122,6 +124,7 @@ class DatusCLI:
         self.context_commands = ContextCommands(self)
         self.metadata_commands = MetadataCommands(self)
         self.sub_agent_commands = SubAgentCommands(self)
+        self.bi_dashboard_commands = BiDashboardCommands(self)
 
         # Dictionary of available commands - created after handlers are initialized
         self.commands = {
@@ -158,6 +161,7 @@ class DatusCLI:
             ".namespace": self._cmd_switch_namespace,
             ".subagent": self.sub_agent_commands.cmd,
             ".mcp": self._cmd_mcp,
+            ".dashboard": self.bi_dashboard_commands.cmd,
             ".help": self._cmd_help,
             ".exit": self._cmd_exit,
             ".quit": self._cmd_exit,
@@ -916,6 +920,7 @@ class DatusCLI:
             (".chat_info", "Show current chat session information"),
             (".compact", "Compact chat session by summarizing conversation history"),
             (".sessions", "List all stored SQLite sessions with detailed information"),
+            (".dashboard", "Extract BI dashboard assets to assemble sub-agent context"),
             (".databases", "List all databases"),
             (".database database_name", "Switch current database"),
             (".tables", "List all tables"),
@@ -1007,56 +1012,9 @@ Type '.help' for a list of commands or '.exit' to quit.
         Returns:
             User input string or default value
         """
-        try:
-            from prompt_toolkit import prompt
-            from prompt_toolkit.formatted_text import HTML
-            from prompt_toolkit.validation import ValidationError, Validator
-
-            # Format the prompt message
-            if default:
-                prompt_text = f"{message} ({default}): "
-            else:
-                prompt_text = f"{message}: "
-
-            # Create validator for choices if provided
-            validator = None
-            if choices:
-
-                class ChoiceValidator(Validator):
-                    def validate(self, document):
-                        text = document.text.strip()
-                        if text and text not in choices:
-                            raise ValidationError(message=f"Please choose from: {', '.join(choices)}")
-
-                validator = ChoiceValidator()
-
-                # Add choices to prompt text
-                prompt_text = f"{message} ({'/'.join(choices)}): "
-                # if default:
-                #     prompt_text = f"{message} ({'/'.join(choices)}) ({default}): "
-
-            # Use the existing session for consistency but create a temporary one for this input
-            from prompt_toolkit.history import InMemoryHistory
-
-            result = prompt(
-                HTML(f"<ansigreen><b>{prompt_text}</b></ansigreen>"),
-                default=default,
-                validator=validator,
-                multiline=multiline,
-                history=InMemoryHistory(),  # Separate history for sub-prompts
-                style=self.session.style,  # Use same style as main session
-            )
-
-            return result.strip()
-
-        except (KeyboardInterrupt, EOFError):
-            # Handle Ctrl+C or Ctrl+D gracefully
-            self.console.print("\n[yellow]Input cancelled[/]")
-            return default
-        except Exception as e:
-            logger.error(f"Input prompt error: {e}")
-            self.console.print(f"[bold red]Input error:[/] {str(e)}")
-            return default
+        return prompt_input(
+            self.console, message, default=default, choices=choices, multiline=multiline, style=self.session.style
+        )
 
     def _init_connection(self):
         """Initialize database connection."""

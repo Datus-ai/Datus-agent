@@ -74,6 +74,21 @@ async def process_sql_item(
             return None
 
         logger.info(f"Generated SQL summary: {sql_summary_file}")
+        from datus.utils.path_manager import get_path_manager
+
+        file_path = (
+            get_path_manager(agent_config.home).sql_summary_path(agent_config.current_namespace) / sql_summary_file
+        )
+        import yaml
+
+        # Load YAML file
+        with open(file_path, "r", encoding="utf-8") as f:
+            doc = yaml.safe_load(f)
+            if not item.get("comment"):
+                item["comment"] = doc.get("comment", "")
+            if not item.get("name"):
+                item["name"] = doc.get("name", "")
+            item["subject_tree"] = doc.get("subject_tree")
         return sql_summary_file
 
     except Exception as e:
@@ -83,8 +98,9 @@ async def process_sql_item(
 
 def init_reference_sql(
     storage: ReferenceSqlRAG,
-    args: Any,
     global_config: AgentConfig,
+    sql_dir: str,
+    validate_only: bool = False,
     build_mode: str = "overwrite",
     pool_size: int = 1,
     subject_tree: Optional[list] = None,
@@ -93,7 +109,8 @@ def init_reference_sql(
 
     Args:
         storage: ReferenceSqlRAG instance
-        args: Command line arguments containing sql_dir path
+        sql_dir: The path to the SQL files directory
+        validate_only: If true, only validate SQL queries.
         global_config: Global agent configuration for LLM model creation
         build_mode: "overwrite" to replace all data, "incremental" to add new entries
         pool_size: Number of threads for parallel processing
@@ -102,7 +119,7 @@ def init_reference_sql(
     Returns:
         Dict containing initialization results and statistics
     """
-    if not hasattr(args, "sql_dir") or not args.sql_dir:
+    if not sql_dir:
         logger.warning("No --sql_dir provided, reference SQL storage initialized but empty")
         return {
             "status": "success",
@@ -113,10 +130,10 @@ def init_reference_sql(
             "total_stored_entries": storage.get_reference_sql_size(),
         }
 
-    logger.info(f"Processing SQL files from directory: {args.sql_dir}")
+    logger.info(f"Processing SQL files from directory: {sql_dir}")
 
     # Process and validate SQL files
-    valid_items, invalid_items = process_sql_files(args.sql_dir)
+    valid_items, invalid_items = process_sql_files(sql_dir)
     validate_errors = (
         []
         if not invalid_items
@@ -127,7 +144,7 @@ def init_reference_sql(
         ]
     )
     # If validate-only mode, exit after processing files
-    if hasattr(args, "validate_only") and args.validate_only:
+    if validate_only:
         logger.info(
             f"Validate-only mode: Processed {len(valid_items)} valid items and "
             f"{len(invalid_items) if invalid_items else 0} invalid items"
@@ -147,9 +164,7 @@ def init_reference_sql(
         logger.info("No valid SQL items found to process")
         return {
             "status": "success",
-            "message": (
-                f"No valid SQL items found in directory: {args.sql_dir}. Please ensure the directory is correct."
-            ),
+            "message": f"No valid SQL items found in directory: {sql_dir}. Please ensure the directory is correct.",
             "valid_entries": 0,
             "processed_entries": 0,
             "invalid_entries": len(invalid_items) if invalid_items else 0,
@@ -192,6 +207,7 @@ def init_reference_sql(
             _errors = []
             # Count successful results
             success_count = 0
+            success_items = []
             for i, result in enumerate(results):
                 item = items_to_process[i]
                 sql = normalize_sql(item["sql"])
@@ -200,18 +216,20 @@ def init_reference_sql(
 
                     _errors.append(f"SQL processing failed with exception `{str(result)}`. SQL: {sql};")
                 elif result:
+                    success_items.append(item)
                     success_count += 1
 
             logger.info(f"Completed processing: {success_count}/{len(items_to_process)} successful")
-            return success_count, _errors
+            return success_count, success_items, _errors
 
         # Run the async function
-        processed_count, errors = asyncio.run(process_all())
+        processed_count, process_items, errors = asyncio.run(process_all())
         if errors:
             process_errors.extend(errors)
         logger.info(f"Processed {processed_count} reference SQL entries")
     else:
         logger.info("No new items to process in incremental mode")
+        process_items = []
 
     # Initialize indices
     storage.after_init()
@@ -221,6 +239,7 @@ def init_reference_sql(
         "message": f"reference_sql bootstrap completed ({build_mode} mode)",
         "valid_entries": len(valid_items) if valid_items else 0,
         "processed_entries": processed_count,
+        "processed_items": process_items,
         "invalid_entries": len(invalid_items) if invalid_items else 0,
         "total_stored_entries": storage.get_reference_sql_size(),
         "validation_errors": "\n".join(validate_errors) if validate_errors else None,

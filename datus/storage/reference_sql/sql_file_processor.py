@@ -5,6 +5,7 @@
 import glob
 import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import sqlglot
@@ -154,18 +155,69 @@ def validate_sql(sql: str) -> Tuple[bool, str, str]:
     return False, "", f"SQL validation errors: {'; '.join(sqlglot_errors)}"
 
 
+def process_sql_items(items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    valid_entries: List[Dict[str, Any]] = []
+    invalid_entries: List[Dict[str, Any]] = []
+
+    for item in items:
+        sql = (item.get("sql") or "").strip()
+        if not sql:
+            continue
+
+        comment = item.get("comment") or ""
+        filepath = item.get("filepath") or ""
+        line_number = item.get("line_number", 1)
+
+        # Check SQL type - only process SELECT queries
+        try:
+            sql_type = parse_sql_type(sql, "mysql")
+            if sql_type != SQLType.SELECT:
+                logger.debug(f"Skipping non-SELECT SQL (type: {sql_type}) at {filepath}:{line_number}")
+                continue
+        except Exception as e:
+            logger.warning(f"Failed to parse SQL type at {filepath}:{line_number}: {str(e)}")
+            continue
+
+        is_valid, cleaned_sql, error_msg = validate_sql(sql)
+
+        if is_valid:
+            cleaned_item = dict(item)
+            cleaned_item["comment"] = comment
+            cleaned_item["sql"] = cleaned_sql
+            cleaned_item["filepath"] = filepath
+            cleaned_item.pop("line_number", None)
+            cleaned_item.pop("error", None)
+            valid_entries.append(cleaned_item)
+        else:
+            invalid_item = dict(item)
+            invalid_item["comment"] = comment
+            invalid_item["sql"] = sql
+            invalid_item["filepath"] = filepath
+            invalid_item["error"] = error_msg
+            invalid_item["line_number"] = line_number
+            invalid_entries.append(invalid_item)
+
+    return valid_entries, invalid_entries
+
+
 def process_sql_files(sql_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     if not os.path.exists(sql_dir):
         raise ValueError(f"SQL directory not found: {sql_dir}")
-
-    sql_files = glob.glob(os.path.join(sql_dir, "*.sql"))
+    sql_dir_path = Path(sql_dir).expanduser().resolve()
+    if sql_dir_path.is_dir():
+        sql_files = glob.glob(os.path.join(sql_dir, "*.sql"))
+    elif sql_dir_path.is_file() and sql_dir_path.suffix.lower() == ".sql":
+        sql_files = [sql_dir]
+    else:
+        sql_files = []
     if not sql_files:
         raise ValueError(f"No SQL files found in directory: {sql_dir}")
 
     logger.info(f"Found {len(sql_files)} SQL files to process")
 
-    valid_entries = []
-    invalid_entries = []
+    valid_entries: List[Dict[str, Any]] = []
+    invalid_entries: List[Dict[str, Any]] = []
+    items: List[Dict[str, Any]] = []
 
     for sql_file in sql_files:
         logger.info(f"Processing file: {sql_file}")
@@ -175,36 +227,14 @@ def process_sql_files(sql_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str
             logger.info(f"Extracted {len(pairs)} comment-SQL pairs from {os.path.basename(sql_file)}")
 
             for comment, sql, line_num in pairs:
-                # Check SQL type - only process SELECT queries
-                try:
-                    sql_type = parse_sql_type(sql, "mysql")
-                    if sql_type != SQLType.SELECT:
-                        logger.debug(f"Skipping non-SELECT SQL (type: {sql_type}) at {sql_file}:{line_num}")
-                        continue
-                except Exception as e:
-                    logger.warning(f"Failed to parse SQL type at {sql_file}:{line_num}: {str(e)}")
-                    continue
-
-                is_valid, cleaned_sql, error_msg = validate_sql(sql)
-
-                if is_valid:
-                    valid_entries.append(
-                        {
-                            "comment": comment or "",
-                            "sql": cleaned_sql,
-                            "filepath": sql_file,
-                        }
-                    )
-                else:
-                    invalid_entries.append(
-                        {
-                            "comment": comment,
-                            "sql": sql,
-                            "filepath": sql_file,
-                            "error": error_msg,
-                            "line_number": line_num,
-                        }
-                    )
+                items.append(
+                    {
+                        "comment": comment or "",
+                        "sql": sql,
+                        "filepath": sql_file,
+                        "line_number": line_num,
+                    }
+                )
 
         except Exception as e:
             logger.error(f"Error processing file {sql_file}: {str(e)}")
@@ -217,6 +247,10 @@ def process_sql_files(sql_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str
                     "line_number": 1,
                 }
             )
+
+    processed_valid, processed_invalid = process_sql_items(items)
+    valid_entries.extend(processed_valid)
+    invalid_entries.extend(processed_invalid)
 
     # Log summary
     logger.info(f"Processing complete: {len(valid_entries)} valid, {len(invalid_entries)} invalid SQL entries")

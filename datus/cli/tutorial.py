@@ -19,9 +19,6 @@ class BenchmarkTutorial:
     def __init__(self, config_path: str) -> None:
         self.config_path = config_path
         self.namespace_name = "california_schools"
-        path_manager = get_path_manager()
-        self.benchmark_path = path_manager.benchmark_dir
-        path_manager.ensure_dirs("sample")
 
     def _ensure_files(self):
         if not self.benchmark_path.exists():
@@ -37,13 +34,15 @@ class BenchmarkTutorial:
         )
 
     def _ensure_config(self) -> bool:
-        if not self.config_path or not Path(self.config_path).expanduser().resolve().exists():
+        if self.config_path and not Path(self.config_path).expanduser().resolve().exists():
             console.print(
                 f" ❌Configuration file `{self.config_path}` not found, "
                 "please check it or run `datus-agent init` first."
             )
             return False
         agent_config = load_agent_config(config=self.config_path)
+        path_manager = get_path_manager(datus_home=agent_config.home)
+        self.benchmark_path = path_manager.benchmark_dir
         if (
             self.namespace_name not in agent_config.benchmark_configs
             or self.namespace_name not in agent_config.namespaces
@@ -102,11 +101,11 @@ class BenchmarkTutorial:
             )
             console.print("[bold yellow][1/5] Ensure data files and configuration[/bold yellow]")
             with console.status("Ensuring...") as status:
+                if not self._ensure_config():
+                    return 1
                 self._ensure_files()
                 console.print("Data files are ready.")
                 status.update("Ensuring configuration...")
-                if not self._ensure_config():
-                    return 1
             console.print("Configuration is ready.")
             california_schools_path = self.benchmark_path / self.namespace_name
             from datus.cli.interactive_init import init_metadata_and_log_result, init_sql_and_log_result
