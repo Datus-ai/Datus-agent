@@ -836,20 +836,7 @@ class SupersetAdaptor(BIAdaptorBase):
     def _auth_headers(self) -> Dict[str, str]:
         if not self._auth_header_value:
             return {}
-        if self.auth_type == AuthType.LOGIN:
-            return {"Authorization": self._auth_header_value}
-
-        header_name = "X-API-Key"
-        token = self._auth_header_value
-        if isinstance(self.auth_params, dict):
-            header_name = self.auth_params.get("header") or self.auth_params.get("header_name") or header_name
-            prefix = self.auth_params.get("prefix")
-            if prefix and not token.startswith(prefix):
-                token = f"{prefix} {token}".strip()
-
-        if token.lower().startswith("bearer "):
-            header_name = "Authorization"
-        return {header_name: token}
+        return {"Authorization": self._auth_header_value}
 
     def _ensure_authenticated(self) -> None:
         if self._auth_header_value and self._token_expiration and time.time() < self._token_expiration:
