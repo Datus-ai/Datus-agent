@@ -36,6 +36,7 @@ from datus.tools.bi_tools.dashboard_assembler import (
 )
 from datus.tools.bi_tools.registry import adaptor_registry
 from datus.utils.constants import SYS_SUB_AGENTS
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.path_manager import get_path_manager
 from datus.utils.sub_agent_manager import SubAgentManager
 
@@ -72,7 +73,7 @@ class BiDashboardCommands:
         except (KeyboardInterrupt, EOFError):
             self.console.print("\n[yellow]Cancelled.[/]")
             return
-        except ValueError as exc:
+        except Exception as exc:
             self.console.print(f"[bold red]Error:[/] {exc}")
             return
 
@@ -155,17 +156,9 @@ class BiDashboardCommands:
         metadata = adaptor_registry.get_metadata(platform)
         if metadata is None:
             raise ValueError(f"Missing BI adaptor metadata for '{platform}'")
-        auth_param = AuthParam()
-        if metadata.auth_type == AuthType.LOGIN:
-            auth_param.username = self._prompt_input(f"{platform.capitalize()} username")
-            if not auth_param.username:
-                raise ValueError("Username is required.")
-
-            auth_param.password = self._prompt_password(f"{platform.capitalize()} password")
-            if not auth_param.password:
-                raise ValueError("Password is required.")
-        else:
-            auth_param.api_key = self._prompt_password(f"{platform.capitalize()} API key")
+        auth_param = self._resolve_auth_params(platform, metadata.auth_type)
+        if auth_param is None:
+            auth_param = self._prompt_auth_params(platform, metadata.auth_type)
 
         default_dialect = self.agent_config.db_type
 
@@ -176,6 +169,69 @@ class BiDashboardCommands:
             auth_params=auth_param,
             dialect=default_dialect,
         )
+
+    def _resolve_auth_params(self, platform: str, auth_type: AuthType) -> Optional[AuthParam]:
+        configs = getattr(self.agent_config, "dashboard_config", None) or {}
+        config = self._lookup_dashboard_config(configs, platform)
+        if config is None:
+            return None
+
+        if isinstance(config, dict):
+            username = (config.get("username") or "").strip()
+            password = (config.get("password") or "").strip()
+            api_key = (config.get("api_key") or "").strip()
+        else:
+            username = (getattr(config, "username", "") or "").strip()
+            password = (getattr(config, "password", "") or "").strip()
+            api_key = (getattr(config, "api_key", "") or "").strip()
+
+        auth_param = AuthParam()
+        if auth_type == AuthType.LOGIN:
+            if not username or not password:
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR,
+                    message=f"Dashboard auth config for '{platform}' requires username and password.",
+                )
+            auth_param.username = username
+            auth_param.password = password
+        elif auth_type == AuthType.API_KEY:
+            if not api_key:
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR, message=f"Dashboard auth config for '{platform}' requires api_key."
+                )
+            auth_param.api_key = api_key
+        else:
+            raise ValueError(f"Unsupported auth type '{auth_type}'.")
+        return auth_param
+
+    def _lookup_dashboard_config(self, configs: dict, platform: str):
+        if platform in configs:
+            return configs[platform]
+        key = (platform or "").strip().lower()
+        if key in configs:
+            return configs[key]
+        for name, config in configs.items():
+            if (name or "").strip().lower() == key:
+                return config
+        return None
+
+    def _prompt_auth_params(self, platform: str, auth_type: AuthType) -> AuthParam:
+        auth_param = AuthParam()
+        if auth_type == AuthType.LOGIN:
+            auth_param.username = self._prompt_input(f"{platform.capitalize()} username")
+            if not auth_param.username:
+                raise ValueError("Username is required.")
+
+            auth_param.password = self._prompt_password(f"{platform.capitalize()} password")
+            if not auth_param.password:
+                raise ValueError("Password is required.")
+        elif auth_type == AuthType.API_KEY:
+            auth_param.api_key = self._prompt_password(f"{platform.capitalize()} API key")
+            if not auth_param.api_key:
+                raise ValueError("API key is required.")
+        else:
+            raise ValueError(f"Unsupported auth type '{auth_type}'.")
+        return auth_param
 
     def _confirm_dashboard(
         self, adaptor: BIAdaptorBase, dashboard_url: str
