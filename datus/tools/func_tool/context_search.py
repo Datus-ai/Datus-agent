@@ -261,7 +261,7 @@ class ContextSearchTools:
     ) -> FuncToolResult:
         """
         Search for reference SQL queries using natural language queries.
-        MUST call `list_domain_layers_tree` first to get the domain, layer1, and layer2.
+        MUST call `list_subject_tree` first to get the subject path.
 
         Args:
             query_text: The natural language query text representing the desired SQL intent.

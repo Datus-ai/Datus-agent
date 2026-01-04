@@ -35,11 +35,51 @@ def init_success_story_semantic_model(
         args: Command line arguments
         agent_config: Agent configuration
     """
-    df = pd.read_csv(args.success_story)
+    # Load and validate CSV file
+    csv_path = args.success_story
+    try:
+        df = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        error_msg = f"Success story CSV file not found: {csv_path}"
+        logger.error(error_msg)
+        return False, error_msg
+    except pd.errors.EmptyDataError:
+        error_msg = f"Success story CSV file is empty: {csv_path}"
+        logger.error(error_msg)
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"Failed to read success story CSV file '{csv_path}': {e}"
+        logger.exception(error_msg)
+        return False, error_msg
+
+    # Validate required columns
+    required_columns = ["sql", "question"]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        error_msg = (
+            f"Success story CSV '{csv_path}' is missing required columns: {missing_columns}. "
+            f"Available columns: {list(df.columns)}"
+        )
+        logger.error(error_msg)
+        return False, error_msg
 
     # Collect all SQL queries and questions
     all_sqls = df["sql"].tolist()
     all_questions = df["question"].tolist()
+
+    # Validate data alignment
+    if len(all_sqls) != len(all_questions):
+        error_msg = (
+            f"Success story CSV '{csv_path}' has mismatched column lengths: "
+            f"sql={len(all_sqls)}, question={len(all_questions)}"
+        )
+        logger.error(error_msg)
+        return False, error_msg
+
+    if len(all_sqls) == 0:
+        error_msg = f"Success story CSV '{csv_path}' contains no data rows"
+        logger.error(error_msg)
+        return False, error_msg
 
     # Build comprehensive context from all rows
     context_message = "Generate semantic models for the following SQL queries:\n\n"
@@ -82,14 +122,17 @@ def init_success_story_semantic_model(
                                 generated_files.append(models)
 
             if not generated_files:
-                return False, "Failed to generate any semantic models"
+                error_msg = f"Failed to generate any semantic models from {len(all_sqls)} SQL queries in '{csv_path}'"
+                logger.error(error_msg)
+                return False, error_msg
 
             logger.info(f"Generated {len(generated_files)} semantic model files: {generated_files}")
             return True, ""
 
         except Exception as e:
-            logger.error(f"Error generating semantic models: {e}")
-            return False, str(e)
+            error_msg = f"Error generating semantic models from '{csv_path}': {e}"
+            logger.exception(error_msg)
+            return False, error_msg
 
     successful, error_message = asyncio.run(generate_semantic_models())
     return successful, error_message
@@ -137,15 +180,30 @@ def process_semantic_yaml_file(
         f"(semantic_objects={include_semantic_objects}, metrics={include_metrics})"
     )
 
+    # Validate file exists
+    if not os.path.exists(yaml_file_path):
+        error_msg = f"Semantic YAML file not found: {yaml_file_path}"
+        logger.error(error_msg)
+        return False, error_msg
+
     # Use GenerationHooks static method to sync to DB
-    result = GenerationHooks._sync_semantic_to_db(
-        yaml_file_path, agent_config, include_semantic_objects=include_semantic_objects, include_metrics=include_metrics
-    )
+    try:
+        result = GenerationHooks._sync_semantic_to_db(
+            yaml_file_path,
+            agent_config,
+            include_semantic_objects=include_semantic_objects,
+            include_metrics=include_metrics,
+        )
+    except Exception as e:
+        error_msg = f"Failed to sync semantic YAML file '{yaml_file_path}' to LanceDB: {e}"
+        logger.exception(error_msg)
+        return False, error_msg
 
     if result.get("success"):
         logger.info(f"Successfully synced to LanceDB: {result.get('message')}")
         return True, ""
     else:
         error = result.get("error", "Unknown error")
-        logger.error(f"Failed to sync to LanceDB: {error}")
+        error_msg = f"Failed to sync '{yaml_file_path}' to LanceDB: {error}"
+        logger.error(error_msg)
         return False, error

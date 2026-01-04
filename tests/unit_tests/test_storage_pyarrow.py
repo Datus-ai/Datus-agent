@@ -105,19 +105,13 @@ def sample_metric_data():
         {
             "subject_path": ["Sales", "Revenue", "Monthly"],
             "name": "monthly_revenue",
-            "llm_text": (
-                "Metric: monthly_revenue\nTotal monthly revenue across all channels\n\n"
-                "Constraint: amount > 0\nSQL: SELECT SUM(amount) FROM sales WHERE month = CURRENT_MONTH"
-            ),
+            "description": "Total monthly revenue across all channels",
             "semantic_model_name": "sales_model",
         },
         {
             "subject_path": ["Sales", "Revenue", "Daily"],
             "name": "daily_revenue",
-            "llm_text": (
-                "Metric: daily_revenue\nTotal daily revenue across all channels\n\n"
-                "Constraint: amount > 0\nSQL: SELECT SUM(amount) FROM sales WHERE date = CURRENT_DATE"
-            ),
+            "description": "Total daily revenue across all channels",
             "semantic_model_name": "sales_model",
         },
     ]
@@ -396,7 +390,7 @@ class TestMetricStoragePyArrow:
                 self.storage = storage
 
             def search_all_metrics(self):
-                return self.metric_storage.search_all_metrics()
+                return self.storage.search_all_metrics()
 
         rag = MockMetricRAG()
         result = rag.search_all_metrics()
@@ -404,7 +398,7 @@ class TestMetricStoragePyArrow:
         assert isinstance(result, list)
         assert len(result) == 2
         assert all("name" in item for item in result)
-        assert all("llm_text" in item for item in result)
+        assert all("description" in item for item in result)
 
     def test_metrics_detail_retrieval(self, temp_db_path, sample_metric_data):
         """Test metrics detail retrieval with PyArrow operations."""
@@ -446,7 +440,7 @@ class TestMetricStoragePyArrow:
             {
                 "subject_path": ["Sales", "Revenue"],
                 "name": "old_metric_name",
-                "llm_text": "This is an old metric description",
+                "description": "This is an old metric description",
                 "semantic_model_name": "sales_model",
             },
         ]
@@ -463,7 +457,7 @@ class TestMetricStoragePyArrow:
         results = storage.search_all_metrics(subject_path=["Sales", "Revenue"])
         assert len(results) == 1
         assert results[0]["name"] == "new_metric_name"
-        assert results[0]["llm_text"] == "This is an old metric description"
+        assert results[0]["description"] == "This is an old metric description"
 
     def test_rename_metric_item_different_parent(self, temp_db_path):
         """Test that renaming metric with different parent path fails."""
@@ -473,7 +467,7 @@ class TestMetricStoragePyArrow:
             {
                 "subject_path": ["Sales", "Revenue"],
                 "name": "metric1",
-                "llm_text": "Metric 1 description",
+                "description": "Metric 1 description",
                 "semantic_model_name": "sales_model",
             },
         ]

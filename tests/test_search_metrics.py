@@ -100,8 +100,7 @@ class TestRag:
 def test_json():
     metric = Metric(
         name="metric_name",
-        llm_text="Metric: metric_name\na description of this metric\n\nSQL: SELECT metric_name FROM metrics\n"
-        "Filter: a constraint of this metric",
+        description="A test metric for JSON serialization",
     )
     json_str = json.dumps(metric.__dict__)
     print(f"json:{json_str}")

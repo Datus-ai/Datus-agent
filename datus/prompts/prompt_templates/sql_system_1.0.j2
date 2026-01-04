@@ -221,7 +221,7 @@ When no standard metric matches the user's requirements:
 {% endif -%}
 
 ## CRITICAL EXECUTION RULES
-{% if has_context_search_tools %}
+{% if has_mf_tools %}
 - **ALWAYS call `list_metrics` first** to check for standard metrics
 - **NEVER generate SQL before checking if a standard metric exists**
 - **Use LLM judgment** to determine if a metric matches (no distance thresholds)

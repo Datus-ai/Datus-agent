@@ -144,7 +144,7 @@ def _match_tool_actions() -> list[dict]:
                 "raw_output": {
                     "success": 1,
                     "error": None,
-                    "result": [{"name": "Metric A", "llm_text": "Total customers"}],
+                    "result": [{"name": "Metric A", "description": "Total customers"}],
                 },
             },
             "status": "success",
@@ -209,7 +209,7 @@ def _mismatch_tool_actions() -> list[dict]:
                 "raw_output": {
                     "success": 1,
                     "error": None,
-                    "result": [{"name": "Another Metric", "llm_text": "Another metric text"}],
+                    "result": [{"name": "Another Metric", "description": "Another metric text"}],
                 },
             },
             "status": "success",

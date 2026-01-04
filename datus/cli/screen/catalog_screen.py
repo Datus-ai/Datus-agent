@@ -49,8 +49,7 @@ class SemanticModelPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         field_specs = [
-            ("Semantic File", "semantic_file_path", 1, None, None),
-            ("Description", "semantic_model_desc", 2, "markdown", None),
+            ("Description", "description", 2, "markdown", None),
             ("Identifiers", "identifiers", 4, "json", None),
             ("Dimensions", "dimensions", 4, "json", None),
             ("Measures", "measures", 4, "json", None),
@@ -712,11 +711,7 @@ class CatalogScreen(ContextScreen):
         table.add_column("Value", style="yellow", justify="left", ratio=3, no_wrap=False)
 
         table.add_row("Semantic Model Name", semantic_record.get("semantic_model_name", "") or "[dim]N/A[/dim]")
-        table.add_row(
-            "Semantic File",
-            semantic_record.get("semantic_file_path", "") or "[dim]N/A[/dim]",
-        )
-        table.add_row("Description", semantic_record.get("semantic_model_desc", "") or "[dim]N/A[/dim]")
+        table.add_row("Description", semantic_record.get("description", "") or "[dim]N/A[/dim]")
         table.add_row("Identifiers", self._create_nested_table_for_json(semantic_record.get("identifiers")))
         table.add_row("Dimensions", self._create_nested_table_for_json(semantic_record.get("dimensions")))
         table.add_row("Measures", self._create_nested_table_for_json(semantic_record.get("measures")))

@@ -691,8 +691,10 @@ class GenerationHooks(AgentHooks):
             if agent_config.db_type == DBType.STARROCKS and not catalog_name:
                 catalog_name = "default_catalog"
 
-            # 1. Process Table & Columns (from data_source)
-            if data_source and include_semantic_objects:
+            # 1. Parse table context from data_source (always, for metric association)
+            # Decoupled from include_semantic_objects to ensure metrics get proper table context
+            table_fq_name = ""
+            if data_source:
                 table_name = data_source.get("name", "")
                 sql_table = data_source.get("sql_table", "")
 
@@ -733,6 +735,8 @@ class GenerationHooks(AgentHooks):
                 fq_parts = [p for p in [catalog_name, database_name, schema_name, table_name] if p]
                 table_fq_name = ".".join(fq_parts)
 
+            # 2. Create and store semantic objects (table/columns) only when requested
+            if data_source and include_semantic_objects:
                 # --- A. Table Object ---
                 table_obj = {
                     "id": f"table:{table_name}",
@@ -804,7 +808,7 @@ class GenerationHooks(AgentHooks):
                 for ident in data_source.get("identifiers", []):
                     process_column(ident, "column", is_ent=True)
 
-            # 2. Process Metrics (Standard Metrics) - These go to MetricStorage
+            # 3. Process Metrics (Standard Metrics) - These go to MetricStorage
             if include_metrics:
                 for metric in metrics_list:
                     m_name = metric.get("name")

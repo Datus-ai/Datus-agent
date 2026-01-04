@@ -119,7 +119,7 @@ class SessionLoader:
                             # Parse arguments
                             try:
                                 args_dict = json.loads(arguments) if arguments else {}
-                                args_str = str(args_dict)[:600]
+                                args_str = str(args_dict)[:60]
                                 assistant_progress.append(f"✓ Tool call: {tool_name}({args_str})")
                             except (json.JSONDecodeError, ValueError, TypeError):
                                 args_dict = {}

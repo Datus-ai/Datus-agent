@@ -54,30 +54,21 @@ def sample_metrics_with_domain_layers():
         {
             "subject_path": ["Sales", "Revenue", "Monthly"],
             "name": "monthly_revenue",
-            "llm_text": (
-                "Metric: monthly_revenue\nMonthly revenue across all channels\n\n"
-                "Constraint: revenue > 0\nSQL: SELECT SUM(amount) FROM sales WHERE month = ?"
-            ),
+            "description": "Monthly revenue across all channels",
             "semantic_model_name": "sales_model",
             "created_at": "2023-01-01T00:00:00Z",
         },
         {
             "subject_path": ["Sales", "Revenue", "Daily"],
             "name": "daily_revenue",
-            "llm_text": (
-                "Metric: daily_revenue\nDaily revenue across all channels\n\n"
-                "Constraint: revenue > 0\nSQL: SELECT SUM(amount) FROM sales WHERE date = ?"
-            ),
+            "description": "Daily revenue across all channels",
             "semantic_model_name": "sales_model",
             "created_at": "2023-01-02T00:00:00Z",
         },
         {
             "subject_path": ["Marketing", "Campaigns", "Performance"],
             "name": "campaign_ctr",
-            "llm_text": (
-                "Metric: campaign_ctr\nCampaign click-through rate\n\n"
-                "Constraint: ctr BETWEEN 0 AND 1\nSQL: SELECT clicks/impressions FROM campaigns WHERE id = ?"
-            ),
+            "description": "Campaign click-through rate",
             "semantic_model_name": "user_model",
             "created_at": "2023-01-03T00:00:00Z",
         },
@@ -100,7 +91,7 @@ class TestMetricRAGPyArrow:
 
         assert len(result) == 3
         assert all(element["name"] for element in result)
-        assert all(element["llm_text"] for element in result)
+        assert all(element["description"] for element in result)
 
     def test_hybrid_search_with_pyarrow_filtering(
         self, temp_db_path, sample_metrics_with_domain_layers, sample_semantic_models
@@ -124,7 +115,7 @@ class TestMetricRAGPyArrow:
         # Simulate the filtering done in search_metrics
         semantic_names_set = semantic_search_result["semantic_model_name"].unique()
 
-        filtered_metrics = all_metrics.select(["name", "llm_text"]).filter(
+        filtered_metrics = all_metrics.select(["name", "description"]).filter(
             pc.is_in(all_metrics["semantic_model_name"], semantic_names_set)
         )
 
@@ -152,7 +143,7 @@ class TestMetricRAGPyArrow:
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0]["name"] == "monthly_revenue"
-        assert "revenue > 0" in result[0]["llm_text"]
+        assert "revenue > 0" in result[0]["description"]
 
     def test_domain_layer_concatenation_consistency(self, temp_db_path):
         """Test that domain_layer concatenation is consistent with PyArrow utilities."""
@@ -161,7 +152,7 @@ class TestMetricRAGPyArrow:
             {
                 "subject_path": ["Test Domain", "Test/Layer1", "Test Layer2"],
                 "name": "test_metric",
-                "llm_text": "Metric: test_metric\nTest metric description\n\nConstraint: value > 0\nSQL: SELECT 1",
+                "description": "Test metric description",
                 "semantic_model_name": "test_model",
                 "created_at": "2023-01-01T00:00:00Z",
             }
@@ -249,7 +240,7 @@ class TestPyArrowComputeIntegration:
         assert all(length > 0 for length in lengths_list)
 
         # Test string replacement
-        cleaned_descriptions = pc.replace_substring(all_metrics["llm_text"], "revenue", "income")
+        cleaned_descriptions = pc.replace_substring(all_metrics["description"], "revenue", "income")
         cleaned_list = cleaned_descriptions.to_pylist()
         assert any("income" in desc for desc in cleaned_list)
 
@@ -280,10 +271,7 @@ class TestPerformanceOptimizations:
                 {
                     "subject_path": [f"Domain_{i % 10}", f"Layer1_{i % 5}", f"Layer2_{i % 3}"],
                     "name": f"metric_{i}",
-                    "llm_text": (
-                        f"Metric: metric_{i}\nDescription for metric {i}\n\n"
-                        f"Constraint: value_{i} > 0\nSQL: SELECT {i} FROM table_{i}"
-                    ),
+                    "description": f"Description for metric {i}",
                     "semantic_model_name": f"model_{i % 20}",
                     "created_at": "2023-01-01T00:00:00Z",
                 }
@@ -319,10 +307,7 @@ class TestPerformanceOptimizations:
                 {
                     "subject_path": ["LargeDomain", "LargeLayer1", "LargeLayer2"],
                     "name": f"large_metric_{i}",
-                    "llm_text": f"Metric: large_metric_{i}\n"
-                    f"This is a very long description for metric {i} " * 20
-                    + f"\n\nConstraint: long_constraint_expression_{i} > 0 AND value < 1000\n"
-                    f"SQL: SELECT * FROM very_large_table_{i} WHERE conditions_are_met",
+                    "description": f"This is a very long description for metric {i}. " * 20,
                     "semantic_model_name": f"large_model_{i % 10}",
                     "created_at": "2023-01-01T00:00:00Z",
                 }

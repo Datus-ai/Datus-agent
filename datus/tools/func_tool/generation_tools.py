@@ -83,13 +83,36 @@ class GenerationTools:
                 )
 
             # Post-filter for exact name match
-            target_name = object_name.lower()
+            # Extract the final segment as target name (e.g., "orders.amount" -> "amount")
+            target_name = object_name.split(".")[-1].lower()
+
+            # Determine target table from explicit context or dotted name
+            target_table = None
+            if table_context:
+                target_table = table_context.lower()
+            elif "." in object_name:
+                target_table = object_name.rsplit(".", 1)[0].lower()
+
             found_object = None
 
             for obj in results:
-                if obj.get("name", "").lower() == target_name:
-                    found_object = obj
-                    break
+                name_match = obj.get("name", "").lower() == target_name
+
+                # For metrics, only check name (no table_name field)
+                if kind == "metric":
+                    if name_match:
+                        found_object = obj
+                        break
+                else:
+                    # For semantic objects (table/column), check both name and table if applicable
+                    if target_table:
+                        table_match = obj.get("table_name", "").lower() == target_table
+                        if name_match and table_match:
+                            found_object = obj
+                            break
+                    elif name_match:
+                        found_object = obj
+                        break
 
             if found_object:
                 return FuncToolResult(
