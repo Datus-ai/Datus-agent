@@ -397,30 +397,17 @@ class SupersetAdaptor(BIAdaptorBase):
 
         sqls: List[str] = []
         used_query_indexes: set[int] = set()
-        results = response_data.get("result")
+        results = response_data.get("result", [])
 
-        if isinstance(results, list):
-            for idx, block in enumerate(results):
-                before = len(sqls)
-                self._append_sql_from_block(block, sqls)
-                if len(sqls) > before:
-                    used_query_indexes.add(idx)
-        elif isinstance(results, dict):
+        for idx, block in enumerate(results):
             before = len(sqls)
-            self._append_sql_from_block(results, sqls)
+            self._append_sql_from_block(block, sqls)
             if len(sqls) > before:
-                used_query_indexes.add(0)
+                used_query_indexes.add(idx)
 
         return sqls, (used_query_indexes or None)
 
     def _append_sql_from_block(self, block: Dict[str, Any], sqls: List[str]) -> None:
-        queries = block.get("queries") or []
-        if queries and isinstance(queries, list):
-            for query_def in queries:
-                sql_text = query_def.get("query")
-                if sql_text:
-                    sqls.append(sql_text.strip())
-
         if sql_text := block.get("query"):
             sqls.append(sql_text.strip())
 
@@ -870,40 +857,31 @@ class SupersetAdaptor(BIAdaptorBase):
         self._authenticate()
 
     def _authenticate(self) -> None:
-        if self.auth_type() == AuthType.LOGIN:
-            payload = {
-                "username": self.auth_params.username,
-                "password": self.auth_params.password,
-                "refresh": True,
-                "provider": "db",
-            }
-            try:
-                response = self._request("POST", "security/login", require_auth=False, json=payload)
-            except SupersetAdaptorError as exc:
-                raise SupersetAdaptorError(f"Authentication failed: {exc}") from exc
+        payload = {
+            "username": self.auth_params.username,
+            "password": self.auth_params.password,
+            "refresh": True,
+            "provider": "db",
+        }
+        try:
+            response = self._request("POST", "security/login", require_auth=False, json=payload)
+        except SupersetAdaptorError as exc:
+            raise SupersetAdaptorError(f"Authentication failed: {exc}") from exc
 
-            data = response.json()
-            token_payload = data.get("result", data)
-            access_token = token_payload.get("access_token")
-            token_type = token_payload.get("token_type", "Bearer")
-            expires_in = token_payload.get("expires_in")
+        data = response.json()
+        token_payload = data.get("result", data)
+        access_token = token_payload.get("access_token")
+        token_type = token_payload.get("token_type", "Bearer")
+        expires_in = token_payload.get("expires_in")
 
-            if not access_token:
-                raise SupersetAdaptorError("Superset login response missing access_token")
+        if not access_token:
+            raise SupersetAdaptorError("Superset login response missing access_token")
 
-            self._auth_header_value = f"{token_type} {access_token}".strip()
-            if isinstance(expires_in, (int, float)) and expires_in > 0:
-                self._token_expiration = time.time() + expires_in - 60
-            else:
-                self._token_expiration = time.time() + 3600
+        self._auth_header_value = f"{token_type} {access_token}".strip()
+        if isinstance(expires_in, (int, float)) and expires_in > 0:
+            self._token_expiration = time.time() + expires_in - 60
         else:
-            api_key = self.auth_params.api_key
-
-            if not api_key:
-                raise SupersetAdaptorError("auth_params must include an API key value for API_KEY auth_type")
-
-            self._auth_header_value = str(api_key)
-            self._token_expiration = time.time() + 365 * 24 * 60 * 60
+            self._token_expiration = time.time() + 3600
 
 
 SupersetAdaptor.register("superset", auth_type=AuthType.LOGIN, display_name="Superset")

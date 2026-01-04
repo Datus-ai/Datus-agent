@@ -77,6 +77,7 @@ class BIAdaptorRegistry:
 
     @classmethod
     def is_registered(cls, platform: str) -> bool:
+        cls.discover_adaptors()
         return (platform or "").strip().lower() in cls._adaptors
 
     @classmethod
