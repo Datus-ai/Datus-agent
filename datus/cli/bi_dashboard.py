@@ -610,10 +610,11 @@ class BiDashboardCommands:
                         if not sql_text.endswith(";"):
                             sql_text = f"{sql_text};"
                         lines.append(sql_text)
+                        # Split SQL
                         lines.append("")
 
                 if lines:
-                    target_f.writelines(lines)
+                    target_f.write("\n".join(lines))
         return target_file
 
     def _build_sql_file_name(

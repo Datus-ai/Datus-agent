@@ -218,6 +218,7 @@ class SQLCompleter(Completer):
             ".subagent update": None,
             ".subagent remove": None,
             ".subagent bootstrap": None,
+            ".dashboard": None,
         }
 
     def update_tables(self, tables: Dict[str, List[str]]):
