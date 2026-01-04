@@ -222,14 +222,14 @@ def test_init_reference_sql_reports_process_errors(monkeypatch):
 
     monkeypatch.setattr(reference_sql_init, "process_sql_item", failing_process_sql_item)
 
-    args = Namespace(sql_dir="dummy", validate_only=False)
     storage = DummyReferenceStorage()
 
     result = reference_sql_init.init_reference_sql(
         storage,
-        args,
         global_config=SimpleNamespace(),
         build_mode="overwrite",
+        sql_dir="dummy",
+        validate_only=False,
         pool_size=1,
         subject_tree=None,
     )
