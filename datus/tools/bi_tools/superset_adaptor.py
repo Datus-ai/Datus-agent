@@ -848,7 +848,7 @@ class SupersetAdaptor(BIAdaptorBase):
             "username": self.auth_params.username,
             "password": self.auth_params.password,
             "refresh": True,
-            "provider": "db",
+            "provider": "db" if not self.auth_params.extra else self.auth_params.extra.get("provider") or "db",
         }
         try:
             response = self._request("POST", "security/login", require_auth=False, json=payload)

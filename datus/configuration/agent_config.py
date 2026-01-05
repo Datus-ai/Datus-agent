@@ -141,10 +141,11 @@ class BenchmarkConfig:
 @dataclass
 class DashboardConfig:
     platform: str
-    #
+    # use login or api_key
     username: str = ""
     password: str = ""
     api_key: str = ""
+    extra: Optional[Dict[str, Any]] = field(default_factory=dict, init=True)
 
 
 logger = get_logger(__name__)
@@ -665,7 +666,7 @@ class AgentConfig:
             password = resolve_env(str(password_raw)) if password_raw else ""
             api_key = resolve_env(str(api_key_raw)) if api_key_raw else ""
             self.dashboard_config[platform] = DashboardConfig(
-                platform=platform, username=username, password=password, api_key=api_key
+                platform=platform, username=username, password=password, api_key=api_key, extra=param.get("extra", {})
             )
 
 

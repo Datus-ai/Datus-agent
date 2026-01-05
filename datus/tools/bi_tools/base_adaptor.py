@@ -11,6 +11,7 @@ class AuthParam(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     api_key: Optional[str] = None
+    extra: Optional[Dict[str, Any]] = None
 
 
 # ---------- Core Models ----------

@@ -274,3 +274,5 @@ agent:
     superset:
       username: admin
       password: admin
+      extra: # Special configurations for different platforms
+        provider: db

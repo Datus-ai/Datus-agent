@@ -392,7 +392,7 @@ def main():
 
     # Load agent configuration
     agent_config = load_agent_config(**vars(args))
-    if args.action == "bi-bootstrap":
+    if args.action == "bootstrap-bi":
         configure_logging(args.debug, console_output=False)
         from datus.cli.bi_dashboard import BiDashboardCommands
 

@@ -161,7 +161,7 @@ class DatusCLI:
             ".namespace": self._cmd_switch_namespace,
             ".subagent": self.sub_agent_commands.cmd,
             ".mcp": self._cmd_mcp,
-            ".dashboard": self.bi_dashboard_commands.cmd,
+            ".bootstrap-bi": self.bi_dashboard_commands.cmd,
             ".help": self._cmd_help,
             ".exit": self._cmd_exit,
             ".quit": self._cmd_exit,

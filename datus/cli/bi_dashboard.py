@@ -13,7 +13,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from datus.cli._cli_utils import prompt_input
-from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config import AgentConfig, DashboardConfig
 from datus.configuration.agent_config_loader import configuration_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.storage.reference_sql.init_utils import gen_reference_sql_id
@@ -176,14 +176,10 @@ class BiDashboardCommands:
         if config is None:
             return None
 
-        if isinstance(config, dict):
-            username = (config.get("username") or "").strip()
-            password = (config.get("password") or "").strip()
-            api_key = (config.get("api_key") or "").strip()
-        else:
-            username = (getattr(config, "username", "") or "").strip()
-            password = (getattr(config, "password", "") or "").strip()
-            api_key = (getattr(config, "api_key", "") or "").strip()
+        username = (config.username or "").strip()
+        password = (config.password or "").strip()
+        api_key = (config.api_key or "").strip()
+        extra = config.extra or {}
 
         auth_param = AuthParam()
         if auth_type == AuthType.LOGIN:
@@ -194,17 +190,19 @@ class BiDashboardCommands:
                 )
             auth_param.username = username
             auth_param.password = password
+            auth_param.extra = extra
         elif auth_type == AuthType.API_KEY:
             if not api_key:
                 raise DatusException(
                     ErrorCode.COMMON_CONFIG_ERROR, message=f"Dashboard auth config for '{platform}' requires api_key."
                 )
             auth_param.api_key = api_key
+            auth_param.extra = extra
         else:
             raise ValueError(f"Unsupported auth type '{auth_type}'.")
         return auth_param
 
-    def _lookup_dashboard_config(self, configs: dict, platform: str):
+    def _lookup_dashboard_config(self, configs: dict, platform: str) -> Optional[DashboardConfig]:
         if platform in configs:
             return configs[platform]
         key = (platform or "").strip().lower()
