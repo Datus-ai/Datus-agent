@@ -307,7 +307,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     bi_subparser = subparsers.add_parser(
-        "bi-bootstrap",
+        "bootstrap-bi",
         help="Benchmarking tutorial using a dataset from California schools",
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
