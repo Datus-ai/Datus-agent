@@ -127,6 +127,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
     def search_all_reference_sql(
         self,
         subject_path: Optional[List[str]] = None,
+        select_fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Search all reference SQL entries with optional subject path filtering.
 
@@ -136,9 +137,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         Returns:
             List of matching reference SQL entries
         """
-        return self.search_with_subject_filter(
-            subject_path=subject_path,
-        )
+        return self.search_with_subject_filter(subject_path=subject_path, selected_fields=select_fields)
 
 
 class ReferenceSqlRAG:
@@ -152,7 +151,11 @@ class ReferenceSqlRAG:
         logger.info(f"store reference SQL items: {len(reference_sql_items)} items")
         self.reference_sql_storage.batch_store_sql(reference_sql_items)
 
-    def search_all_reference_sql(self, subject_path: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def search_all_reference_sql(
+        self,
+        subject_path: Optional[List[str]] = None,
+        select_fields: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """Search all reference SQL items.
 
         Args:
@@ -161,7 +164,7 @@ class ReferenceSqlRAG:
         Returns:
             List of matching reference SQL entries
         """
-        return self.reference_sql_storage.search_all_reference_sql(subject_path)
+        return self.reference_sql_storage.search_all_reference_sql(subject_path, select_fields=select_fields)
 
     def after_init(self):
         """Initialize indices after data loading."""

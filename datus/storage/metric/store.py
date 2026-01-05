@@ -136,6 +136,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         query_text: Optional[str] = None,
         semantic_model_names: Optional[List[str]] = None,
         subject_path: Optional[List[str]] = None,
+        select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Search metrics with semantic model and subject filtering."""
@@ -151,17 +152,18 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             top_n=top_n,
             name_field="name",
             additional_conditions=additional_conditions if additional_conditions else None,
+            selected_fields=select_fields,
         )
 
     def search_all_metrics(
         self,
         semantic_model_names: Optional[List[str]] = None,
         subject_path: Optional[List[str]] = None,
+        select_fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Search all metrics with optional semantic model and subject filtering."""
         return self._search_metrics_internal(
-            semantic_model_names=semantic_model_names,
-            subject_path=subject_path,
+            semantic_model_names=semantic_model_names, subject_path=subject_path, select_fields=select_fields
         )
 
     def search_metrics(
@@ -210,8 +212,8 @@ class SemanticMetricsRAG:
     ) -> List[Dict[str, Any]]:
         return self.semantic_model_storage.search_all(database_name, select_fields=select_fields)
 
-    def search_all_metrics(self) -> List[Dict[str, Any]]:
-        return self.metric_storage.search_all_metrics()
+    def search_all_metrics(self, select_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        return self.metric_storage.search_all_metrics(select_fields=select_fields)
 
     def after_init(self):
         self.semantic_model_storage.create_indices()

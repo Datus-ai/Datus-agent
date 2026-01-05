@@ -328,7 +328,7 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 else:
                     result.append(self._build_rich_table_by_list("Sample Data", sample_data))
                 return result
-            if function_name == "list_domain_layers_tree":
+            if function_name == "list_subject_tree":
                 result.append(self._build_rich_tree(items))
                 return result
             else:

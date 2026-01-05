@@ -118,6 +118,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         self,
         query_text: Optional[str] = None,
         subject_path: Optional[List[str]] = None,
+        select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = 5,
     ) -> List[Dict[str, Any]]:
         """Search for similar knowledge entries.
@@ -134,6 +135,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         return self.search_with_subject_filter(
             query_text=query_text,
             subject_path=subject_path,
+            selected_fields=select_fields,
             top_n=top_n,
             name_field="terminology",
         )

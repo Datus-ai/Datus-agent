@@ -885,7 +885,8 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             # Build where clause
             where = None if len(conditions) == 0 else and_(*conditions)
-
+            if selected_fields and SUBJECT_ID_COLUMN_NAME not in selected_fields:
+                selected_fields = [SUBJECT_ID_COLUMN_NAME] + selected_fields
             # Perform search
             if query_text:
                 search_result = self.search(
@@ -895,7 +896,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
                     where=where,
                 )
             else:
-                search_result = self._search_all(where=where)
+                search_result = self._search_all(where=where, select_fields=selected_fields)
 
             # Enrich with subject_path - this adds subject_path field to all results
             result_list = search_result.to_pylist()
