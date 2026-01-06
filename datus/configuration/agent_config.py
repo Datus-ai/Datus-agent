@@ -666,7 +666,11 @@ class AgentConfig:
             password = resolve_env(str(password_raw)) if password_raw else ""
             api_key = resolve_env(str(api_key_raw)) if api_key_raw else ""
             self.dashboard_config[platform] = DashboardConfig(
-                platform=platform, username=username, password=password, api_key=api_key, extra=param.get("extra", {})
+                platform=platform,
+                username=username,
+                password=password,
+                api_key=api_key,
+                extra=auth_params.get("extra", {}),
             )
 
 
