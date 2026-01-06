@@ -32,14 +32,7 @@ class DbConfig:
     warehouse: str = field(default="", init=True)
     catalog: str = field(default="", init=True)
     logic_name: str = field(default="", init=True)  # Logical name defined in namespace, used to switch databases
-    # ClickZetta specific fields
-    service: str = field(default="", init=True)
-    instance: str = field(default="", init=True)
-    workspace: str = field(default="", init=True)
-    vcluster: str = field(default="", init=True)
-    secure: bool = field(default=False, init=True)
-    hints: Optional[Dict] = field(default=None, init=True)
-    extra: Optional[Dict] = field(default=None, init=True)
+    extra: Optional[Dict] = field(default=None, init=True)  # Adapter-specific fields stored here
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -47,14 +40,27 @@ class DbConfig:
     @staticmethod
     def filter_kwargs(cls, kwargs) -> "DbConfig":
         valid_fields = {f.name for f in fields(cls)}
+        # Fields that are handled specially, not stored in extra
+        internal_fields = {"name"}
         params = {}
+        extra_params = {}
         for k, v in kwargs.items():
             if k not in valid_fields:
+                # Store unknown fields in extra for adapter-specific config
+                # Skip internal fields that are handled separately
+                if v is not None and v != "" and k not in internal_fields:
+                    extra_params[k] = v
                 continue
             if not v:
                 params[k] = v
             else:
                 params[k] = resolve_env(str(v))
+
+        # Merge extra_params into existing extra field
+        if extra_params:
+            existing_extra = params.get("extra") or {}
+            params["extra"] = {**existing_extra, **extra_params}
+
         db_config = cls(**params)
         if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
             db_config.database = file_stem_from_uri(db_config.uri)
