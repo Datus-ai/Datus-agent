@@ -71,6 +71,8 @@ class Agent:
         self.storage_modules = {}
         self.metadata_store = None
         self.metrics_store = None
+        self._ref_sql_file_sql_counter: Dict[str, int] = {}
+        self._metrics_row_stage_seen: Dict[int, Set[str]] = {}
         self._check_storage_modules()
 
     def _initialize_model(self) -> LLMBaseModel:
@@ -244,6 +246,108 @@ class Agent:
             except Exception as exc:
                 logger.warning(f"Failed to refresh scoped KB for sub-agent '{name}': {exc}")
 
+    def _reset_reference_sql_stream_state(self) -> None:
+        self._ref_sql_file_sql_counter = {}
+
+    def _reset_metrics_stream_state(self) -> None:
+        self._metrics_row_stage_seen = {}
+
+    def _print_stream_lines(self, message: Optional[object], indent: str = "  ") -> None:
+        if not message:
+            return
+        text = str(message).strip()
+        if not text:
+            return
+        for line in text.splitlines():
+            print(f"{indent}{line}", flush=True)
+
+    def _next_reference_sql_number(self, filepath: str) -> int:
+        count = self._ref_sql_file_sql_counter.get(filepath, 0) + 1
+        self._ref_sql_file_sql_counter[filepath] = count
+        return count
+
+    def _format_reference_sql_line(self, sql_text: str, number: int) -> str:
+        condensed = " ".join(str(sql_text).split())
+        return condensed or f"sql_{number}"
+
+    def _emit_reference_sql_event(self, event: dict) -> None:
+        event_type = event.get("type")
+        if not event_type:
+            return
+
+        if event_type == "reference_sql_init.file_start":
+            filepath = str(event.get("filepath") or "unknown_file")
+            logger.info("reference_sql file start: %s", filepath)
+            print(f"{filepath} start", flush=True)
+            return
+
+        if event_type == "reference_sql_init.file_complete":
+            filepath = str(event.get("filepath") or "unknown_file")
+            logger.info("reference_sql file complete: %s", filepath)
+            print(f"{filepath} end", flush=True)
+            return
+
+        if event_type == "reference_sql_init.item_start":
+            filepath = str(event.get("filepath") or "unknown_file")
+            number = self._next_reference_sql_number(filepath)
+            sql_line = self._format_reference_sql_line(str(event.get("sql") or ""), number)
+            print(f"# {number}. {sql_line}", flush=True)
+            return
+
+        if event_type == "reference_sql_init.action":
+            self._print_stream_lines(event.get("messages"))
+            return
+
+        if event_type == "reference_sql_init.item_error":
+            error = event.get("error")
+            if error:
+                self._print_stream_lines(error)
+            return
+
+    def _emit_metrics_event(self, event: dict) -> None:
+        event_type = event.get("type")
+        if not event_type:
+            return
+
+        if event_type == "metrics_init.row_start":
+            row_idx = event.get("row_idx")
+            question = event.get("question") or ""
+            logger.info("metrics row start: %s", row_idx)
+            print(f"row {row_idx} start: {question}".strip(), flush=True)
+            table_name = event.get("table_name")
+            if table_name:
+                print(f"  table: {table_name}", flush=True)
+            return
+
+        if event_type == "metrics_init.action":
+            row_idx = event.get("row_idx")
+            stage = event.get("stage") or "action"
+            seen = self._metrics_row_stage_seen.setdefault(row_idx, set())
+            if stage not in seen:
+                seen.add(stage)
+                print(f"  {stage}:", flush=True)
+            self._print_stream_lines(event.get("messages"), indent="    ")
+            return
+
+        if event_type == "metrics_init.semantic_model_ready":
+            semantic_model_file = event.get("semantic_model_file")
+            if semantic_model_file:
+                print(f"  semantic_model: {semantic_model_file}", flush=True)
+            return
+
+        if event_type == "metrics_init.row_success":
+            row_idx = event.get("row_idx")
+            logger.info("metrics row success: %s", row_idx)
+            print(f"row {row_idx} end", flush=True)
+            return
+
+        if event_type == "metrics_init.row_error":
+            row_idx = event.get("row_idx")
+            error = event.get("error") or "unknown error"
+            logger.error("metrics row error: %s", row_idx)
+            print(f"row {row_idx} error: {error}", flush=True)
+            return
+
     def bootstrap_kb(self):
         """Initialize knowledge base storage components."""
         logger.info("Initializing knowledge base components")
@@ -361,11 +465,21 @@ class Agent:
                     self.global_config.save_storage_config("metric")
                 else:
                     self.global_config.check_init_storage_config("metric")
+                self._reset_metrics_stream_state()
                 # Initialize metrics using unified SemanticAgenticNode approach
                 if hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
-                    successful, error_message = init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
+                    successful, error_message = init_semantic_yaml_metrics(
+                        self.args.semantic_yaml,
+                        self.global_config,
+                        emit=self._emit_metrics_event,
+                    )
                 else:
-                    successful, error_message = init_success_story_metrics(self.args, self.global_config, subject_tree)
+                    successful, error_message = init_success_story_metrics(
+                        self.args,
+                        self.global_config,
+                        subject_tree,
+                        emit=self._emit_metrics_event,
+                    )
 
                 # Create metrics_store for statistics
                 if successful:
@@ -422,6 +536,7 @@ class Agent:
                 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 
                 self.reference_sql_store = ReferenceSqlRAG(self.global_config)
+                self._reset_reference_sql_stream_state()
                 result = init_reference_sql(
                     self.reference_sql_store,
                     self.global_config,
@@ -430,6 +545,7 @@ class Agent:
                     build_mode=kb_update_strategy,
                     pool_size=pool_size,
                     subject_tree=subject_tree,
+                    emit=self._emit_reference_sql_event,
                 )
                 if isinstance(result, dict) and result.get("status") != "error":
                     self._refresh_scoped_agents("reference_sql", kb_update_strategy)

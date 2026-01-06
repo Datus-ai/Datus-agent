@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 from datus.configuration.agent_config import AgentConfig
@@ -18,11 +18,29 @@ from datus.utils.sql_utils import normalize_sql
 logger = get_logger(__name__)
 
 
+def _safe_emit(emit: Optional[Callable[[Dict[str, Any]], None]], event: Dict[str, Any]) -> None:
+    if emit is None:
+        return
+    try:
+        emit(event)
+    except Exception as exc:
+        logger.debug(f"emit callback failed: {exc}")
+
+
+def _action_status_value(action: Any) -> Optional[str]:
+    status = getattr(action, "status", None)
+    if status is None:
+        return None
+    return status.value if hasattr(status, "value") else str(status)
+
+
 async def process_sql_item(
     item: dict,
     agent_config: AgentConfig,
     build_mode: str = "incremental",
     subject_tree: Optional[list] = None,
+    emit: Optional[Callable[[Dict[str, Any]], None]] = None,
+    sql_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     Process a single SQL item using SqlSummaryAgenticNode in workflow mode.
@@ -32,11 +50,15 @@ async def process_sql_item(
         agent_config: Agent configuration
         build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
         subject_tree: Optional predefined subject tree categories
+        emit: Optional callback to stream progress events
+        sql_id: Optional precomputed SQL identifier
 
     Returns:
         SQL summary file path if successful, None otherwise
     """
     logger.debug(f"Processing SQL item: {item.get('filepath', '')}, {item.get('sql', '')}, {item.get('comment', '')}")
+    sql_id = sql_id or gen_reference_sql_id(item.get("sql", ""), item.get("comment", ""))
+    filepath = item.get("filepath")
 
     try:
         # Create input for SqlSummaryAgenticNode
@@ -61,6 +83,18 @@ async def process_sql_item(
         # Execute and collect results
         node.input = sql_input
         async for action in node.execute_stream(action_history_manager):
+            _safe_emit(
+                emit,
+                {
+                    "type": "reference_sql_init.action",
+                    "stage": "gen_sql_summary",
+                    "status": _action_status_value(action),
+                    "messages": getattr(action, "messages", None),
+                    "output": getattr(action, "output", None),
+                    "filepath": filepath,
+                    "sql_id": sql_id,
+                },
+            )
             if action.status == ActionStatus.SUCCESS and action.output:
                 output = action.output
                 if isinstance(output, dict):
@@ -74,6 +108,15 @@ async def process_sql_item(
             return None
 
         logger.info(f"Generated SQL summary: {sql_summary_file}")
+        _safe_emit(
+            emit,
+            {
+                "type": "reference_sql_init.sql_summary_ready",
+                "sql_summary_file": sql_summary_file,
+                "filepath": filepath,
+                "sql_id": sql_id,
+            },
+        )
         from datus.utils.path_manager import get_path_manager
 
         file_path = (
@@ -104,6 +147,7 @@ def init_reference_sql(
     build_mode: str = "overwrite",
     pool_size: int = 1,
     subject_tree: Optional[list] = None,
+    emit: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
     """Initialize reference SQL from SQL files directory.
 
@@ -115,6 +159,7 @@ def init_reference_sql(
         build_mode: "overwrite" to replace all data, "incremental" to add new entries
         pool_size: Number of threads for parallel processing
         subject_tree: Optional predefined subject tree categories
+        emit: Optional callback to stream progress events
 
     Returns:
         Dict containing initialization results and statistics
@@ -195,26 +240,121 @@ def init_reference_sql(
         async def process_all():
             semaphore = asyncio.Semaphore(pool_size)
             logger.info(f"Processing {len(items_to_process)} SQL items with concurrency={pool_size}")
+            file_counts: Dict[str, int] = {}
+            for item in items_to_process:
+                file_key = str(item.get("filepath") or "unknown_file")
+                file_counts[file_key] = file_counts.get(file_key, 0) + 1
+            file_remaining = dict(file_counts)
+            file_started: set[str] = set()
+            file_lock = asyncio.Lock()
+
+            async def emit_file_start_if_needed(file_key: str, filepath: Optional[str]) -> None:
+                async with file_lock:
+                    if file_key in file_started:
+                        return
+                    file_started.add(file_key)
+                _safe_emit(
+                    emit,
+                    {
+                        "type": "reference_sql_init.file_start",
+                        "filepath": filepath,
+                        "file_key": file_key,
+                        "total_items": file_counts.get(file_key),
+                    },
+                )
+
+            async def emit_file_complete_if_done(file_key: str, filepath: Optional[str]) -> None:
+                async with file_lock:
+                    remaining = file_remaining.get(file_key)
+                    if remaining is None:
+                        return
+                    remaining -= 1
+                    file_remaining[file_key] = remaining
+                    if remaining != 0:
+                        return
+                _safe_emit(
+                    emit,
+                    {
+                        "type": "reference_sql_init.file_complete",
+                        "filepath": filepath,
+                        "file_key": file_key,
+                        "total_items": file_counts.get(file_key),
+                    },
+                )
 
             async def process_with_semaphore(item):
+                sql_id = gen_reference_sql_id(item.get("sql", ""), item.get("comment", ""))
+                filepath = item.get("filepath")
+                file_key = str(filepath or "unknown_file")
                 async with semaphore:
-                    return await process_sql_item(item, global_config, build_mode, subject_tree)
+                    await emit_file_start_if_needed(file_key, filepath)
+                    _safe_emit(
+                        emit,
+                        {
+                            "type": "reference_sql_init.item_start",
+                            "filepath": filepath,
+                            "sql_id": sql_id,
+                            "sql": item.get("sql"),
+                        },
+                    )
+                    error = None
+                    result = None
+                    try:
+                        result = await process_sql_item(
+                            item,
+                            global_config,
+                            build_mode,
+                            subject_tree,
+                            emit=emit,
+                            sql_id=sql_id,
+                        )
+                    except Exception as exc:
+                        error = exc
+                        _safe_emit(
+                            emit,
+                            {
+                                "type": "reference_sql_init.item_error",
+                                "filepath": filepath,
+                                "sql_id": sql_id,
+                                "error": str(exc),
+                                "exception_type": type(exc).__name__,
+                            },
+                        )
+                    if result:
+                        _safe_emit(
+                            emit,
+                            {
+                                "type": "reference_sql_init.item_success",
+                                "filepath": filepath,
+                                "sql_id": sql_id,
+                                "sql_summary_file": result,
+                            },
+                        )
+                    elif error is None:
+                        _safe_emit(
+                            emit,
+                            {
+                                "type": "reference_sql_init.item_error",
+                                "filepath": filepath,
+                                "sql_id": sql_id,
+                                "error": "Failed to generate SQL summary",
+                            },
+                        )
+                    await emit_file_complete_if_done(file_key, filepath)
+                    return item, sql_id, result, error
 
             # Process all items in parallel
-            results = await asyncio.gather(
-                *[process_with_semaphore(item) for item in items_to_process], return_exceptions=True
-            )
+            tasks = [asyncio.create_task(process_with_semaphore(item)) for item in items_to_process]
             _errors = []
             # Count successful results
             success_count = 0
             success_items = []
-            for i, result in enumerate(results):
-                item = items_to_process[i]
+            for task in asyncio.as_completed(tasks):
+                item, _sql_id, result, error = await task
                 sql = normalize_sql(item["sql"])
-                if isinstance(result, Exception):
-                    logger.error(f"SQL processing failed with exception `{result}`. SQL: {sql};")
-
-                    _errors.append(f"SQL processing failed with exception `{str(result)}`. SQL: {sql};")
+                if error:
+                    logger.error(f"SQL processing failed with exception `{error}`. SQL: {sql};")
+                    _errors.append(f"SQL processing failed with exception `{str(error)}`. SQL: {sql};")
                 elif result:
                     success_items.append(item)
                     success_count += 1

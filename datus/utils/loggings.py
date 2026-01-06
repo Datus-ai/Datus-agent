@@ -165,6 +165,8 @@ def configure_logging(debug=False, log_dir=None, console_output=True) -> Dynamic
                  - "~/.datus/logs" for packaged installation
         console_output: If False, disable logging to console
     """
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     global fileno
     fileno = debug
 

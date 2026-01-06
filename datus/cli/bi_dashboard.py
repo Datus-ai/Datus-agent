@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import yaml
 from rich.console import Console
+from rich.markup import escape
 from rich.syntax import Syntax
 from rich.table import Table
 
@@ -63,9 +64,13 @@ class BiDashboardCommands:
             self._configuration_manager = getattr(agent_config, "configuration_manager", None)
         else:
             self.agent_config = agent_config
-            self.console = console or Console()
+            self.console = console or Console(log_path=False)
             self._configuration_manager = None
         self._adaptor_registry = self._discover_adaptors()
+        self._ref_sql_sql_seen: set[tuple[str, str]] = set()
+        self._ref_sql_sql_text: dict[tuple[str, str], str] = {}
+        self._ref_sql_sql_numbers: dict[tuple[str, str], int] = {}
+        self._ref_sql_file_sql_counter: dict[str, int] = {}
 
     def cmd(self, args: str = "") -> None:
         try:
@@ -505,12 +510,14 @@ class BiDashboardCommands:
             table_names = self._dedupe_values([table for table in result.tables if table])
             self.console.log("[bold cyan]Start building reference SQL[/]")
             sql_dir = self._write_chart_sql_files(result.reference_sqls, platform, dashboard, dashboard_id)
+            self._reset_reference_sql_stream_state()
             sql_rag = ReferenceSqlRAG(self.agent_config)
             result = init_reference_sql(
                 sql_rag,
                 global_config=self.agent_config,
                 sql_dir=str(sql_dir),
                 build_mode="incremental",
+                emit=self._emit_reference_sql_event,
             )
             ref_sqls = []
             if result.get("status") != "success":
@@ -562,6 +569,95 @@ class BiDashboardCommands:
             manager.bootstrap_agent(sub_agent, components=["metadata", "reference_sql"])
             self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` bootstrapped.")
             self._refresh_agent_config(manager)
+
+    def _emit_reference_sql_event(self, event: dict) -> None:
+        event_type = event.get("type")
+        if not event_type:
+            return
+
+        if event_type == "reference_sql_init.file_start":
+            filepath, _ = self._reference_sql_file_key(event)
+            self.console.print(f"{escape(filepath)} processing started")
+            return
+
+        if event_type == "reference_sql_init.file_complete":
+            filepath, _ = self._reference_sql_file_key(event)
+            self.console.print(f"{escape(filepath)} processing completed")
+            return
+
+        file_key, _ = self._reference_sql_file_key(event)
+        sql_key = self._reference_sql_sql_key(event, file_key)
+
+        sql_text = event.get("sql")
+        if sql_text:
+            self._ref_sql_sql_text[sql_key] = str(sql_text)
+
+        self._maybe_print_reference_sql_headers(file_key, sql_key)
+
+        if event_type == "reference_sql_init.item_start":
+            return
+
+        if event_type == "reference_sql_init.action":
+            self._print_reference_sql_lines(event.get("messages"))
+            return
+
+        if event_type == "reference_sql_init.item_error":
+            error = event.get("error") or "unknown error"
+            exception_type = event.get("exception_type")
+            detail = str(error)
+            if exception_type:
+                detail = f"{detail} ({exception_type})"
+            self._print_reference_sql_lines(detail)
+            return
+
+    def _reference_sql_file_key(self, event: dict) -> tuple[str, str]:
+        filepath = str(event.get("filepath") or "")
+        if filepath:
+            return filepath, filepath
+        return "unknown_file", "unknown_file"
+
+    def _reference_sql_sql_key(self, event: dict, file_key: str) -> tuple[str, str]:
+        sql_id = str(event.get("sql_id") or "")
+        sql_text = str(event.get("sql") or "")
+        if not sql_id and sql_text:
+            sql_id = gen_reference_sql_id(sql_text, "")
+        return (file_key, sql_id or "unknown_sql")
+
+    def _maybe_print_reference_sql_headers(self, file_key: str, sql_key: tuple[str, str]) -> None:
+        if sql_key not in self._ref_sql_sql_seen:
+            self._ref_sql_sql_seen.add(sql_key)
+            sql_number = self._reference_sql_number(file_key, sql_key)
+            sql_text = self._ref_sql_sql_text.get(sql_key, "")
+            sql_line = self._format_reference_sql_line(sql_text, sql_number)
+            self.console.print(f"  # {sql_number}. {escape(sql_line)}")
+
+    def _reference_sql_number(self, file_key: str, sql_key: tuple[str, str]) -> int:
+        existing = self._ref_sql_sql_numbers.get(sql_key)
+        if existing is not None:
+            return existing
+        next_number = self._ref_sql_file_sql_counter.get(file_key, 0) + 1
+        self._ref_sql_file_sql_counter[file_key] = next_number
+        self._ref_sql_sql_numbers[sql_key] = next_number
+        return next_number
+
+    def _format_reference_sql_line(self, sql_text: str, sql_number: int) -> str:
+        condensed = " ".join(str(sql_text).split())
+        return condensed or f"sql_{sql_number}"
+
+    def _print_reference_sql_lines(self, messages: Optional[object]) -> None:
+        if not messages:
+            return
+        message_text = str(messages).strip()
+        if not message_text:
+            return
+        for line in message_text.splitlines():
+            self.console.print(f"    [dim]{escape(line)}[/]")
+
+    def _reset_reference_sql_stream_state(self) -> None:
+        self._ref_sql_sql_seen.clear()
+        self._ref_sql_sql_text.clear()
+        self._ref_sql_sql_numbers.clear()
+        self._ref_sql_file_sql_counter.clear()
 
     def _refresh_agent_config(self, manager: SubAgentManager) -> None:
         try:

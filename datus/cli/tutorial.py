@@ -2,10 +2,15 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import argparse
+import os
+import shutil
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Set
 
-from datus.cli.interactive_init import console, create_agent
+from rich.markup import escape
+
+from datus.cli.interactive_init import console
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.agent_models import SubAgentConfig
 from datus.utils.loggings import get_logger, print_rich_exception
@@ -13,6 +18,22 @@ from datus.utils.path_manager import get_path_manager
 from datus.utils.sub_agent_manager import SubAgentManager
 
 logger = get_logger(__name__)
+
+
+def _parse_subject_tree(subject_tree: Optional[str]) -> Optional[list]:
+    if not subject_tree:
+        return None
+    return [item.strip() for item in subject_tree.split(",") if item.strip()]
+
+
+def _print_stream_lines(message: Optional[object], indent: str = "  ") -> None:
+    if not message:
+        return
+    text = str(message).strip()
+    if not text:
+        return
+    for line in text.splitlines():
+        console.print(f"{indent}{escape(line)}")
 
 
 class BenchmarkTutorial:
@@ -128,8 +149,8 @@ class BenchmarkTutorial:
                 'california_schools/Charter/Education_Location"'
                 "[/]"
             )
-            with console.status("Metrics initializing..."):
-                self._init_metrics(success_path)
+            console.print("Metrics initializing...")
+            self._init_metrics(success_path)
 
             console.print("[bold yellow][4/5] Initialize Reference SQL using command: [/bold yellow]")
             console.print(
@@ -182,36 +203,101 @@ class BenchmarkTutorial:
 
     def _init_metrics(self, success_path: Path):
         """Initialize metrics using success stories."""
+        from datus.storage.metric.metrics_init import init_success_story_metrics
+        from datus.storage.metric.store import SemanticMetricsRAG
+
         logger.info(f"Metrics initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
         try:
-            agent = create_agent(
-                namespace_name=self.namespace_name,
-                components=["metrics"],
-                success_story=success_path,
-                validate_only=False,
-                config_path=self.config_path,
-                subject_tree="california_schools/Continuation_School/Free_Rate,"
-                "california_schools/Charter/Education_Location",
+            agent_config = load_agent_config(reload=True, config=self.config_path)
+            agent_config.current_namespace = self.namespace_name
+            kb_update_strategy = "overwrite"
+            storage_path = agent_config.rag_storage_path()
+            semantic_model_path = os.path.join(storage_path, "semantic_model.lance")
+            metrics_path = os.path.join(storage_path, "metrics.lance")
+            if kb_update_strategy == "overwrite":
+                if os.path.exists(semantic_model_path):
+                    shutil.rmtree(semantic_model_path)
+                    logger.info(f"Deleted existing directory {semantic_model_path}")
+                if os.path.exists(metrics_path):
+                    shutil.rmtree(metrics_path)
+                    logger.info(f"Deleted existing directory {metrics_path}")
+                agent_config.save_storage_config("metric")
+            else:
+                agent_config.check_init_storage_config("metric")
+
+            subject_tree = _parse_subject_tree(
+                "california_schools/Continuation_School/Free_Rate," "california_schools/Charter/Education_Location"
             )
-            result = agent.bootstrap_kb()
-            if result.get("status") == "success":
-                metrics_size = 0 if not agent.metrics_store else agent.metrics_store.get_metrics_size()
+            stage_seen: Dict[int, Set[str]] = {}
+
+            def emit(event: dict) -> None:
+                event_type = event.get("type")
+                if not event_type:
+                    return
+
+                if event_type == "metrics_init.row_start":
+                    row_idx = event.get("row_idx")
+                    question = str(event.get("question") or "")
+                    console.print(f"row {row_idx} start: {escape(question)}")
+                    table_name = event.get("table_name")
+                    if table_name:
+                        console.print(f"  table: {escape(str(table_name))}")
+                    return
+
+                if event_type == "metrics_init.action":
+                    row_idx = event.get("row_idx")
+                    stage = str(event.get("stage") or "action")
+                    seen = stage_seen.setdefault(row_idx, set())
+                    if stage not in seen:
+                        seen.add(stage)
+                        console.print(f"  {escape(stage)}:")
+                    _print_stream_lines(event.get("messages"), indent="    ")
+                    return
+
+                if event_type == "metrics_init.semantic_model_ready":
+                    semantic_model_file = event.get("semantic_model_file")
+                    if semantic_model_file:
+                        console.print(f"  semantic_model: {escape(str(semantic_model_file))}")
+                    return
+
+                if event_type == "metrics_init.row_success":
+                    row_idx = event.get("row_idx")
+                    console.print(f"row {row_idx} end")
+                    return
+
+                if event_type == "metrics_init.row_error":
+                    row_idx = event.get("row_idx")
+                    error = event.get("error") or "unknown error"
+                    console.print(f"row {row_idx} error: {escape(str(error))}")
+                    return
+
+            args = argparse.Namespace(success_story=str(success_path))
+            successful, error_message = init_success_story_metrics(
+                args,
+                agent_config,
+                subject_tree,
+                emit=emit,
+            )
+
+            if successful:
+                metrics_store = SemanticMetricsRAG(agent_config)
+                metrics_size = metrics_store.get_metrics_size()
                 if metrics_size > 0:
                     console.print(f"  → Processed {metrics_size} metrics")
-                    if err := result.get("error"):
+                    if error_message:
                         console.print(" ⚠️ [bold]The metrics has not been fully initialised successfully: [/]")
-                        console.print(f"    {err}")
+                        console.print(f"    {escape(error_message)}")
                     else:
                         console.print(" ✅ Metrics initialized")
                 else:
-                    if err := result.get("error"):
+                    if error_message:
                         console.print(" ❌[bold]There are some errors in the processing:[/]")
-                        console.print(f"    {err}")
+                        console.print(f"    {escape(error_message)}")
                     else:
                         console.print(" ⚠️No metrics initialized")
             else:
                 console.print(" ❌[bold]Metrics initialization failed:[/]")
-                console.print(f"    {result.get('message')}")
+                console.print(f"    {escape(str(error_message))}")
             return True
         except Exception as e:
             print_rich_exception(console, e, "Metrics initialization failed", logger)

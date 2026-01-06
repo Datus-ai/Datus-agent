@@ -9,6 +9,8 @@ Interactive initialization command for Datus Agent.
 This module provides an interactive CLI for setting up the basic configuration
 without requiring users to manually write conf/agent.yml files.
 """
+import os
+import shutil
 import sys
 from getpass import getpass
 from pathlib import Path
@@ -16,6 +18,7 @@ from typing import Optional
 
 import yaml
 from rich.console import Console
+from rich.markup import escape
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
@@ -258,6 +261,7 @@ class InteractiveInit:
 
         # Get adapter metadata
         adapter_metadata = available_adapters[db_type]
+
         config_fields = adapter_metadata.get_config_fields()
 
         # Collect configuration based on adapter's config schema
@@ -516,33 +520,117 @@ def create_agent(namespace_name: str, components: list, config_path: str, **kwar
     from datus.agent.agent import Agent
     from datus.configuration.agent_config_loader import load_agent_config
 
-    agent_config = load_agent_config(reload=True, config_path=config_path, **vars(args))
+    agent_config = load_agent_config(reload=True, config=config_path, **vars(args))
 
     agent_config.current_namespace = namespace_name
 
     return Agent(args, agent_config)
 
 
-def init_metadata_and_log_result(namespace_name: str, config_path: str):
-    agent = create_agent(namespace_name=namespace_name, components=["metadata"], config_path=config_path)
-    with console.status(
-        "→ Initializing metadata for " f"{namespace_name} with path `{agent.global_config.rag_storage_path()}`..."
-    ):
-        try:
-            result = agent.bootstrap_kb()
-            # Log detailed results
-            if isinstance(result, dict) and "message" in result:
-                logger.info(f"Metadata bootstrap completed: {result['message']}")
-            else:
-                logger.info(f"Metadata bootstrap result: {result}")
+def _parse_subject_tree(subject_tree: Optional[str]) -> Optional[list]:
+    if not subject_tree:
+        return None
+    return [item.strip() for item in subject_tree.split(",") if item.strip()]
 
-            # Try to get table counts after bootstrap
+
+def _print_stream_lines(message: Optional[object], indent: str = "  ") -> None:
+    if not message:
+        return
+    text = str(message).strip()
+    if not text:
+        return
+    for line in text.splitlines():
+        console.print(f"{indent}{escape(line)}")
+
+
+def _format_reference_sql_line(sql_text: str, number: int) -> str:
+    condensed = " ".join(str(sql_text).split())
+    return condensed or f"sql_{number}"
+
+
+def _build_reference_sql_emitter():
+    sql_counts: dict[str, int] = {}
+
+    def emit(event: dict) -> None:
+        event_type = event.get("type")
+        if not event_type:
+            return
+
+        if event_type == "reference_sql_init.file_start":
+            filepath = str(event.get("filepath") or "unknown_file")
+            console.print(f"{escape(filepath)} start")
+            return
+
+        if event_type == "reference_sql_init.file_complete":
+            filepath = str(event.get("filepath") or "unknown_file")
+            console.print(f"{escape(filepath)} end")
+            return
+
+        if event_type == "reference_sql_init.item_start":
+            filepath = str(event.get("filepath") or "unknown_file")
+            count = sql_counts.get(filepath, 0) + 1
+            sql_counts[filepath] = count
+            sql_line = _format_reference_sql_line(str(event.get("sql") or ""), count)
+            console.print(f"# {count}. {escape(sql_line)}")
+            return
+
+        if event_type == "reference_sql_init.action":
+            _print_stream_lines(event.get("messages"))
+            return
+
+        if event_type == "reference_sql_init.item_error":
+            error = event.get("error")
+            if error:
+                _print_stream_lines(error)
+            return
+
+    return emit
+
+
+def init_metadata_and_log_result(namespace_name: str, config_path: str):
+    from datus.configuration.agent_config_loader import load_agent_config
+    from datus.storage.schema_metadata.local_init import init_local_schema
+    from datus.storage.schema_metadata.store import SchemaWithValueRAG
+    from datus.tools.db_tools.db_manager import db_manager_instance
+
+    agent_config = load_agent_config(reload=True, config=config_path)
+    agent_config.current_namespace = namespace_name
+    kb_update_strategy = "overwrite"
+    storage_path = agent_config.rag_storage_path()
+
+    with console.status("→ Initializing metadata for " f"{namespace_name} with path `{storage_path}`..."):
+        try:
+            if kb_update_strategy == "overwrite":
+                agent_config.save_storage_config("database")
+                schema_metadata_path = os.path.join(storage_path, "schema_metadata.lance")
+                schema_value_path = os.path.join(storage_path, "schema_value.lance")
+                if os.path.exists(schema_metadata_path):
+                    shutil.rmtree(schema_metadata_path)
+                    logger.info(f"Deleted existing directory {schema_metadata_path}")
+                if os.path.exists(schema_value_path):
+                    shutil.rmtree(schema_value_path)
+                    logger.info(f"Deleted existing directory {schema_value_path}")
+            else:
+                agent_config.check_init_storage_config("database")
+
+            metadata_store = SchemaWithValueRAG(agent_config)
+            db_manager = db_manager_instance(agent_config.namespaces)
+            init_local_schema(
+                metadata_store,
+                agent_config,
+                db_manager,
+                build_mode=kb_update_strategy,
+                table_type="full",
+                init_catalog_name="",
+                init_database_name="",
+                pool_size=4,
+            )
+
             try:
-                if hasattr(agent, "metadata_store") and agent.metadata_store:
-                    schema_size = agent.metadata_store.get_schema_size()
-                    value_size = agent.metadata_store.get_value_size()
-                    logger.info(f"Bootstrap success: {schema_size} tables processed, {value_size} sample records")
-                    console.print(f"  → Processed {schema_size} tables with {value_size} sample records")
+                schema_size = metadata_store.get_schema_size()
+                value_size = metadata_store.get_value_size()
+                logger.info(f"Metadata bootstrap completed: {schema_size} tables, {value_size} sample records")
+                console.print(f"  → Processed {schema_size} tables with {value_size} sample records")
             except Exception as count_e:
                 logger.debug(f"Could not get table counts: {count_e}")
             console.print(" ✅ Metadata knowledge base initialized")
@@ -556,61 +644,78 @@ def init_sql_and_log_result(
     config_path: str,
     subject_tree: Optional[str] = None,
 ):
-    with console.status(f"Reference SQL initialization...{namespace_name}, dir:{sql_dir}"):
-        try:
-            # Count SQL files first
-            sql_files = list(Path(sql_dir).rglob("*.sql"))
-            if not sql_files:
-                console.print(f"No sql files found in {sql_dir}")
+    from datus.configuration.agent_config_loader import load_agent_config
+    from datus.storage.reference_sql.reference_sql_init import init_reference_sql
+    from datus.storage.reference_sql.store import ReferenceSqlRAG
+
+    try:
+        sql_files = list(Path(sql_dir).rglob("*.sql"))
+        if not sql_files:
+            console.print(f"No sql files found in {sql_dir}")
+            return
+
+        agent_config = load_agent_config(reload=True, config=config_path)
+        agent_config.current_namespace = namespace_name
+        kb_update_strategy = "overwrite"
+        storage_path = agent_config.rag_storage_path()
+        if kb_update_strategy == "overwrite":
+            reference_sql_path = os.path.join(storage_path, "reference_sql.lance")
+            if os.path.exists(reference_sql_path):
+                shutil.rmtree(reference_sql_path)
+                logger.info(f"Deleted existing directory {reference_sql_path}")
+            agent_config.save_storage_config("reference_sql")
+        else:
+            agent_config.check_init_storage_config("reference_sql")
+
+        console.print(f"Reference SQL initialization for {namespace_name} (dir: {escape(str(sql_dir))})")
+        emit = _build_reference_sql_emitter()
+        subject_tree_list = _parse_subject_tree(subject_tree)
+        sql_rag = ReferenceSqlRAG(agent_config)
+        result = init_reference_sql(
+            sql_rag,
+            agent_config,
+            sql_dir,
+            validate_only=False,
+            build_mode=kb_update_strategy,
+            pool_size=4,
+            subject_tree=subject_tree_list,
+            emit=emit,
+        )
+
+        if isinstance(result, dict):
+            if result.get("message"):
+                logger.info(f"Reference SQL bootstrap completed: {result['message']}")
+
+            processed_entries = result.get("processed_entries", 0)
+            valid_entries = result.get("valid_entries", 0)
+            invalid_entries = result.get("invalid_entries", 0)
+            validation_errors = result.get("validation_errors")
+            process_errors = result.get("process_errors")
+            if valid_entries == 0:
+                console.print(f" ⚠️ No SQL files processed in the directory `{sql_dir}`. ")
+                if validation_errors:
+                    console.print(f"    Reason: {validation_errors}")
                 return
-
-            agent = create_agent(
-                namespace_name=namespace_name,
-                components=["reference_sql"],
-                sql_dir=sql_dir,
-                validate_only=False,
-                subject_tree=subject_tree,
-                config_path=config_path,
-            )
-            result = agent.bootstrap_kb()
-
-            # Log detailed results
-            if isinstance(result, dict):
-                if result.get("message"):
-                    logger.info(f"Reference SQL bootstrap completed: {result['message']}")
-
-                processed_entries = result.get("processed_entries", 0)
-                valid_entries = result.get("valid_entries", 0)
-                invalid_entries = result.get("invalid_entries", 0)
-                validation_errors = result.get("validation_errors")
-                process_errors = result.get("process_errors")
-                if valid_entries == 0:
-                    console.print(f" ⚠️ No SQL files processed in the directory `{sql_dir}`. ")
-                    if validation_errors:
-                        console.print(f"    Reason: {validation_errors}")
-                    return
-                if invalid_entries > 0:
-                    console.print(
-                        f"  → Processed {processed_entries} SQL, {valid_entries} valid SQL,"
-                        f" {invalid_entries} invalid SQL. Details: \n\n{validation_errors}",
-                    )
-                if processed_entries == 0:
-                    console.print(f" ⚠️ Processed failed with validation SQL. Details: \n\n{process_errors}. ")
-                    return
-                elif process_errors:
-                    console.print(
-                        f"  → Processed {processed_entries} SQL successfully, "
-                        f"but there are still some SQL processing failures. Details: \n\n{process_errors}",
-                    )
-                else:
-                    console.print(f"  → Processed {processed_entries} SQL successfully")
-                console.print(" ✅ Imported SQL files into reference completed")
-
+            if invalid_entries > 0:
+                console.print(
+                    f"  → Processed {processed_entries} SQL, {valid_entries} valid SQL,"
+                    f" {invalid_entries} invalid SQL. Details: \n\n{validation_errors}",
+                )
+            if processed_entries == 0:
+                console.print(f" ⚠️ Processed failed with validation SQL. Details: \n\n{process_errors}. ")
+                return
+            elif process_errors:
+                console.print(
+                    f"  → Processed {processed_entries} SQL successfully, "
+                    f"but there are still some SQL processing failures. Details: \n\n{process_errors}",
+                )
             else:
-                logger.info(f"Reference SQL bootstrap result: {result}")
-
-        except Exception as e:
-            print_rich_exception(console, e, "Reference SQL initialization failed", logger)
+                console.print(f"  → Processed {processed_entries} SQL successfully")
+            console.print(" ✅ Imported SQL files into reference completed")
+        else:
+            logger.info(f"Reference SQL bootstrap result: {result}")
+    except Exception as e:
+        print_rich_exception(console, e, "Reference SQL initialization failed", logger)
 
 
 def main():

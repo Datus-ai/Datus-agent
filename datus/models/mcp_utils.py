@@ -79,7 +79,7 @@ async def multiple_mcp_servers(mcp_servers: Dict[str, Any]):
                 logger.error(f"Failed to start MCP server {server_name}: {str(e)}")
 
         if not connected_servers:
-            logger.warning("No MCP servers were successfully connected")
+            logger.debug("Warning: No MCP servers were successfully connected")
 
         yield connected_servers
 

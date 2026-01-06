@@ -62,7 +62,7 @@ class DatusCLI:
     def __init__(self, args):
         """Initialize the CLI with the given arguments."""
         self.args = args
-        self.console = Console()
+        self.console = Console(log_path=False)
         self.console_column_width = 16
         self.selected_catalog_path = ""
         self.streamlit_mode = False
