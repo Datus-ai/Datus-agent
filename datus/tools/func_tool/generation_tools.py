@@ -42,7 +42,8 @@ class GenerationTools:
                 self.check_semantic_object_exists,  # Updated name to reflect broader scope
                 self.check_metric_exists,  # Kept for backward compat or specific metric checks
                 self.generate_sql_summary_id,
-                self.end_generation,
+                self.end_semantic_model_generation,
+                self.end_metric_generation,
             )
         ]
 
@@ -148,34 +149,64 @@ class GenerationTools:
         """
         return self.check_semantic_object_exists(metric_name, kind="metric")
 
-    def end_generation(self, filepaths: List[str]) -> FuncToolResult:
+    def end_semantic_model_generation(self, filepaths: List[str]) -> FuncToolResult:
         """
-        Complete the generation process.
+        Complete semantic model generation process.
 
-        Call this tool when you have finished generating YAML files (semantic models, metrics, etc.).
+        Call this tool when you have finished generating semantic model YAML files.
         This tool triggers user confirmation workflow for syncing to LanceDB.
 
         Args:
-            filepaths: List of absolute paths to generated YAML files
+            filepaths: List of absolute paths to generated semantic model YAML files
 
         Returns:
-            dict: Result containing:
-                - 'success' (int): 1 if successful, 0 if failed
-                - 'error' (str or None): Error message if failed
-                - 'result' (dict): Contains confirmation message and filepaths
+            dict: Result containing confirmation message and filepaths
         """
         try:
-            logger.info(f"Generation completed for {len(filepaths)} files: {filepaths}")
+            logger.info(f"Semantic model generation completed for {len(filepaths)} files: {filepaths}")
 
             return FuncToolResult(
                 result={
-                    "message": f"Generation completed successfully for {len(filepaths)} file(s)",
+                    "message": f"Semantic model generation completed for {len(filepaths)} file(s)",
                     "filepaths": filepaths,
                 }
             )
 
         except Exception as e:
-            logger.error(f"Error completing generation: {e}")
+            logger.error(f"Error completing semantic model generation: {e}")
+            return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
+
+    def end_metric_generation(self, metric_file: str, semantic_model_file: str = "") -> FuncToolResult:
+        """
+        Complete metric generation process.
+
+        Call this tool when you have finished generating a metric YAML file.
+        This tool triggers user confirmation workflow for syncing to LanceDB.
+
+        Args:
+            metric_file: Absolute path to the generated metric YAML file (required)
+            semantic_model_file: Absolute path to the primary semantic model file that defines
+                                 the measure(s) used by this metric. Optional - provide this
+                                 if the semantic model was newly created or updated.
+
+        Returns:
+            dict: Result containing confirmation message and file paths
+        """
+        try:
+            logger.info(
+                f"Metric generation completed: metric_file={metric_file}, semantic_model_file={semantic_model_file}"
+            )
+
+            return FuncToolResult(
+                result={
+                    "message": "Metric generation completed",
+                    "metric_file": metric_file,
+                    "semantic_model_file": semantic_model_file,
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Error completing metric generation: {e}")
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
 
     def generate_sql_summary_id(self, sql_query: str, comment: str = "") -> FuncToolResult:

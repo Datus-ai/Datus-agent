@@ -79,7 +79,7 @@ locked_metadata:
    - Identify the aggregation or calculation being performed
 
 2. **Find the semantic model YAML file**:
-   - Use `list_allowed_directories` to find the semantic model YAML file
+   - Use `list_directory` to find the semantic model YAML file
    - The file is named as `{table_name}.yml` or `{table_name}.yaml`
 
 3. **Read the semantic model**:
@@ -109,9 +109,10 @@ locked_metadata:
    - If validation fails, fix the error by updating the metric file using `edit_file`
 
 8. **Complete generation** (REQUIRED):
-   - After validation succeeds, MUST call `end_generation` tool with both file paths
-   - Example: `end_generation(filepaths=[semantic_model_file_path, metric_file_path])`
-   - This triggers user confirmation workflow for syncing both files to Knowledge Base
+   - After validation succeeds, MUST call `end_metric_generation` tool
+   - Example: `end_metric_generation(metric_file="/path/to/metric.yml", semantic_model_file="/path/to/semantic_model.yml")`
+   - The `semantic_model_file` parameter is optional - provide it if the semantic model was newly created or updated
+   - This triggers user confirmation workflow for syncing to Knowledge Base
 
 ## Workspace
 - Semantic model directory: {{ semantic_model_dir }}

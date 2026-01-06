@@ -69,8 +69,9 @@ Please strictly follow the instructions below:
    - If there is any error, fix it and try again
 
 7. **Complete generation** (REQUIRED):
-   - After validation succeeds, MUST call `end_generation` tool with the absolute filepath
-   - This registers the semantic model and triggers user confirmation workflow
+   - After validation succeeds, MUST call `end_semantic_model_generation` tool with the list of absolute filepaths
+   - Example: `end_semantic_model_generation(filepaths=["/path/to/orders.yml", "/path/to/customers.yml"])`
+   - This registers the semantic models and triggers user confirmation workflow
 
 ## Multi-Table Generation Workflow
 
@@ -144,7 +145,7 @@ data_source:
 - **Max 3 retry attempts**.
 
 ### Step 7: Complete Generation
-- Call `end_generation` with **ALL generated filepaths**.
+- Call `end_semantic_model_generation` with **ALL generated filepaths**.
 
 ## Relationship Discovery Strategy
 

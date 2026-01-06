@@ -186,8 +186,8 @@ class GenSemanticModelAgenticNode(AgenticNode):
             self.generation_tools = GenerationTools(self.agent_config)
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
-            self.tools.append(trans_to_function_tool(self.generation_tools.end_generation))
-            logger.debug("Added tools: check_semantic_object_exists, end_generation")
+            self.tools.append(trans_to_function_tool(self.generation_tools.end_semantic_model_generation))
+            logger.debug("Added tools: check_semantic_object_exists, end_semantic_model_generation")
 
         except Exception as e:
             logger.error(f"Failed to setup generation tools: {e}")

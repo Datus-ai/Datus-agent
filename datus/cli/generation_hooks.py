@@ -63,9 +63,12 @@ class GenerationHooks(AgentHooks):
 
         logger.debug(f"Tool end: {tool_name}, result type: {type(result)}")
 
-        # Intercept end_generation tool (for semantic models and metrics)
-        if tool_name == "end_generation":
-            await self._handle_end_generation(result)
+        # Intercept semantic model generation completion
+        if tool_name == "end_semantic_model_generation":
+            await self._handle_end_semantic_model_generation(result)
+        # Intercept metric generation completion
+        elif tool_name == "end_metric_generation":
+            await self._handle_end_metric_generation(result)
         # Intercept write_file tool and check if it's SQL summary
         elif tool_name == "write_file":
             # Check if this is a SQL summary file by examining tool arguments
@@ -84,80 +87,110 @@ class GenerationHooks(AgentHooks):
         # Wait if execution is paused
         await execution_controller.wait_for_resume()
 
-    @optional_traceable(name="_handle_end_generation", run_type="chain")
-    async def _handle_end_generation(self, result):
+    @optional_traceable(name="_handle_end_semantic_model_generation", run_type="chain")
+    async def _handle_end_semantic_model_generation(self, result):
         """
-        Handle end_generation tool result with user interaction.
+        Handle end_semantic_model_generation tool result.
 
         Args:
-            result: Tool result from end_generation
+            result: Tool result containing filepaths list
         """
         try:
-            # Extract filepaths from result (dict or FuncToolResult object)
-            file_paths = []
-            semantic_model_file = None
-            metric_file = None
+            file_paths = self._extract_filepaths_from_result(result)
 
-            if isinstance(result, dict):
-                # Handle dict result
-                result_dict = result.get("result", {})
-                if isinstance(result_dict, dict):
-                    # Check for new format with separate semantic_model_file and metric_file
-                    if "semantic_model_file" in result_dict and "metric_file" in result_dict:
-                        semantic_model_file = result_dict.get("semantic_model_file")
-                        metric_file = result_dict.get("metric_file")
-                    # Try filepaths list format
-                    elif "filepaths" in result_dict:
-                        filepaths = result_dict.get("filepaths", [])
-                        if filepaths and isinstance(filepaths, list):
-                            file_paths = filepaths
-                    # Fallback to old format (filepath: str)
-                    elif "filepath" in result_dict:
-                        file_paths = [result_dict["filepath"]]
-            elif hasattr(result, "result") and hasattr(result, "success"):
-                # Handle FuncToolResult object
-                result_dict = result.result
-                if isinstance(result_dict, dict):
-                    # Check for new format with separate semantic_model_file and metric_file
-                    if "semantic_model_file" in result_dict and "metric_file" in result_dict:
-                        semantic_model_file = result_dict.get("semantic_model_file")
-                        metric_file = result_dict.get("metric_file")
-                    # Try filepaths list format
-                    elif "filepaths" in result_dict:
-                        filepaths = result_dict.get("filepaths", [])
-                        if filepaths and isinstance(filepaths, list):
-                            file_paths = filepaths
-                    # Fallback to old format
-                    elif "filepath" in result_dict:
-                        file_paths = [result_dict["filepath"]]
-
-            logger.debug(
-                f"Extracted file_paths: {file_paths}, "
-                f"semantic_model_file: {semantic_model_file}, metric_file: {metric_file}"
-            )
-
-            # Process new format with both semantic model and metric files
-            if semantic_model_file and metric_file:
-                await self._process_metric_with_semantic_model(semantic_model_file, metric_file)
-            elif file_paths:
-                # Check if we have exactly 2 files (semantic model + metric)
-                if len(file_paths) == 2:
-                    # Heuristic: first file is semantic model, second is metric
-                    # This matches the pattern: end_generation(filepaths=[semantic_model_file, metric_file])
-                    await self._process_metric_with_semantic_model(file_paths[0], file_paths[1])
-                else:
-                    # Process each file sequentially (old format or single file)
-                    for file_path in file_paths:
-                        await self._process_single_file(file_path)
-            else:
-                logger.warning(f"Could not extract file paths from end_generation result: {result}")
+            if not file_paths:
+                logger.warning(f"Could not extract file paths from end_semantic_model_generation result: {result}")
                 return
+
+            logger.debug(f"Processing semantic model files: {file_paths}")
+
+            # Process each semantic model file
+            for file_path in file_paths:
+                await self._process_single_file(file_path)
 
         except GenerationCancelledException:
             self.console.print("[yellow]Generation workflow cancelled[/]")
         except Exception as e:
-            logger.error(f"Error handling end_generation: {e}", exc_info=True)
+            logger.error(f"Error handling end_semantic_model_generation: {e}", exc_info=True)
             self.console.print(f"[red]Error: {e}[/]")
+
+    @optional_traceable(name="_handle_end_metric_generation", run_type="chain")
+    async def _handle_end_metric_generation(self, result):
+        """
+        Handle end_metric_generation tool result.
+
+        Args:
+            result: Tool result containing metric_file and optional semantic_model_file
+        """
+        try:
+            metric_file, semantic_model_file = self._extract_metric_generation_result(result)
+
+            if not metric_file:
+                logger.warning(f"Could not extract metric_file from end_metric_generation result: {result}")
+                return
+
+            logger.debug(
+                f"Processing metric generation: metric_file={metric_file}, semantic_model_file={semantic_model_file}"
+            )
+
+            if semantic_model_file:
+                # Process both files together for proper association
+                await self._process_metric_with_semantic_model(semantic_model_file, metric_file)
+            else:
+                # Process metric file alone (semantic model already exists in KB)
+                await self._process_single_file(metric_file)
+
+        except GenerationCancelledException:
+            self.console.print("[yellow]Generation workflow cancelled[/]")
+        except Exception as e:
+            logger.error(f"Error handling end_metric_generation: {e}", exc_info=True)
+            self.console.print(f"[red]Error: {e}[/]")
+
+    def _extract_filepaths_from_result(self, result) -> list:
+        """
+        Extract filepaths list from tool result.
+
+        Args:
+            result: Tool result (dict or FuncToolResult object)
+
+        Returns:
+            List of file paths
+        """
+        result_dict = None
+        if isinstance(result, dict):
+            result_dict = result.get("result", {})
+        elif hasattr(result, "result") and hasattr(result, "success"):
+            result_dict = result.result
+
+        if isinstance(result_dict, dict):
+            filepaths = result_dict.get("filepaths", [])
+            if filepaths and isinstance(filepaths, list):
+                return filepaths
+
+        return []
+
+    def _extract_metric_generation_result(self, result) -> tuple:
+        """
+        Extract metric_file and semantic_model_file from tool result.
+
+        Args:
+            result: Tool result (dict or FuncToolResult object)
+
+        Returns:
+            Tuple of (metric_file, semantic_model_file)
+        """
+        result_dict = None
+        if isinstance(result, dict):
+            result_dict = result.get("result", {})
+        elif hasattr(result, "result") and hasattr(result, "success"):
+            result_dict = result.result
+
+        if isinstance(result_dict, dict):
+            metric_file = result_dict.get("metric_file", "")
+            semantic_model_file = result_dict.get("semantic_model_file", "")
+            return metric_file, semantic_model_file
+
+        return "", ""
 
     async def _process_single_file(self, file_path: str):
         """
@@ -202,7 +235,7 @@ class GenerationHooks(AgentHooks):
         self.console.print(syntax)
         await asyncio.sleep(0.2)
 
-        # Get user confirmation to sync (end_generation is for semantic models/metrics)
+        # Get user confirmation to sync
         await self._get_sync_confirmation(yaml_content, file_path, "semantic")
 
     async def _process_metric_with_semantic_model(self, semantic_model_file: str, metric_file: str):
