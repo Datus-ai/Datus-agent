@@ -149,8 +149,8 @@ class BenchmarkTutorial:
                 'california_schools/Charter/Education_Location"'
                 "[/]"
             )
-            console.print("Metrics initializing...")
-            self._init_metrics(success_path)
+            with console.status("Metrics initializing..."):
+                self._init_metrics(success_path)
 
             console.print("[bold yellow][4/5] Initialize Reference SQL using command: [/bold yellow]")
             console.print(
@@ -167,18 +167,19 @@ class BenchmarkTutorial:
                 "california_schools/Enrollment/Total"
                 '" [/]'
             )
-            init_sql_and_log_result(
-                namespace_name=self.namespace_name,
-                sql_dir=str(california_schools_path / "reference_sql"),
-                subject_tree="california_schools/Continuation/Free_Rate,"
-                "california_schools/Charter/Education_Location,"
-                "california_schools/Charter-Fund/Phone,"
-                "california_schools/SAT_Score/Average,"
-                "california_schools/SAT_Score/Excellence_Rate,"
-                "california_schools/FRPM_Enrollment/Rate,"
-                "california_schools/Enrollment/Total",
-                config_path=self.config_path,
-            )
+            with console.status("Reference SQL initializing..."):
+                init_sql_and_log_result(
+                    namespace_name=self.namespace_name,
+                    sql_dir=str(california_schools_path / "reference_sql"),
+                    subject_tree="california_schools/Continuation/Free_Rate,"
+                    "california_schools/Charter/Education_Location,"
+                    "california_schools/Charter-Fund/Phone,"
+                    "california_schools/SAT_Score/Average,"
+                    "california_schools/SAT_Score/Excellence_Rate,"
+                    "california_schools/FRPM_Enrollment/Rate,"
+                    "california_schools/Enrollment/Total",
+                    config_path=self.config_path,
+                )
             console.print("[bold yellow][5/5] Building sub-agents and workflows: [/bold yellow]")
 
             with console.status("Sub-Agents Building...") as status:
