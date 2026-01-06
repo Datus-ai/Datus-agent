@@ -798,7 +798,7 @@ class GenerationHooks(AgentHooks):
                 # --- B. Column Objects (Measures & Dimensions & Identifiers) ---
 
                 # Helper to process columns
-                def process_column(col_def, kind, is_dim=False, is_meas=False, is_ent=False):
+                def process_column(col_def, is_dim=False, is_meas=False, is_ent=False):
                     col_name = col_def.get("name")
                     if not col_name:
                         return
@@ -829,17 +829,17 @@ class GenerationHooks(AgentHooks):
 
                 # Process Dimensions
                 for dim in data_source.get("dimensions", []):
-                    process_column(dim, "column", is_dim=True)
+                    process_column(dim, is_dim=True)
 
                 # Process Measures
                 for meas in data_source.get("measures", []):
                     # Measures in MF are defined on columns but act as aggregations
                     # For semantic search, we treat them as 'fields' you can query
-                    process_column(meas, "column", is_meas=True)
+                    process_column(meas, is_meas=True)
 
                 # Process Identifiers
                 for ident in data_source.get("identifiers", []):
-                    process_column(ident, "column", is_ent=True)
+                    process_column(ident, is_ent=True)
 
             # 3. Process Metrics (Standard Metrics) - These go to MetricStorage
             if include_metrics:

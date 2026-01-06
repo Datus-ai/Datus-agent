@@ -206,26 +206,19 @@ class GenMetricsAgenticNode(AgenticNode):
     def _get_existing_subject_trees(self) -> list:
         """
         Query existing subject_tree values from metrics storage.
-        Refactored to check SemanticObjectStorage for kind='metric'.
+
+        Returns:
+            List of unique subject_path values as strings (e.g., ["Finance/Revenue/Q1", ...])
         """
         try:
-            # We need to access the object storage directly
-            if not hasattr(self.metrics_rag, "object_storage"):
+            # Check if storage is available
+            if not getattr(self.metrics_rag, "storage", None):
                 return []
 
-            # Search for all metrics, selecting only relevant fields
-            results = self.metrics_rag.storage.search_all(select_fields=["domain", "layer1", "layer2"])
-
-            unique_trees = set()
-            for item in results:
-                d = item.get("domain")
-                l1 = item.get("layer1")
-                l2 = item.get("layer2")
-
-                if d and l1 and l2:
-                    unique_trees.add(f"{d}/{l1}/{l2}")
-
-            return sorted(list(unique_trees))
+            # Get all subject paths using the flat tree structure
+            subject_paths = sorted(self.metrics_rag.storage.get_subject_tree_flat())
+            logger.debug(f"Found {len(subject_paths)} unique metric subject_paths")
+            return subject_paths
 
         except Exception as e:
             logger.error(f"Error getting existing metric subject_trees: {e}")
@@ -382,7 +375,10 @@ class GenMetricsAgenticNode(AgenticNode):
                 enhanced_parts.append(context_part_str)
 
             if enhanced_parts:
-                enhanced_message = f"{'\\n\\n'.join(enhanced_parts)}\\n\\nUser question: {user_input.user_message}"
+                separator = "\n\n"
+                enhanced_message = (
+                    f"{separator.join(enhanced_parts)}{separator}User question: {user_input.user_message}"
+                )
 
             # Create assistant action for processing
             assistant_action = ActionHistory.create_action(
