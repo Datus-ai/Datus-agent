@@ -11,7 +11,7 @@ Responsibilities:
 3. Provide adaptor metadata for CLI selection
 """
 
-from typing import Dict, Optional, Type
+from typing import ClassVar, Dict, Optional, Type
 
 from datus.tools.bi_tools.base_adaptor import AuthType, BIAdaptorBase
 from datus.utils.loggings import get_logger
@@ -38,9 +38,9 @@ class AdaptorMetadata:
 class BIAdaptorRegistry:
     """Central registry for BI adaptors."""
 
-    _adaptors: Dict[str, Type[BIAdaptorBase]] = {}
-    _metadata: Dict[str, AdaptorMetadata] = {}
-    _initialized: bool = False
+    _adaptors: ClassVar[Dict[str, Type[BIAdaptorBase]]] = {}
+    _metadata: ClassVar[Dict[str, AdaptorMetadata]] = {}
+    _initialized: ClassVar[bool] = False
 
     @classmethod
     def register(
