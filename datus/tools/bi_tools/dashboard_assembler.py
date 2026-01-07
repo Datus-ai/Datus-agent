@@ -317,9 +317,7 @@ class DashboardAssembler:
             return bool(database_name and schema_name)
         if normalized == DBType.SNOWFLAKE:
             return bool(database_name and schema_name)
-        if normalized == "databricks":
-            return bool(schema_name)
-        return bool(database_name)
+        return bool(database_name) or bool(schema_name)
 
     def _dedupe_metrics(self, metrics: Iterable[MetricDef]) -> List[MetricDef]:
         seen = set()

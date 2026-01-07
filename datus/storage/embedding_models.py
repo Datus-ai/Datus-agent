@@ -173,7 +173,7 @@ class EmbeddingModel:
                 logger.debug(f"Model {self.registry_name}/{self.model_name} initialized successfully")
             except Exception as e:
                 raise DatusException(
-                    ErrorCode.MODEL_EMBEDDING_ERROR, message=f"Embedding Model initialized faield because of {str(e)}"
+                    ErrorCode.MODEL_EMBEDDING_ERROR, message=f"Embedding Model initialized failed because of {str(e)}"
                 ) from e
 
         elif self.registry_name == EmbeddingProvider.OPENAI:

@@ -920,7 +920,7 @@ class DatusCLI:
             (".chat_info", "Show current chat session information"),
             (".compact", "Compact chat session by summarizing conversation history"),
             (".sessions", "List all stored SQLite sessions with detailed information"),
-            (".dashboard", "Extract BI dashboard assets to assemble sub-agent context"),
+            (".bootstrap_bi", "Extract BI dashboard assets to assemble sub-agent context"),
             (".databases", "List all databases"),
             (".database database_name", "Switch current database"),
             (".tables", "List all tables"),

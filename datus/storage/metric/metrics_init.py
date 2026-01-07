@@ -230,7 +230,7 @@ async def process_line(
     metrics_user_message = (
         f"Generate metrics for the following SQL query:\n\nSQL:\n{sql}\n\n"
         f"Question: {question}\n\nTable: {table_name}"
-        f"Use the following semantic model: {semantic_model_file}"
+        f"\n\nUse the following semantic model: {semantic_model_file}"
     )
     metrics_input = SemanticNodeInput(
         user_message=metrics_user_message,

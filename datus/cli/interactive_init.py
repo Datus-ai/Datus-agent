@@ -532,7 +532,7 @@ def create_agent(namespace_name: str, components: list, config_path: str, **kwar
     return Agent(args, agent_config)
 
 
-def _parse_subject_tree(subject_tree: Optional[str]) -> Optional[list]:
+def parse_subject_tree(subject_tree: Optional[str]) -> Optional[list]:
     if not subject_tree:
         return None
     return [item.strip() for item in subject_tree.split(",") if item.strip()]
@@ -755,7 +755,7 @@ def do_init_sql_and_log_result(
         # Create stream handler
         stream_handler = ReferenceSqlStreamHandler(output_mgr)
 
-        subject_tree_list = _parse_subject_tree(subject_tree)
+        subject_tree_list = parse_subject_tree(subject_tree)
         sql_rag = ReferenceSqlRAG(agent_config)
 
         try:

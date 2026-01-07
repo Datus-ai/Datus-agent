@@ -61,7 +61,7 @@ class StreamOutputManager:
         # Message Queue (keep last N rows, auto-scroll)
         self.messages = deque(maxlen=max_message_lines)
 
-        # 当前任务信息
+        # Current task information
         self.current_task = ""
         self.current_file = ""
         self.task_number = 0

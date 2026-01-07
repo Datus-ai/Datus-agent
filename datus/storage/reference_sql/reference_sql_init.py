@@ -107,14 +107,17 @@ async def process_sql_item(
         )
         import yaml
 
-        # Load YAML file
-        with open(file_path, "r", encoding="utf-8") as f:
-            doc = yaml.safe_load(f)
-            if not item.get("comment"):
-                item["comment"] = doc.get("comment", "")
-            if not item.get("name"):
-                item["name"] = doc.get("name", "")
-            item["subject_tree"] = doc.get("subject_tree")
+        try:
+            # Load YAML file
+            with open(file_path, "r", encoding="utf-8") as f:
+                doc = yaml.safe_load(f)
+                if not item.get("comment"):
+                    item["comment"] = doc.get("comment", "")
+                if not item.get("name"):
+                    item["name"] = doc.get("name", "")
+                item["subject_tree"] = doc.get("subject_tree")
+        except Exception as e:
+            logger.warning(f"Failed to open summary file for {file_path}: {e}")
         return sql_summary_file
 
     except Exception as e:

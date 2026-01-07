@@ -6,11 +6,12 @@ import argparse
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from rich.console import Console
 from rich.markup import escape
 
+from datus.cli.interactive_init import parse_subject_tree
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.agent_models import SubAgentConfig
 from datus.utils.loggings import get_logger, print_rich_exception
@@ -18,12 +19,6 @@ from datus.utils.path_manager import get_path_manager
 from datus.utils.sub_agent_manager import SubAgentManager
 
 logger = get_logger(__name__)
-
-
-def _parse_subject_tree(subject_tree: Optional[str]) -> Optional[list]:
-    if not subject_tree:
-        return None
-    return [item.strip() for item in subject_tree.split(",") if item.strip()]
 
 
 class BenchmarkTutorial:
@@ -220,7 +215,7 @@ class BenchmarkTutorial:
                 logger.info(f"Deleted existing directory {metrics_path}")
             agent_config.save_storage_config("metric")
 
-            subject_tree = _parse_subject_tree(
+            subject_tree = parse_subject_tree(
                 "california_schools/Continuation_School/Free_Rate," "california_schools/Charter/Education_Location"
             )
 
@@ -295,10 +290,11 @@ class BenchmarkTutorial:
 
             if successful:
                 self.console.print(" [green]OK[/] Metrics initialized")
+                return True
             else:
                 self.console.print(" [red]Error:[/] Metrics initialization failed:")
                 self.console.print(f"    {escape(str(error_message))}")
-            return True
+                return False
         except Exception as e:
             print_rich_exception(self.console, e, "Metrics initialization failed", logger)
             return False
