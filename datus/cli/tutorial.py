@@ -208,20 +208,17 @@ class BenchmarkTutorial:
         try:
             agent_config = load_agent_config(reload=True, config=self.config_path)
             agent_config.current_namespace = self.namespace_name
-            kb_update_strategy = "overwrite"
+
             storage_path = agent_config.rag_storage_path()
             semantic_model_path = os.path.join(storage_path, "semantic_model.lance")
             metrics_path = os.path.join(storage_path, "metrics.lance")
-            if kb_update_strategy == "overwrite":
-                if os.path.exists(semantic_model_path):
-                    shutil.rmtree(semantic_model_path)
-                    logger.info(f"Deleted existing directory {semantic_model_path}")
-                if os.path.exists(metrics_path):
-                    shutil.rmtree(metrics_path)
-                    logger.info(f"Deleted existing directory {metrics_path}")
-                agent_config.save_storage_config("metric")
-            else:
-                agent_config.check_init_storage_config("metric")
+            if os.path.exists(semantic_model_path):
+                shutil.rmtree(semantic_model_path)
+                logger.info(f"Deleted existing directory {semantic_model_path}")
+            if os.path.exists(metrics_path):
+                shutil.rmtree(metrics_path)
+                logger.info(f"Deleted existing directory {metrics_path}")
+            agent_config.save_storage_config("metric")
 
             subject_tree = _parse_subject_tree(
                 "california_schools/Continuation_School/Free_Rate," "california_schools/Charter/Education_Location"
