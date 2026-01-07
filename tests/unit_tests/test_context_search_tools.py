@@ -43,9 +43,10 @@ def _build_tree_structure(entries: list) -> dict:
 
 @pytest.fixture
 def build_context_tools(mock_agent_config):
-    def _builder(metric_cfg=None, sql_cfg=None):
+    def _builder(metric_cfg=None, sql_cfg=None, knowledge_cfg=None):
         metric_cfg = metric_cfg or {}
         sql_cfg = sql_cfg or {}
+        knowledge_cfg = knowledge_cfg or {}
 
         # Create mock SubjectTreeStore
         mock_subject_tree = Mock()
@@ -71,54 +72,78 @@ def build_context_tools(mock_agent_config):
         if "search_sql_side_effect" in sql_cfg:
             sql_rag.search_reference_sql.side_effect = sql_cfg["search_sql_side_effect"]
 
+        # Create mock SemanticModelRAG
+        semantic_rag = Mock()
+        semantic_rag.get_size.return_value = 0
+
+        # Create mock ExtKnowledgeRAG
+        ext_knowledge_rag = Mock()
+        knowledge_entries = knowledge_cfg.get("entries", [])
+        ext_knowledge_rag.get_knowledge_size.return_value = knowledge_cfg.get("size", len(knowledge_entries))
+        ext_knowledge_rag.query_knowledge.return_value = knowledge_cfg.get("search_return", [])
+        ext_knowledge_rag.get_knowledge_detail.return_value = knowledge_cfg.get("get_return", [])
+        ext_knowledge_rag.store = Mock()
+        ext_knowledge_rag.store.search_all_knowledge.return_value = knowledge_entries
+        if "get_knowledge_side_effect" in knowledge_cfg:
+            ext_knowledge_rag.get_knowledge_detail.side_effect = knowledge_cfg["get_knowledge_side_effect"]
+
         # Set up get_tree_structure to return tree from all entries
-        all_entries = metric_entries + sql_entries
+        all_entries = metric_entries + sql_entries + knowledge_entries
         mock_subject_tree.get_tree_structure.return_value = _build_tree_structure(all_entries)
 
         with (
             patch("datus.tools.func_tool.context_search.MetricRAG", return_value=metric_rag),
-            patch("datus.tools.func_tool.context_search.SemanticModelRAG", return_value=Mock()),
+            patch("datus.tools.func_tool.context_search.SemanticModelRAG", return_value=semantic_rag),
             patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=sql_rag),
-            patch("datus.tools.func_tool.context_search.SubjectTreeStore", return_value=mock_subject_tree),
+            patch("datus.tools.func_tool.context_search.ExtKnowledgeRAG", return_value=ext_knowledge_rag),
+            patch(
+                "datus.tools.func_tool.context_search.MetricRAG.storage.subject_tree", return_value=mock_subject_tree
+            ),
         ):
             tools = ContextSearchTools(mock_agent_config)
-        return tools, metric_rag, sql_rag, mock_subject_tree
+        return tools, metric_rag, sql_rag, mock_subject_tree, ext_knowledge_rag
 
     return _builder
 
 
 def test_available_tools_with_metrics_and_sql(build_context_tools):
-    tools, _, _, _ = build_context_tools(
+    tools, _, _, _, _ = build_context_tools(
         metric_cfg={"entries": METRIC_ENTRIES, "search_return": [{"name": "monthly_sales"}]},
         sql_cfg={"entries": SQL_ENTRIES, "search_return": [{"name": "sales_query"}]},
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_subject_tree", "search_metrics", "search_reference_sql"}
+    assert tool_names == {
+        "list_subject_tree",
+        "search_metrics",
+        "get_metrics",
+        "search_reference_sql",
+        "get_reference_sql",
+    }
 
 
 def test_available_tools_metrics_only(build_context_tools):
-    tools, _, _, _ = build_context_tools(
+    tools, _, _, _, _ = build_context_tools(
         metric_cfg={"entries": METRIC_ENTRIES, "search_return": [{"name": "monthly_sales"}]},
         sql_cfg={"entries": [], "size": 0},
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_subject_tree", "search_metrics"}
+    assert tool_names == {"list_subject_tree", "search_metrics", "get_metrics"}
 
 
 def test_available_tools_sql_only(build_context_tools):
-    tools, _, _, _ = build_context_tools(
+    tools, _, _, _, _ = build_context_tools(
         metric_cfg={"entries": [], "size": 0},
         sql_cfg={"entries": SQL_ENTRIES, "search_return": [{"name": "sales_query"}]},
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_subject_tree", "search_reference_sql"}
+    assert tool_names == {"list_subject_tree", "search_reference_sql", "get_reference_sql"}
 
 
 def test_list_domain_layers_tree_combined(build_context_tools):
-    tools, _, _, _ = build_context_tools(
+    tools, _, _, _, _ = build_context_tools(
         metric_cfg={"entries": METRIC_ENTRIES},
         sql_cfg={"entries": SQL_ENTRIES},
     )
@@ -139,7 +164,7 @@ def test_list_domain_layers_tree_combined(build_context_tools):
 
 def test_collect_metrics_entries_handles_exception(build_context_tools):
     # Set size > 0 so that _show_metrics() returns True and the method is called
-    tools, metric_rag, _, _ = build_context_tools(
+    tools, metric_rag, _, _, _ = build_context_tools(
         metric_cfg={"entries": [], "size": 1, "search_all_side_effect": RuntimeError("metrics offline")}
     )
 
@@ -150,7 +175,7 @@ def test_collect_metrics_entries_handles_exception(build_context_tools):
 
 def test_collect_sql_entries_handles_exception(build_context_tools):
     # Set size > 0 so that _show_sql() returns True and the method is called
-    tools, _, sql_rag, _ = build_context_tools(
+    tools, _, sql_rag, _, _ = build_context_tools(
         sql_cfg={"entries": [], "size": 1, "search_all_side_effect": RuntimeError("sql offline")}
     )
 
@@ -160,7 +185,7 @@ def test_collect_sql_entries_handles_exception(build_context_tools):
 
 
 def test_search_metrics_passes_filters(build_context_tools):
-    tools, metric_rag, _, _ = build_context_tools(
+    tools, metric_rag, _, _, _ = build_context_tools(
         metric_cfg={
             "entries": METRIC_ENTRIES,
             "search_return": [{"name": "monthly_sales"}],
@@ -182,7 +207,7 @@ def test_search_metrics_passes_filters(build_context_tools):
 
 
 def test_search_metrics_handles_failure(build_context_tools):
-    tools, metric_rag, _, _ = build_context_tools(
+    tools, metric_rag, _, _, _ = build_context_tools(
         metric_cfg={
             "entries": METRIC_ENTRIES,
             "search_metrics_side_effect": Exception("metric search failed"),
@@ -196,7 +221,7 @@ def test_search_metrics_handles_failure(build_context_tools):
 
 
 def test_search_historical_sql(build_context_tools):
-    tools, _, sql_rag, _ = build_context_tools(
+    tools, _, sql_rag, _, _ = build_context_tools(
         metric_cfg={"entries": METRIC_ENTRIES},
         sql_cfg={
             "entries": SQL_ENTRIES,
@@ -215,7 +240,7 @@ def test_search_historical_sql(build_context_tools):
 
 
 def test_search_historical_sql_handles_failure(build_context_tools):
-    tools, _, sql_rag, _ = build_context_tools(
+    tools, _, sql_rag, _, _ = build_context_tools(
         sql_cfg={
             "entries": SQL_ENTRIES,
             "search_sql_side_effect": Exception("sql search failed"),
@@ -226,3 +251,68 @@ def test_search_historical_sql_handles_failure(build_context_tools):
     assert result.success == 0
     assert "sql search failed" in (result.error or "")
     sql_rag.search_reference_sql.assert_called_once()
+
+
+KNOWLEDGE_ENTRIES = [
+    {"subject_path": ["Business", "Terms"], "name": "GMV"},
+    {"subject_path": ["Business", "Terms"], "name": "ARR"},
+]
+
+
+def test_available_tools_with_knowledge(build_context_tools):
+    tools, _, _, _, _ = build_context_tools(
+        metric_cfg={"entries": [], "size": 0},
+        sql_cfg={"entries": [], "size": 0},
+        knowledge_cfg={"entries": KNOWLEDGE_ENTRIES},
+    )
+
+    tool_names = {tool.name for tool in tools.available_tools()}
+    assert tool_names == {"list_subject_tree", "search_knowledge", "get_knowledge"}
+
+
+def test_get_knowledge_success(build_context_tools):
+    knowledge_detail = {
+        "terminology": "GMV",
+        "explanation": "Gross Merchandise Value is the total sales value",
+    }
+    tools, _, _, _, ext_knowledge_rag = build_context_tools(
+        knowledge_cfg={
+            "entries": KNOWLEDGE_ENTRIES,
+            "get_return": [knowledge_detail],
+        }
+    )
+
+    result = tools.get_knowledge(subject_path=["Business", "Terms"], name="GMV")
+    assert result.success == 1
+    assert result.result == knowledge_detail
+    ext_knowledge_rag.get_knowledge_detail.assert_called_once_with(
+        subject_path=["Business", "Terms"],
+        name="GMV",
+    )
+
+
+def test_get_knowledge_not_found(build_context_tools):
+    tools, _, _, _, ext_knowledge_rag = build_context_tools(
+        knowledge_cfg={
+            "entries": KNOWLEDGE_ENTRIES,
+            "get_return": [],
+        }
+    )
+
+    result = tools.get_knowledge(subject_path=["Business", "Terms"], name="Unknown")
+    assert result.success == 0
+    assert result.error == "No matched result"
+
+
+def test_get_knowledge_handles_failure(build_context_tools):
+    tools, _, _, _, ext_knowledge_rag = build_context_tools(
+        knowledge_cfg={
+            "entries": KNOWLEDGE_ENTRIES,
+            "get_knowledge_side_effect": Exception("knowledge retrieval failed"),
+        }
+    )
+
+    result = tools.get_knowledge(subject_path=["Business", "Terms"], name="GMV")
+    assert result.success == 0
+    assert "knowledge retrieval failed" in (result.error or "")
+    ext_knowledge_rag.get_knowledge_detail.assert_called_once()

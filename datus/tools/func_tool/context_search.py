@@ -9,6 +9,7 @@ from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
+from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
@@ -23,6 +24,8 @@ _NAME_GET_METRICS = "context_search_tools.get_metrics"
 _NAME_SQL = "context_search_tools.search_reference_sql"
 _NAME_GET_SQL = "context_search_tools.get_reference_sql"
 _NAME_SEMANTIC = "context_search_tools.search_semantic_objects"
+_NAME_KNOWLEDGE = "context_search_tools.search_knowledge"
+_NAME_GET_KNOWLEDGE = "context_search_tools.get_knowledge"
 
 
 class ContextSearchTools:
@@ -32,6 +35,7 @@ class ContextSearchTools:
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
         self.semantic_rag = SemanticModelRAG(agent_config, sub_agent_name)
         self.reference_sql_store = ReferenceSqlRAG(agent_config, sub_agent_name)
+        self.ext_knowledge_rag = ExtKnowledgeRAG(agent_config, sub_agent_name)
 
         # Initialize SubjectTreeStore for domain hierarchy
         self.subject_tree = self.metric_rag.storage.subject_tree
@@ -43,6 +47,7 @@ class ContextSearchTools:
         self.has_metrics = self.metric_rag.get_metrics_size() > 0
         self.has_reference_sql = self.reference_sql_store.get_reference_sql_size() > 0
         self.has_semantic_objects = self.semantic_rag.get_size() > 0
+        self.has_knowledge = self.ext_knowledge_rag.get_knowledge_size() > 0
 
     def _show_metrics(self):
         return self.has_metrics and (
@@ -58,6 +63,14 @@ class ContextSearchTools:
             or _NAME in self.sub_agent_config.tool_list
             or _NAME_SQL in self.sub_agent_config.tool_list
             or _NAME_GET_SQL in self.sub_agent_config.tool_list
+        )
+
+    def _show_knowledge(self):
+        return self.has_knowledge and (
+            not self.sub_agent_config
+            or _NAME in self.sub_agent_config.tool_list
+            or _NAME_KNOWLEDGE in self.sub_agent_config.tool_list
+            or _NAME_GET_KNOWLEDGE in self.sub_agent_config.tool_list
         )
 
     def _show_semantic_objects(self):
@@ -80,18 +93,28 @@ class ContextSearchTools:
 
     def available_tools(self) -> List[Tool]:
         tools = []
+        has_subject_tree = False
+
         if self.has_metrics:
             for tool in (self.list_subject_tree, self.search_metrics, self.get_metrics):
                 tools.append(trans_to_function_tool(tool))
+            has_subject_tree = True
 
         if self.has_reference_sql:
-            if not self.has_metrics:
+            if not has_subject_tree:
                 tools.append(trans_to_function_tool(self.list_subject_tree))
+                has_subject_tree = True
             tools.append(trans_to_function_tool(self.search_reference_sql))
             tools.append(trans_to_function_tool(self.get_reference_sql))
 
         if self._show_semantic_objects():
             tools.append(trans_to_function_tool(self.search_semantic_objects))
+
+        if self._show_knowledge():
+            if not has_subject_tree:
+                tools.append(trans_to_function_tool(self.list_subject_tree))
+            tools.append(trans_to_function_tool(self.search_knowledge))
+            tools.append(trans_to_function_tool(self.get_knowledge))
 
         return tools
 
@@ -106,6 +129,7 @@ class ContextSearchTools:
                     "<layer2>": {
                         "metrics": <[name1, name2, ...], optional>,
                         "reference_sql": <[name1, name2, ...], optional>
+                        "knowledge": <[name1, name2, ...], optional>
                     },
                     ...
                 },
@@ -120,10 +144,13 @@ class ContextSearchTools:
             # Collect entries from the new subject-path index (decoupled from the metric/sql payload tables).
             metrics_entries = self._collect_metrics_entries()
             sql_entries = self._collect_sql_entries()
+            knowledge_entries = self._collect_knowledge_entries()
             enriched_tree = {}
 
             _fill_subject_tree(enriched_tree, metrics_entries, "metrics")
             _fill_subject_tree(enriched_tree, sql_entries, "reference_sql")
+            _fill_subject_tree(enriched_tree, knowledge_entries, "knowledge")
+
             _normalize_subject_tree(enriched_tree)
 
             logger.debug("enriched_tree: %s", enriched_tree)
@@ -152,6 +179,16 @@ class ContextSearchTools:
             return self.reference_sql_store.search_all_reference_sql(select_fields=["name"])
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("Failed to collect SQL taxonomy: %s", exc)
+            return []
+
+    def _collect_knowledge_entries(self) -> List[Dict[str, Any]]:
+        if not self._show_knowledge():
+            return []
+        try:
+            knowledge = self.ext_knowledge_rag.store.search_all_knowledge()
+            return knowledge
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to collect ext knowledge: %s", exc)
             return []
 
     def search_metrics(
@@ -307,9 +344,72 @@ class ContextSearchTools:
             logger.error(f"Failed to search semantic objects for '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
+    def search_knowledge(
+        self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
+    ) -> FuncToolResult:
+        """
+        Search for external business knowledge using natural language queries.
+
+        Args:
+            query_text: The natural language query text for searching knowledge entries.
+            subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
+            top_n: The number of top results to return (default 5).
+
+        Returns:
+            FuncToolResult with keys:
+                - 'success' (int): 1 if the search succeeded, 0 otherwise.
+                - 'error' (str or None): Error message if any.
+                - 'result' (list): On success, a list of matching entries, each containing:
+                    - 'terminology': Business terminology/concept
+                    - 'explanation': Detailed explanation of the terminology
+        """
+        try:
+            result = self.ext_knowledge_rag.query_knowledge(
+                query_text=query_text,
+                subject_path=subject_path,
+                top_n=top_n,
+            )
+            logger.debug(f"result of search_knowledge: {result}")
+            return FuncToolResult(success=1, error=None, result=result)
+        except Exception as e:
+            logger.error(f"Failed to search knowledge for `{query_text}`: {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def get_knowledge(self, subject_path: List[str], name: str = "") -> FuncToolResult:
+        """
+        Get external business knowledge by subject path and name.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
+            name: The name of the knowledge entry
+
+        Returns:
+            FuncToolResult with keys:
+                - 'success' (int): 1 if the search succeeded, 0 otherwise.
+                - 'error' (str or None): Error message if any.
+                - 'result' (dict): On success, the knowledge entry containing:
+                    - 'terminology': Business terminology/concept
+                    - 'explanation': Detailed explanation of the terminology
+        """
+        try:
+            result = self.ext_knowledge_rag.get_knowledge_detail(
+                subject_path=subject_path,
+                name=name,
+            )
+            logger.debug(f"result of get_knowledge: {result}")
+            if result:
+                return FuncToolResult(success=1, error=None, result=result[0])
+            else:
+                return FuncToolResult(success=0, error="No matched result", result=None)
+        except Exception as e:
+            logger.error(f"Failed to get knowledge for `{'/'.join(subject_path)}/{name}`: {e}")
+            return FuncToolResult(success=0, error=str(e))
+
 
 def _fill_subject_tree(
-    enriched_tree: Dict[str, Any], entries: List[Dict[str, Any]], entry_type: Literal["metrics", "reference_sql"]
+    enriched_tree: Dict[str, Any],
+    entries: List[Dict[str, Any]],
+    entry_type: Literal["metrics", "reference_sql", "knowledge"],
 ):
     for item in entries:
         subject_path = item.get("subject_path")
@@ -324,7 +424,7 @@ def _fill_subject_tree(
 
 def _normalize_subject_tree(enriched_tree: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in enriched_tree.items():
-        if key in ("metrics", "reference_sql"):
+        if key in ("metrics", "reference_sql", "knowledge"):
             if isinstance(value, set):
                 enriched_tree[key] = sorted(value)
         elif isinstance(value, dict):

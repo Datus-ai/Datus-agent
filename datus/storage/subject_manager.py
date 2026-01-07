@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.cache import get_storage_cache_instance
+from datus.storage.ext_knowledge import ExtKnowledgeStore
 from datus.storage.metric import MetricStorage
 from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.utils.loggings import get_logger
@@ -25,6 +26,7 @@ class SubjectUpdater:
         self.storage_cache = get_storage_cache_instance(self._agent_config)
         self.metrics_storage: MetricStorage = self.storage_cache.metric_storage()
         self.reference_sql_storage: ReferenceSqlStorage = self.storage_cache.reference_sql_storage()
+        self.ext_knowledge_storage: ExtKnowledgeStore = self.storage_cache.ext_knowledge_storage()
 
     def _sub_agent_storage_metrics(self, sub_agent_config: SubAgentConfig) -> MetricStorage:
         name = sub_agent_config.system_prompt
@@ -86,3 +88,18 @@ class SubjectUpdater:
                     logger.warning(
                         f"Failed to update the reference SQL details in the sub_agent `{sub_agent_name}`: {e}"
                     )
+
+    def update_ext_knowledge(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
+        """Update external knowledge detail fields using subject_path and name.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue'])
+            name: Name of the ext_knowledge entry
+            update_values: Dictionary of fields to update (excluding subject_node_id and name)
+        """
+        if not update_values:
+            return
+
+        # Update in main storage
+        self.ext_knowledge_storage.update_entry(subject_path, name, update_values)
+        logger.debug("Updated the ext_knowledge details in the main space successfully")

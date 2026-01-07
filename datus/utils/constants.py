@@ -87,7 +87,7 @@ class EmbeddingProvider(str, Enum):
 
 
 # System sub-agents that are built-in and not user-configurable
-SYS_SUB_AGENTS = {"gen_semantic_model", "gen_metrics", "gen_sql_summary"}
+SYS_SUB_AGENTS = {"gen_semantic_model", "gen_metrics", "gen_sql_summary", "gen_ext_knowledge"}
 
 
 class SQLType(str, Enum):

@@ -24,6 +24,7 @@ from datus.cli.screen.base_widgets import EditableTree, FocusableStatic, InputWi
 from datus.cli.screen.context_screen import ContextScreen
 from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.subject_manager import SubjectUpdater
@@ -333,6 +334,81 @@ class ReferenceSqlPanel(Vertical):
             field.restore()
 
 
+class ExtKnowledgePanel(Vertical):
+    """
+    A panel for displaying and editing external knowledge details using DetailField components.
+    """
+
+    can_focus = True
+
+    def __init__(self, entry: Dict[str, Any], readonly: bool = True) -> None:
+        super().__init__()
+        self.entry = entry
+        self.readonly = readonly
+        self.fields: List[InputWithLabel] = []
+
+    def compose(self) -> ComposeResult:
+        knowledge_name = self.entry.get("name", "Unnamed Knowledge")
+        yield Label(f"📚 [bold cyan]Knowledge: {knowledge_name}[/]")
+        terminology_field = InputWithLabel(
+            "Terminology",
+            self.entry.get("terminology", ""),
+            lines=2,
+            readonly=self.readonly,
+            language="markdown",
+        )
+        self.fields.append(terminology_field)
+        yield terminology_field
+
+        explanation_field = InputWithLabel(
+            "Explanation",
+            self.entry.get("explanation", ""),
+            lines=10,
+            readonly=self.readonly,
+            language="markdown",
+        )
+        self.fields.append(explanation_field)
+        yield explanation_field
+
+    def _fill_data(self):
+        self.fields[0].set_value(self.entry.get("terminology", ""))
+        self.fields[1].set_value(self.entry.get("explanation", ""))
+
+    def set_readonly(self, readonly: bool) -> None:
+        """
+        Toggle the read-only mode for all fields in this panel.
+        """
+        self.readonly = readonly
+        for field in self.fields:
+            field.set_readonly(readonly)
+
+    def is_modified(self) -> bool:
+        """
+        Return True if any field has been modified.
+        """
+        return any(field.is_modified() for field in self.fields)
+
+    def get_value(self) -> Dict[str, str]:
+        """
+        Return a dictionary mapping field labels to their current values.
+        """
+        return {field.label_text.lower(): field.get_value() for field in self.fields}
+
+    def restore(self):
+        for field in self.fields:
+            field.restore()
+
+    def update_data(self, summary_data: Dict[str, Any]):
+        self.entry.update(summary_data)
+        self._fill_data()
+
+    def focus_first_input(self) -> bool:
+        for field in self.fields:
+            if field.focus_input():
+                return True
+        return False
+
+
 @lru_cache(maxsize=128)
 def _fetch_metrics_with_cache(metric_rag: MetricRAG, subject_path_tuple: tuple, name: str) -> List[Dict[str, Any]]:
     """Fetch metrics with caching. subject_path_tuple is a tuple to allow hashing for lru_cache."""
@@ -479,6 +555,7 @@ class SubjectScreen(ContextScreen):
         self.agent_config: AgentConfig = context_data.get("agent_config")
         self.metrics_rag: MetricRAG = MetricRAG(self.agent_config)
         self.sql_rag: ReferenceSqlRAG = ReferenceSqlRAG(self.agent_config)
+        self.ext_knowledge_rag: ExtKnowledgeRAG = ExtKnowledgeRAG(self.agent_config)
         self.subject_tree_store = self.metrics_rag.storage.subject_tree
         self.inject_callback = inject_callback
         self.selected_path = ""
@@ -560,6 +637,8 @@ class SubjectScreen(ContextScreen):
                 return "metrics", widget
             if isinstance(widget, ReferenceSqlPanel):
                 return "sql", widget
+            if isinstance(widget, ExtKnowledgePanel):
+                return "ext_knowledge", widget
             widget = widget.parent
         return None, None
 
@@ -570,6 +649,7 @@ class SubjectScreen(ContextScreen):
             "tree": "✏️ Editing tree node",
             "metrics": "✏️ Editing metrics details",
             "sql": "✏️ Editing reference SQL",
+            "ext_knowledge": "✏️ Editing external knowledge",
         }
         header.sub_title = messages.get(component, "")
         header.refresh()
@@ -664,6 +744,15 @@ class SubjectScreen(ContextScreen):
                     entry_key = f"sql:{name}"
                     node_data["subject_entries"][entry_key] = {"name": name, "entry_type": "sql"}
 
+            # Get ext_knowledge for this exact node (not descendants)
+            ext_knowledge_results = self.ext_knowledge_rag.store.list_entries(node_id)
+            for ext_knowledge_entry in ext_knowledge_results:
+                name = ext_knowledge_entry.get("name", "")
+                if name:
+                    # Create separate entry for each ext_knowledge with unique key
+                    entry_key = f"ext_knowledge:{name}"
+                    node_data["subject_entries"][entry_key] = {"name": name, "entry_type": "ext_knowledge"}
+
             # Recursively attach entries for children
             for child_name, child_data in node_data.get("children", {}).items():
                 child_path = subject_path + [child_name]
@@ -731,6 +820,8 @@ class SubjectScreen(ContextScreen):
                 icon = "📈"
             elif entry_type == "sql":
                 icon = "💻"
+            elif entry_type == "ext_knowledge":
+                icon = "📚"
             else:
                 icon = "📋"  # Fallback icon
 
@@ -808,14 +899,14 @@ class SubjectScreen(ContextScreen):
         self._begin_panel_edit(component, widget)
 
     def action_save_edit(self) -> None:
-        if self._editing_component in {"metrics", "sql"}:
+        if self._editing_component in {"metrics", "sql", "ext_knowledge"}:
             self._save_panel_edit(self._editing_component)
             return
 
         self.app.notify("Nothing to save", severity="warning")
 
     def _begin_panel_edit(self, component: str, current_widget: Optional[Widget]) -> None:
-        if component not in {"metrics", "sql"}:
+        if component not in {"metrics", "sql", "ext_knowledge"}:
             return
 
         if self._editing_component == component:
@@ -826,12 +917,12 @@ class SubjectScreen(ContextScreen):
             return
 
         # Switch layout to editable panels if we're currently in read-only mode.
-        panel: Optional[MetricsPanel | ReferenceSqlPanel] = None
+        panel: Optional[MetricsPanel | ReferenceSqlPanel | ExtKnowledgePanel] = None
         if self.readonly:
             self.readonly = False
             self._show_subject_details(self.selected_data)
 
-        if isinstance(current_widget, (MetricsPanel, ReferenceSqlPanel)):
+        if isinstance(current_widget, (MetricsPanel, ReferenceSqlPanel, ExtKnowledgePanel)):
             panel = current_widget
         else:
             panel = self._get_panel(component)
@@ -858,12 +949,15 @@ class SubjectScreen(ContextScreen):
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
         sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
 
-        panel: Optional[MetricsPanel | ReferenceSqlPanel] = None
+        panel: Optional[MetricsPanel | ReferenceSqlPanel | ExtKnowledgePanel] = None
         if component == "metrics":
             if query := metrics_container.query(MetricsPanel):
                 panel = query.first()
         elif component == "sql":
             if query := sql_container.query(ReferenceSqlPanel):
+                panel = query.first()
+        elif component == "ext_knowledge":
+            if query := metrics_container.query(ExtKnowledgePanel):
                 panel = query.first()
 
         if panel is None:
@@ -898,6 +992,9 @@ class SubjectScreen(ContextScreen):
                 logger.info(f"Updating metrics: subject_path={subject_path}, name={name}, data={data}")
                 self.subject_updater.update_metrics_detail(subject_path, name, data)
                 _fetch_metrics_with_cache.cache_clear()
+            elif component == "ext_knowledge":
+                logger.info(f"Updating ext_knowledge: subject_path={subject_path}, name={name}, data={data}")
+                self.subject_updater.update_ext_knowledge(subject_path, name, data)
         else:
             self.app.notify(f"No changes detected in {component}.", severity="warning")
 
@@ -958,6 +1055,7 @@ class SubjectScreen(ContextScreen):
         subject_info: Dict[str, Any],
         metrics: List[Dict[str, Any]],
         sql_entries: List[Dict[str, Any]],
+        ext_knowledge_entries: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Render static (read-only) details using the `_create_*_content` helpers."""
 
@@ -974,6 +1072,11 @@ class SubjectScreen(ContextScreen):
             name = self._create_metrics_panel_content(metrics, subject_info.get("name", ""))
             metrics_container.mount(FocusableStatic(name))
             self._toggle_visibility(metrics_container, True)
+        elif ext_knowledge_entries:
+            # Display ext_knowledge in metrics container when no metrics
+            group = self._create_ext_knowledge_panel_content(ext_knowledge_entries)
+            metrics_container.mount(FocusableStatic(group))
+            self._toggle_visibility(metrics_container, True)
         else:
             metrics_container.mount(Static("[dim]No metrics for this item[/dim]"))
             self._toggle_visibility(metrics_container, False)
@@ -986,8 +1089,13 @@ class SubjectScreen(ContextScreen):
             sql_container.mount(Static("[dim]No reference SQL for this item[/dim]"))
             self._toggle_visibility(sql_container, False)
 
-    def _render_editable_panels(self, metrics: List[Dict[str, Any]], sql_entries: List[Dict[str, Any]]) -> None:
-        """Render editable panels (MetricsPanel / ReferenceSqlPanel)."""
+    def _render_editable_panels(
+        self,
+        metrics: List[Dict[str, Any]],
+        sql_entries: List[Dict[str, Any]],
+        ext_knowledge_entries: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Render editable panels (MetricsPanel / ReferenceSqlPanel / ExtKnowledgePanel)."""
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
         sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
 
@@ -1000,6 +1108,11 @@ class SubjectScreen(ContextScreen):
         if metrics:
             metrics_panel = MetricsPanel(metrics[0], readonly=False)
             metrics_container.mount(metrics_panel)
+            self._toggle_visibility(metrics_container, True)
+        elif ext_knowledge_entries:
+            # Display ext_knowledge panel in metrics container when no metrics
+            ext_knowledge_panel = ExtKnowledgePanel(ext_knowledge_entries[0], readonly=False)
+            metrics_container.mount(ext_knowledge_panel)
             self._toggle_visibility(metrics_container, True)
         else:
             metrics_container.mount(Static("[dim]No metrics for this item[/dim]"))
@@ -1246,8 +1359,14 @@ class SubjectScreen(ContextScreen):
                         _sql_details_cache.cache_clear()
                     except Exception as e:
                         logger.warning(f"Failed to rename SQL entry: {e}")
+                elif entry_type == "ext_knowledge":
+                    # Only rename in ext_knowledge storage
+                    try:
+                        self.ext_knowledge_rag.store.rename(old_path, new_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to rename ext_knowledge entry: {e}")
                 else:
-                    # Fallback: rename in both storages for backward compatibility
+                    # Fallback: rename in all storages for backward compatibility
                     try:
                         self.metrics_rag.storage.rename(old_path, new_path)
                         _fetch_metrics_with_cache.cache_clear()
@@ -1259,6 +1378,11 @@ class SubjectScreen(ContextScreen):
                         _sql_details_cache.cache_clear()
                     except Exception as e:
                         logger.warning(f"Failed to rename SQL entry: {e}")
+
+                    try:
+                        self.ext_knowledge_rag.store.rename(old_path, new_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to rename ext_knowledge entry: {e}")
 
             # Store path to focus after tree reload, then reload
             self._pending_focus_path = new_path
@@ -1334,7 +1458,7 @@ class SubjectScreen(ContextScreen):
             for child in node.children:
                 child_name = child.data.get("name", "") if child.data else ""
                 # Strip icon prefixes
-                child_name = child_name.replace("📁", "").replace("📈", "").replace("💻", "").strip()
+                child_name = child_name.replace("📁", "").replace("📈", "").replace("💻", "").replace("📚", "").strip()
                 if child_name == target_name:
                     node = child
                     node.expand()
@@ -1347,7 +1471,7 @@ class SubjectScreen(ContextScreen):
         tree.move_cursor(node)
 
     def _show_subject_details(self, subject_info: Dict[str, Any]) -> None:
-        """Show metrics and SQL details for the selected subject.
+        """Show metrics, SQL, and ext_knowledge details for the selected subject.
 
         Args:
             subject_info: Dict containing node data with new structure:
@@ -1360,6 +1484,7 @@ class SubjectScreen(ContextScreen):
 
         metrics: List[Dict[str, Any]] = []
         sql_entries: List[Dict[str, Any]] = []
+        ext_knowledge_entries: List[Dict[str, Any]] = []
 
         node_type = subject_info.get("type")
         node_id = subject_info.get("node_id")
@@ -1372,31 +1497,42 @@ class SubjectScreen(ContextScreen):
                 metrics = self._fetch_metrics_by_path_and_name(node_id, name)
             elif entry_type == "sql":
                 sql_entries = self._fetch_sql_by_path_and_name(node_id, name)
+            elif entry_type == "ext_knowledge":
+                ext_knowledge_entries = self._fetch_ext_knowledge_by_path_and_name(node_id, name)
 
         # Render depending on mode
         if self.readonly:
-            self._render_readonly_panels(subject_info, metrics, sql_entries)
+            self._render_readonly_panels(subject_info, metrics, sql_entries, ext_knowledge_entries)
         else:
-            self._render_editable_panels(metrics, sql_entries)
+            self._render_editable_panels(metrics, sql_entries, ext_knowledge_entries)
 
         # Layout sizing + divider logic (same for both modes)
         metrics_visible = bool(metrics)
         sql_visible = bool(sql_entries)
+        ext_knowledge_visible = bool(ext_knowledge_entries)
 
-        if metrics_visible and sql_visible:
+        # Calculate visible count for layout
+        visible_count = sum([metrics_visible, sql_visible, ext_knowledge_visible])
+
+        if visible_count == 0:
             metrics_container.styles.height = "50%"
             sql_container.styles.height = "50%"
-        elif metrics_visible:
-            metrics_container.styles.height = "100%"
-            sql_container.styles.height = "0%"
-        elif sql_visible:
-            sql_container.styles.height = "100%"
-            metrics_container.styles.height = "0%"
+        elif visible_count == 1:
+            if metrics_visible:
+                metrics_container.styles.height = "100%"
+                sql_container.styles.height = "0%"
+            elif sql_visible:
+                sql_container.styles.height = "100%"
+                metrics_container.styles.height = "0%"
+            elif ext_knowledge_visible:
+                # Use metrics container for ext_knowledge display
+                metrics_container.styles.height = "100%"
+                sql_container.styles.height = "0%"
         else:
             metrics_container.styles.height = "50%"
             sql_container.styles.height = "50%"
 
-        self._toggle_visibility(divider, metrics_visible and sql_visible)
+        self._toggle_visibility(divider, visible_count >= 2)
 
     def _toggle_visibility(self, widget: Any, visible: bool) -> None:
         if visible:
@@ -1461,6 +1597,29 @@ class SubjectScreen(ContextScreen):
                 "SQL",
                 Syntax(str(sql_entry.get("sql", "")), "sql", theme="monokai", word_wrap=True, line_numbers=True),
             )
+
+            sections.append(details)
+
+        return Group(*sections)
+
+    def _create_ext_knowledge_panel_content(self, ext_knowledge_entries: List[Dict[str, Any]]) -> Group:
+        sections: List[Table] = []
+        for idx, entry in enumerate(ext_knowledge_entries, 1):
+            details = Table(
+                title=f"[bold cyan]📚 Knowledge #{idx}: {entry.get('name', 'Unnamed')}[/bold cyan]",
+                show_header=False,
+                box=box.SIMPLE,
+                border_style="blue",
+                expand=True,
+                padding=(0, 1),
+            )
+            details.add_column("Key", style="bright_cyan", width=12)
+            details.add_column("Value", style="yellow", ratio=1)
+
+            if terminology := entry.get("terminology"):
+                details.add_row("Terminology", terminology)
+            if explanation := entry.get("explanation"):
+                details.add_row("Explanation", explanation)
 
             sections.append(details)
 
@@ -1713,7 +1872,7 @@ class SubjectScreen(ContextScreen):
             self._update_edit_indicator(None)
             self._last_tree_selection = None
 
-    def _get_panel(self, component: str) -> Optional[MetricsPanel | ReferenceSqlPanel]:
+    def _get_panel(self, component: str) -> Optional[MetricsPanel | ReferenceSqlPanel | ExtKnowledgePanel]:
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
         sql_container = self.query_one("#sql-panel-container", ScrollableContainer)
         if component == "metrics":
@@ -1721,6 +1880,9 @@ class SubjectScreen(ContextScreen):
             return query.first() if query else None
         if component == "sql":
             query = sql_container.query(ReferenceSqlPanel)
+            return query.first() if query else None
+        if component == "ext_knowledge":
+            query = metrics_container.query(ExtKnowledgePanel)
             return query.first() if query else None
         return None
 
@@ -1746,7 +1908,7 @@ class SubjectScreen(ContextScreen):
             return
 
         # Case 2: in-panel editing
-        if self._editing_component in {"metrics", "sql"}:
+        if self._editing_component in {"metrics", "sql", "ext_knowledge"}:
             component = self._editing_component
             panel = self._get_panel(component)
             if panel is not None:
@@ -1807,6 +1969,18 @@ class SubjectScreen(ContextScreen):
             List of SQL entries matching the criteria
         """
         return self.sql_rag.reference_sql_storage.list_entries(node_id=node_id, name=name)
+
+    def _fetch_ext_knowledge_by_path_and_name(self, node_id: int, name: str) -> List[Dict[str, Any]]:
+        """Fetch ext_knowledge entries by subject node ID and entry name.
+
+        Args:
+            node_id: Subject node ID
+            name: Entry name
+
+        Returns:
+            List of ext_knowledge entries matching the criteria
+        """
+        return self.ext_knowledge_rag.store.list_entries(node_id=node_id, name=name)
 
 
 class NavigationHelpScreen(ModalScreen):

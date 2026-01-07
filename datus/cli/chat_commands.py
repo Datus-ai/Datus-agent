@@ -155,6 +155,16 @@ class ChatCommands:
                     tools=None,
                     node_name=subagent_name,
                 )
+            # Use GenExtKnowledgeAgenticNode for gen_ext_knowledge
+            elif subagent_name == "gen_ext_knowledge":
+                from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
+
+                self.console.print(f"[dim]Creating new {subagent_name} session...[/]")
+                return GenExtKnowledgeAgenticNode(
+                    node_name=subagent_name,
+                    agent_config=self.cli.agent_config,
+                    execution_mode="interactive",
+                )
             else:
                 # Default: Create GenSQLAgenticNode
                 from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
@@ -185,6 +195,7 @@ class ChatCommands:
         self, user_message: str, current_node, at_tables, at_metrics, at_sqls, plan_mode: bool = False
     ):
         """Create node input based on node type - shared logic for CLI and web"""
+        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
@@ -218,6 +229,17 @@ class ChatCommands:
                     prompt_language="en",
                 ),
                 "sql_summary",
+            )
+        elif isinstance(current_node, GenExtKnowledgeAgenticNode):
+            from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
+
+            return (
+                ExtKnowledgeNodeInput(
+                    user_message=user_message,
+                    prompt_version="1.0",
+                    prompt_language="en",
+                ),
+                "ext_knowledge",
             )
         elif isinstance(current_node, GenSQLAgenticNode):
             from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
@@ -402,6 +424,11 @@ class ChatCommands:
                     if sql_summary_file:
                         self._display_sql_summary_file(sql_summary_file)
 
+                    # Check for ext_knowledge_file field (from ExtKnowledgeAgenticNode)
+                    ext_knowledge_file = final_action.output.get("ext_knowledge_file")
+                    if ext_knowledge_file:
+                        self._display_ext_knowledge_file(ext_knowledge_file)
+
                     if clean_output:
                         self._display_markdown_response(clean_output)
                     self.last_actions = incremental_actions
@@ -535,6 +562,22 @@ class ChatCommands:
             logger.error(f"Error displaying SQL summary file: {e}")
             # Fallback to simple display
             self.console.print(f"\n[bold yellow]SQL Summary File:[/] {sql_summary_file}")
+
+    def _display_ext_knowledge_file(self, ext_knowledge_file: str):
+        """
+        Display external knowledge file path.
+
+        Args:
+            ext_knowledge_file: External knowledge file path
+        """
+        try:
+            self.console.print()
+            self.console.print(f"[bold green]External Knowledge File:[/] [cyan]{ext_knowledge_file}[/]")
+
+        except Exception as e:
+            logger.error(f"Error displaying external knowledge file: {e}")
+            # Fallback to simple display
+            self.console.print(f"\n[bold green]External Knowledge File:[/] {ext_knowledge_file}")
 
     def _extract_sql_and_output_from_content(self, content: str) -> Tuple[Optional[str], Optional[str]]:
         """

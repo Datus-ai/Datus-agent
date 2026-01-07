@@ -22,8 +22,8 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.node_models import SqlTask
-from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge
-from datus.storage.ext_knowledge.store import ExtKnowledgeStore
+from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge, init_success_story_knowledge
+from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.storage.metric.metric_init import init_semantic_yaml_metrics, init_success_story_metrics
 from datus.storage.metric.store import MetricRAG
 from datus.storage.schema_metadata import SchemaWithValueRAG
@@ -565,14 +565,27 @@ class Agent:
                     self.global_config.save_storage_config("ext_knowledge")
                 else:
                     self.global_config.check_init_storage_config("ext_knowledge")
-                self.ext_knowledge_store = ExtKnowledgeStore(dir_path)
-                init_ext_knowledge(
-                    self.ext_knowledge_store, self.args, build_mode=kb_update_strategy, pool_size=pool_size
-                )
+                self.ext_knowledge_rag = ExtKnowledgeRAG(self.global_config)
+                # Initialize ext_knowledge using appropriate method
+                if hasattr(self.args, "ext_knowledge") and self.args.ext_knowledge:
+                    # Use CSV file directly
+                    init_ext_knowledge(
+                        self.ext_knowledge_rag.store, self.args, build_mode=kb_update_strategy, pool_size=pool_size
+                    )
+                elif hasattr(self.args, "success_story") and self.args.success_story:
+                    # Use GenExtKnowledgeAgenticNode to generate from success story
+                    successful, error_message = init_success_story_knowledge(
+                        self.args, self.global_config, subject_tree
+                    )
+                    if not successful:
+                        return {
+                            "status": "failed",
+                            "message": error_message,
+                        }
                 return {
                     "status": "success",
                     "message": f"ext_knowledge bootstrap completed, "
-                    f"knowledge_size={self.ext_knowledge_store.table_size()}",
+                    f"knowledge_size={self.ext_knowledge_rag.store.table_size()}",
                 }
             elif component == "reference_sql":
                 reference_sql_path = os.path.join(dir_path, "reference_sql.lance")

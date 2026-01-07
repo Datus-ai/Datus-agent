@@ -10,6 +10,7 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.date_parser_node_models import DateParserInput
 from datus.schemas.doc_search_node_models import DocSearchInput
+from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
@@ -54,6 +55,7 @@ class NodeType:
     TYPE_SEMANTIC = "semantic"  # For semantic model generation
     TYPE_SQL_SUMMARY = "sql_summary"  # For SQL summary generation
     TYPE_GEN_REPORT = "gen_report"  # For generic report generation
+    TYPE_EXT_KNOWLEDGE = "ext_knowledge"  # For external knowledge generation
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
@@ -71,6 +73,7 @@ class NodeType:
         TYPE_SEMANTIC,
         TYPE_SQL_SUMMARY,
         TYPE_GEN_REPORT,
+        TYPE_EXT_KNOWLEDGE,
     ]
 
     NODE_TYPE_DESCRIPTIONS = {
@@ -95,6 +98,7 @@ class NodeType:
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
         TYPE_SQL_SUMMARY: "SQL summary generation with conversational AI",
         TYPE_GEN_REPORT: "Generic report generation with semantic and database tools",
+        TYPE_EXT_KNOWLEDGE: "External knowledge generation with conversational AI",
     }
 
     @classmethod
@@ -142,6 +146,8 @@ class NodeType:
             input_data_cls = SqlSummaryNodeInput
         elif node_type == NodeType.TYPE_GEN_REPORT:
             input_data_cls = GenReportNodeInput
+        elif node_type == NodeType.TYPE_EXT_KNOWLEDGE:
+            input_data_cls = ExtKnowledgeNodeInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 

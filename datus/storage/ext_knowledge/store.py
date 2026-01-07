@@ -6,7 +6,8 @@ from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
 
-from datus.storage.embedding_models import EmbeddingModel, get_document_embedding_model
+from datus.configuration.agent_config import AgentConfig
+from datus.storage.base import EmbeddingModel
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
 from datus.utils.loggings import get_logger
 
@@ -16,16 +17,13 @@ logger = get_logger(__name__)
 class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
     """Store and manage external business knowledge in LanceDB."""
 
-    def __init__(self, db_path: str, embedding_model: Optional[EmbeddingModel] = None):
+    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
         """Initialize the external knowledge store.
 
         Args:
             db_path: Path to the LanceDB database directory
-            embedding_model: Embedding model to use, defaults to document embedding model
+            embedding_model: Embedding model for vector search
         """
-        if embedding_model is None:
-            embedding_model = get_document_embedding_model()
-
         super().__init__(
             db_path=db_path,
             table_name="ext_knowledge",
@@ -137,7 +135,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             subject_path=subject_path,
             selected_fields=select_fields,
             top_n=top_n,
-            name_field="terminology",
+            name_field="name",
         )
 
     def search_all_knowledge(
@@ -157,3 +155,118 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
     def after_init(self):
         """After initialization, create indices for the table."""
         self.create_indices()
+
+
+class ExtKnowledgeRAG:
+    """RAG interface for external knowledge with CRUD operations suitable for LLM tools.
+
+    This class provides a simple, tool-friendly interface for managing external knowledge entries.
+    All methods return structured dictionaries with success/failure status and messages.
+    """
+
+    def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
+        from datus.storage.cache import get_storage_cache_instance
+
+        self.store = get_storage_cache_instance(agent_config).ext_knowledge_storage(sub_agent_name)
+
+    def _parse_subject_path(self, subject_path) -> List[str]:
+        """Parse subject_path from string or list format.
+
+        Args:
+            subject_path: Either a string like "Finance/Revenue" or a list like ["Finance", "Revenue"]
+
+        Returns:
+            List of path components
+        """
+        if isinstance(subject_path, str):
+            return [part.strip() for part in subject_path.split("/") if part.strip()]
+        elif isinstance(subject_path, list):
+            return subject_path
+        else:
+            raise ValueError(f"subject_path must be string or list, got {type(subject_path)}")
+
+    def get_knowledge_size(self):
+        return self.store.table_size()
+
+    def add_knowledge(
+        self,
+        terminology: str,
+        explanation: str,
+        subject_path: List[str],
+        name: Optional[str] = None,
+    ):
+        """Add a new knowledge entry.
+
+        Args:
+            terminology: Business terminology/concept
+            explanation: Detailed explanation
+            subject_path: Subject hierarchy path (e.g., "Finance/Revenue" or ["Finance", "Revenue"])
+            name: Optional name for the entry (defaults to terminology if not provided)
+
+        Returns:
+            Dict with keys:
+                - success (bool): Whether the operation succeeded
+                - message (str): Success or error message
+                - data (dict): Created entry details (if successful)
+
+        Examples:
+            >>> rag.add_knowledge(
+            ...     terminology="GMV",
+            ...     explanation="Gross Merchandise Value is the total sales value...",
+            ...     subject_path="Finance/Revenue"
+            ... )
+            {'success': True, 'message': 'Knowledge entry added successfully', 'data': {...}}
+        """
+        try:
+            # Validate inputs
+            if not terminology or not terminology.strip():
+                return {"success": False, "message": "terminology cannot be empty", "data": None}
+
+            if not explanation or not explanation.strip():
+                return {"success": False, "message": "explanation cannot be empty", "data": None}
+
+            if not subject_path:
+                return {"success": False, "message": "subject_path cannot be empty", "data": None}
+
+            # Use terminology as name if not provided
+            if not name:
+                name = terminology
+
+            # Store the knowledge entry
+            self.store.store_knowledge(
+                subject_path=subject_path,
+                name=name,
+                terminology=terminology,
+                explanation=explanation,
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to add knowledge: {str(e)}")
+            raise e
+
+    def query_knowledge(
+        self,
+        query_text: Optional[str] = None,
+        subject_path: Optional[List[str]] = None,
+        top_n: int = 5,
+    ) -> List[Dict[str, Any]]:
+        # Perform search
+        return self.store.search_knowledge(
+            query_text=query_text,
+            subject_path=subject_path,
+            top_n=top_n,
+        )
+
+    def get_knowledge_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
+        """Get knowledge detail by subject path and name.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
+            name: Knowledge entry name
+
+        Returns:
+            List containing the matching knowledge entry details
+        """
+        full_path = subject_path.copy()
+        full_path.append(name)
+        return self.store.search_all_knowledge(subject_path=full_path)

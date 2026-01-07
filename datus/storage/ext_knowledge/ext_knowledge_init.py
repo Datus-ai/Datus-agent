@@ -3,13 +3,18 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import argparse
+import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
-from typing import Set
+from typing import Dict, List, Optional, Set
 
 import pandas as pd
 
+from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
+from datus.configuration.agent_config import AgentConfig
+from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
 from datus.storage.ext_knowledge.init_utils import exists_ext_knowledge, gen_ext_knowledge_id
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
 from datus.utils.loggings import get_logger
@@ -147,3 +152,103 @@ def process_row(
     except Exception as e:
         logger.error(f"Row {index}: Error processing row {row}: {str(e)}")
         return "error"
+
+
+def init_success_story_knowledge(
+    args: argparse.Namespace,
+    agent_config: AgentConfig,
+    subject_tree: Optional[list] = None,
+) -> tuple[bool, str]:
+    """
+    Initialize external knowledge from success story CSV file using GenExtKnowledgeAgenticNode in workflow mode.
+
+    Args:
+        args: Command line arguments containing success_story CSV file path
+        agent_config: Agent configuration
+        subject_tree: Optional predefined subject tree categories
+
+    Returns:
+        tuple[bool, str]: (whether successful, error message)
+    """
+    if not os.path.exists(args.success_story):
+        error_msg = f"Success story CSV file not found: {args.success_story}"
+        logger.error(error_msg)
+        return False, error_msg
+
+    df = pd.read_csv(args.success_story)
+
+    async def process_all() -> tuple[bool, List[str]]:
+        errors: List[str] = []
+        for idx, row in df.iterrows():
+            row_idx = idx + 1
+            logger.info(f"Processing row {row_idx}/{len(df)}")
+            try:
+                result = await process_knowledge_line(row.to_dict(), agent_config, subject_tree)
+                if not result.get("successful"):
+                    errors.append(f"Error processing row {row_idx}: {result.get('error')}")
+            except Exception as e:
+                errors.append(f"Error processing row {row_idx}: {e}")
+                logger.error(f"Error processing row {row_idx}: {e}")
+        return (len(df) - len(errors)) > 0, errors
+
+    successful, errors = asyncio.run(process_all())
+    error_message = "\n    ".join(errors) if errors else ""
+    return successful, error_message
+
+
+async def process_knowledge_line(
+    row: dict,
+    agent_config: AgentConfig,
+    subject_tree: Optional[list] = None,
+) -> Dict[str, any]:
+    """
+    Process a single line from the CSV using GenExtKnowledgeAgenticNode in workflow mode.
+
+    Args:
+        row: CSV row data containing question_id, question, sql, subject_path
+        agent_config: Agent configuration
+        subject_tree: Optional predefined subject tree categories
+
+    Returns:
+        Dict with 'successful' and 'error' keys
+    """
+    logger.info(f"processing line: {row}")
+
+    question = row.get("question", "")
+    sql = row.get("sql", "")
+    subject_path = row.get("subject_path", "")
+
+    if not question:
+        return {"successful": False, "error": "Missing question field"}
+
+    # Build user_message combining question and sql
+    user_message = f"Generate external knowledge for the following question:\nQuestion: {question}\nSQL: {sql}"
+
+    # Create ExtKnowledgeNodeInput
+    ext_knowledge_input = ExtKnowledgeNodeInput(
+        user_message=user_message,
+        subject_path=subject_path if subject_path else None,
+    )
+
+    # Create GenExtKnowledgeAgenticNode (workflow mode auto-saves to database)
+    ext_knowledge_node = GenExtKnowledgeAgenticNode(
+        node_name="gen_ext_knowledge",
+        agent_config=agent_config,
+        execution_mode="workflow",
+        subject_tree=subject_tree,
+    )
+
+    action_history_manager = ActionHistoryManager()
+
+    try:
+        ext_knowledge_node.input = ext_knowledge_input
+        async for action in ext_knowledge_node.execute_stream(action_history_manager):
+            if action.status == ActionStatus.SUCCESS and action.output:
+                logger.debug(f"Knowledge generation action: {action.messages}")
+
+        logger.info(f"Generated knowledge for: {question}")
+        return {"successful": True, "error": ""}
+
+    except Exception as e:
+        logger.error(f"Error generating knowledge for {question}: {e}")
+        return {"successful": False, "error": f"Error generating knowledge: {str(e)}"}

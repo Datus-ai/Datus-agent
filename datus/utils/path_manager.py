@@ -159,6 +159,11 @@ class DatusPathManager:
         """SQL summaries directory: ~/.datus/sql_summaries"""
         return self._datus_home / "sql_summaries"
 
+    @property
+    def ext_knowledge_dir(self) -> Path:
+        """ext knowledge directory: ~/.datus/ext_knowledge"""
+        return self._datus_home / "ext_knowledge"
+
     # Valid directory names mapping
     _VALID_DIR_NAMES = {
         "conf": "conf_dir",
@@ -278,6 +283,21 @@ class DatusPathManager:
             Path: ~/.datus/sql_summaries/{namespace}
         """
         path = self.sql_summaries_dir / namespace
+        # Ensure the directory exists
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def ext_knowledge_path(self, namespace: str) -> Path:
+        """
+        Ext knowledge path for a namespace.
+
+        Args:
+            namespace: Namespace name
+
+        Returns:
+            Path: ~/.datus/ext_knowledge/{namespace}
+        """
+        path = self.ext_knowledge_dir / namespace
         # Ensure the directory exists
         path.mkdir(parents=True, exist_ok=True)
         return path
