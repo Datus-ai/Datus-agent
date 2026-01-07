@@ -3,11 +3,12 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_reference_sql_id
 from datus.storage.reference_sql.sql_file_processor import process_sql_files
@@ -17,14 +18,7 @@ from datus.utils.sql_utils import normalize_sql
 
 logger = get_logger(__name__)
 
-
-def _safe_emit(emit: Optional[Callable[[Dict[str, Any]], None]], event: Dict[str, Any]) -> None:
-    if emit is None:
-        return
-    try:
-        emit(event)
-    except Exception as exc:
-        logger.debug(f"emit callback failed: {exc}")
+BIZ_NAME = "reference_sql_init"
 
 
 def _action_status_value(action: Any) -> Optional[str]:
@@ -39,7 +33,7 @@ async def process_sql_item(
     agent_config: AgentConfig,
     build_mode: str = "incremental",
     subject_tree: Optional[list] = None,
-    emit: Optional[Callable[[Dict[str, Any]], None]] = None,
+    event_helper: Optional[BatchEventHelper] = None,
     sql_id: Optional[str] = None,
 ) -> Optional[str]:
     """
@@ -50,7 +44,7 @@ async def process_sql_item(
         agent_config: Agent configuration
         build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
         subject_tree: Optional predefined subject tree categories
-        emit: Optional callback to stream progress events
+        event_helper: Optional BatchEventHelper to stream progress events
         sql_id: Optional precomputed SQL identifier
 
     Returns:
@@ -83,18 +77,15 @@ async def process_sql_item(
         # Execute and collect results
         node.input = sql_input
         async for action in node.execute_stream(action_history_manager):
-            _safe_emit(
-                emit,
-                {
-                    "type": "reference_sql_init.action",
-                    "stage": "gen_sql_summary",
-                    "status": _action_status_value(action),
-                    "messages": getattr(action, "messages", None),
-                    "output": getattr(action, "output", None),
-                    "filepath": filepath,
-                    "sql_id": sql_id,
-                },
-            )
+            if event_helper:
+                event_helper.item_processing(
+                    item_id=sql_id,
+                    action_name="gen_sql_summary",
+                    status=_action_status_value(action),
+                    group_id=filepath,
+                    messages=action.messages,
+                    output=action.output,
+                )
             if action.status == ActionStatus.SUCCESS and action.output:
                 output = action.output
                 if isinstance(output, dict):
@@ -108,15 +99,7 @@ async def process_sql_item(
             return None
 
         logger.info(f"Generated SQL summary: {sql_summary_file}")
-        _safe_emit(
-            emit,
-            {
-                "type": "reference_sql_init.sql_summary_ready",
-                "sql_summary_file": sql_summary_file,
-                "filepath": filepath,
-                "sql_id": sql_id,
-            },
-        )
+
         from datus.utils.path_manager import get_path_manager
 
         file_path = (
@@ -147,7 +130,7 @@ def init_reference_sql(
     build_mode: str = "overwrite",
     pool_size: int = 1,
     subject_tree: Optional[list] = None,
-    emit: Optional[Callable[[Dict[str, Any]], None]] = None,
+    emit: Optional[BatchEventEmitter] = None,
 ) -> Dict[str, Any]:
     """Initialize reference SQL from SQL files directory.
 
@@ -159,11 +142,13 @@ def init_reference_sql(
         build_mode: "overwrite" to replace all data, "incremental" to add new entries
         pool_size: Number of threads for parallel processing
         subject_tree: Optional predefined subject tree categories
-        emit: Optional callback to stream progress events
+        emit: Optional callback to stream BatchEvent progress events
 
     Returns:
         Dict containing initialization results and statistics
     """
+    event_helper = BatchEventHelper(BIZ_NAME, emit)
+
     if not sql_dir:
         logger.warning("No --sql_dir provided, reference SQL storage initialized but empty")
         return {
@@ -177,6 +162,9 @@ def init_reference_sql(
 
     logger.info(f"Processing SQL files from directory: {sql_dir}")
 
+    # Emit task started
+    event_helper.task_started(sql_dir=sql_dir)
+
     # Process and validate SQL files
     valid_items, invalid_items = process_sql_files(sql_dir)
     validate_errors = (
@@ -188,6 +176,14 @@ def init_reference_sql(
             for i in invalid_items
         ]
     )
+
+    # Emit task validated
+    event_helper.task_validated(
+        total_items=len(valid_items) + len(invalid_items) if invalid_items else len(valid_items),
+        valid_items=len(valid_items) if valid_items else 0,
+        invalid_items=len(invalid_items) if invalid_items else 0,
+    )
+
     # If validate-only mode, exit after processing files
     if validate_only:
         logger.info(
@@ -236,6 +232,9 @@ def init_reference_sql(
     processed_count = 0
     process_errors = []
     if items_to_process:
+        # Emit task processing
+        event_helper.task_processing(total_items=len(items_to_process))
+
         # Use SqlSummaryAgenticNode with parallel processing (unified approach)
         async def process_all():
             semaphore = asyncio.Semaphore(pool_size)
@@ -248,22 +247,18 @@ def init_reference_sql(
             file_started: set[str] = set()
             file_lock = asyncio.Lock()
 
-            async def emit_file_start_if_needed(file_key: str, filepath: Optional[str]) -> None:
+            async def emit_group_started_if_needed(file_key: str, filepath: Optional[str]) -> None:
                 async with file_lock:
                     if file_key in file_started:
                         return
                     file_started.add(file_key)
-                _safe_emit(
-                    emit,
-                    {
-                        "type": "reference_sql_init.file_start",
-                        "filepath": filepath,
-                        "file_key": file_key,
-                        "total_items": file_counts.get(file_key),
-                    },
+                event_helper.group_started(
+                    group_id=file_key,
+                    total_items=file_counts.get(file_key),
+                    filepath=filepath,
                 )
 
-            async def emit_file_complete_if_done(file_key: str, filepath: Optional[str]) -> None:
+            async def emit_group_completed_if_done(file_key: str, filepath: Optional[str]) -> None:
                 async with file_lock:
                     remaining = file_remaining.get(file_key)
                     if remaining is None:
@@ -272,14 +267,10 @@ def init_reference_sql(
                     file_remaining[file_key] = remaining
                     if remaining != 0:
                         return
-                _safe_emit(
-                    emit,
-                    {
-                        "type": "reference_sql_init.file_complete",
-                        "filepath": filepath,
-                        "file_key": file_key,
-                        "total_items": file_counts.get(file_key),
-                    },
+                event_helper.group_completed(
+                    group_id=file_key,
+                    total_items=file_counts.get(file_key),
+                    filepath=filepath,
                 )
 
             async def process_with_semaphore(item):
@@ -287,15 +278,11 @@ def init_reference_sql(
                 filepath = item.get("filepath")
                 file_key = str(filepath or "unknown_file")
                 async with semaphore:
-                    await emit_file_start_if_needed(file_key, filepath)
-                    _safe_emit(
-                        emit,
-                        {
-                            "type": "reference_sql_init.item_start",
-                            "filepath": filepath,
-                            "sql_id": sql_id,
-                            "sql": item.get("sql"),
-                        },
+                    await emit_group_started_if_needed(file_key, filepath)
+                    event_helper.item_started(
+                        item_id=sql_id,
+                        group_id=filepath,
+                        sql=item.get("sql"),
                     )
                     error = None
                     result = None
@@ -305,42 +292,30 @@ def init_reference_sql(
                             global_config,
                             build_mode,
                             subject_tree,
-                            emit=emit,
+                            event_helper=event_helper,
                             sql_id=sql_id,
                         )
                     except Exception as exc:
                         error = exc
-                        _safe_emit(
-                            emit,
-                            {
-                                "type": "reference_sql_init.item_error",
-                                "filepath": filepath,
-                                "sql_id": sql_id,
-                                "error": str(exc),
-                                "exception_type": type(exc).__name__,
-                            },
+                        event_helper.item_failed(
+                            item_id=sql_id,
+                            error=str(exc),
+                            group_id=filepath,
+                            exception_type=type(exc).__name__,
                         )
                     if result:
-                        _safe_emit(
-                            emit,
-                            {
-                                "type": "reference_sql_init.item_success",
-                                "filepath": filepath,
-                                "sql_id": sql_id,
-                                "sql_summary_file": result,
-                            },
+                        event_helper.item_completed(
+                            item_id=sql_id,
+                            group_id=filepath,
+                            sql_summary_file=result,
                         )
                     elif error is None:
-                        _safe_emit(
-                            emit,
-                            {
-                                "type": "reference_sql_init.item_error",
-                                "filepath": filepath,
-                                "sql_id": sql_id,
-                                "error": "Failed to generate SQL summary",
-                            },
+                        event_helper.item_failed(
+                            item_id=sql_id,
+                            error="Failed to generate SQL summary",
+                            group_id=filepath,
                         )
-                    await emit_file_complete_if_done(file_key, filepath)
+                    await emit_group_completed_if_done(file_key, filepath)
                     return item, sql_id, result, error
 
             # Process all items in parallel
@@ -370,6 +345,13 @@ def init_reference_sql(
     else:
         logger.info("No new items to process in incremental mode")
         process_items = []
+
+    # Emit task completed
+    event_helper.task_completed(
+        total_items=len(items_to_process) if items_to_process else 0,
+        completed_items=processed_count,
+        failed_items=len(process_errors),
+    )
 
     # Initialize indices
     storage.after_init()

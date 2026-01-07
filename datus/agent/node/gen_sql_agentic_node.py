@@ -131,7 +131,7 @@ class GenSQLAgenticNode(AgenticNode):
         # Update database connection if task specifies a different database
         task_database = workflow.task.database_name
         if task_database and self.db_func_tool and task_database != self.db_func_tool.connector.database_name:
-            logger.info(
+            logger.debug(
                 f"Updating database connection from '{self.db_func_tool.connector.database_name}' "
                 f"to '{task_database}' based on workflow task"
             )
@@ -212,7 +212,7 @@ class GenSQLAgenticNode(AgenticNode):
         for pattern in tool_patterns:
             self._setup_tool_pattern(pattern)
 
-        logger.info(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
+        logger.debug(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
     def _setup_db_tools(self):
         """Setup database tools."""
@@ -252,7 +252,7 @@ class GenSQLAgenticNode(AgenticNode):
             root_path = self._resolve_workspace_root()
             self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
             self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.info(f"Setup filesystem tools with root path: {root_path}")
+            logger.debug(f"Setup filesystem tools with root path: {root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
@@ -352,7 +352,7 @@ class GenSQLAgenticNode(AgenticNode):
             server_instance, details = mcp_manager._create_server_instance(server_config)
 
             if server_instance:
-                logger.info(f"Added MCP server '{server_name}' from configuration: {details}")
+                logger.debug(f"Added MCP server '{server_name}' from configuration: {details}")
                 return server_instance
             else:
                 error_msg = details.get("error", "Unknown error")
@@ -377,7 +377,7 @@ class GenSQLAgenticNode(AgenticNode):
             try:
                 # Skip filesystem_mcp - now handled by native filesystem tools
                 if server_name == "filesystem_mcp":
-                    logger.info("Skipping filesystem_mcp - use filesystem_tools instead")
+                    logger.debug("Skipping filesystem_mcp - use filesystem_tools instead")
                     continue
 
                 # Handle MCP servers from {agent.home}/conf/.mcp.json using mcp_manager
@@ -388,7 +388,7 @@ class GenSQLAgenticNode(AgenticNode):
             except Exception as e:
                 logger.error(f"Failed to setup MCP server '{server_name}': {e}")
 
-        logger.info(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
+        logger.debug(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
 
         # Debug: Log detailed info about each server
         for name, server in mcp_servers.items():
@@ -867,7 +867,7 @@ class GenSQLAgenticNode(AgenticNode):
             from datus.utils.json_utils import llm_result2json
 
             content = output.get("content", "")
-            logger.info(
+            logger.debug(
                 f"extract_sql_and_output_from_final_resp: {content[:200] if isinstance(content, str) else content}"
             )
 

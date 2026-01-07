@@ -107,7 +107,7 @@ class SemanticAgenticNode(AgenticNode):
         self.setup_tools()
 
         # Debug: log hooks status after setup
-        logger.info(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
+        logger.debug(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
 
     def get_node_name(self) -> str:
         """
@@ -138,7 +138,7 @@ class SemanticAgenticNode(AgenticNode):
         else:
             logger.warning(f"Unknown node name: {self.configured_node_name}, no tools configured")
 
-        logger.info(
+        logger.debug(
             f"Setup {len(self.tools)} tools for {self.configured_node_name}: {[tool.name for tool in self.tools]}"
         )
 
@@ -429,7 +429,7 @@ class SemanticAgenticNode(AgenticNode):
 
             logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
-            logger.info(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
+            logger.debug(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
 
             # Initialize response collection variables
             response_content = ""

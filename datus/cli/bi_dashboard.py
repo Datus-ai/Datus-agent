@@ -9,11 +9,11 @@ from urllib.parse import urlparse
 
 import yaml
 from rich.console import Console
-from rich.markup import escape
 from rich.syntax import Syntax
 from rich.table import Table
 
 from datus.cli._cli_utils import prompt_input
+from datus.cli.interactive_init import ReferenceSqlStreamHandler
 from datus.configuration.agent_config import AgentConfig, DashboardConfig
 from datus.configuration.agent_config_loader import configuration_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
@@ -39,6 +39,7 @@ from datus.tools.bi_tools.registry import adaptor_registry
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.path_manager import get_path_manager
+from datus.utils.stream_output import StreamOutputManager
 from datus.utils.sub_agent_manager import SubAgentManager
 
 if TYPE_CHECKING:
@@ -67,10 +68,6 @@ class BiDashboardCommands:
             self.console = console or Console(log_path=False)
             self._configuration_manager = None
         self._adaptor_registry = self._discover_adaptors()
-        self._ref_sql_sql_seen: set[tuple[str, str]] = set()
-        self._ref_sql_sql_text: dict[tuple[str, str], str] = {}
-        self._ref_sql_sql_numbers: dict[tuple[str, str], int] = {}
-        self._ref_sql_file_sql_counter: dict[str, int] = {}
 
     def cmd(self, args: str = "") -> None:
         try:
@@ -499,165 +496,95 @@ class BiDashboardCommands:
         result: DashboardAssemblyResult,
     ) -> None:
         sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
-        with self.console.status(f"[bold]Sub-Agent `{sub_agent_name}` building ...[/]"):
-            if not getattr(self.agent_config, "current_namespace", ""):
-                self.console.print("[yellow]No namespace set. Skipping sub-agent save.[/]")
-                return
+        if not getattr(self.agent_config, "current_namespace", ""):
+            self.console.print("[yellow]No namespace set. Skipping sub-agent save.[/]")
+            return
 
-            if sub_agent_name in SYS_SUB_AGENTS:
-                self.console.print(f"[bold red]Error:[/] '{sub_agent_name}' is reserved for built-in sub-agents.")
-                return
-            table_names = self._dedupe_values([table for table in result.tables if table])
-            self.console.log("[bold cyan]Start building reference SQL[/]")
-            sql_dir = self._write_chart_sql_files(result.reference_sqls, platform, dashboard, dashboard_id)
-            self._reset_reference_sql_stream_state()
-            sql_rag = ReferenceSqlRAG(self.agent_config)
-            result = init_reference_sql(
-                sql_rag,
-                global_config=self.agent_config,
-                sql_dir=str(sql_dir),
-                build_mode="incremental",
-                emit=self._emit_reference_sql_event,
+        if sub_agent_name in SYS_SUB_AGENTS:
+            self.console.print(f"[bold red]Error:[/] '{sub_agent_name}' is reserved for built-in sub-agents.")
+            return
+        table_names = self._dedupe_values([table for table in result.tables if table])
+        self.console.log("[bold cyan]Start building reference SQL[/]")
+        sql_dir = self._write_chart_sql_files(result.reference_sqls, platform, dashboard, dashboard_id)
+        # Create StreamOutputManager
+        output_mgr = StreamOutputManager(
+            console=self.console,
+            max_message_lines=10,
+            show_progress=True,
+            title="Reference SQL Initialization",
+        )
+
+        # Create stream handler
+        stream_handler = ReferenceSqlStreamHandler(output_mgr)
+        result = init_reference_sql(
+            storage=ReferenceSqlRAG(self.agent_config),
+            global_config=self.agent_config,
+            build_mode="incremental",
+            sql_dir=str(sql_dir),
+            subject_tree=None,
+            emit=stream_handler.handle_event,
+        )
+        output_mgr.stop()
+
+        # Print statistics
+        valid_entries = result.get("valid_entries", 0)
+        invalid_entries = result.get("invalid_entries", 0)
+        processed_entries = result.get("processed_entries", 0)
+        if invalid_entries > 0:
+            self.console.print(f"  [yellow]Warning: {invalid_entries} invalid SQL items skipped[/]")
+        if valid_entries > processed_entries:
+            skipped = valid_entries - processed_entries
+            self.console.print(f"  [dim]({skipped} items already existed, skipped in incremental mode)[/]")
+
+        ref_sqls = []
+        if result.get("status") != "success":
+            self.console.log(f"[bold red]Processed reference SQL failed: {result.get('error')}[/]")
+        else:
+            self.console.log("[bold cyan]Processed reference SQL succeeded.[/]")
+            subject_trees = set()
+            for item in result.get("processed_items", []):
+                subject_tree = item.get("subject_tree")
+                if subject_tree:
+                    parts = subject_tree.split("/")
+                    domain = parts[0].strip() if len(parts) > 0 else ""
+                    layer1 = parts[1].strip() if len(parts) > 1 else ""
+                    layer2 = parts[2].strip() if len(parts) > 2 else ""
+                    layers = f"{domain}.{layer1}.{layer2}.{item.get('name')}"
+                    subject_trees.add(layers)
+            ref_sqls.extend(subject_trees)
+
+        scoped_context: Optional[ScopedContext] = None
+        if table_names or ref_sqls:
+            scoped_context = ScopedContext(
+                tables=",".join(table_names) if table_names else None,
+                sqls=",".join(ref_sqls) if ref_sqls else None,
             )
-            ref_sqls = []
-            if result.get("status") != "success":
-                self.console.log(f"[bold red]Processed reference SQL failed: {result.get('error')}[/]")
-            else:
-                self.console.log("[bold cyan]Processed reference SQL succeeded.[/]")
-                subject_trees = set()
-                for item in result.get("processed_items", []):
-                    subject_tree = item.get("subject_tree")
-                    if subject_tree:
-                        parts = subject_tree.split("/")
-                        domain = parts[0].strip() if len(parts) > 0 else ""
-                        layer1 = parts[1].strip() if len(parts) > 1 else ""
-                        layer2 = parts[2].strip() if len(parts) > 2 else ""
-                        layers = f"{domain}.{layer1}.{layer2}.{item.get('name')}"
-                        subject_trees.add(layers)
-                ref_sqls.extend(subject_trees)
-
-            scoped_context: Optional[ScopedContext] = None
-            if table_names or ref_sqls:
-                scoped_context = ScopedContext(
-                    tables=",".join(table_names) if table_names else None,
-                    sqls=",".join(ref_sqls) if ref_sqls else None,
-                )
-
-            if scoped_context is None:
-                self.console.log("[yellow]No scoped context derived. Skipping sub-agent save.[/]")
-                return
-
-            description = dashboard.description or dashboard.name or ""
-            sub_agent = SubAgentConfig(
-                system_prompt=sub_agent_name,
-                agent_description=description,
-                tools="context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.read_query",
-                scoped_context=scoped_context,
-            )
-
-            manager = SubAgentManager(
-                configuration_manager=self._configuration_manager or configuration_manager(),
-                namespace=self.agent_config.current_namespace,
-                agent_config=self.agent_config,
-            )
-            try:
-                manager.save_agent(sub_agent, previous_name=sub_agent_name)
-                self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` saved.")
-            except Exception as exc:
-                self.console.log(f"[bold red]Failed to persist sub-agent:[/] {exc}")
-                return
-            manager.bootstrap_agent(sub_agent, components=["metadata", "reference_sql"])
-            self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` bootstrapped.")
-            self._refresh_agent_config(manager)
-
-    def _emit_reference_sql_event(self, event: dict) -> None:
-        event_type = event.get("type")
-        if not event_type:
+        if scoped_context is None:
+            self.console.log("[yellow]No scoped context derived. Skipping sub-agent save.[/]")
             return
 
-        if event_type == "reference_sql_init.file_start":
-            filepath, _ = self._reference_sql_file_key(event)
-            self.console.print(f"{escape(filepath)} processing started")
+        description = dashboard.description or dashboard.name or ""
+        sub_agent = SubAgentConfig(
+            system_prompt=sub_agent_name,
+            agent_description=description,
+            tools="context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.read_query",
+            scoped_context=scoped_context,
+        )
+
+        manager = SubAgentManager(
+            configuration_manager=self._configuration_manager or configuration_manager(),
+            namespace=self.agent_config.current_namespace,
+            agent_config=self.agent_config,
+        )
+        try:
+            manager.save_agent(sub_agent, previous_name=sub_agent_name)
+            self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` saved.")
+        except Exception as exc:
+            self.console.log(f"[bold red]Failed to persist sub-agent:[/] {exc}")
             return
-
-        if event_type == "reference_sql_init.file_complete":
-            filepath, _ = self._reference_sql_file_key(event)
-            self.console.print(f"{escape(filepath)} processing completed")
-            return
-
-        file_key, _ = self._reference_sql_file_key(event)
-        sql_key = self._reference_sql_sql_key(event, file_key)
-
-        sql_text = event.get("sql")
-        if sql_text:
-            self._ref_sql_sql_text[sql_key] = str(sql_text)
-
-        self._maybe_print_reference_sql_headers(file_key, sql_key)
-
-        if event_type == "reference_sql_init.item_start":
-            return
-
-        if event_type == "reference_sql_init.action":
-            self._print_reference_sql_lines(event.get("messages"))
-            return
-
-        if event_type == "reference_sql_init.item_error":
-            error = event.get("error") or "unknown error"
-            exception_type = event.get("exception_type")
-            detail = str(error)
-            if exception_type:
-                detail = f"{detail} ({exception_type})"
-            self._print_reference_sql_lines(detail)
-            return
-
-    def _reference_sql_file_key(self, event: dict) -> tuple[str, str]:
-        filepath = str(event.get("filepath") or "")
-        if filepath:
-            return filepath, filepath
-        return "unknown_file", "unknown_file"
-
-    def _reference_sql_sql_key(self, event: dict, file_key: str) -> tuple[str, str]:
-        sql_id = str(event.get("sql_id") or "")
-        sql_text = str(event.get("sql") or "")
-        if not sql_id and sql_text:
-            sql_id = gen_reference_sql_id(sql_text, "")
-        return (file_key, sql_id or "unknown_sql")
-
-    def _maybe_print_reference_sql_headers(self, file_key: str, sql_key: tuple[str, str]) -> None:
-        if sql_key not in self._ref_sql_sql_seen:
-            self._ref_sql_sql_seen.add(sql_key)
-            sql_number = self._reference_sql_number(file_key, sql_key)
-            sql_text = self._ref_sql_sql_text.get(sql_key, "")
-            sql_line = self._format_reference_sql_line(sql_text, sql_number)
-            self.console.print(f"  # {sql_number}. {escape(sql_line)}")
-
-    def _reference_sql_number(self, file_key: str, sql_key: tuple[str, str]) -> int:
-        existing = self._ref_sql_sql_numbers.get(sql_key)
-        if existing is not None:
-            return existing
-        next_number = self._ref_sql_file_sql_counter.get(file_key, 0) + 1
-        self._ref_sql_file_sql_counter[file_key] = next_number
-        self._ref_sql_sql_numbers[sql_key] = next_number
-        return next_number
-
-    def _format_reference_sql_line(self, sql_text: str, sql_number: int) -> str:
-        condensed = " ".join(str(sql_text).split())
-        return condensed or f"sql_{sql_number}"
-
-    def _print_reference_sql_lines(self, messages: Optional[object]) -> None:
-        if not messages:
-            return
-        message_text = str(messages).strip()
-        if not message_text:
-            return
-        for line in message_text.splitlines():
-            self.console.print(f"    [dim]{escape(line)}[/]")
-
-    def _reset_reference_sql_stream_state(self) -> None:
-        self._ref_sql_sql_seen.clear()
-        self._ref_sql_sql_text.clear()
-        self._ref_sql_sql_numbers.clear()
-        self._ref_sql_file_sql_counter.clear()
+        manager.bootstrap_agent(sub_agent, components=["metadata", "reference_sql"])
+        self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` bootstrapped.")
+        self._refresh_agent_config(manager)
 
     def _refresh_agent_config(self, manager: SubAgentManager) -> None:
         try:

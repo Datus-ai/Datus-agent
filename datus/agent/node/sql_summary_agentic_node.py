@@ -97,7 +97,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         self.hooks = None
         self.setup_tools()
 
-        logger.info(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
+        logger.debug(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
 
     def get_node_name(self) -> str:
         """
@@ -412,7 +412,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             yield assistant_action
 
             logger.debug(f"Tools available: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
-            logger.info(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
+            logger.debug(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
 
             # Initialize response collection variables
             response_content = ""

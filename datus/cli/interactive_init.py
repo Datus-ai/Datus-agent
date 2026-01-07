@@ -23,11 +23,11 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from datus.cli.init_util import detect_db_connectivity
+from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import configure_logging, get_logger, print_rich_exception
 from datus.utils.resource_utils import copy_data_file, read_data_file_text
 
 logger = get_logger(__name__)
-console = Console()
 
 
 class InteractiveInit:
@@ -37,6 +37,7 @@ class InteractiveInit:
         self.workspace_path = ""
         self.namespace_name = ""
         self.user_home = user_home if user_home else Path.home()
+        self.console = Console(log_path=False)
 
         # Use path manager for directory paths
         from datus.utils.path_manager import get_path_manager
@@ -52,7 +53,7 @@ class InteractiveInit:
             self.config = yaml.safe_load(text)
         except Exception as e:
             logger.error(f"Loading sample configuration failed: {e}")
-            console.print("[yellow]Unable to load sample configuration file, using default configuration[/]")
+            self.console.print("[yellow]Unable to load sample configuration file, using default configuration[/]")
             self.config = {
                 "agent": {
                     "target": "",
@@ -84,11 +85,11 @@ class InteractiveInit:
         config_path = self.conf_dir / "agent.yml"
 
         if config_path.exists():
-            console.print(f"\n[yellow]⚠️  Configuration file already exists at {config_path}[/yellow]")
+            self.console.print(f"\n[yellow]⚠️  Configuration file already exists at {config_path}[/yellow]")
             if not Confirm.ask("Do you want to overwrite the existing configuration?", default=False):
-                console.print("Initialization cancelled.")
+                self.console.print("Initialization cancelled.")
                 return 0
-            console.print()
+            self.console.print()
 
         import logging
 
@@ -117,8 +118,8 @@ class InteractiveInit:
             root_logger.setLevel(logging.INFO)
 
         try:
-            console.print("\n[bold cyan]Welcome to Datus Init 🎉[/bold cyan]")
-            console.print("Let's set up your environment step by step.\n")
+            self.console.print("\n[bold cyan]Welcome to Datus Init 🎉[/bold cyan]")
+            self.console.print("Let's set up your environment step by step.\n")
 
             # Step 1: Configure LLM
             while not self._configure_llm():
@@ -142,7 +143,7 @@ class InteractiveInit:
             self._optional_setup(str(config_path))
 
             # Step 5: Summary and save configuration first
-            console.print("[bold yellow][5/5] Configuration Summary[/bold yellow]")
+            self.console.print("[bold yellow][5/5] Configuration Summary[/bold yellow]")
 
             self._display_summary()
 
@@ -150,10 +151,10 @@ class InteractiveInit:
             return 0
 
         except KeyboardInterrupt:
-            console.print("\n❌ Initialization cancelled by user")
+            self.console.print("\n❌ Initialization cancelled by user")
             return 1
         except Exception as e:
-            print_rich_exception(console, e, "Initialization failed", logger)
+            print_rich_exception(self.console, e, "Initialization failed", logger)
             return 1
         finally:
             # Restore original logging configuration
@@ -164,7 +165,7 @@ class InteractiveInit:
 
     def _configure_llm(self) -> bool:
         """Step 1: Configure LLM provider and test connectivity."""
-        console.print("[bold yellow][1/5] Configure LLM[/bold yellow]")
+        self.console.print("[bold yellow][1/5] Configure LLM[/bold yellow]")
 
         # Provider selection
         providers = {
@@ -204,7 +205,7 @@ class InteractiveInit:
         # API key input
         api_key = getpass("- Enter your API key: ")
         if not api_key.strip():
-            console.print("❌ API key cannot be empty")
+            self.console.print("❌ API key cannot be empty")
             return False
 
         # Base URL (with default)
@@ -213,7 +214,7 @@ class InteractiveInit:
         # Model name (with default and options hint)
         if "options" in providers[provider]:
             options_hint = ", ".join(providers[provider]["options"])
-            console.print(f"  [dim]reference options: {options_hint}[/dim]")
+            self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
         model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"])
 
         # Store configuration
@@ -227,23 +228,23 @@ class InteractiveInit:
         }
 
         # Test LLM connectivity
-        console.print("→ Testing LLM connectivity...")
+        self.console.print("→ Testing LLM connectivity...")
         success, error_msg = self._test_llm_connectivity()
         if success:
-            console.print(" ✅ LLM model test successful\n")
+            self.console.print(" ✅ LLM model test successful\n")
             return True
         else:
-            console.print(f"❌ LLM connectivity test failed: {error_msg}\n")
+            self.console.print(f"❌ LLM connectivity test failed: {error_msg}\n")
             return False
 
     def _configure_namespace(self) -> bool:
         """Step 2: Configure namespace and database."""
-        console.print("[bold yellow][2/5] Configure Namespace[/bold yellow]")
+        self.console.print("[bold yellow][2/5] Configure Namespace[/bold yellow]")
 
         # Namespace name
         self.namespace_name = Prompt.ask("- Namespace name")
         if not self.namespace_name.strip():
-            console.print("❌ Namespace name cannot be empty")
+            self.console.print("❌ Namespace name cannot be empty")
             return False
 
         # Get available adapters dynamically
@@ -251,7 +252,7 @@ class InteractiveInit:
 
         available_adapters = connector_registry.list_available_adapters()
         if not available_adapters:
-            console.print("❌ No database adapters available. Please install at least one adapter.")
+            self.console.print("❌ No database adapters available. Please install at least one adapter.")
             return False
 
         # Database type selection
@@ -272,7 +273,7 @@ class InteractiveInit:
 
         # If adapter provides config schema, use it to prompt for fields
         if not config_fields:
-            console.print(f"❌ Adapter '{db_type}' does not have a configuration schema registered.")
+            self.console.print(f"❌ Adapter '{db_type}' does not have a configuration schema registered.")
             return False
 
         for field_name, field_info in config_fields.items():
@@ -314,12 +315,14 @@ class InteractiveInit:
                         # Validate port range
                         if field_name == "port":
                             if not (1 <= value <= 65535):
-                                console.print("[yellow]Port must be between 1 and 65535. Please try again.[/yellow]")
+                                self.console.print(
+                                    "[yellow]Port must be between 1 and 65535. Please try again.[/yellow]"
+                                )
                                 continue
 
                         break
                     except ValueError:
-                        console.print("[yellow]Invalid integer value. Please enter a valid number.[/yellow]")
+                        self.console.print("[yellow]Invalid integer value. Please enter a valid number.[/yellow]")
             elif not required and default_value is not None:
                 value = Prompt.ask(label, default=str(default_value))
             elif not required:
@@ -333,15 +336,15 @@ class InteractiveInit:
 
         self.config["agent"]["namespace"][self.namespace_name] = config_data
         # Test database connectivity
-        console.print("→ Testing database connectivity...")
+        self.console.print("→ Testing database connectivity...")
         success, error_msg = detect_db_connectivity(
             self.namespace_name, self.config["agent"]["namespace"][self.namespace_name]
         )
         if success:
-            console.print(" ✅ Database connection test successful\n")
+            self.console.print(" ✅ Database connection test successful\n")
             return True
         else:
-            console.print(f" ❌ Database connectivity test failed: {error_msg}\n")
+            self.console.print(f" ❌ Database connectivity test failed: {error_msg}\n")
             # Remove failed database configuration
             if self.namespace_name in self.config["agent"]["namespace"]:
                 del self.config["agent"]["namespace"][self.namespace_name]
@@ -349,7 +352,7 @@ class InteractiveInit:
 
     def _configure_workspace(self) -> bool:
         """Step 3: Configure workspace directory."""
-        console.print("[bold yellow][3/5] Configure Workspace Root (your sql files located here)[/bold yellow]")
+        self.console.print("[bold yellow][3/5] Configure Workspace Root (your sql files located here)[/bold yellow]")
 
         default_workspace = str(self.user_home / ".datus" / "workspace")
         self.workspace_path = Prompt.ask("- Workspace path", default=default_workspace)
@@ -361,27 +364,29 @@ class InteractiveInit:
         # Create workspace directory
         try:
             Path(self.workspace_path).mkdir(parents=True, exist_ok=True)
-            console.print(" ✅ Workspace directory created\n")
+            self.console.print(" ✅ Workspace directory created\n")
             return True
         except Exception as e:
-            print_rich_exception(console, e, "Failed to create workspace directory", logger)
+            print_rich_exception(self.console, e, "Failed to create workspace directory", logger)
             return False
 
     def _optional_setup(self, config_path: str):
         """Step 4: Optional setup for metadata and reference SQL."""
-        console.print("[bold yellow][4/5] Optional Setup[/bold yellow]")
+        self.console.print("[bold yellow][4/5] Optional Setup[/bold yellow]")
 
         # Initialize metadata knowledge base
         if Confirm.ask("- Initialize vector DB for metadata?", default=False):
-            init_metadata_and_log_result(self.namespace_name, config_path)
+            init_metadata_and_log_result(self.namespace_name, config_path, self.console)
 
         # Initialize reference SQL
         if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
             default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
             sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
-            init_sql_and_log_result(namespace_name=self.namespace_name, sql_dir=sql_dir, config_path=config_path)
+            init_sql_and_log_result(
+                namespace_name=self.namespace_name, sql_dir=sql_dir, config_path=config_path, console=self.console
+            )
 
-        console.print()
+        self.console.print()
 
     def _save_configuration(self) -> bool:
         """Save configuration to file."""
@@ -390,10 +395,10 @@ class InteractiveInit:
             with open(config_path, "w", encoding="utf-8") as f:
                 yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True)
 
-            console.print(f" ✅ Configuration saved to {config_path}")
+            self.console.print(f" ✅ Configuration saved to {config_path}")
             return True
         except Exception as e:
-            console.print(f" ❌ Failed to save configuration: {e}")
+            self.console.print(f" ❌ Failed to save configuration: {e}")
             return False
 
     def _display_summary(self):
@@ -409,12 +414,12 @@ class InteractiveInit:
         table.add_row("Namespace", self.namespace_name)
         table.add_row("Workspace", self.workspace_path)
 
-        console.print(table)
+        self.console.print(table)
 
     def _display_completion(self):
         """Display completion message."""
-        console.print(f"\nYou are ready to run `datus-cli --namespace {self.namespace_name}` 🚀")
-        console.print("\nCheck the document at https://docs.datus.ai/ for more details.")
+        self.console.print(f"\nYou are ready to run `datus-cli --namespace {self.namespace_name}` 🚀")
+        self.console.print("\nCheck the document at https://docs.datus.ai/ for more details.")
 
     def _test_llm_connectivity(self) -> tuple[bool, str]:
         """Test LLM model connectivity."""
@@ -533,61 +538,100 @@ def _parse_subject_tree(subject_tree: Optional[str]) -> Optional[list]:
     return [item.strip() for item in subject_tree.split(",") if item.strip()]
 
 
-def _print_stream_lines(message: Optional[object], indent: str = "  ") -> None:
-    if not message:
-        return
-    text = str(message).strip()
-    if not text:
-        return
-    for line in text.splitlines():
-        console.print(f"{indent}{escape(line)}")
-
-
-def _format_reference_sql_line(sql_text: str, number: int) -> str:
+def _format_reference_sql_line(sql_text: str, max_length: int = 80) -> str:
     condensed = " ".join(str(sql_text).split())
-    return condensed or f"sql_{number}"
+    if len(condensed) > max_length:
+        return condensed[:max_length] + "..."
+    return condensed or "unknown_sql"
 
 
-def _build_reference_sql_emitter():
-    sql_counts: dict[str, int] = {}
+class ReferenceSqlStreamHandler:
+    """Stream handler for reference SQL initialization using BatchEvent."""
 
-    def emit(event: dict) -> None:
-        event_type = event.get("type")
-        if not event_type:
+    def __init__(self, output_mgr):
+        from datus.schemas.batch_events import BatchStage
+
+        self.output_mgr = output_mgr
+        self.BatchStage = BatchStage
+        self.sql_counts: dict[str, int] = {}
+        self.current_group: Optional[str] = None
+
+    def handle_event(self, event) -> None:
+        from datus.schemas.batch_events import BatchStage
+
+        stage = event.stage
+
+        if stage == BatchStage.TASK_STARTED:
             return
 
-        if event_type == "reference_sql_init.file_start":
-            filepath = str(event.get("filepath") or "unknown_file")
-            console.print(f"{escape(filepath)} start")
+        if stage == BatchStage.TASK_VALIDATED:
+            payload = event.payload or {}
+            valid_items = payload.get("valid_items", 0)
+            invalid_items = payload.get("invalid_items", 0)
+            # Don't start progress bar here - wait for TASK_PROCESSING which has actual items to process
+            if invalid_items > 0:
+                self.output_mgr.add_message(f"Validated: {valid_items} valid, {invalid_items} invalid", style="yellow")
+            else:
+                self.output_mgr.add_message(f"Validated: {valid_items} SQL items", style="cyan")
             return
 
-        if event_type == "reference_sql_init.file_complete":
-            filepath = str(event.get("filepath") or "unknown_file")
-            console.print(f"{escape(filepath)} end")
+        if stage == BatchStage.TASK_PROCESSING:
+            total_items = event.total_items or 0
+            # Start progress bar here with actual number of items to process
+            self.output_mgr.start(total_items=total_items, description="Initializing reference SQL")
             return
 
-        if event_type == "reference_sql_init.item_start":
-            filepath = str(event.get("filepath") or "unknown_file")
-            count = sql_counts.get(filepath, 0) + 1
-            sql_counts[filepath] = count
-            sql_line = _format_reference_sql_line(str(event.get("sql") or ""), count)
-            console.print(f"# {count}. {escape(sql_line)}")
+        if stage == BatchStage.GROUP_STARTED:
+            payload = event.payload or {}
+            filepath = str(payload.get("filepath") or event.group_id or "unknown_file")
+            total_items = event.total_items or 0
+            self.current_group = filepath
+            self.output_mgr.start_task(f"File: {escape(filepath)} ({total_items} items)")
             return
 
-        if event_type == "reference_sql_init.action":
-            _print_stream_lines(event.get("messages"))
+        if stage == BatchStage.GROUP_COMPLETED:
+            self.output_mgr.complete_task(success=True)
+            self.current_group = None
             return
 
-        if event_type == "reference_sql_init.item_error":
-            error = event.get("error")
+        if stage == BatchStage.ITEM_STARTED:
+            payload = event.payload or {}
+            filepath = str(payload.get("filepath") or event.group_id or "unknown_file")
+            count = self.sql_counts.get(filepath, 0) + 1
+            self.sql_counts[filepath] = count
+            sql_line = _format_reference_sql_line(str(payload.get("sql") or ""))
+            self.output_mgr.add_message(f"#{count}: {escape(sql_line)}", style="dim")
+            return
+
+        if stage == BatchStage.ITEM_PROCESSING:
+            payload = event.payload or {}
+            messages = payload.get("output", {}).get("raw_output")
+            if messages:
+                self.output_mgr.add_llm_output(str(messages))
+            return
+
+        if stage == BatchStage.ITEM_COMPLETED:
+            self.output_mgr.update_progress(advance=1.0)
+            return
+
+        if stage == BatchStage.ITEM_FAILED:
+            error = event.error
             if error:
-                _print_stream_lines(error)
+                self.output_mgr.error(str(error))
+            self.output_mgr.update_progress(advance=1.0)
             return
 
-    return emit
+        if stage == BatchStage.TASK_COMPLETED:
+            completed = event.completed_items or 0
+            failed = event.failed_items or 0
+            if failed > 0:
+                self.output_mgr.warning(f"Completed: {completed} successful, {failed} failed")
+            else:
+                self.output_mgr.success(f"All {completed} SQL items processed successfully")
+            return
 
 
-def init_metadata_and_log_result(namespace_name: str, config_path: str):
+def init_metadata_and_log_result(namespace_name: str, config_path: str, console: Console):
     from datus.configuration.agent_config_loader import load_agent_config
     from datus.storage.schema_metadata.local_init import init_local_schema
     from datus.storage.schema_metadata.store import SchemaWithValueRAG
@@ -643,20 +687,49 @@ def init_sql_and_log_result(
     sql_dir: str,
     config_path: str,
     subject_tree: Optional[str] = None,
+    console: Optional[Console] = None,
 ):
+    if not console:
+        console = Console(log_path=False)
     from datus.configuration.agent_config_loader import load_agent_config
-    from datus.storage.reference_sql.reference_sql_init import init_reference_sql
-    from datus.storage.reference_sql.store import ReferenceSqlRAG
 
     try:
-        sql_files = list(Path(sql_dir).rglob("*.sql"))
-        if not sql_files:
-            console.print(f"No sql files found in {sql_dir}")
-            return
-
         agent_config = load_agent_config(reload=True, config=config_path)
         agent_config.current_namespace = namespace_name
-        kb_update_strategy = "overwrite"
+        do_init_sql_and_log_result(agent_config, sql_dir, subject_tree, console)
+    except Exception as e:
+        print_rich_exception(console, e, "Reference SQL initialization failed", logger)
+
+
+def do_init_sql_and_log_result(
+    agent_config: AgentConfig,
+    sql_dir: str,
+    subject_tree: Optional[str] = None,
+    console: Optional[Console] = None,
+    kb_update_strategy: str = "overwrite",
+):
+    from datus.storage.reference_sql.reference_sql_init import init_reference_sql
+    from datus.storage.reference_sql.store import ReferenceSqlRAG
+    from datus.utils.stream_output import StreamOutputManager
+
+    try:
+        sql_dir_path = Path(sql_dir)
+        if not sql_dir_path.exists():
+            console.print(f"[bold red]No sql files found in {sql_dir}[/]")
+            return
+        if sql_dir_path.is_dir():
+            sql_files = list(sql_dir_path.rglob("*.sql"))
+            if not sql_files:
+                console.print(f"[bold red]No sql files found in {sql_dir}[/]")
+                return
+        elif sql_dir_path.is_file():
+            if sql_dir_path.suffix.lower() != ".sql":
+                console.print(f"[bold red]{sql_dir} must be a .sql file[/]")
+                return
+        else:
+            console.print("[bold red]Only SQL directories or files are supported[/]")
+            return
+
         storage_path = agent_config.rag_storage_path()
         if kb_update_strategy == "overwrite":
             reference_sql_path = os.path.join(storage_path, "reference_sql.lance")
@@ -667,20 +740,37 @@ def init_sql_and_log_result(
         else:
             agent_config.check_init_storage_config("reference_sql")
 
-        console.print(f"Reference SQL initialization for {namespace_name} (dir: {escape(str(sql_dir))})")
-        emit = _build_reference_sql_emitter()
+        console.print(
+            f"Reference SQL initialization for {agent_config.current_namespace} (dir: {escape(str(sql_dir))})"
+        )
+
+        # Create StreamOutputManager
+        output_mgr = StreamOutputManager(
+            console=console,
+            max_message_lines=10,
+            show_progress=True,
+            title="Reference SQL Initialization",
+        )
+
+        # Create stream handler
+        stream_handler = ReferenceSqlStreamHandler(output_mgr)
+
         subject_tree_list = _parse_subject_tree(subject_tree)
         sql_rag = ReferenceSqlRAG(agent_config)
-        result = init_reference_sql(
-            sql_rag,
-            agent_config,
-            sql_dir,
-            validate_only=False,
-            build_mode=kb_update_strategy,
-            pool_size=4,
-            subject_tree=subject_tree_list,
-            emit=emit,
-        )
+
+        try:
+            result = init_reference_sql(
+                sql_rag,
+                agent_config,
+                sql_dir,
+                validate_only=False,
+                build_mode=kb_update_strategy,
+                pool_size=4,
+                subject_tree=subject_tree_list,
+                emit=stream_handler.handle_event,
+            )
+        finally:
+            output_mgr.stop()
 
         if isinstance(result, dict):
             if result.get("message"):
@@ -692,26 +782,28 @@ def init_sql_and_log_result(
             validation_errors = result.get("validation_errors")
             process_errors = result.get("process_errors")
             if valid_entries == 0:
-                console.print(f" ⚠️ No SQL files processed in the directory `{sql_dir}`. ")
+                console.print(f" [yellow]Warning:[/] No SQL files processed in the directory `{sql_dir}`.")
                 if validation_errors:
                     console.print(f"    Reason: {validation_errors}")
                 return
             if invalid_entries > 0:
                 console.print(
-                    f"  → Processed {processed_entries} SQL, {valid_entries} valid SQL,"
+                    f"  -> Processed {processed_entries} SQL, {valid_entries} valid SQL,"
                     f" {invalid_entries} invalid SQL. Details: \n\n{validation_errors}",
                 )
             if processed_entries == 0:
-                console.print(f" ⚠️ Processed failed with validation SQL. Details: \n\n{process_errors}. ")
+                console.print(
+                    f" [yellow]Warning:[/] Processed failed with validation SQL. Details: \n\n{process_errors}."
+                )
                 return
             elif process_errors:
                 console.print(
-                    f"  → Processed {processed_entries} SQL successfully, "
+                    f"  -> Processed {processed_entries} SQL successfully, "
                     f"but there are still some SQL processing failures. Details: \n\n{process_errors}",
                 )
             else:
-                console.print(f"  → Processed {processed_entries} SQL successfully")
-            console.print(" ✅ Imported SQL files into reference completed")
+                console.print(f"  -> Processed {processed_entries} SQL successfully")
+            console.print(" [green]OK[/] Imported SQL files into reference completed")
         else:
             logger.info(f"Reference SQL bootstrap result: {result}")
     except Exception as e:

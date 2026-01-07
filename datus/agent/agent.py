@@ -6,6 +6,7 @@ import argparse
 import csv
 import os
 import shutil
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, AsyncGenerator, Dict, Optional, Set
 
@@ -18,6 +19,7 @@ from datus.models.base import LLMBaseModel
 # Import model implementations
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.agent_models import SubAgentConfig
+from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.node_models import SqlTask
 from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
@@ -73,6 +75,7 @@ class Agent:
         self.metrics_store = None
         self._ref_sql_file_sql_counter: Dict[str, int] = {}
         self._metrics_row_stage_seen: Dict[int, Set[str]] = {}
+        self._print_lock = threading.Lock()
         self._check_storage_modules()
 
     def _initialize_model(self) -> LLMBaseModel:
@@ -252,100 +255,105 @@ class Agent:
     def _reset_metrics_stream_state(self) -> None:
         self._metrics_row_stage_seen = {}
 
-    def _print_stream_lines(self, message: Optional[object], indent: str = "  ") -> None:
+    def _print_stream_lines(self, message: Optional[object], indent: str = "  ", prefix: str = "") -> None:
         if not message:
             return
         text = str(message).strip()
         if not text:
             return
         for line in text.splitlines():
-            print(f"{indent}{line}", flush=True)
+            print(f"{prefix}{indent}{line}", flush=True)
 
     def _next_reference_sql_number(self, filepath: str) -> int:
-        count = self._ref_sql_file_sql_counter.get(filepath, 0) + 1
-        self._ref_sql_file_sql_counter[filepath] = count
-        return count
+        with self._print_lock:
+            count = self._ref_sql_file_sql_counter.get(filepath, 0) + 1
+            self._ref_sql_file_sql_counter[filepath] = count
+            return count
 
     def _format_reference_sql_line(self, sql_text: str, number: int) -> str:
         condensed = " ".join(str(sql_text).split())
         return condensed or f"sql_{number}"
 
-    def _emit_reference_sql_event(self, event: dict) -> None:
-        event_type = event.get("type")
-        if not event_type:
+    def _get_file_short_name(self, filepath: str) -> str:
+        """Extract short filename for display prefix."""
+        basename = os.path.basename(filepath)
+        name, _ = os.path.splitext(basename)
+        return name
+
+    def _emit_reference_sql_event(self, event: BatchEvent) -> None:
+        stage = event.stage
+        filepath = event.group_id or "unknown_file"
+        short_name = self._get_file_short_name(filepath)
+        prefix = f"[{short_name}] "
+
+        if stage == BatchStage.GROUP_STARTED:
+            logger.info(f"reference_sql file start: {filepath}")
+            print(f"{prefix}start processing {filepath}", flush=True)
             return
 
-        if event_type == "reference_sql_init.file_start":
-            filepath = str(event.get("filepath") or "unknown_file")
-            logger.info("reference_sql file start: %s", filepath)
-            print(f"{filepath} start", flush=True)
+        if stage == BatchStage.GROUP_COMPLETED:
+            logger.info(f"reference_sql file complete: {filepath}")
+            print(f"{prefix}completed", flush=True)
             return
 
-        if event_type == "reference_sql_init.file_complete":
-            filepath = str(event.get("filepath") or "unknown_file")
-            logger.info("reference_sql file complete: %s", filepath)
-            print(f"{filepath} end", flush=True)
-            return
-
-        if event_type == "reference_sql_init.item_start":
-            filepath = str(event.get("filepath") or "unknown_file")
+        if stage == BatchStage.ITEM_STARTED:
+            payload = event.payload or {}
             number = self._next_reference_sql_number(filepath)
-            sql_line = self._format_reference_sql_line(str(event.get("sql") or ""), number)
-            print(f"# {number}. {sql_line}", flush=True)
+            sql_line = self._format_reference_sql_line(str(payload.get("sql") or ""), number)
+            print(f"{prefix}#{number}. {sql_line}", flush=True)
             return
 
-        if event_type == "reference_sql_init.action":
-            self._print_stream_lines(event.get("messages"))
+        if stage == BatchStage.ITEM_PROCESSING:
+            payload = event.payload or {}
+            self._print_stream_lines(payload.get("output", {}).get("raw_output"), prefix=prefix)
             return
 
-        if event_type == "reference_sql_init.item_error":
-            error = event.get("error")
+        if stage == BatchStage.ITEM_FAILED:
+            error = event.error
             if error:
-                self._print_stream_lines(error)
+                self._print_stream_lines(error, prefix=prefix)
             return
 
-    def _emit_metrics_event(self, event: dict) -> None:
-        event_type = event.get("type")
-        if not event_type:
-            return
+    def _emit_metrics_event(self, event: BatchEvent) -> None:
+        stage = event.stage
+        payload = event.payload or {}
+        row_idx = payload.get("row_idx", "?")
+        prefix = f"[row{row_idx}] "
 
-        if event_type == "metrics_init.row_start":
-            row_idx = event.get("row_idx")
-            question = event.get("question") or ""
-            logger.info("metrics row start: %s", row_idx)
-            print(f"row {row_idx} start: {question}".strip(), flush=True)
-            table_name = event.get("table_name")
+        if stage == BatchStage.ITEM_STARTED:
+            question = payload.get("question") or ""
+            logger.info(f"metrics row start: {row_idx}")
+            print(f"{prefix}start: {question}".strip(), flush=True)
+            table_name = payload.get("table_name")
             if table_name:
-                print(f"  table: {table_name}", flush=True)
+                print(f"{prefix}  table: {table_name}", flush=True)
             return
 
-        if event_type == "metrics_init.action":
-            row_idx = event.get("row_idx")
-            stage = event.get("stage") or "action"
-            seen = self._metrics_row_stage_seen.setdefault(row_idx, set())
-            if stage not in seen:
-                seen.add(stage)
-                print(f"  {stage}:", flush=True)
-            self._print_stream_lines(event.get("messages"), indent="    ")
+        if stage == BatchStage.ITEM_PROCESSING:
+            action_name = event.action_name or "action"
+            with self._print_lock:
+                seen = self._metrics_row_stage_seen.setdefault(row_idx, set())
+                if action_name not in seen:
+                    seen.add(action_name)
+                    print(f"{prefix}  {action_name}:", flush=True)
+            self._print_stream_lines(payload.get("output", {}).get("raw_output"), indent="    ", prefix=prefix)
+            # Check for semantic model output
+            output = payload.get("output")
+            if isinstance(output, dict):
+                semantic_model_file = output.get("semantic_model")
+                if semantic_model_file:
+                    print(f"{prefix}  semantic_model: {semantic_model_file}", flush=True)
             return
 
-        if event_type == "metrics_init.semantic_model_ready":
-            semantic_model_file = event.get("semantic_model_file")
-            if semantic_model_file:
-                print(f"  semantic_model: {semantic_model_file}", flush=True)
+        if stage == BatchStage.ITEM_COMPLETED:
+            logger.info(f"metrics row success: {row_idx}")
+            print(f"{prefix}completed", flush=True)
             return
 
-        if event_type == "metrics_init.row_success":
-            row_idx = event.get("row_idx")
-            logger.info("metrics row success: %s", row_idx)
-            print(f"row {row_idx} end", flush=True)
-            return
-
-        if event_type == "metrics_init.row_error":
-            row_idx = event.get("row_idx")
-            error = event.get("error") or "unknown error"
-            logger.error("metrics row error: %s", row_idx)
-            print(f"row {row_idx} error: {error}", flush=True)
+        if stage == BatchStage.ITEM_FAILED:
+            error = event.error or "unknown error"
+            logger.error(f"metrics row error: {row_idx}")
+            print(f"{prefix}error: {error}", flush=True)
             return
 
     def bootstrap_kb(self):
@@ -471,7 +479,6 @@ class Agent:
                     successful, error_message = init_semantic_yaml_metrics(
                         self.args.semantic_yaml,
                         self.global_config,
-                        emit=self._emit_metrics_event,
                     )
                 else:
                     successful, error_message = init_success_story_metrics(
@@ -479,6 +486,7 @@ class Agent:
                         self.global_config,
                         subject_tree,
                         emit=self._emit_metrics_event,
+                        # pool_size=pool_size,
                     )
 
                 # Create metrics_store for statistics

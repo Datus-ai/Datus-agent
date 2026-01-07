@@ -104,7 +104,7 @@ class EmbeddingModel:
                 if self._model is None:
                     try:
                         self.model_initialization_attempted = True
-                        logger.info(f"Loading embedding model: {self.model_name} on {self.device}")
+                        logger.debug(f"Loading embedding model: {self.model_name} on {self.device}")
                         self.init_model()
                     except Exception as e:
                         # Save error state, don't immediately raise exception
@@ -144,7 +144,7 @@ class EmbeddingModel:
 
             try:
                 self.model_initialization_attempted = True
-                logger.info(f"Attempting silent initialization of embedding model: {self.model_name}")
+                logger.debug(f"Attempting silent initialization of embedding model: {self.model_name}")
                 self.init_model()
                 return True
             except Exception as e:
@@ -159,7 +159,7 @@ class EmbeddingModel:
         # Additional PyTorch-specific threading controls
 
         if self.registry_name in (EmbeddingProvider.SENTENCE_TRANSFORMERS, EmbeddingProvider.FASTEMBED):
-            logger.info(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")
+            logger.debug(f"Pre-downloading model {self.registry_name}/{self.model_name} by {self.device}")
             from datus.storage.fastembed_embeddings import FastEmbedEmbeddings
 
             try:
@@ -170,14 +170,14 @@ class EmbeddingModel:
                 )
                 # first download
                 # self._model.generate_embeddings(["foo"])
-                logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
+                logger.debug(f"Model {self.registry_name}/{self.model_name} initialized successfully")
             except Exception as e:
                 raise DatusException(
                     ErrorCode.MODEL_EMBEDDING_ERROR, message=f"Embedding Model initialized faield because of {str(e)}"
                 ) from e
 
         elif self.registry_name == EmbeddingProvider.OPENAI:
-            logger.info(f"Initializing model {self.registry_name}/{self.model_name}")
+            logger.debug(f"Initializing model {self.registry_name}/{self.model_name}")
             from datus.storage.embedding_openai import OpenAIEmbeddings
 
             if self.openai_config:
@@ -191,7 +191,7 @@ class EmbeddingModel:
                 self._model = OpenAIEmbeddings.create(name=self.model_name, dim=self._dim_size)
             # check if the model is initialized
             self._model.generate_embeddings(["foo"])
-            logger.info(f"Model {self.registry_name}/{self.model_name} initialized successfully")
+            logger.debug(f"Model {self.registry_name}/{self.model_name} initialized successfully")
         else:
             raise DatusException(
                 ErrorCode.MODEL_EMBEDDING_ERROR,
