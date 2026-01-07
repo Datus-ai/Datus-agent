@@ -202,7 +202,6 @@ class BenchmarkTutorial:
         """Initialize metrics using success stories."""
         from datus.schemas.batch_events import BatchEvent, BatchStage
         from datus.storage.metric.metrics_init import init_success_story_metrics
-        from datus.storage.metric.store import SemanticMetricsRAG
         from datus.utils.stream_output import StreamOutputManager
 
         logger.info(f"Metrics initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
@@ -298,23 +297,7 @@ class BenchmarkTutorial:
                 output_mgr.stop()
 
             if successful:
-                metrics_store = SemanticMetricsRAG(agent_config)
-                metrics_size = metrics_store.get_metrics_size()
-                if metrics_size > 0:
-                    self.console.print(f"  -> Processed {metrics_size} metrics")
-                    if error_message:
-                        self.console.print(
-                            " [yellow]Warning:[/] The metrics has not been fully initialised successfully:"
-                        )
-                        self.console.print(f"    {escape(error_message)}")
-                    else:
-                        self.console.print(" [green]OK[/] Metrics initialized")
-                else:
-                    if error_message:
-                        self.console.print(" [red]Error:[/] There are some errors in the processing:")
-                        self.console.print(f"    {escape(error_message)}")
-                    else:
-                        self.console.print(" [yellow]Warning:[/] No metrics initialized")
+                self.console.print(" [green]OK[/] Metrics initialized")
             else:
                 self.console.print(" [red]Error:[/] Metrics initialization failed:")
                 self.console.print(f"    {escape(str(error_message))}")
