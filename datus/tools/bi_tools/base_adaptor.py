@@ -164,6 +164,9 @@ class BIAdaptorBase(ABC):
         """Return DatasetInfo with columns/metrics/dimensions if available."""
         raise NotImplementedError
 
+    def close(self):
+        return
+
 
 class AuthType(Enum):
     LOGIN = "login"  # username & password

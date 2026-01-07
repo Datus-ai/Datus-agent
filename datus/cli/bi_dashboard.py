@@ -34,6 +34,8 @@ from datus.tools.bi_tools.dashboard_assembler import (
     DashboardAssembler,
     DashboardAssemblyResult,
     ReferenceSqlCandidate,
+    parts_match,
+    split_table_parts,
 )
 from datus.tools.bi_tools.registry import adaptor_registry
 from datus.utils.constants import SYS_SUB_AGENTS
@@ -914,28 +916,13 @@ class BiDashboardCommands:
     def _table_matches(self, dimension_table: Optional[str], allowed_tables: Sequence[str]) -> bool:
         if not dimension_table:
             return False
-        dim_parts = self._split_table_parts(dimension_table)
+        dim_parts = split_table_parts(dimension_table)
         if not dim_parts:
             return False
         for table_name in allowed_tables:
-            table_parts = self._split_table_parts(table_name)
-            if self._parts_match(dim_parts, table_parts):
+            table_parts = split_table_parts(table_name)
+            if parts_match(dim_parts, table_parts):
                 return True
-        return False
-
-    def _split_table_parts(self, name: str) -> List[str]:
-        parts = [part.strip('`"[]') for part in str(name).split(".") if part.strip('`"[]')]
-        return [part.lower() for part in parts if part]
-
-    def _parts_match(self, left: List[str], right: List[str]) -> bool:
-        if not left or not right:
-            return False
-        if left == right:
-            return True
-        if len(left) < len(right):
-            return right[-len(left) :] == left
-        if len(right) < len(left):
-            return left[-len(right) :] == right
         return False
 
     def _discover_adaptors(self) -> dict[str, type[BIAdaptorBase]]:

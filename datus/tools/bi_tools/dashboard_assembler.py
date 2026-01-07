@@ -348,10 +348,10 @@ class DashboardAssembler:
             if not name:
                 continue
             matched_index = None
-            table_parts = self._split_table_parts(name)
+            table_parts = split_table_parts(name)
             for idx, existing in enumerate(deduped):
-                existing_parts = self._split_table_parts(existing)
-                if self._parts_match(table_parts, existing_parts):
+                existing_parts = split_table_parts(existing)
+                if parts_match(table_parts, existing_parts):
                     matched_index = idx
                     break
 
@@ -363,24 +363,26 @@ class DashboardAssembler:
 
         return deduped
 
-    def _split_table_parts(self, name: str) -> List[str]:
-        parts = [part.strip('`"[]') for part in normalize_sql(name).split(".") if part.strip('`"[]')]
-        return [part.lower() for part in parts if part]
-
-    def _parts_match(self, left: List[str], right: List[str]) -> bool:
-        if not left or not right:
-            return False
-        if left == right:
-            return True
-        if len(left) < len(right):
-            return right[-len(left) :] == left
-        if len(right) < len(left):
-            return left[-len(right) :] == right
-        return False
-
     def _prefer_table_name(self, left: str, right: str) -> str:
-        left_parts = self._split_table_parts(left)
-        right_parts = self._split_table_parts(right)
+        left_parts = split_table_parts(left)
+        right_parts = split_table_parts(right)
         if len(right_parts) > len(left_parts):
             return right
         return left
+
+
+def split_table_parts(name: str) -> List[str]:
+    parts = [part.strip('`"[]') for part in normalize_sql(name).split(".") if part.strip('`"[]')]
+    return [part.lower() for part in parts if part]
+
+
+def parts_match(left: List[str], right: List[str]) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    if len(left) < len(right):
+        return right[-len(left) :] == left
+    if len(right) < len(left):
+        return left[-len(right) :] == right
+    return False
