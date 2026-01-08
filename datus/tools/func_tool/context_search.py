@@ -22,6 +22,7 @@ _NAME_METRICS = "context_search_tools.search_metrics"
 _NAME_GET_METRICS = "context_search_tools.get_metrics"
 _NAME_SQL = "context_search_tools.search_reference_sql"
 _NAME_GET_SQL = "context_search_tools.get_reference_sql"
+_NAME_SEMANTIC = "context_search_tools.search_semantic_objects"
 
 
 class ContextSearchTools:
@@ -41,6 +42,7 @@ class ContextSearchTools:
             self.sub_agent_config = None
         self.has_metrics = self.metric_rag.get_metrics_size() > 0
         self.has_reference_sql = self.reference_sql_store.get_reference_sql_size() > 0
+        self.has_semantic_objects = self.semantic_rag.get_size() > 0
 
     def _show_metrics(self):
         return self.has_metrics and (
@@ -56,6 +58,13 @@ class ContextSearchTools:
             or _NAME in self.sub_agent_config.tool_list
             or _NAME_SQL in self.sub_agent_config.tool_list
             or _NAME_GET_SQL in self.sub_agent_config.tool_list
+        )
+
+    def _show_semantic_objects(self):
+        return self.has_semantic_objects and (
+            not self.sub_agent_config
+            or _NAME in self.sub_agent_config.tool_list
+            or _NAME_SEMANTIC in self.sub_agent_config.tool_list
         )
 
     @staticmethod
@@ -81,8 +90,8 @@ class ContextSearchTools:
             tools.append(trans_to_function_tool(self.search_reference_sql))
             tools.append(trans_to_function_tool(self.get_reference_sql))
 
-        # Always add unified semantic object search
-        tools.append(trans_to_function_tool(self.search_semantic_objects))
+        if self._show_semantic_objects():
+            tools.append(trans_to_function_tool(self.search_semantic_objects))
 
         return tools
 
