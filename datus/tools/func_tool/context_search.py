@@ -126,64 +126,6 @@ class ContextSearchTools:
             )
             return FuncToolResult(success=0, error=str(exc))
 
-    def _enrich_tree_with_counts(self, tree_structure: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Recursively enrich tree structure with metrics and SQL counts.
-
-        Args:
-            tree_structure: Tree structure from subject_tree.get_tree_structure()
-
-        Returns:
-            Enriched tree with metrics_size and sql_size at leaf nodes
-        """
-        result = {}
-
-        for name, node_info in tree_structure.items():
-            node_id = node_info.get("node_id")
-            children = node_info.get("children", {})
-
-            if children:
-                # Has children - recursively process
-                result[name] = self._enrich_tree_with_counts(children)
-            else:
-                # Leaf node - add counts
-                leaf_data = {}
-
-                if node_id:
-                    # Count metrics for this node
-                    if self._show_metrics():
-                        try:
-                            from datus.storage.lancedb_conditions import build_where, eq
-                            from datus.storage.subject_tree.store import SUBJECT_ID_COLUMN_NAME
-
-                            metrics_storage = self.metric_rag.storage
-                            if hasattr(metrics_storage, "table") and metrics_storage.table:
-                                where_clause = build_where(eq(SUBJECT_ID_COLUMN_NAME, node_id))
-                                metrics_count = metrics_storage.table.count_rows(where_clause)
-                                if metrics_count > 0:
-                                    leaf_data["metrics_size"] = metrics_count
-                        except Exception as e:
-                            logger.warning(f"Failed to count metrics for node {node_id}: {e}")
-
-                    # Count SQL for this node
-                    if self._show_sql():
-                        try:
-                            from datus.storage.lancedb_conditions import build_where, eq
-                            from datus.storage.subject_tree.store import SUBJECT_ID_COLUMN_NAME
-
-                            sql_storage = self.reference_sql_store.reference_sql_storage
-                            if hasattr(sql_storage, "table") and sql_storage.table:
-                                where_clause = build_where(eq(SUBJECT_ID_COLUMN_NAME, node_id))
-                                sql_count = sql_storage.table.count_rows(where_clause)
-                                if sql_count > 0:
-                                    leaf_data["sql_size"] = sql_count
-                        except Exception as e:
-                            logger.warning(f"Failed to count SQL for node {node_id}: {e}")
-
-                result[name] = leaf_data
-
-        return result
-
     def _collect_metrics_entries(self) -> List[Dict[str, Any]]:
         if not self._show_metrics():
             return []
