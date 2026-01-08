@@ -957,7 +957,7 @@ def prepare_template_context(
     Args:
         node_config: Node configuration
         has_db_tools: Whether database tools are available
-        has_mcp_filesystem: Whether filesystem MCP is available
+        has_filesystem_tools: Whether filesystem tools are available
         has_mf_tools: Whether MetricFlow MCP tools are available
         has_context_search_tools: Whether context search tools are available
         has_parsing_tools: Whether date parsing tools are available

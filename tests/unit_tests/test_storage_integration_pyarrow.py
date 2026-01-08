@@ -143,7 +143,7 @@ class TestMetricRAGPyArrow:
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0]["name"] == "monthly_revenue"
-        assert "revenue > 0" in result[0]["description"]
+        assert "Monthly revenue across all channels" in result[0]["description"]
 
     def test_domain_layer_concatenation_consistency(self, temp_db_path):
         """Test that domain_layer concatenation is consistent with PyArrow utilities."""

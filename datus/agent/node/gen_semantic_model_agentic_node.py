@@ -124,9 +124,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         self._setup_generation_tools()
         self._setup_filesystem_tools()
 
-        logger.debug(
-            f"Setup {len(self.tools)} tools for {self.configured_node_name}: {[tool.name for tool in self.tools]}"
-        )
+        logger.debug(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
 
         # Setup hooks (only in interactive mode)
         if self.execution_mode == "interactive":

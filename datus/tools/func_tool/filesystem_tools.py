@@ -340,7 +340,7 @@ class FilesystemFuncTool(BaseTool):
         """
         try:
             target_path = self._get_safe_path(path)
-            logger.info(f"target_path: {target_path}")
+            logger.debug(f"target_path: {target_path}")
 
             if not target_path or not target_path.exists():
                 return FuncToolResult(success=0, error=f"Directory not found: {path}")

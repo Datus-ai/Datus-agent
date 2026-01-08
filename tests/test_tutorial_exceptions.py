@@ -182,8 +182,8 @@ def test_init_success_story_metrics_collects_all_errors(monkeypatch):
     success, error_message = metric_init.init_success_story_metrics(args, DummyAgentConfig())
 
     assert success is False
-    assert "Row 1: LLM refused to run" in error_message
-    assert "Row 2: agent blew up" in error_message
+    assert "Error processing row 1: LLM refused to run" in error_message
+    assert "Error processing row 2: agent blew up" in error_message
 
 
 @pytest.mark.asyncio

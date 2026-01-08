@@ -15,7 +15,7 @@ def existing_semantic_metrics(semantic_rag: SemanticModelRAG, metric_rag: Metric
     all_semantic_models, all_metrics = set(), set()
     for semantic_model in semantic_rag.search_all("", select_fields=["id"]):
         all_semantic_models.add(str(semantic_model["id"]))
-    for metric in metric_rag.search_all_metrics("", select_fields=["id"]):
+    for metric in metric_rag.search_all_metrics(select_fields=["id"]):
         all_metrics.add(str(metric["id"]))
     return all_semantic_models, all_metrics
 

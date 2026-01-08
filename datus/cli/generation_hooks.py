@@ -449,7 +449,7 @@ class GenerationHooks(AgentHooks):
             raise
         except Exception as e:
             logger.error(f"Error in sync confirmation: {e}", exc_info=True)
-            raise e
+            raise
 
     async def _get_sync_confirmation(self, yaml_content: str, file_path: str, yaml_type: str):
         """
@@ -502,7 +502,7 @@ class GenerationHooks(AgentHooks):
             raise
         except Exception as e:
             logger.error(f"Error in sync confirmation: {e}", exc_info=True)
-            raise e
+            raise
 
     @optional_traceable(name="_sync_to_storage", run_type="chain")
     async def _sync_to_storage(self, file_path: str, yaml_type: str):
