@@ -155,7 +155,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="Path to semantic model YAML file",
     )
     bootstrap_parser.add_argument(
-        "--from-adapter",
+        "--from_adapter",
         type=str,
         help="Pull semantic models and metrics from semantic adapter (e.g., metricflow, dbt, cube)",
     )

@@ -60,10 +60,7 @@ class SemanticStorageManager:
     def _ensure_subject_tree_store(self) -> SubjectTreeStore:
         """Lazy init subject tree storage."""
         if self.subject_tree_store is None:
-            self.subject_tree_store = SubjectTreeStore(
-                db_path=self.agent_config.db_path,
-                embedding_model=self.agent_config.embedding_model,
-            )
+            self.subject_tree_store = SubjectTreeStore(db_path=self.agent_config.db_path)
         return self.subject_tree_store
 
     def store_semantic_model(
@@ -234,9 +231,9 @@ class SemanticStorageManager:
         """
         store = self._ensure_metric_store()
 
-        # Use provided subject_path or empty list
-        if subject_path is None:
-            subject_path = []
+        # Use provided subject_path or default category
+        if not subject_path:
+            subject_path = ["Uncategorized"]
 
         metric_obj = {
             "subject_path": subject_path,

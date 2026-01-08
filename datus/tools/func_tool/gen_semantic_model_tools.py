@@ -439,6 +439,9 @@ class GenSemanticModelTools:
         relationships = []
         table_schemas = {}
 
+        # Build case-insensitive lookup: lowercased name -> canonical name
+        tables_lower_map = {t.lower(): t for t in tables}
+
         # Get all table schemas
         for table in tables:
             schema_result = self.db_tool.describe_table(table, catalog, database, schema_name)
@@ -452,9 +455,11 @@ class GenSemanticModelTools:
 
                 # Match pattern: {target}_id
                 if col_name.endswith("_id"):
-                    target_table = col_name[:-3]  # Remove "_id"
+                    target_table_lower = col_name[:-3]  # Remove "_id" (already lowercase)
 
-                    if target_table in tables:
+                    if target_table_lower in tables_lower_map:
+                        # Get canonical table name with original casing
+                        target_table = tables_lower_map[target_table_lower]
                         # Check if target table has "id" column
                         target_columns = table_schemas.get(target_table, [])
                         if any(c.get("name", "").lower() == "id" for c in target_columns):

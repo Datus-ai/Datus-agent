@@ -467,14 +467,14 @@ The adapter will be automatically discovered via entry points!
 datus-agent bootstrap-kb \
   --namespace my_project \
   --components semantic_model \
-  --from-adapter metricflow \
+  --from_adapter metricflow \
   --kb-update-strategy overwrite
 
 # Pull metrics from MetricFlow with subject tree categorization
 datus-agent bootstrap-kb \
   --namespace my_project \
   --components metrics \
-  --from-adapter metricflow \
+  --from_adapter metricflow \
   --subject-path "Finance,Sales,Operations" \
   --kb-update-strategy overwrite
 ```
