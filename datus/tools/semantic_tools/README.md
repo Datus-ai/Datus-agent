@@ -8,8 +8,8 @@ This package provides a unified abstraction layer for semantic layer services (M
 ┌─────────────────────────────────────────────────────────┐
 │                   Agent/Tools Layer                      │
 │  ┌────────────────┐        ┌──────────────────┐         │
-│  │ DBFuncTool     │        │ SemanticFuncTool │         │
-│  │ describe_table │───────▶│ (new)            │         │
+│  │ DBFuncTool     │        │ SemanticTools    │         │
+│  │ describe_table │───────▶│                  │         │
 │  └────────────────┘        └──────────────────┘         │
 └──────────────────┬──────────────────┬───────────────────┘
                    │                  │
@@ -44,11 +44,10 @@ Standard data models for semantic layer operations:
 
 ```python
 from datus.tools.semantic_tools.models import (
-    TimeGranularity,    # Enum: HOUR, DAY, WEEK, MONTH, QUARTER, YEAR
-    TimeRange,          # BaseModel: start, end, granularity
     MetricDefinition,   # BaseModel: name, description, type, dimensions, etc.
     QueryResult,        # BaseModel: columns, data, metadata
     ValidationResult,   # BaseModel: valid, issues
+    AnomalyContext,     # BaseModel: rule, observed_change_pct
 )
 ```
 
@@ -95,15 +94,11 @@ adapter = semantic_adapter_registry.create_adapter("metricflow", config)
 
 ### 4. Configuration (`config.py`)
 
-Configuration classes for different semantic services:
+Base configuration class for semantic adapters. Specific adapter configurations
+(MetricFlowConfig, DbtConfig, CubeConfig, etc.) are defined in their respective adapter packages.
 
 ```python
-from datus.tools.semantic_tools import (
-    SemanticAdapterConfig,  # Base config
-    MetricFlowConfig,       # MetricFlow-specific
-    DbtConfig,              # dbt-specific
-    CubeConfig,             # Cube-specific
-)
+from datus.tools.semantic_tools import SemanticAdapterConfig  # Base config
 ```
 
 ### 5. Storage Sync (`storage_sync.py`)
@@ -118,14 +113,14 @@ manager.store_semantic_model(model_data, source="metricflow")
 manager.store_metric(metric_data, source="metricflow", subject_path=["Finance"])
 ```
 
-### 6. Function Tools (`semantic_func_tool.py`)
+### 6. Function Tools (`semantic_tools.py`)
 
 High-level tool interface for LLM agents:
 
 ```python
-from datus.tools.func_tool import SemanticFuncTool
+from datus.tools.func_tool.semantic_tools import SemanticTools
 
-tool = SemanticFuncTool(agent_config, sub_agent_name="gen_metrics")
+tool = SemanticTools(agent_config, sub_agent_name="gen_metrics")
 tools = tool.available_tools()  # Returns list of Tools for LLM
 ```
 
@@ -487,18 +482,18 @@ datus-agent bootstrap-kb \
 ### 2. Use in Agent Node
 
 ```python
-from datus.tools.func_tool import SemanticFuncTool
+from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.configuration.agent_config import AgentConfig
 
 # Initialize tool (uses storage by default)
-semantic_tool = SemanticFuncTool(
+semantic_tool = SemanticTools(
     agent_config=agent_config,
     sub_agent_name="gen_metrics",
     adapter_type=None,  # Storage-only mode
 )
 
 # Or with adapter for direct queries
-semantic_tool = SemanticFuncTool(
+semantic_tool = SemanticTools(
     agent_config=agent_config,
     sub_agent_name="gen_metrics",
     adapter_type="metricflow",  # Enable MetricFlow adapter
@@ -687,4 +682,3 @@ raise DatusException(
 - **Architecture Pattern**: [datus/tools/db_tools/](../db_tools/) - Database adapter pattern
 - **Storage Integration**: [datus/storage/semantic_model/](../../storage/semantic_model/), [datus/storage/metric/](../../storage/metric/)
 - **Example Usage**: [datus/agent/node/gen_metrics_agentic_node.py](../../agent/node/gen_metrics_agentic_node.py)
-- **Plan Document**: [/.claude/plans/fuzzy-giggling-tower.md](../../../../.claude/plans/fuzzy-giggling-tower.md)

@@ -154,27 +154,13 @@ class GenSemanticModelAgenticNode(AgenticNode):
         """Setup semantic function tools (for querying metrics via adapters)."""
         try:
             from datus.tools.func_tool.semantic_tools import SemanticTools
-            from datus.tools.semantic_tools.registry import semantic_adapter_registry
 
-            # Determine adapter type from config or auto-discover
-            adapter_type = None
-
-            # 1. Check if configured in agentic_nodes config
+            # Default to "metricflow", override from config if specified
+            adapter_type = "metricflow"
             if hasattr(self.agent_config, "agentic_nodes") and self.NODE_NAME in self.agent_config.agentic_nodes:
                 node_config = self.agent_config.agentic_nodes[self.NODE_NAME]
-                if isinstance(node_config, dict):
+                if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
                     adapter_type = node_config.get("semantic_adapter")
-
-            # 2. Auto-discover if not configured
-            if adapter_type is None:
-                available_adapters = semantic_adapter_registry.list_adapters()
-                if available_adapters:
-                    # Use the first available adapter (prefer metricflow if available)
-                    if "metricflow" in available_adapters:
-                        adapter_type = "metricflow"
-                    else:
-                        adapter_type = next(iter(available_adapters.keys()))
-                    logger.info(f"Auto-discovered semantic adapter: {adapter_type}")
 
             # Initialize semantic func tool
             self.semantic_func_tool = SemanticTools(
@@ -188,8 +174,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             self.tools.extend(semantic_tools)
 
             tool_names = [tool.name for tool in semantic_tools]
-            adapter_info = f" (adapter: {adapter_type})" if adapter_type else " (storage only)"
-            logger.info(f"Added semantic func tools{adapter_info}: {', '.join(tool_names)}")
+            logger.info(f"Added semantic func tools (adapter: {adapter_type}): {', '.join(tool_names)}")
 
         except Exception as e:
             logger.error(f"Failed to setup semantic func tools: {e}")

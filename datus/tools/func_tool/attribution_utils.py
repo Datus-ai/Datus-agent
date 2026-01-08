@@ -199,18 +199,10 @@ class DimensionAttributionUtil:
                 time_end=current_end,
             )
 
-            # Debug logging
-            logger.debug(f"Ranking dimension '{dimension}' for metric '{metric_name}'")
-            logger.debug(f"Baseline result columns: {baseline_result.columns}")
-            logger.debug(f"Baseline result data count: {len(baseline_result.data)}")
-            if baseline_result.data:
-                first_row = baseline_result.data[0]
-                keys = list(first_row.keys()) if first_row else "empty"
-                logger.debug(f"Baseline first row keys: {keys}")
-                logger.debug(f"Baseline first row: {baseline_result.data[0]}")
-            logger.debug(f"Current result data count: {len(current_result.data)}")
-            if current_result.data:
-                logger.debug(f"Current first row: {current_result.data[0]}")
+            logger.debug(
+                f"Ranking dimension '{dimension}': baseline={len(baseline_result.data)} rows, "
+                f"current={len(current_result.data)} rows"
+            )
 
             # Build lookup for baseline values
             baseline_lookup = {}
