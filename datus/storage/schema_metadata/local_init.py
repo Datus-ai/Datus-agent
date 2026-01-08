@@ -562,15 +562,18 @@ def store_tables(
 def _fill_sample_rows(
     new_values: List[Dict[str, Any]], identifier: str, table_data: Dict[str, Any], connector: BaseSqlConnector
 ):
-    sample_rows = connector.get_sample_rows(
-        tables=[table_data["table_name"]],
-        top_n=5,
-        catalog_name=table_data["catalog_name"],
-        database_name=table_data["database_name"],
-        schema_name=table_data["schema_name"],
-    )
-    if sample_rows:
-        for row in sample_rows:
-            if not row.get("identifier"):
-                row["identifier"] = identifier
-        new_values.extend(sample_rows)
+    try:
+        sample_rows = connector.get_sample_rows(
+            tables=[table_data["table_name"]],
+            top_n=5,
+            catalog_name=table_data["catalog_name"],
+            database_name=table_data["database_name"],
+            schema_name=table_data["schema_name"],
+        )
+        if sample_rows:
+            for row in sample_rows:
+                if not row.get("identifier"):
+                    row["identifier"] = identifier
+            new_values.extend(sample_rows)
+    except Exception as e:
+        logger.warning(f"Failed to select sample rows for {identifier}: {e}")
