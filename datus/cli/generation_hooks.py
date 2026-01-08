@@ -1016,7 +1016,7 @@ class GenerationHooks(AgentHooks):
             item_id = reference_sql_data.get("id", "")
 
             if not item_id or item_id == "auto_generated":
-                item_id = gen_reference_sql_id(sql_query, comment)
+                item_id = gen_reference_sql_id(sql_query)
                 reference_sql_data["id"] = item_id
 
             # Get storage and check if item already exists

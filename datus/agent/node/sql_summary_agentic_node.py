@@ -254,10 +254,8 @@ class SqlSummaryAgenticNode(AgenticNode):
                 logger.info(f"Found {len(existing_trees)} existing reference SQL subject_trees for context")
 
         # Query similar reference SQLs for classification reference
-        # Use comment as primary query text, fallback to first 200 chars of SQL
-        query_text = user_input.comment if user_input.comment else ""
-        if not query_text and user_input.sql_query:
-            query_text = user_input.sql_query[:200]
+        # Use first 200 chars of SQL as query text
+        query_text = user_input.sql_query[:200] if user_input.sql_query else ""
 
         similar_items = self._get_similar_sqls(query_text, top_n=5)
         context["similar_items"] = similar_items

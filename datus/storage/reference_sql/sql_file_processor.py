@@ -17,6 +17,64 @@ from datus.utils.sql_utils import parse_sql_type
 logger = get_logger(__name__)
 
 
+def _find_effective_semicolon(line: str, in_block_comment: bool) -> Tuple[int, bool]:
+    """
+    Find the position of an effective semicolon (not inside any comment) in a line.
+
+    Args:
+        line: The line to check
+        in_block_comment: Whether we're currently inside a block comment from previous lines
+
+    Returns:
+        Tuple of (semicolon_position or -1 if none, updated in_block_comment state)
+    """
+    i = 0
+    while i < len(line):
+        if in_block_comment:
+            # Look for end of block comment
+            end_pos = line.find("*/", i)
+            if end_pos == -1:
+                # Still in block comment, no effective semicolon possible
+                return -1, True
+            # Exit block comment and continue scanning
+            in_block_comment = False
+            i = end_pos + 2
+        else:
+            # Check for line comment (-- style)
+            if line[i : i + 2] == "--":
+                # Rest of line is comment, no more effective semicolons
+                return -1, False
+            # Check for block comment start
+            if line[i : i + 2] == "/*":
+                in_block_comment = True
+                i += 2
+                continue
+            # Check for semicolon
+            if line[i] == ";":
+                # Found effective semicolon, but need to continue to update block comment state
+                semicolon_pos = i
+                # Continue scanning to update in_block_comment state for next line
+                i += 1
+                while i < len(line):
+                    if in_block_comment:
+                        end_pos = line.find("*/", i)
+                        if end_pos == -1:
+                            return semicolon_pos, True
+                        in_block_comment = False
+                        i = end_pos + 2
+                    else:
+                        if line[i : i + 2] == "--":
+                            return semicolon_pos, False
+                        if line[i : i + 2] == "/*":
+                            in_block_comment = True
+                            i += 2
+                            continue
+                        i += 1
+                return semicolon_pos, in_block_comment
+            i += 1
+    return -1, in_block_comment
+
+
 def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -33,22 +91,12 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
     blocks = []
     current_block_lines = []
     block_start_line = 1
+    in_block_comment = False
 
     for line_num, line in enumerate(lines, 1):
-        stripped = line.strip()
-
         # Check if this line contains a statement-ending semicolon (not in comment)
-        has_semicolon = False
-        if ";" in line:
-            # Find first semicolon and comment position
-            comment_pos = line.find("--")
-            semicolon_pos = line.find(";")
-
-            # Semicolon is valid statement terminator if:
-            # 1. No comment on this line, OR
-            # 2. Semicolon appears before the comment
-            if comment_pos == -1 or semicolon_pos < comment_pos:
-                has_semicolon = True
+        semicolon_pos, in_block_comment = _find_effective_semicolon(line, in_block_comment)
+        has_semicolon = semicolon_pos >= 0
 
         current_block_lines.append(line)
 
@@ -65,39 +113,25 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
         if block_content.strip():
             blocks.append((block_content, block_start_line))
 
-    # Now process each block to extract comments and SQL
+    # Process each block - keep entire block as SQL (including comments)
     pairs = []
 
     for block_content, block_line_num in blocks:
-        comment_lines = []
-        sql_lines = []
-
-        for line in block_content.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("--"):
-                # Comment line - remove all leading dashes
-                comment_text = re.sub(r"^-+\s*", "", stripped)
-                comment_lines.append(comment_text)
-            elif stripped:
-                # SQL line - keep as-is (don't remove semicolons per-line to preserve string literals)
-                sql_lines.append(line)
-
-        # Build comment and SQL
-        comment = " ".join(comment_lines).strip() if comment_lines else ""
-        sql = "\n".join(sql_lines)
+        # Keep the entire block as SQL (including inline comments)
+        sql = block_content
 
         # Clean up SQL: remove trailing whitespace and statement-terminating semicolon
-        sql = sql.rstrip()  # Remove trailing whitespace
+        sql = sql.rstrip()
         if sql.endswith(";"):
-            sql = sql[:-1].rstrip()  # Remove trailing semicolon and any whitespace before it
+            sql = sql[:-1].rstrip()
 
         # Remove excessive blank lines
         sql = re.sub(r"\n\s*\n", "\n", sql)
         sql = sql.strip()
 
-        # Add to pairs if SQL is not empty
+        # Add to pairs if SQL is not empty (comment is empty since it's embedded in SQL)
         if sql:
-            pairs.append((comment, sql, block_line_num))
+            pairs.append(("", sql, block_line_num))
 
     return pairs
 
@@ -224,7 +258,7 @@ def process_sql_files(sql_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str
 
         try:
             pairs = parse_comment_sql_pairs(sql_file)
-            logger.info(f"Extracted {len(pairs)} comment-SQL pairs from {os.path.basename(sql_file)}")
+            logger.info(f"Extracted {len(pairs)} SQL blocks from {os.path.basename(sql_file)}")
 
             for comment, sql, line_num in pairs:
                 items.append(

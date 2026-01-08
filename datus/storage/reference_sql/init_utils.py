@@ -8,10 +8,9 @@ from typing import Set
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 
 
-def gen_reference_sql_id(sql: str, comment: str) -> str:
-    """Generate MD5 hash ID from SQL and comment fields."""
-    combined_text = f"{sql}{comment}"
-    return hashlib.md5(combined_text.encode("utf-8")).hexdigest()
+def gen_reference_sql_id(sql: str) -> str:
+    """Generate MD5 hash ID from SQL content."""
+    return hashlib.md5(sql.encode("utf-8")).hexdigest()
 
 
 def exists_reference_sql(storage: ReferenceSqlRAG, build_mode: str = "overwrite") -> Set[str]:

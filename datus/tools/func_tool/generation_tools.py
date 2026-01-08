@@ -217,7 +217,7 @@ class GenerationTools:
             from datus.storage.reference_sql.init_utils import gen_reference_sql_id
 
             # Generate the ID using the same utility as the storage system
-            generated_id = gen_reference_sql_id(sql_query, comment)
+            generated_id = gen_reference_sql_id(sql_query)
 
             logger.info(f"Generated reference SQL ID: {generated_id}")
             return FuncToolResult(result=generated_id)

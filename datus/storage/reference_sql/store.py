@@ -57,7 +57,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         self.create_subject_index()
 
         # Create FTS index for reference SQL-specific fields
-        self.create_fts_index(["sql", "name", "comment", "summary", "tags", "search_text"])
+        self.create_fts_index(["sql", "name", "summary", "tags", "search_text"])
 
     def batch_store_sql(self, sql_items: List[Dict[str, Any]], subject_path_field: str = "subject_path") -> None:
         """Store multiple reference SQL items in batch with subject path processing.

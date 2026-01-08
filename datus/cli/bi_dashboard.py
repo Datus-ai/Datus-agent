@@ -772,8 +772,11 @@ class BiDashboardCommands:
             return None, None
 
         sql_query = doc.get("sql", "")
-        comment = doc.get("comment", "")
-        item_id = doc.get("id") or gen_reference_sql_id(sql_query, comment)
+        comment = (doc.get("comment") or "").strip()
+        # If comment exists, prepend it as SQL inline comment
+        if comment:
+            sql_query = f"-- {comment}\n{sql_query}"
+        item_id = doc.get("id") or gen_reference_sql_id(sql_query)
         subject_tree = doc.get("subject_tree") or fallback_subject_tree or ""
         domain, layer1, layer2 = self._split_subject_tree(subject_tree)
         name = (doc.get("name") or "").strip()
@@ -784,7 +787,7 @@ class BiDashboardCommands:
             "id": item_id,
             "name": name,
             "sql": sql_query,
-            "comment": comment,
+            "comment": "",  # Comment is now embedded in sql
             "summary": doc.get("summary", ""),
             "filepath": doc.get("filepath") or file_name,
             "domain": domain,

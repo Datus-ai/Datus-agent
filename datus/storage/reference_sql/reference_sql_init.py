@@ -51,7 +51,7 @@ async def process_sql_item(
         SQL summary file path if successful, None otherwise
     """
     logger.debug(f"Processing SQL item: {item.get('filepath', '')}, {item.get('sql', '')}, {item.get('comment', '')}")
-    sql_id = sql_id or gen_reference_sql_id(item.get("sql", ""), item.get("comment", ""))
+    sql_id = sql_id or gen_reference_sql_id(item.get("sql", ""))
     filepath = item.get("filepath")
 
     try:
@@ -59,7 +59,6 @@ async def process_sql_item(
         sql_input = SqlSummaryNodeInput(
             user_message="Analyze and summarize this SQL query",
             sql_query=item.get("sql"),
-            comment=item.get("comment", ""),
         )
 
         # Create SqlSummaryAgenticNode in workflow mode (no user interaction)
@@ -108,11 +107,9 @@ async def process_sql_item(
         import yaml
 
         try:
-            # Load YAML file
+            # Load YAML file to get name and subject_tree
             with open(file_path, "r", encoding="utf-8") as f:
                 doc = yaml.safe_load(f)
-                if not item.get("comment"):
-                    item["comment"] = doc.get("comment", "")
                 if not item.get("name"):
                     item["name"] = doc.get("name", "")
                 item["subject_tree"] = doc.get("subject_tree")
@@ -175,7 +172,7 @@ def init_reference_sql(
         if not invalid_items
         else [
             f"Failed to validate SQL item at {i['filepath']}:{i['line_number']} with error `{i['error']}`. "
-            "Please check that the SQL meets expectations (e.g., valid syntax, tables exist, comment field non-empty)."
+            "Please check that the SQL meets expectations (e.g., valid syntax, tables exist)."
             for i in invalid_items
         ]
     )
@@ -223,7 +220,7 @@ def init_reference_sql(
 
         new_items = []
         for item_dict in valid_items:
-            item_id = gen_reference_sql_id(item_dict["sql"], item_dict["comment"])
+            item_id = gen_reference_sql_id(item_dict["sql"])
             if item_id not in existing_ids:
                 new_items.append(item_dict)
 
@@ -277,7 +274,7 @@ def init_reference_sql(
                 )
 
             async def process_with_semaphore(item):
-                sql_id = gen_reference_sql_id(item.get("sql", ""), item.get("comment", ""))
+                sql_id = gen_reference_sql_id(item.get("sql", ""))
                 filepath = item.get("filepath")
                 file_key = str(filepath or "unknown_file")
                 async with semaphore:
