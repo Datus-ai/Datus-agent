@@ -66,7 +66,6 @@ class SemanticStorageManager:
     def store_semantic_model(
         self,
         model_data: Dict[str, Any],
-        source: str = "adapter",
     ) -> None:
         """
         Store semantic model to unified storage.
@@ -84,7 +83,6 @@ class SemanticStorageManager:
                     "measures": List[{name, description, expr}],
                     "identifiers": List[{name, description, expr}] (optional),
                 }
-            source: Source identifier (e.g., "metricflow", "dbt")
         """
         store = self._ensure_semantic_model_store()
         semantic_model_name = model_data["semantic_model_name"]
@@ -111,7 +109,6 @@ class SemanticStorageManager:
             "is_measure": False,
             "is_entity_key": False,
             "is_deprecated": False,
-            "source": source,
             "yaml_path": "",
             "updated_at": updated_at,
         }
@@ -137,7 +134,6 @@ class SemanticStorageManager:
                 "is_measure": False,
                 "is_entity_key": False,
                 "is_deprecated": False,
-                "source": source,
                 "yaml_path": "",
                 "updated_at": updated_at,
             }
@@ -165,7 +161,6 @@ class SemanticStorageManager:
                 "is_measure": True,
                 "is_entity_key": False,
                 "is_deprecated": False,
-                "source": source,
                 "yaml_path": "",
                 "updated_at": updated_at,
             }
@@ -193,7 +188,6 @@ class SemanticStorageManager:
                 "is_measure": False,
                 "is_entity_key": True,
                 "is_deprecated": False,
-                "source": source,
                 "yaml_path": "",
                 "updated_at": updated_at,
             }
@@ -285,7 +279,7 @@ class SemanticStorageManager:
             for model_name in models:
                 model_data = adapter.get_semantic_model(table_name=model_name)
                 if model_data:
-                    self.store_semantic_model(model_data, source=adapter.service_type)
+                    self.store_semantic_model(model_data)
                     stats["semantic_models_synced"] += 1
 
         # Sync metrics

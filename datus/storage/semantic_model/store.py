@@ -46,7 +46,6 @@ class SemanticModelStorage(BaseEmbeddingStore):
                     pa.field("is_entity_key", pa.bool_()),
                     pa.field("is_deprecated", pa.bool_()),
                     # -- Operations & Lineage --
-                    pa.field("source", pa.string()),  # "dbt", "introspection", etc.
                     pa.field("yaml_path", pa.string()),
                     pa.field("updated_at", pa.timestamp("ms")),
                 ]

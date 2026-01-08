@@ -474,18 +474,6 @@ class SemanticTools:
             - dimension_ranking: All dimensions ranked by importance score
             - selected_dimensions: Top dimensions selected for analysis
             - top_dimension_values: Delta contributions of dimension values
-
-        Example:
-            attribution_analyze(
-                metric_name="payment_amount",
-                candidate_dimensions=["project_title", "region", "channel"],
-                baseline_start="2026-01-01",
-                baseline_end="2026-01-01",
-                current_start="2026-01-08",
-                current_end="2026-01-08",
-                anomaly_context=AnomalyContext(rule="wow_growth_gt_20pct", observed_change_pct=0.8017)
-            )
-            -> Identifies which dimension (e.g., project_title) explains the 80% spike
         """
         if not self.attribution_tool:
             return FuncToolResult(
