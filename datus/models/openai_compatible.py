@@ -812,12 +812,13 @@ class OpenAICompatibleModel(LLMBaseModel):
                                         # Create thinking/final output action and yield it
                                         # External AgenticNode will parse raw_output for SQL extraction
                                         text_content = text_content.strip()
-                                        if len(text_content) > 200:
-                                            text_content = f"{text_content[:200]}..."
+                                        text_content_split = (
+                                            text_content if len(text_content) <= 200 else f"{text_content[:200]}..."
+                                        )
                                         thinking_action = ActionHistory(
                                             action_id=f"assistant_{uuid.uuid4().hex[:8]}",
                                             role=ActionRole.ASSISTANT,
-                                            messages=f"Thinking: {text_content}",
+                                            messages=f"Thinking: {text_content_split}",
                                             action_type="response",
                                             input={},
                                             output={"raw_output": text_content},
