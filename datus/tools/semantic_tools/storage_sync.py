@@ -212,7 +212,6 @@ class SemanticStorageManager:
     def store_metric(
         self,
         metric_data: Dict[str, Any],
-        source: str = "adapter",
         subject_path: Optional[List[str]] = None,
     ) -> None:
         """
@@ -231,7 +230,6 @@ class SemanticStorageManager:
                     "format": str (optional),
                     "semantic_model_name": str (optional),
                 }
-            source: Source identifier (e.g., "metricflow", "dbt")
             subject_path: Subject tree path (e.g., ["Finance", "Revenue", "Q1"])
         """
         store = self._ensure_metric_store()
@@ -310,7 +308,6 @@ class SemanticStorageManager:
                         "unit": metric.unit,
                         "format": metric.format,
                     },
-                    source=adapter.service_type,
                     subject_path=metric_subject_path,
                 )
                 stats["metrics_synced"] += 1

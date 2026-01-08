@@ -398,6 +398,9 @@ class GenSemanticModelTools:
         sql_rag = ReferenceSqlRAG(self.agent_config, self.sub_agent_name)
         relationships = []
 
+        # Build case-insensitive lookup: lowercased name -> canonical name
+        tables_lower_map = {t.lower(): t for t in tables}
+
         # Search for SQL queries containing each table
         for table in tables:
             try:
@@ -410,13 +413,15 @@ class GenSemanticModelTools:
                     for match in re.finditer(join_pattern, sql_text, re.IGNORECASE):
                         left_table, left_col, right_table, right_col = match.groups()
 
-                        # Only keep joins involving target tables
-                        if left_table in tables and right_table in tables:
+                        # Only keep joins involving target tables (case-insensitive)
+                        left_lower = left_table.lower()
+                        right_lower = right_table.lower()
+                        if left_lower in tables_lower_map and right_lower in tables_lower_map:
                             relationships.append(
                                 {
-                                    "source_table": left_table,
+                                    "source_table": tables_lower_map[left_lower],
                                     "source_column": left_col,
-                                    "target_table": right_table,
+                                    "target_table": tables_lower_map[right_lower],
                                     "target_column": right_col,
                                     "confidence": "medium",
                                     "evidence": "join_pattern",

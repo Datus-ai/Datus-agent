@@ -157,7 +157,6 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--from-adapter",
         type=str,
-        choices=["metricflow", "dbt", "cube"],
         help="Pull semantic models and metrics from semantic adapter (e.g., metricflow, dbt, cube)",
     )
     bootstrap_parser.add_argument(

@@ -199,8 +199,6 @@ class BaseSemanticAdapter(ABC):
                 "metrics_synced": int,
             }
         """
-        import asyncio
-
         stats = {"semantic_models_synced": 0, "metrics_synced": 0}
 
         # Sync semantic models
@@ -226,13 +224,12 @@ class BaseSemanticAdapter(ABC):
                         "unit": metric.unit,
                         "format": metric.format,
                     },
-                    source=self.service_type,
                     subject_path=metric.path or [],
                 )
                 count += 1
             return count
 
-        stats["metrics_synced"] = asyncio.run(_sync_metrics())
+        stats["metrics_synced"] = self._run_async(_sync_metrics())
 
         return stats
 
@@ -241,9 +238,45 @@ class BaseSemanticAdapter(ABC):
     def test_connection(self) -> bool:
         """Test connection to semantic service."""
         try:
-            import asyncio
-
-            asyncio.run(self.list_metrics(limit=1))
+            self._run_async(self.list_metrics(limit=1))
             return True
         except Exception:
             return False
+
+    def _run_async(self, coro):
+        """
+        Run async coroutine safely, handling both sync and async contexts.
+
+        Args:
+            coro: Coroutine to run
+
+        Returns:
+            Result of the coroutine
+        """
+        import asyncio
+        import threading
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running, use asyncio.run()
+            return asyncio.run(coro)
+
+        # Event loop is running, create a new thread to run the coroutine
+        result = None
+        exception = None
+
+        def run_in_thread():
+            nonlocal result, exception
+            try:
+                result = asyncio.run(coro)
+            except Exception as e:
+                exception = e
+
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        thread.join()
+
+        if exception:
+            raise exception
+        return result
