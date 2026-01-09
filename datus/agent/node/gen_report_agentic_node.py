@@ -196,7 +196,7 @@ class GenReportAgenticNode(AgenticNode):
         try:
             if tool_type == "semantic_tools":
                 if not self.semantic_tools:
-                    adapter_type = self.node_config.get("adapter_type")
+                    adapter_type = self.node_config.get("adapter_type", "metricflow")
                     self.semantic_tools = SemanticTools(
                         agent_config=self.agent_config,
                         sub_agent_name=self.node_config.get("system_prompt"),

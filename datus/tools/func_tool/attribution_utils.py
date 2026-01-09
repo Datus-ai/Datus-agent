@@ -220,9 +220,12 @@ class DimensionAttributionUtil:
                 delta = current_val - baseline_val
                 deltas.append(delta)
 
-            # Also check new values in current period
+            # Precompute current dimension values for O(1) lookup
+            current_dim_vals = {self._extract_dimension_value(row, dimension) for row in current_result.data}
+
+            # Also check values that disappeared (exist in baseline but not in current)
             for dim_val, baseline_val in baseline_lookup.items():
-                if not any(self._extract_dimension_value(row, dimension) == dim_val for row in current_result.data):
+                if dim_val not in current_dim_vals:
                     delta = 0.0 - baseline_val
                     deltas.append(delta)
 
@@ -322,12 +325,14 @@ class DimensionAttributionUtil:
                 )
             )
 
+        # Precompute current dimension keys for O(1) lookup
+        current_dim_keys = {
+            tuple(self._extract_dimension_value(row, dim) for dim in dimensions) for row in current_result.data
+        }
+
         # Also include values that disappeared (exist in baseline but not in current)
         for dim_key, baseline_val in baseline_lookup.items():
-            if not any(
-                tuple(self._extract_dimension_value(row, dim) for dim in dimensions) == dim_key
-                for row in current_result.data
-            ):
+            if dim_key not in current_dim_keys:
                 delta = 0.0 - baseline_val
                 dimension_values = {dim: dim_key[i] for i, dim in enumerate(dimensions)}
                 contribution_pct = (delta / total_delta * 100) if total_delta != 0 else 0.0

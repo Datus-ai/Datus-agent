@@ -109,8 +109,8 @@ Syncs data from adapters to unified storage:
 from datus.tools.semantic_tools import SemanticStorageManager
 
 manager = SemanticStorageManager(agent_config)
-manager.store_semantic_model(model_data, source="metricflow")
-manager.store_metric(metric_data, source="metricflow", subject_path=["Finance"])
+manager.store_semantic_model(model_data)
+manager.store_metric(metric_data, subject_path=["Finance"])
 ```
 
 ### 6. Function Tools (`semantic_tools.py`)

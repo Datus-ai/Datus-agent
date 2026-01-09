@@ -206,7 +206,7 @@ class BaseSemanticAdapter(ABC):
         for model_name in models:
             model_data = self.get_semantic_model(table_name=model_name)
             if model_data:
-                storage_manager.store_semantic_model(model_data, source=self.service_type)
+                storage_manager.store_semantic_model(model_data)
                 stats["semantic_models_synced"] += 1
 
         # Sync metrics (async)
@@ -238,7 +238,11 @@ class BaseSemanticAdapter(ABC):
     def test_connection(self) -> bool:
         """Test connection to semantic service."""
         try:
-            self._run_async(self.list_metrics(limit=1))
+
+            async def _test():
+                await self.list_metrics(limit=1)
+
+            self._run_async(_test())
             return True
         except Exception:
             return False
