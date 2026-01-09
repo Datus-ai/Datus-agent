@@ -160,7 +160,7 @@ class SemanticAdapterRegistry:
         """
         try:
             # Try to import the plugin package
-            module_name = f"datus_{service_type}"
+            module_name = f"datus_semantic_{service_type}"
             import importlib
 
             module = importlib.import_module(module_name)

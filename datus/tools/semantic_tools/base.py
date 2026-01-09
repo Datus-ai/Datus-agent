@@ -5,7 +5,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from .models import MetricDefinition, QueryResult, ValidationResult
+from .models import DimensionInfo, MetricDefinition, QueryResult, ValidationResult
 
 
 class BaseSemanticAdapter(ABC):
@@ -102,7 +102,7 @@ class BaseSemanticAdapter(ABC):
         self,
         metric_name: str,
         path: Optional[List[str]] = None,
-    ) -> List[str]:
+    ) -> List[DimensionInfo]:
         """
         Get queryable dimensions for a specific metric.
 
@@ -111,7 +111,7 @@ class BaseSemanticAdapter(ABC):
             path: path name of metric e.g. ["domainA"], ["domain", "layer1", "layer2"]
 
         Returns:
-            List of dimension names that can be used with this metric.
+            List of DimensionInfo objects containing dimension name and description.
         """
         raise NotImplementedError()
 

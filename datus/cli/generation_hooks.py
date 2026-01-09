@@ -778,7 +778,6 @@ class GenerationHooks(AgentHooks):
                     "fq_name": table_fq_name,
                     "table_name": table_name,
                     "description": data_source.get("description", ""),
-                    "source": "metricflow_yaml",
                     "yaml_path": file_path,
                     "updated_at": datetime.now().replace(microsecond=0),
                     # Database hierarchy
@@ -816,7 +815,6 @@ class GenerationHooks(AgentHooks):
                         "is_measure": is_meas,
                         "is_entity_key": is_ent,
                         "is_deprecated": False,
-                        "source": "metricflow_yaml",
                         "yaml_path": file_path,
                         "updated_at": datetime.now().replace(microsecond=0),
                         # Database hierarchy

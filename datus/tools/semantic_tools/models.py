@@ -7,6 +7,13 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class DimensionInfo(BaseModel):
+    """Information about a dimension"""
+
+    name: str = Field(..., description="Dimension name")
+    description: Optional[str] = Field(None, description="Dimension description")
+
+
 class MetricDefinition(BaseModel):
     """Metadata about a specific metric"""
 
