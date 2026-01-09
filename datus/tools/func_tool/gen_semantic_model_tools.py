@@ -355,7 +355,7 @@ class GenSemanticModelTools:
             )
 
         except Exception as e:
-            logger.error(f"Error analyzing column usage patterns: {e}")
+            logger.exception("Error analyzing column usage patterns")
             return FuncToolResult(success=0, error=str(e))
 
     # ========== Private helper methods ==========

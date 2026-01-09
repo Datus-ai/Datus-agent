@@ -239,12 +239,13 @@ class MetricFlowAdapter(BaseSemanticAdapter):
         path: Optional[List[str]] = None,
     ) -> List[str]:
         """
-        Call: mf list-dimensions --metric-names {metric_name}
+        Call: mf --namespace {namespace} list-dimensions --metric-names {metric_name}
         Parse and return dimension names.
         """
-        cmd = [self.cli_path, "list-dimensions", "--metric-names", metric_name]
-        if self.project_root:
-            cmd.extend(["--project-root", self.project_root])
+        cmd = [self.cli_path]
+        if self.namespace:
+            cmd.extend(["--namespace", self.namespace])
+        cmd.extend(["list-dimensions", "--metric-names", metric_name])
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

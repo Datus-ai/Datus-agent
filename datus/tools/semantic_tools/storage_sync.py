@@ -92,13 +92,16 @@ class SemanticStorageManager:
         schema = model_data.get("schema_name", "")
         updated_at = datetime.now()
 
+        # Build fully qualified table name (filter empty parts)
+        table_fq_name = ".".join(p for p in [catalog, database, schema, table_name] if p)
+
         # Store table object
-        table_id = f"table:{table_name}"
+        table_id = f"table:{table_fq_name}"
         table_obj = {
             "id": table_id,
             "kind": "table",
             "name": table_name,
-            "fq_name": f"{catalog}.{database}.{schema}.{table_name}".strip("."),
+            "fq_name": table_fq_name,
             "semantic_model_name": semantic_model_name,
             "catalog_name": catalog,
             "database_name": database,
@@ -118,12 +121,13 @@ class SemanticStorageManager:
         dimensions = model_data.get("dimensions", [])
         dim_objects = []
         for dim in dimensions:
-            dim_id = f"column:{table_name}.{dim['name']}"
+            dim_fq_name = f"{table_fq_name}.{dim['name']}"
+            dim_id = f"column:{dim_fq_name}"
             dim_obj = {
                 "id": dim_id,
                 "kind": "column",
                 "name": dim["name"],
-                "fq_name": f"{table_name}.{dim['name']}",
+                "fq_name": dim_fq_name,
                 "semantic_model_name": semantic_model_name,
                 "catalog_name": catalog,
                 "database_name": database,
@@ -145,12 +149,13 @@ class SemanticStorageManager:
         measures = model_data.get("measures", [])
         measure_objects = []
         for measure in measures:
-            measure_id = f"column:{table_name}.{measure['name']}"
+            measure_fq_name = f"{table_fq_name}.{measure['name']}"
+            measure_id = f"column:{measure_fq_name}"
             measure_obj = {
                 "id": measure_id,
                 "kind": "column",
                 "name": measure["name"],
-                "fq_name": f"{table_name}.{measure['name']}",
+                "fq_name": measure_fq_name,
                 "semantic_model_name": semantic_model_name,
                 "catalog_name": catalog,
                 "database_name": database,
@@ -172,12 +177,13 @@ class SemanticStorageManager:
         identifiers = model_data.get("identifiers", [])
         identifier_objects = []
         for identifier in identifiers:
-            identifier_id = f"column:{table_name}.{identifier['name']}"
+            identifier_fq_name = f"{table_fq_name}.{identifier['name']}"
+            identifier_id = f"column:{identifier_fq_name}"
             identifier_obj = {
                 "id": identifier_id,
                 "kind": "column",
                 "name": identifier["name"],
-                "fq_name": f"{table_name}.{identifier['name']}",
+                "fq_name": identifier_fq_name,
                 "semantic_model_name": semantic_model_name,
                 "catalog_name": catalog,
                 "database_name": database,
@@ -229,9 +235,11 @@ class SemanticStorageManager:
         if not subject_path:
             subject_path = ["Uncategorized"]
 
+        # Include subject_path in ID to avoid collision for metrics with same name
+        subject_path_str = "/".join(subject_path)
         metric_obj = {
             "subject_path": subject_path,
-            "id": f"metric:{metric_data['name']}",
+            "id": f"metric:{subject_path_str}.{metric_data['name']}",
             "name": metric_data["name"],
             "description": metric_data.get("description", ""),
             "semantic_model_name": metric_data.get("semantic_model_name", ""),
