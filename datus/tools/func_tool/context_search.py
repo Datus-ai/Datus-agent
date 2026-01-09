@@ -113,6 +113,8 @@ class ContextSearchTools:
             },
             ...
         }
+
+        Note that the hierarchy of this subject_tree is indeterminate
         """
         try:
             # Collect entries from the new subject-path index (decoupled from the metric/sql payload tables).
@@ -122,7 +124,6 @@ class ContextSearchTools:
 
             _fill_subject_tree(enriched_tree, metrics_entries, "metrics")
             _fill_subject_tree(enriched_tree, sql_entries, "reference_sql")
-
             _normalize_subject_tree(enriched_tree)
 
             logger.debug("enriched_tree: %s", enriched_tree)
@@ -311,18 +312,21 @@ def _fill_subject_tree(
     enriched_tree: Dict[str, Any], entries: List[Dict[str, Any]], entry_type: Literal["metrics", "reference_sql"]
 ):
     for item in entries:
-        subject_path = item["subject_path"]
-        (domain, layer1, layer2) = subject_path[:3]
-        leaf = enriched_tree.setdefault(domain, {}).setdefault(layer1, {}).setdefault(layer2, {})
+        subject_path = item.get("subject_path")
+        if not subject_path:
+            logger.warning("No subject path found, skipping")
+            continue
+        leaf = enriched_tree
+        for layer in subject_path:
+            leaf = leaf.setdefault(layer, {})
         leaf.setdefault(entry_type, set()).add(item["name"])
 
 
 def _normalize_subject_tree(enriched_tree: Dict[str, Any]) -> Dict[str, Any]:
-    for _, layer1_map in enriched_tree.items():
-        for _, layer2_map in layer1_map.items():
-            for _, leaf in layer2_map.items():
-                for k in ("metrics", "reference_sql"):
-                    v = leaf.get(k)
-                    if isinstance(v, set):
-                        leaf[k] = sorted(v)
+    for key, value in enriched_tree.items():
+        if key in ("metrics", "reference_sql"):
+            if isinstance(value, set):
+                enriched_tree[key] = sorted(value)
+        elif isinstance(value, dict):
+            _normalize_subject_tree(value)
     return enriched_tree
