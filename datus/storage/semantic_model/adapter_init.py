@@ -39,24 +39,40 @@ async def init_from_adapter(
         Tuple of (success, error_message)
     """
     try:
-        # Create adapter
+        # Normalize adapter_type to lowercase for registry lookup
+        adapter_type = adapter_type.lower().strip()
+
+        # Get namespace from agent_config
+        namespace = getattr(agent_config, "namespace", None) or agent_config.current_namespace
+
+        # Get the registered config class for this adapter type
+        metadata = semantic_adapter_registry.get_metadata(adapter_type)
+
+        # Build adapter config
         if adapter_config is None:
             # Try to get config from agent_config if available
             adapter_config = getattr(agent_config, f"{adapter_type}_config", None)
-            if adapter_config is None:
-                # Get namespace from agent_config
-                namespace = getattr(agent_config, "namespace", None) or agent_config.current_namespace
 
-                # Get the registered config class for this adapter type
-                metadata = semantic_adapter_registry.get_metadata(adapter_type)
-                if metadata and metadata.config_class:
-                    # Use the adapter's config class
-                    adapter_config = metadata.config_class(namespace=namespace)
-                else:
-                    # Fallback to base config
-                    from datus.tools.semantic_tools.config import SemanticAdapterConfig
+        if adapter_config is None:
+            # No config provided, create default config
+            if metadata and metadata.config_class:
+                adapter_config = metadata.config_class(namespace=namespace)
+            else:
+                from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
-                    adapter_config = SemanticAdapterConfig(namespace=namespace)
+                adapter_config = SemanticAdapterConfig(namespace=namespace)
+        elif isinstance(adapter_config, dict):
+            # Convert dict to adapter-specific config class
+            # Ensure namespace is set
+            if "namespace" not in adapter_config:
+                adapter_config["namespace"] = namespace
+
+            if metadata and metadata.config_class:
+                adapter_config = metadata.config_class(**adapter_config)
+            else:
+                from datus.tools.semantic_tools.config import SemanticAdapterConfig
+
+                adapter_config = SemanticAdapterConfig(**adapter_config)
 
         adapter = semantic_adapter_registry.create_adapter(adapter_type, adapter_config)
 
@@ -79,5 +95,5 @@ async def init_from_adapter(
 
     except Exception as e:
         error_msg = f"Failed to sync semantic models from {adapter_type}: {str(e)}"
-        logger.error(error_msg)
+        logger.exception(error_msg)
         return False, error_msg

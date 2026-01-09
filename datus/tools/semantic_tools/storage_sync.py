@@ -84,6 +84,10 @@ class SemanticStorageManager:
                     "identifiers": List[{name, description, expr}] (optional),
                 }
         """
+        # Validate required field
+        if "semantic_model_name" not in model_data:
+            raise ValueError("model_data must contain 'semantic_model_name' field")
+
         store = self._ensure_semantic_model_store()
         semantic_model_name = model_data["semantic_model_name"]
         table_name = model_data.get("table_name", "")
@@ -121,6 +125,10 @@ class SemanticStorageManager:
         dimensions = model_data.get("dimensions", [])
         dim_objects = []
         for dim in dimensions:
+            # Skip dimensions without name field
+            if not isinstance(dim, dict) or "name" not in dim:
+                logger.warning(f"Skipping dimension without 'name' field in model '{semantic_model_name}'")
+                continue
             dim_fq_name = f"{table_fq_name}.{dim['name']}"
             dim_id = f"column:{dim_fq_name}"
             dim_obj = {
@@ -149,6 +157,10 @@ class SemanticStorageManager:
         measures = model_data.get("measures", [])
         measure_objects = []
         for measure in measures:
+            # Skip measures without name field
+            if not isinstance(measure, dict) or "name" not in measure:
+                logger.warning(f"Skipping measure without 'name' field in model '{semantic_model_name}'")
+                continue
             measure_fq_name = f"{table_fq_name}.{measure['name']}"
             measure_id = f"column:{measure_fq_name}"
             measure_obj = {
@@ -177,6 +189,10 @@ class SemanticStorageManager:
         identifiers = model_data.get("identifiers", [])
         identifier_objects = []
         for identifier in identifiers:
+            # Skip identifiers without name field
+            if not isinstance(identifier, dict) or "name" not in identifier:
+                logger.warning(f"Skipping identifier without 'name' field in model '{semantic_model_name}'")
+                continue
             identifier_fq_name = f"{table_fq_name}.{identifier['name']}"
             identifier_id = f"column:{identifier_fq_name}"
             identifier_obj = {
@@ -229,6 +245,10 @@ class SemanticStorageManager:
                 }
             subject_path: Subject tree path (e.g., ["Finance", "Revenue", "Q1"])
         """
+        # Validate required field
+        if "name" not in metric_data:
+            raise ValueError("metric_data must contain 'name' field")
+
         store = self._ensure_metric_store()
 
         # Use provided subject_path or default category
@@ -283,33 +303,52 @@ class SemanticStorageManager:
 
         # Sync semantic models
         if sync_semantic_models:
-            models = adapter.list_semantic_models()
+            try:
+                models = adapter.list_semantic_models()
+            except Exception as e:
+                logger.error(f"Failed to list semantic models from {adapter.service_type}: {e}")
+                models = []
+
             for model_name in models:
-                model_data = adapter.get_semantic_model(table_name=model_name)
-                if model_data:
-                    self.store_semantic_model(model_data)
-                    stats["semantic_models_synced"] += 1
+                try:
+                    model_data = adapter.get_semantic_model(table_name=model_name)
+                    if model_data:
+                        self.store_semantic_model(model_data)
+                        stats["semantic_models_synced"] += 1
+                except Exception as e:
+                    logger.error(f"Failed to sync semantic model '{model_name}' from {adapter.service_type}: {e}")
+                    continue
 
         # Sync metrics
         if sync_metrics:
-            metrics = await adapter.list_metrics()
-            for metric in metrics:
-                # Use metric's own path if available, otherwise use provided subject_path
-                metric_subject_path = metric.path if metric.path else subject_path
+            try:
+                metrics = await adapter.list_metrics()
+            except Exception as e:
+                logger.error(f"Failed to list metrics from {adapter.service_type}: {e}")
+                metrics = []
 
-                self.store_metric(
-                    {
-                        "name": metric.name,
-                        "description": metric.description,
-                        "metric_type": metric.type or "simple",
-                        "dimensions": metric.dimensions,
-                        "measures": metric.measures,
-                        "unit": metric.unit,
-                        "format": metric.format,
-                    },
-                    subject_path=metric_subject_path,
-                )
-                stats["metrics_synced"] += 1
+            for metric in metrics:
+                try:
+                    # Use metric's own path if available, otherwise use provided subject_path
+                    metric_subject_path = metric.path if metric.path else subject_path
+
+                    self.store_metric(
+                        {
+                            "name": metric.name,
+                            "description": metric.description,
+                            "metric_type": metric.type or "simple",
+                            "dimensions": metric.dimensions,
+                            "measures": metric.measures,
+                            "unit": metric.unit,
+                            "format": metric.format,
+                        },
+                        subject_path=metric_subject_path,
+                    )
+                    stats["metrics_synced"] += 1
+                except Exception as e:
+                    metric_id = getattr(metric, "name", "unknown")
+                    logger.error(f"Failed to sync metric '{metric_id}' from {adapter.service_type}: {e}")
+                    continue
 
         logger.info(
             f"Synced from {adapter.service_type}: "

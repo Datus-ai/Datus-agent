@@ -9,7 +9,6 @@ Provides unified interface to semantic layer services through adapters.
 Tools delegate to registered semantic adapters while leveraging unified storage for performance.
 """
 
-import asyncio
 from typing import List, Optional
 
 from agents import Tool
@@ -31,39 +30,21 @@ def _run_async(coro):
     """
     Run async coroutine safely, handling both sync and async contexts.
 
+    Delegates to the centralized run_async utility which handles:
+    - Deadlock prevention for nested calls
+    - Proper event loop management
+    - Timeout support
+    - Improved error handling
+
     Args:
         coro: Coroutine to run
 
     Returns:
         Result of the coroutine
     """
-    try:
-        # Try to get the running event loop
-        asyncio.get_running_loop()
-    except RuntimeError:
-        # No event loop running, use asyncio.run()
-        return asyncio.run(coro)
+    from datus.utils.async_utils import run_async
 
-    # Event loop is running, create a new thread to run the coroutine
-    import threading
-
-    result = None
-    exception = None
-
-    def run_in_thread():
-        nonlocal result, exception
-        try:
-            result = asyncio.run(coro)
-        except Exception as e:
-            exception = e
-
-    thread = threading.Thread(target=run_in_thread)
-    thread.start()
-    thread.join()
-
-    if exception:
-        raise exception
-    return result
+    return run_async(coro)
 
 
 class SemanticTools:

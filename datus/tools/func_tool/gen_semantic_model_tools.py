@@ -276,6 +276,17 @@ class GenSemanticModelTools:
                 "MATCH": r"MATCH\s*\(\s*\b{col}\b\s*\)",
             }
 
+            # Helper function to sanitize filter examples by redacting sensitive literals
+            def sanitize_example(example: str) -> str:
+                """Redact sensitive literals from SQL example snippets."""
+                sanitized = example
+                # Redact quoted strings (single and double quotes)
+                sanitized = re.sub(r"'[^']*'", "'<REDACTED>'", sanitized)
+                sanitized = re.sub(r'"[^"]*"', '"<REDACTED>"', sanitized)
+                # Redact numeric literals (integers and decimals) after operators
+                sanitized = re.sub(r"(?<=[=<>!\s,(\[])\s*\d+\.?\d*(?=\s*[,)\];\s]|$)", " <REDACTED>", sanitized)
+                return sanitized
+
             # Analyze each SQL query
             for sql_entry in search_results:
                 sql_text = sql_entry.get("sql", "")
@@ -284,18 +295,25 @@ class GenSemanticModelTools:
                 if not sql_text or table_name.lower() not in sql_text.lower():
                     continue
 
+                # Track columns seen in this query to increment usage_count only once per query
+                seen_columns_in_query: set = set()
+
                 for col in target_columns:
                     # Check for operators
                     for op, pattern_template in operator_patterns.items():
                         pattern = pattern_template.replace("{col}", re.escape(col))
                         if re.search(pattern, sql_text, re.IGNORECASE):
                             column_patterns[col]["operators"].add(op)
-                            column_patterns[col]["usage_count"] += 1
 
-                            # Extract example filter (limit to 150 chars)
+                            # Increment usage_count only once per column per query
+                            if col not in seen_columns_in_query:
+                                column_patterns[col]["usage_count"] += 1
+                                seen_columns_in_query.add(col)
+
+                            # Extract example filter (limit to 150 chars), sanitize before storing
                             match = re.search(rf"\b{re.escape(col)}\b[^,;)]*", sql_text, re.IGNORECASE)
                             if match and len(column_patterns[col]["filter_examples"]) < 3:
-                                example = match.group(0).strip()[:150]
+                                example = sanitize_example(match.group(0).strip()[:150])
                                 if example not in column_patterns[col]["filter_examples"]:
                                     column_patterns[col]["filter_examples"].append(example)
 
@@ -304,12 +322,16 @@ class GenSemanticModelTools:
                         pattern = pattern_template.replace("{col}", re.escape(col))
                         if re.search(pattern, sql_text, re.IGNORECASE):
                             column_patterns[col]["functions"].add(func)
-                            column_patterns[col]["usage_count"] += 1
 
-                            # Extract example function call
+                            # Increment usage_count only once per column per query
+                            if col not in seen_columns_in_query:
+                                column_patterns[col]["usage_count"] += 1
+                                seen_columns_in_query.add(col)
+
+                            # Extract example function call, sanitize before storing
                             match = re.search(rf"{func}\s*\([^)]*\b{re.escape(col)}\b[^)]*\)", sql_text, re.IGNORECASE)
                             if match and len(column_patterns[col]["filter_examples"]) < 3:
-                                example = match.group(0).strip()[:150]
+                                example = sanitize_example(match.group(0).strip()[:150])
                                 if example not in column_patterns[col]["filter_examples"]:
                                     column_patterns[col]["filter_examples"].append(example)
 
@@ -451,7 +473,8 @@ class GenSemanticModelTools:
         # Check for {table_name}_id -> {table_name}.id patterns
         for source_table, columns in table_schemas.items():
             for column in columns:
-                col_name = column.get("name", "").lower()
+                orig_col_name = column.get("name", "")
+                col_name = orig_col_name.lower()  # Lowercase for pattern matching
 
                 # Match pattern: {target}_id
                 if col_name.endswith("_id"):
@@ -466,7 +489,7 @@ class GenSemanticModelTools:
                             relationships.append(
                                 {
                                     "source_table": source_table,
-                                    "source_column": col_name,
+                                    "source_column": orig_col_name,
                                     "target_table": target_table,
                                     "target_column": "id",
                                     "confidence": "low",

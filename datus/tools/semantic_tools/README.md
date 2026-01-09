@@ -586,8 +586,8 @@ print(f"Synced {stats['semantic_models_synced']} models, {stats['metrics_synced'
 # tests/test_adapter.py
 import pytest
 from datus.tools.semantic_tools import semantic_adapter_registry
-from datus_metricflow.adapter import MetricFlowAdapter
-from datus.tools.semantic_tools.config import MetricFlowConfig
+from datus_semantic_metricflow.adapter import MetricFlowAdapter
+from datus_semantic_metricflow.config import MetricFlowConfig
 
 @pytest.mark.asyncio
 async def test_list_metrics():
