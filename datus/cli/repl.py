@@ -7,12 +7,14 @@ Datus-CLI REPL (Read-Eval-Print Loop) implementation.
 This module provides the main interactive shell for the CLI.
 """
 
+from __future__ import annotations
+
 import sys
 import threading
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -23,7 +25,8 @@ from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.console import Console
 from rich.table import Table
 
-from datus.agent.workflow_runner import WorkflowRunner
+if TYPE_CHECKING:
+    from datus.agent.workflow_runner import WorkflowRunner
 from datus.cli._cli_utils import prompt_input
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
