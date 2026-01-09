@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 
 def _find_effective_semicolon(line: str, in_block_comment: bool) -> Tuple[int, bool]:
     """
-    Find the position of an effective semicolon (not inside any comment) in a line.
+    Find the position of an effective semicolon (not inside any comment or string literal) in a line.
 
     Args:
         line: The line to check
@@ -29,6 +29,9 @@ def _find_effective_semicolon(line: str, in_block_comment: bool) -> Tuple[int, b
         Tuple of (semicolon_position or -1 if none, updated in_block_comment state)
     """
     i = 0
+    in_single_quote = False
+    in_double_quote = False
+
     while i < len(line):
         if in_block_comment:
             # Look for end of block comment
@@ -39,22 +42,49 @@ def _find_effective_semicolon(line: str, in_block_comment: bool) -> Tuple[int, b
             # Exit block comment and continue scanning
             in_block_comment = False
             i = end_pos + 2
+        elif in_single_quote:
+            # Inside single-quoted string - look for closing quote
+            if line[i] == "'":
+                # Check for escaped single quote ('')
+                if i + 1 < len(line) and line[i + 1] == "'":
+                    # Escaped quote, skip both
+                    i += 2
+                    continue
+                # Closing quote found
+                in_single_quote = False
+            i += 1
+        elif in_double_quote:
+            # Inside double-quoted identifier - look for closing quote
+            if line[i] == '"':
+                # Check for escaped double quote ("")
+                if i + 1 < len(line) and line[i + 1] == '"':
+                    # Escaped quote, skip both
+                    i += 2
+                    continue
+                # Closing quote found
+                in_double_quote = False
+            i += 1
         else:
-            # Check for line comment (-- style)
-            if line[i : i + 2] == "--":
+            # Not in comment or quote - check for quote starts, comment starts, or semicolon
+            if line[i] == "'":
+                in_single_quote = True
+                i += 1
+            elif line[i] == '"':
+                in_double_quote = True
+                i += 1
+            elif line[i : i + 2] == "--":
                 # Rest of line is comment, no more effective semicolons
                 return -1, False
-            # Check for block comment start
-            if line[i : i + 2] == "/*":
+            elif line[i : i + 2] == "/*":
                 in_block_comment = True
                 i += 2
-                continue
-            # Check for semicolon
-            if line[i] == ";":
+            elif line[i] == ";":
                 # Found effective semicolon, but need to continue to update block comment state
                 semicolon_pos = i
                 # Continue scanning to update in_block_comment state for next line
                 i += 1
+                in_single_quote = False
+                in_double_quote = False
                 while i < len(line):
                     if in_block_comment:
                         end_pos = line.find("*/", i)
@@ -62,16 +92,37 @@ def _find_effective_semicolon(line: str, in_block_comment: bool) -> Tuple[int, b
                             return semicolon_pos, True
                         in_block_comment = False
                         i = end_pos + 2
+                    elif in_single_quote:
+                        if line[i] == "'":
+                            if i + 1 < len(line) and line[i + 1] == "'":
+                                i += 2
+                                continue
+                            in_single_quote = False
+                        i += 1
+                    elif in_double_quote:
+                        if line[i] == '"':
+                            if i + 1 < len(line) and line[i + 1] == '"':
+                                i += 2
+                                continue
+                            in_double_quote = False
+                        i += 1
                     else:
-                        if line[i : i + 2] == "--":
+                        if line[i] == "'":
+                            in_single_quote = True
+                            i += 1
+                        elif line[i] == '"':
+                            in_double_quote = True
+                            i += 1
+                        elif line[i : i + 2] == "--":
                             return semicolon_pos, False
-                        if line[i : i + 2] == "/*":
+                        elif line[i : i + 2] == "/*":
                             in_block_comment = True
                             i += 2
-                            continue
-                        i += 1
+                        else:
+                            i += 1
                 return semicolon_pos, in_block_comment
-            i += 1
+            else:
+                i += 1
     return -1, in_block_comment
 
 

@@ -226,7 +226,6 @@ class ContextSearchTools:
                 - 'error' (str or None): Error message if any.
                 - 'result' (list): On success, a list of matching entries, each containing:
                     - 'sql'
-                    - 'comment'
                     - 'tags'
                     - 'summary'
                     - 'file_path'
@@ -236,7 +235,7 @@ class ContextSearchTools:
                 query_text=query_text,
                 subject_path=subject_path,
                 top_n=top_n,
-                selected_fields=["name", "sql", "comment", "summary", "tags"],
+                selected_fields=["name", "sql", "summary", "tags"],
             )
             return FuncToolResult(success=1, error=None, result=result)
         except Exception as e:
@@ -257,13 +256,14 @@ class ContextSearchTools:
                 - 'error' (str or None): Error message if any.
                 - 'result' (dict): On success, a list of matching entries, each containing:
                     - 'sql'
-                    - 'comment'
                     - 'tags'
                     - 'summary'
                     - 'file_path'
         """
         try:
-            result = self.reference_sql_store.get_reference_sql_detail(subject_path=subject_path, name=name)
+            result = self.reference_sql_store.get_reference_sql_detail(
+                subject_path=subject_path, name=name, selected_fields=["name", "sql", "summary", "tags"]
+            )
             if len(result) > 0:
                 return FuncToolResult(success=1, error=None, result=result[0])
             return FuncToolResult(success=0, error="No matched result", result=None)
