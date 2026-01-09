@@ -5,7 +5,7 @@
 import argparse
 import asyncio
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -15,8 +15,6 @@ from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.utils.loggings import get_logger
-from datus.utils.path_manager import get_path_manager
-from datus.utils.sql_utils import extract_table_names
 
 logger = get_logger(__name__)
 
@@ -35,20 +33,18 @@ def init_success_story_metrics(
     agent_config: AgentConfig,
     subject_tree: Optional[list] = None,
     emit: Optional[BatchEventEmitter] = None,
-    pool_size: int = 1,
 ) -> tuple[bool, str]:
     """
-    Initialize ONLY metrics from success story CSV.
+    Initialize metrics from success story CSV by batch processing.
 
-    This processes each row individually to generate one metric per SQL query.
-    Assumes semantic models are already generated and available in YAML files.
+    This reads all SQL queries from the CSV and processes them as a batch
+    to extract core unique metrics (deduplicating aggregation patterns).
 
     Args:
         args: Command line arguments
         agent_config: Agent configuration
         subject_tree: Optional predefined subject tree categories
         emit: Optional callback to stream BatchEvent progress events
-        pool_size: Number of concurrent tasks (default: 1 for sequential processing)
     """
     event_helper = BatchEventHelper(BIZ_NAME, emit)
     df = pd.read_csv(args.success_story)
@@ -56,121 +52,22 @@ def init_success_story_metrics(
     # Emit task started
     event_helper.task_started(total_items=len(df), success_story=args.success_story)
 
-    async def process_all() -> tuple[bool, List[str]]:
-        semaphore = asyncio.Semaphore(pool_size)
-        errors: List[str] = []
+    # Build batch message with all SQL queries
+    sql_queries = []
+    for idx, row in df.iterrows():
+        sql = row["sql"]
+        question = row["question"]
+        sql_queries.append(f"Query {idx + 1}:\nQuestion: {question}\nSQL:\n{sql}")
 
-        async def process_with_semaphore(position, row):
-            async with semaphore:
-                row_idx = position + 1  # Use position (0-based) instead of DataFrame index
-                logger.info(f"Processing row {row_idx}/{len(df)} - generating metrics only")
-                try:
-                    result = await process_line_metrics_only(
-                        row.to_dict(), agent_config, subject_tree, row_idx=row_idx, event_helper=event_helper
-                    )
-                    return row_idx, result
-                except Exception as e:
-                    logger.error(f"Error processing row {row_idx}: {e}")
-                    return row_idx, {"successful": False, "error": str(e)}
+    batch_message = "Analyze the following SQL queries and extract core metrics:\n\n" + "\n\n---\n\n".join(sql_queries)
 
-        # Emit task processing
-        event_helper.task_processing(total_items=len(df))
+    logger.info(f"Processing {len(df)} SQL queries as batch for core metrics extraction")
 
-        # Process rows with controlled concurrency
-        tasks = [
-            asyncio.create_task(process_with_semaphore(position, row))
-            for position, (_, row) in enumerate(df.iterrows())
-        ]
-
-        for task in asyncio.as_completed(tasks):
-            row_idx, result = await task
-            if not result.get("successful"):
-                errors.append(f"Error processing row {row_idx}: {result.get('error')}")
-
-        return (len(df) - len(errors)) > 0, errors
-
-    successful, errors = asyncio.run(process_all())
-
-    # Emit task completed
-    event_helper.task_completed(
-        total_items=len(df),
-        completed_items=len(df) - len(errors),
-        failed_items=len(errors),
-    )
-
-    error_message = "\n    ".join(errors) if errors else ""
-    return successful, error_message
-
-
-async def process_line_metrics_only(
-    row: dict,
-    agent_config: AgentConfig,
-    subject_tree: Optional[list] = None,
-    row_idx: Optional[int] = None,
-    event_helper: Optional[BatchEventHelper] = None,
-) -> Dict[str, Any]:
-    """
-    Process a single row to generate ONLY metrics (Step 2).
-    Assumes semantic model YAML already exists.
-
-    Args:
-        row: CSV row data containing question and sql
-        agent_config: Agent configuration
-        subject_tree: Optional predefined subject tree categories
-        row_idx: Optional row index for progress events
-        event_helper: Optional BatchEventHelper to stream progress events
-    """
-    logger.info(f"Generating metrics for: {row}")
-
+    # Get database context
     current_db_config = agent_config.current_db_config()
-    sql = row["sql"]
-    question = row["question"]
-    item_id = str(row_idx) if row_idx is not None else "unknown"
-
-    table_names = extract_table_names(sql, agent_config.db_type)
-    full_table_name = table_names[0] if table_names else ""
-
-    # Extract the pure table name (last part of fully qualified name)
-    table_name = full_table_name.split(".")[-1] if full_table_name else ""
-
-    if event_helper:
-        event_helper.item_started(
-            item_id=item_id,
-            row_idx=row_idx,
-            question=question,
-            table_name=table_name,
-        )
-
-    if not full_table_name:
-        if event_helper:
-            event_helper.item_failed(
-                item_id=item_id,
-                error="No table name found in SQL query",
-                row_idx=row_idx,
-                question=question,
-                table_name=table_name,
-            )
-        return {"successful": False, "error": "No table name found in SQL query"}
-
-    # Look for existing semantic_model YAML file
-    path_manager = get_path_manager()
-    semantic_model_dir = str(path_manager.semantic_model_path(agent_config.current_namespace))
-    semantic_model_file = os.path.join(semantic_model_dir, f"{table_name}.yml")
-
-    if not os.path.exists(semantic_model_file):
-        logger.warning(f"Semantic model file not found: {semantic_model_file}, proceeding anyway")
-        semantic_model_file = ""
-
-    # Generate metrics using gen_metrics node
-    metrics_user_message = (
-        f"Generate metrics for the following SQL query:\n\nSQL:\n{sql}\n\n"
-        f"Question: {question}\n\nTable: {table_name}"
-    )
-    if semantic_model_file:
-        metrics_user_message += f"\n\nUse the following semantic model: {semantic_model_file}"
 
     metrics_input = SemanticNodeInput(
-        user_message=metrics_user_message,
+        user_message=batch_message,
         catalog=current_db_config.catalog,
         database=current_db_config.database,
         db_schema=current_db_config.schema,
@@ -185,43 +82,46 @@ async def process_line_metrics_only(
     action_history_manager = ActionHistoryManager()
     metrics_node.input = metrics_input
 
-    try:
-        async for action in metrics_node.execute_stream(action_history_manager):
-            if event_helper:
-                event_helper.item_processing(
-                    item_id=item_id,
-                    action_name="gen_metrics",
-                    status=_action_status_value(action),
-                    row_idx=row_idx,
-                    messages=action.messages,
-                    output=action.output,
-                    question=question,
-                    table_name=table_name,
-                )
-            if action.status == ActionStatus.SUCCESS and action.output:
-                logger.debug(f"Metrics generation action: {action.messages}")
+    # Emit task processing
+    event_helper.task_processing(total_items=len(df))
 
-        logger.info(f"Generated metrics for {question}")
-        if event_helper:
-            event_helper.item_completed(
-                item_id=item_id,
-                row_idx=row_idx,
-                question=question,
-                table_name=table_name,
-            )
-        return {"successful": True, "error": ""}
-    except Exception as e:
-        logger.error(f"Error generating metrics: {e}")
-        if event_helper:
-            event_helper.item_failed(
-                item_id=item_id,
-                error=f"Error generating metrics: {str(e)}",
-                exception_type=type(e).__name__,
-                row_idx=row_idx,
-                question=question,
-                table_name=table_name,
-            )
-        return {"successful": False, "error": str(e)}
+    async def process_batch() -> dict:
+        try:
+            async for action in metrics_node.execute_stream(action_history_manager):
+                if event_helper:
+                    event_helper.item_processing(
+                        item_id="batch",
+                        action_name="gen_metrics",
+                        status=_action_status_value(action),
+                        messages=action.messages,
+                        output=action.output,
+                    )
+                if action.status == ActionStatus.SUCCESS and action.output:
+                    logger.debug(f"Metrics generation action: {action.messages}")
+
+            logger.info("Batch metrics extraction completed successfully")
+            return {"successful": True, "error": ""}
+        except Exception as e:
+            logger.error(f"Error in batch metrics extraction: {e}")
+            return {"successful": False, "error": str(e)}
+
+    result = asyncio.run(process_batch())
+
+    # Emit task completed
+    if result.get("successful"):
+        event_helper.task_completed(
+            total_items=len(df),
+            completed_items=len(df),
+            failed_items=0,
+        )
+        return True, ""
+    else:
+        event_helper.task_completed(
+            total_items=len(df),
+            completed_items=0,
+            failed_items=len(df),
+        )
+        return False, result.get("error", "Unknown error")
 
 
 def init_semantic_yaml_metrics(
