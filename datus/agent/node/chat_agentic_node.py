@@ -361,7 +361,11 @@ class ChatAgenticNode(GenSQLAgenticNode):
 
             # Collect action history and calculate execution stats
             all_actions = action_history_manager.get_actions()
-            tool_calls = [action for action in all_actions if action.role == ActionRole.TOOL]
+            tool_calls = [
+                action
+                for action in all_actions
+                if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
+            ]
 
             execution_stats = {
                 "total_actions": len(all_actions),

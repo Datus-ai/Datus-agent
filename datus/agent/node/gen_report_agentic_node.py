@@ -428,7 +428,11 @@ class GenReportAgenticNode(AgenticNode):
                             break
 
             # Collect execution stats
-            tool_calls = [action for action in all_actions if action.role == ActionRole.TOOL]
+            tool_calls = [
+                action
+                for action in all_actions
+                if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
+            ]
             execution_stats = {
                 "total_actions": len(all_actions),
                 "tool_calls_count": len(tool_calls),
