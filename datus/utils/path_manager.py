@@ -179,6 +179,7 @@ class DatusPathManager:
         "trajectory": "trajectory_dir",
         "semantic_models": "semantic_models_dir",
         "sql_summaries": "sql_summaries_dir",
+        "ext_knowledge": "ext_knowledge_dir",
     }
 
     # Configuration file paths

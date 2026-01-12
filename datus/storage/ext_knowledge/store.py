@@ -188,62 +188,6 @@ class ExtKnowledgeRAG:
     def get_knowledge_size(self):
         return self.store.table_size()
 
-    def add_knowledge(
-        self,
-        search_text: str,
-        explanation: str,
-        subject_path: List[str],
-        name: Optional[str] = None,
-    ):
-        """Add a new knowledge entry.
-
-        Args:
-            search_text: Business search_text/concept
-            explanation: Detailed explanation
-            subject_path: Subject hierarchy path (e.g., "Finance/Revenue" or ["Finance", "Revenue"])
-            name: Optional name for the entry (defaults to search_text if not provided)
-
-        Returns:
-            Dict with keys:
-                - success (bool): Whether the operation succeeded
-                - message (str): Success or error message
-                - data (dict): Created entry details (if successful)
-
-        Examples:
-            >>> rag.add_knowledge(
-            ...     search_text="GMV",
-            ...     explanation="Gross Merchandise Value is the total sales value...",
-            ...     subject_path="Finance/Revenue"
-            ... )
-            {'success': True, 'message': 'Knowledge entry added successfully', 'data': {...}}
-        """
-        try:
-            # Validate inputs
-            if not search_text or not search_text.strip():
-                return {"success": False, "message": "search_text cannot be empty", "data": None}
-
-            if not explanation or not explanation.strip():
-                return {"success": False, "message": "explanation cannot be empty", "data": None}
-
-            if not subject_path:
-                return {"success": False, "message": "subject_path cannot be empty", "data": None}
-
-            # Use search_text as name if not provided
-            if not name:
-                name = search_text
-
-            # Store the knowledge entry
-            self.store.store_knowledge(
-                subject_path=subject_path,
-                name=name,
-                search_text=search_text,
-                explanation=explanation,
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to add knowledge: {str(e)}")
-            raise e
-
     def query_knowledge(
         self,
         query_text: Optional[str] = None,

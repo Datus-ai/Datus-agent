@@ -14,7 +14,7 @@ def sample_table():
             "domain": ["Health Care", "Finance/Banking", "Tech"],
             "layer1": ["Cat 1", "Cat2", "Cat 3"],
             "layer2": ["Sub/A", "Sub B", "Sub/C"],
-            "terminology": ["Term 1", "Term/2", "Term3"],
+            "search_text": ["Term 1", "Term/2", "Term3"],
         }
     )
 
@@ -24,7 +24,7 @@ def test_concat_columns_with_cleaning(sample_table):
     replacements = {" ": "_", "/": "_"}
     result = concat_columns_with_cleaning(
         sample_table,
-        columns=["domain", "layer1", "layer2", "terminology"],
+        columns=["domain", "layer1", "layer2", "search_text"],
         separator="_",
         replacements=replacements,
     )
@@ -35,7 +35,7 @@ def test_concat_columns_with_cleaning(sample_table):
 
 # Test concat_columns without cleaning
 def test_concat_columns(sample_table):
-    result = concat_columns(sample_table, columns=["domain", "layer1", "layer2", "terminology"], separator="_")
+    result = concat_columns(sample_table, columns=["domain", "layer1", "layer2", "search_text"], separator="_")
     expected_result = ["Health Care_Cat 1_Sub/A_Term 1", "Finance/Banking_Cat2_Sub B_Term/2", "Tech_Cat 3_Sub/C_Term3"]
     assert result.to_pylist() == expected_result
 
@@ -47,7 +47,7 @@ def test_null_handling(sample_table):
 
     result = concat_columns_with_cleaning(
         table_with_nulls,
-        columns=["domain", "layer1", "layer2", "terminology", "null_column"],
+        columns=["domain", "layer1", "layer2", "search_text", "null_column"],
         separator="_",
         null_handling="replace",
         null_replacement="NULL",

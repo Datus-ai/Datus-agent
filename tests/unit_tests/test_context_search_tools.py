@@ -272,7 +272,7 @@ def test_available_tools_with_knowledge(build_context_tools):
 
 def test_get_knowledge_success(build_context_tools):
     knowledge_detail = {
-        "terminology": "GMV",
+        "search_text": "GMV",
         "explanation": "Gross Merchandise Value is the total sales value",
     }
     tools, _, _, _, ext_knowledge_rag = build_context_tools(

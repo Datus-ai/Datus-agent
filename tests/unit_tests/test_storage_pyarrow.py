@@ -86,13 +86,13 @@ def sample_ext_knowledge_data():
         {
             "subject_path": ["Finance", "Banking", "Retail"],
             "name": "APR",
-            "terminology": "APR",
+            "search_text": "APR",
             "explanation": "Annual Percentage Rate - the yearly cost of a loan",
         },
         {
             "subject_path": ["Finance", "Investment", "Stocks"],
             "name": "P/E_Ratio",
-            "terminology": "P/E Ratio",
+            "search_text": "P/E Ratio",
             "explanation": "Price-to-earnings ratio - a valuation metric",
         },
     ]
@@ -336,14 +336,14 @@ class TestExtKnowledgeStorePyArrow:
         knowledge_data = [
             {
                 "subject_path": ["Finance", "Banking"],
-                "terminology": "old_term",
+                "search_text": "old_term",
                 "name": "old_term",
                 "explanation": "This is an explanation for old term",
             },
         ]
         storage.batch_store_knowledge(knowledge_data)
 
-        # Rename the terminology (LanceDB item, not subject node)
+        # Rename the search_text (LanceDB item, not subject node)
         success = storage.rename(
             old_path=["Finance", "Banking", "old_term"], new_path=["Finance", "Banking", "new_term"]
         )
@@ -364,7 +364,7 @@ class TestExtKnowledgeStorePyArrow:
             {
                 "subject_path": ["Finance", "Banking"],
                 "name": "term1",
-                "terminology": "term1",
+                "search_text": "term1",
                 "explanation": "Explanation 1",
             },
         ]
@@ -614,7 +614,7 @@ class TestReturnTypeConsistency:
             {
                 "subject_path": ["Test", "L1", "L2"],
                 "name": "name",
-                "terminology": "term",
+                "search_text": "term",
                 "explanation": "explanation",
                 "created_at": "2023-01-01T00:00:00Z",
             }
