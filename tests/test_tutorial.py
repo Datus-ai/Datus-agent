@@ -544,72 +544,9 @@ class TestBenchmarkTutorialInitMetrics:
 # =============================================================================
 
 
-@pytest.mark.asyncio
-async def test_process_line_returns_error_without_table(monkeypatch):
-    row = {"sql": "SELECT 1", "question": "q"}
-    agent_config = DummyAgentConfig()
-    monkeypatch.setattr(metric_init, "extract_table_names", lambda sql, db_type: [])
-
-    result = await metric_init.process_line_metrics_only(row, agent_config)
-
-    assert result["successful"] is False
-    assert result["error"] == "No table name found in SQL query"
-
-
-@pytest.mark.asyncio
-async def test_process_line_reports_metrics_generation_exception_old(monkeypatch):
-    # This test is now deprecated since we split semantic model and metrics generation
-    # Keeping for reference but it doesn't test the new flow
-    row = {"sql": "SELECT * FROM schools", "question": "Describe schools"}
-    agent_config = DummyAgentConfig()
-
-    # Create a node class that raises an exception during execute_stream
-    class FailingNode:
-        NODE_NAME = "gen_metrics"
-
-        def __init__(self, *args, **kwargs):
-            self.input = None
-
-        def execute_stream(self, action_history_manager):
-            return AsyncIteratorStub(exc=RuntimeError("metrics failure"))
-
-    monkeypatch.setattr(metric_init, "GenMetricsAgenticNode", FailingNode)
-    monkeypatch.setattr(metric_init, "extract_table_names", lambda sql, db_type: ["schools"])
-
-    result = await metric_init.process_line_metrics_only(row, agent_config)
-
-    assert result["successful"] is False
-    # The error message is just the exception string
-    assert "metrics failure" in result["error"]
-
-
-@pytest.mark.asyncio
-async def test_process_line_reports_metrics_generation_exception(monkeypatch):
-    row = {"sql": "SELECT * FROM metrics", "question": "Describe metrics"}
-    agent_config = DummyAgentConfig()
-
-    # Create a node class that raises an exception during execute_stream
-    class FailingNode:
-        NODE_NAME = "gen_metrics"
-
-        def __init__(self, *args, **kwargs):
-            self.input = None
-
-        def execute_stream(self, action_history_manager):
-            return AsyncIteratorStub(exc=RuntimeError("metrics failure"))
-
-    monkeypatch.setattr(metric_init, "GenMetricsAgenticNode", FailingNode)
-    monkeypatch.setattr(metric_init, "extract_table_names", lambda sql, db_type: ["metrics"])
-
-    result = await metric_init.process_line_metrics_only(row, agent_config)
-
-    assert result["successful"] is False
-    # The error message is just the exception string
-    assert "metrics failure" in result["error"]
-
-
 @pytest.mark.acceptance
-def test_init_success_story_metrics_collects_all_errors(monkeypatch):
+def test_init_success_story_metrics_returns_error_on_exception(monkeypatch):
+    """Test that init_success_story_metrics returns error when GenMetricsAgenticNode fails."""
     df = pd.DataFrame(
         [
             {"sql": "SELECT * FROM schools", "question": "Q1"},
@@ -618,25 +555,52 @@ def test_init_success_story_metrics_collects_all_errors(monkeypatch):
     )
     monkeypatch.setattr(metric_init.pd, "read_csv", lambda path: df)
 
-    responses = [
-        {"successful": False, "error": "LLM refused to run"},
-        RuntimeError("agent blew up"),
-    ]
+    # Create a node class that raises an exception during execute_stream
+    class FailingNode:
+        def __init__(self, *args, **kwargs):
+            self.input = None
 
-    async def fake_process_line(*args, **kwargs):
-        result = responses.pop(0)
-        if isinstance(result, Exception):
-            raise result
-        return result
+        def execute_stream(self, action_history_manager):
+            return AsyncIteratorStub(exc=RuntimeError("metrics generation failed"))
 
-    monkeypatch.setattr(metric_init, "process_line_metrics_only", fake_process_line)
+    monkeypatch.setattr(metric_init, "GenMetricsAgenticNode", FailingNode)
 
     args = Namespace(success_story="anything.csv")
     success, error_message = metric_init.init_success_story_metrics(args, DummyAgentConfig())
 
     assert success is False
-    assert "Error processing row 1: LLM refused to run" in error_message
-    assert "Error processing row 2: agent blew up" in error_message
+    assert "metrics generation failed" in error_message
+
+
+def test_init_success_story_metrics_success(monkeypatch):
+    """Test that init_success_story_metrics returns success when processing completes."""
+    df = pd.DataFrame(
+        [
+            {"sql": "SELECT * FROM schools", "question": "Q1"},
+        ]
+    )
+    monkeypatch.setattr(metric_init.pd, "read_csv", lambda path: df)
+
+    # Create a node class that succeeds
+    class SuccessNode:
+        def __init__(self, *args, **kwargs):
+            self.input = None
+
+        def execute_stream(self, action_history_manager):
+            action = SimpleNamespace(
+                status=ActionStatus.SUCCESS,
+                output={"metrics": []},
+                messages="Metrics extracted",
+            )
+            return AsyncIteratorStub(actions=[action])
+
+    monkeypatch.setattr(metric_init, "GenMetricsAgenticNode", SuccessNode)
+
+    args = Namespace(success_story="anything.csv")
+    success, error_message = metric_init.init_success_story_metrics(args, DummyAgentConfig())
+
+    assert success is True
+    assert error_message == ""
 
 
 # =============================================================================
