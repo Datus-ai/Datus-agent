@@ -325,15 +325,11 @@ class Agent:
         payload = event.payload or {}
 
         if stage == BatchStage.TASK_STARTED:
-            logger.info("Metrics batch task started")
-            return
-
-        if stage == BatchStage.TASK_PROCESSING:
-            logger.info("Metrics batch task processing")
+            logger.info("Metrics initialization started")
             return
 
         if stage == BatchStage.TASK_COMPLETED:
-            logger.info("Metrics batch task completed.")
+            logger.info("Metrics initialization completed.")
             return
 
         if stage == BatchStage.ITEM_PROCESSING:
@@ -525,12 +521,11 @@ class Agent:
                 elif hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
                     successful, error_message = init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
                 else:
-                    successful, error_message = init_success_story_metrics(
+                    successful, error_message, _ = init_success_story_metrics(
                         self.args,
                         self.global_config,
                         subject_tree,
                         emit=self._emit_metrics_event,
-                        # pool_size=pool_size,
                     )
 
                 if successful:
