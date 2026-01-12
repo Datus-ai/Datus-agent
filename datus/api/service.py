@@ -104,19 +104,8 @@ class DatusAPIService:
 
     def _create_sql_task(self, request: RunWorkflowRequest, task_id: str, agent: Agent) -> SqlTask:
         """Create SQL task from request parameters."""
-        # Load default metric_meta (will return default values if not configured)
-        metric_meta = agent.global_config.current_metric_meta("default")
-        external_knowledge = metric_meta.ext_knowledge
-        if metric_meta.subject_path and metric_meta.subject_path.strip():
-            subject_path = [c.strip() for c in metric_meta.subject_path.split("/") if c.strip()]
-        else:
-            subject_path = None
-
-        # Override with request parameters if provided
-        if request.subject_path is not None:
-            subject_path = request.subject_path
-        if request.ext_knowledge is not None:
-            external_knowledge = request.ext_knowledge
+        subject_path = request.subject_path
+        external_knowledge = request.ext_knowledge or ""
 
         return SqlTask(
             id=task_id,

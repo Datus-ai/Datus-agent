@@ -69,20 +69,6 @@ class DbConfig:
 
 
 @dataclass
-class MetricMeta:
-    subject_path: str = field(default="DEFAULT_DOMAIN/DEFAULT_LAYER1/DEFAULT_LAYER2", init=True)
-    ext_knowledge: str = field(default="DEFAULT_EXT_KNOWLEDGE", init=True)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-    @staticmethod
-    def filter_kwargs(cls, kwargs):
-        valid_fields = {f.name for f in fields(cls)}
-        return MetricMeta(**{k: resolve_env(v) for k, v in kwargs.items() if k in valid_fields})
-
-
-@dataclass
 class ModelConfig:
     type: str
     base_url: str
@@ -250,7 +236,6 @@ class AgentConfig:
         self.namespaces: Dict[str, Dict[str, DbConfig]] = {}
         self._init_namespace_config(kwargs.get("namespace", {}))
 
-        self.metric_meta = {k: MetricMeta.filter_kwargs(MetricMeta, v) for k, v in kwargs.get("metrics", {}).items()}
         self.workspace_root = None
         # use default embedding model if not provided
         if storage_config := kwargs.get("storage", {}):
@@ -380,17 +365,6 @@ class AgentConfig:
         self,
     ) -> Dict[str, DbConfig]:
         return self.namespaces[self._current_namespace]
-
-    def current_metric_meta(self, metric_meta_name: str = "") -> MetricMeta:
-        if not metric_meta_name:
-            raise DatusException(
-                code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message_args={"field_name": "metric_name"},
-            )
-        if metric_meta_name not in self.metric_meta:
-            # Return a default MetricMeta instance with default values
-            return MetricMeta()
-        return self.metric_meta[metric_meta_name]
 
     @property
     def output_dir(self) -> str:
@@ -554,12 +528,6 @@ class AgentConfig:
             # Update all model configs to enable tracing if command line flag is set
             for model_config in self.models.values():
                 model_config.save_llm_trace = True
-        if kwargs.get("metric_meta", ""):
-            current_metric_meta = self.current_metric_meta(metric_meta_name=kwargs["metric_meta"])
-            if kwargs.get("subject_path", ""):
-                current_metric_meta.subject_path = kwargs["subject_path"]
-            if kwargs.get("ext_knowledge", ""):
-                current_metric_meta.ext_knowledge = kwargs["ext_knowledge"]
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

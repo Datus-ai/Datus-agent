@@ -339,11 +339,11 @@ export MF_MODEL_PATH=</path/to/semantic-models-dir>
 ### Bootstrap Metrics Generation
 
 ```bash
-python -m datus.main bootstrap-kb --namespace duckdb --components metrics --metric_meta tutorial --kb_update_strategy overwrite
+python -m datus.main bootstrap-kb --namespace duckdb --components metrics --kb_update_strategy overwrite
 ```
 
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --workflow metric_to_sql --metric_meta tutorial
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --workflow metric_to_sql
 ```

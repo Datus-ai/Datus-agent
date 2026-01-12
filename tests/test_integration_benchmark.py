@@ -39,7 +39,6 @@ def test_benchmark_bird(agent_config: AgentConfig, db_manager: DBManager):
             "task_ids": target_task_ids,  # for evaluation
             "task_db_name": "",
             "task_schema": "",
-            "metric_meta": "",
             "subject_path": "",
             "task_ext_knowledge": "",
             "current_date": None,

@@ -40,8 +40,7 @@ Data Table/Historical SQLs → Semantic Model → Business Metrics
 datus bootstrap-kb \
     --namespace your_namespace \
     --components metrics \
-    --success_story path/to/success_story.csv \
-    --metric_meta business_meta
+    --success_story path/to/success_story.csv
 ```
 
 ```bash
@@ -49,8 +48,7 @@ datus bootstrap-kb \
 datus bootstrap-kb \
     --namespace your_namespace \
     --components metrics \
-    --semantic_yaml path/to/semantic_model.yaml \
-    --metric_meta business_meta
+    --semantic_yaml path/to/semantic_model.yaml
 ```
 
 ### Key Parameters
@@ -61,7 +59,6 @@ datus bootstrap-kb \
 | `--components` | ✅ | Components to initialize | `metrics` |
 | `--success_story` | ⚠️ | A CSV file containing historical SQLs and questions (required if not using `--semantic_yaml`) | `benchmark/semantic_layer/success_story.csv` |
 | `--semantic_yaml` | ⚠️ | Semantic model YAML file (required if not using `--success_story`) | `models/semantic_model.yaml` |
-| `--metric_meta` | ✅ | Metric metadata | `ecommerce` configuration component in `agent.yml` |
 | `--kb_update_strategy` | ✅ | Update strategy | `overwrite`/`incremental` |
 | `--pool_size` | ❌ | Concurrent thread count | `4` |
 
@@ -143,7 +140,6 @@ datus bootstrap-kb \
     --namespace your_db \
     --components metrics \
     --success_story clean_success_stories.csv \
-    --metric_meta business_meta \
     --kb_update_strategy overwrite \
     --pool_size 4
 ```

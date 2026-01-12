@@ -159,9 +159,6 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         help="Pull semantic models and metrics from semantic adapter (e.g., metricflow, dbt, cube)",
     )
-    bootstrap_parser.add_argument(
-        "--metric_meta", type=str, default="default", help="Metric meta for the success story"
-    )
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
 
     bootstrap_parser.add_argument("--subject_path", type=str, help="Subject path of the success story")
@@ -202,7 +199,6 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
     benchmark_parser.add_argument("--task_db_name", type=str, help="Database name for the task")
     benchmark_parser.add_argument("--task_schema", type=str, help="Schema name for the task")
-    benchmark_parser.add_argument("--metric_meta", type=str, default="default", help="Metric meta for the task")
     benchmark_parser.add_argument("--subject_path", type=str, help="Subject path for the task")
     benchmark_parser.add_argument("--task_ext_knowledge", type=str, default="", help="External knowledge for the task")
     benchmark_parser.add_argument(

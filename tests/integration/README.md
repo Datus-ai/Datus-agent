@@ -37,13 +37,13 @@ python -m datus.main benchmark --namespace snowflake --benchmark spider2 --max_w
 
 ```shell
 # Basic usage
-python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer
 
 # With custom testing set file
-python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial --testing_set /path/to/custom_test.csv
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --testing_set /path/to/custom_test.csv
 
 # With specific task IDs(line numbers)
-python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --metric_meta tutorial --benchmark_task_ids <id1>  <id2>...
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --benchmark_task_ids <id1>  <id2>...
 ```
 
 These commands will automatically:

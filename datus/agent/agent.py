@@ -749,8 +749,6 @@ class Agent:
 
         logger.info(f"Loaded {len(tasks)} tasks from semantic_layer benchmark")
 
-        metric_meta = self.global_config.current_metric_meta(self.args.metric_meta)
-
         for task in tasks:
             task_id = str(task["question_id"])
             if target_task_ids and task_id not in target_task_ids:
@@ -760,23 +758,12 @@ class Agent:
             logger.info(f"start benchmark with {task_id}: {question}")
             current_db_config = self.global_config.current_db_config()
 
-            # Merge external knowledge from file with metric_meta
-            combined_ext_knowledge = metric_meta.ext_knowledge
-            if "external_knowledge" in task and task["external_knowledge"]:
-                if combined_ext_knowledge:
-                    # Combine both knowledge sources
-                    combined_ext_knowledge = f"{combined_ext_knowledge}\n\n{task['external_knowledge']}"
-                else:
-                    # Use only file knowledge if metric_meta doesn't have any
-                    combined_ext_knowledge = task["external_knowledge"]
+            combined_ext_knowledge = task.get("external_knowledge", "") or ""
 
             # Use hierarchical save directory structure
             output_dir = self.global_config.get_save_run_dir(run_id) if run_id else self.global_config.output_dir
 
-            if metric_meta.subject_path and metric_meta.subject_path.strip():
-                subject_path = [c.strip() for c in metric_meta.subject_path.split("/") if c.strip()]
-            else:
-                subject_path = None
+            subject_path = None
             self.run(
                 SqlTask(
                     id=task_id,
