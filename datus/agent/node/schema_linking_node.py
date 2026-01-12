@@ -197,9 +197,7 @@ class SchemaLinkingNode(Node):
                 return ""
 
             # Execute semantic search
-            search_results = knowledge_rag.query_knowledge(
-                query_text=user_query, subject_path=subject_path, top_n=5
-            )
+            search_results = knowledge_rag.query_knowledge(query_text=user_query, subject_path=subject_path, top_n=5)
 
             # Format search results
             if search_results:
