@@ -206,7 +206,7 @@ class SchemaLinkingNode(Node):
             if search_results:
                 knowledge_items = []
                 for result in search_results:
-                    knowledge_items.append(f"- {result['terminology']}: {result['explanation']}")
+                    knowledge_items.append(f"- {result['search_text']}: {result['explanation']}")
 
                 formatted_knowledge = "\n".join(knowledge_items)
                 logger.info(f"Found {len(knowledge_items)} relevant knowledge entries")

@@ -227,15 +227,15 @@ class GenerationTools:
             logger.error(f"Error generating reference SQL ID: {e}")
             return FuncToolResult(success=0, error=f"Failed to generate ID: {str(e)}")
 
-    def generate_ext_knowledge_id(self, terminology: str, subject_path: str = "") -> FuncToolResult:
+    def generate_ext_knowledge_id(self, search_text: str, subject_path: str = "") -> FuncToolResult:
         """
-        Generate a unique ID for external knowledge entry based on terminology and subject path.
+        Generate a unique ID for external knowledge entry based on search_text and subject path.
 
         This tool helps create consistent, unique IDs for external knowledge entries.
         Use this tool when you need to generate an ID for a new knowledge entry.
 
         Args:
-            terminology: The business terminology/concept that will be used to generate the ID
+            search_text: The business search_text/concept that will be used to generate the ID
             subject_path: Optional subject path string (format: "domain/layer1/layer2")
 
         Returns:
@@ -246,7 +246,7 @@ class GenerationTools:
 
         Example:
             result = generate_ext_knowledge_id(
-                terminology="GMV",
+                search_text="GMV",
                 subject_path="Finance/Revenue/Metrics"
             )
         """
@@ -259,7 +259,7 @@ class GenerationTools:
                 subject_path_list = [part.strip() for part in subject_path.split("/") if part.strip()]
 
             # Generate the ID using the same utility as the storage system
-            generated_id = gen_ext_knowledge_id(subject_path_list, terminology)
+            generated_id = gen_ext_knowledge_id(subject_path_list, search_text)
 
             logger.info(f"Generated external knowledge ID: {generated_id}")
             return FuncToolResult(result=generated_id)

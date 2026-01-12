@@ -360,8 +360,8 @@ class ContextSearchTools:
                 - 'success' (int): 1 if the search succeeded, 0 otherwise.
                 - 'error' (str or None): Error message if any.
                 - 'result' (list): On success, a list of matching entries, each containing:
-                    - 'terminology': Business terminology/concept
-                    - 'explanation': Detailed explanation of the terminology
+                    - 'search_text': Business search_text/concept
+                    - 'explanation': Detailed explanation of the search_text
         """
         try:
             result = self.ext_knowledge_rag.query_knowledge(
@@ -388,8 +388,8 @@ class ContextSearchTools:
                 - 'success' (int): 1 if the search succeeded, 0 otherwise.
                 - 'error' (str or None): Error message if any.
                 - 'result' (dict): On success, the knowledge entry containing:
-                    - 'terminology': Business terminology/concept
-                    - 'explanation': Detailed explanation of the terminology
+                    - 'search_text': Business search_text/concept
+                    - 'explanation': Detailed explanation of the search_text
         """
         try:
             result = self.ext_knowledge_rag.get_knowledge_detail(

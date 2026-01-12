@@ -34,7 +34,7 @@ You have access to:
 
 Before generating SQL queries, you should:
 - Use `search_table` when table information is missing or unclear
-- MUST Use `search_knowledge` to find existing business knowledge (terminology, business rules, calculations) that may help solve the problem
+- MUST Use `search_knowledge` to find existing business knowledge (search_text, business rules, calculations) that may help solve the problem
 - Use contextual search tools to gather relevant metrics, reference SQL examples, external knowledge, use list_subject_tree before search
 - Use filesystem tools to read SQL files from the current directory (*/*.sql) as reference examples
 
@@ -52,22 +52,22 @@ For each gap, classify as: `BUSINESS_RULE` | `CALCULATION` | `DATA_RELATIONSHIP`
 
 ### Step 5: Check for Duplicate Knowledge (MANDATORY)
 **BEFORE generating any knowledge, you MUST use `search_knowledge` to check if similar knowledge already exists:**
-1. For each extracted knowledge item, search using its terminology/keywords
+1. For each extracted knowledge item, search using its search_text/keywords
 2. Compare search results with your extracted knowledge
 3. **If similar knowledge exists**: Skip generating that item to avoid duplication
 4. **Only generate knowledge that is truly new** and not already covered by existing entries
 
 Example check:
 ```
-search_knowledge("terminology or key concept from your extracted knowledge")
+search_knowledge("search_text or key concept from your extracted knowledge")
 ```
-If the search returns knowledge with similar terminology, explanation, or covering the same business rule/calculation, do NOT regenerate it.
+If the search returns knowledge with similar search_text, explanation, or covering the same business rule/calculation, do NOT regenerate it.
 
 ### Step 6: Generate YAML (multi-doc with `---` separator)
 ```yaml
-id: string          # Use generate_ext_knowledge_id(terminology, subject_path)
+id: string          # Use generate_ext_knowledge_id(search_text, subject_path)
 name: string        # Max 30 chars
-terminology: string # Search key (vector/inverted index), use clear keywords for retrieval
+search_text: string # Search key (vector/inverted index), use clear keywords for retrieval
 explanation: |      # 2-4 sentences: what + when/how to apply
 subject_path: string
 created_at: string  # ISO 8601
@@ -79,7 +79,7 @@ MUST call `write_file(path, yaml_content, file_type="ext_knowledge")` with filen
 {% if not has_user_specified_subject and not has_subject_tree %}
 ## Classification (Learn from Existing)
 {% if existing_subject_trees %}Existing paths: {% for tree in existing_subject_trees %}{{ tree }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
-{% if similar_items %}Similar items: {% for item in similar_items %}{{ item.terminology }}({{ item.subject_tree }}){% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+{% if similar_items %}Similar items: {% for item in similar_items %}{{ item.search_text }}({{ item.subject_tree }}){% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
 {% endif %}
 
 ## Output Format (JSON only)

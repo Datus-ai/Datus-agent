@@ -31,12 +31,12 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             schema=pa.schema(
                 base_schema_columns()
                 + [
-                    pa.field("terminology", pa.string()),
+                    pa.field("search_text", pa.string()),
                     pa.field("explanation", pa.string()),
                     pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
                 ]
             ),
-            vector_source_name="explanation",
+            vector_source_name="search_text",
         )
 
     def create_indices(self):
@@ -46,7 +46,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
 
         # Create FTS index for knowledge-specific fields
         self._ensure_table_ready()
-        self.create_fts_index(["terminology", "explanation"])
+        self.create_fts_index(["search_text", "explanation"])
 
     def batch_store_knowledge(
         self,
@@ -57,7 +57,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         Args:
             knowledge_entries: List of knowledge entry dictionaries, each containing:
                 - subject_path: List[str] - subject hierarchy path components
-                - terminology: str - business terminology/concept
+                - search_text: str - business search_text/concept
                 - explanation: str - detailed explanation
                 - name: str - name for the knowledge entry
                 - created_at: str - creation timestamp (optional)
@@ -70,11 +70,11 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         for entry in knowledge_entries:
             subject_path = entry.get("subject_path", [])
             name = entry.get("name")
-            terminology = entry.get("terminology", "")
+            search_text = entry.get("search_text", "")
             explanation = entry.get("explanation", "")
 
             # Validate required fields
-            if not all([subject_path, name, terminology, explanation]):
+            if not all([subject_path, name, search_text, explanation]):
                 logger.warning(f"Skipping entry with missing required fields: {entry}")
                 continue
 
@@ -87,16 +87,16 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         self,
         subject_path: List[str],
         name: str,
-        terminology: str,
+        search_text: str,
         explanation: str,
     ):
         """Store a single knowledge entry.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
-            terminology: Business terminology/concept
+            search_text: Business search_text/concept
             explanation: Detailed explanation
-            name: Name for the knowledge entry (defaults to terminology if not provided)
+            name: Name for the knowledge entry (defaults to search_text if not provided)
         """
         # Find or create the subject tree path to get node_id
         subject_node_id = self.subject_tree.find_or_create_path(subject_path)
@@ -105,7 +105,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             {
                 "subject_node_id": subject_node_id,
                 "name": name,
-                "terminology": terminology,
+                "search_text": search_text,
                 "explanation": explanation,
                 "created_at": self._get_current_timestamp(),
             }
@@ -190,7 +190,7 @@ class ExtKnowledgeRAG:
 
     def add_knowledge(
         self,
-        terminology: str,
+        search_text: str,
         explanation: str,
         subject_path: List[str],
         name: Optional[str] = None,
@@ -198,10 +198,10 @@ class ExtKnowledgeRAG:
         """Add a new knowledge entry.
 
         Args:
-            terminology: Business terminology/concept
+            search_text: Business search_text/concept
             explanation: Detailed explanation
             subject_path: Subject hierarchy path (e.g., "Finance/Revenue" or ["Finance", "Revenue"])
-            name: Optional name for the entry (defaults to terminology if not provided)
+            name: Optional name for the entry (defaults to search_text if not provided)
 
         Returns:
             Dict with keys:
@@ -211,7 +211,7 @@ class ExtKnowledgeRAG:
 
         Examples:
             >>> rag.add_knowledge(
-            ...     terminology="GMV",
+            ...     search_text="GMV",
             ...     explanation="Gross Merchandise Value is the total sales value...",
             ...     subject_path="Finance/Revenue"
             ... )
@@ -219,8 +219,8 @@ class ExtKnowledgeRAG:
         """
         try:
             # Validate inputs
-            if not terminology or not terminology.strip():
-                return {"success": False, "message": "terminology cannot be empty", "data": None}
+            if not search_text or not search_text.strip():
+                return {"success": False, "message": "search_text cannot be empty", "data": None}
 
             if not explanation or not explanation.strip():
                 return {"success": False, "message": "explanation cannot be empty", "data": None}
@@ -228,15 +228,15 @@ class ExtKnowledgeRAG:
             if not subject_path:
                 return {"success": False, "message": "subject_path cannot be empty", "data": None}
 
-            # Use terminology as name if not provided
+            # Use search_text as name if not provided
             if not name:
-                name = terminology
+                name = search_text
 
             # Store the knowledge entry
             self.store.store_knowledge(
                 subject_path=subject_path,
                 name=name,
-                terminology=terminology,
+                search_text=search_text,
                 explanation=explanation,
             )
 

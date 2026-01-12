@@ -20,8 +20,8 @@ class ExtKnowledgeNodeInput(BaseInput):
     """Input model for external knowledge generation node."""
 
     user_message: str = Field(..., description="User's input message or request")
-    terminology: Optional[str] = Field(default=None, description="Business terminology/concept to define")
-    explanation: Optional[str] = Field(default=None, description="Existing explanation for the terminology")
+    search_text: Optional[str] = Field(default=None, description="Business search_text/concept to define")
+    explanation: Optional[str] = Field(default=None, description="Existing explanation for the knowledge")
     subject_path: Optional[str] = Field(
         default=None, description="Subject path for classification (e.g., 'Finance/Revenue')"
     )

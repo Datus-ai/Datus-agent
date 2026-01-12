@@ -350,15 +350,15 @@ class ExtKnowledgePanel(Vertical):
     def compose(self) -> ComposeResult:
         knowledge_name = self.entry.get("name", "Unnamed Knowledge")
         yield Label(f"📚 [bold cyan]Knowledge: {knowledge_name}[/]")
-        terminology_field = InputWithLabel(
-            "Terminology",
-            self.entry.get("terminology", ""),
+        search_text_field = InputWithLabel(
+            "search_text",
+            self.entry.get("search_text", ""),
             lines=2,
             readonly=self.readonly,
             language="markdown",
         )
-        self.fields.append(terminology_field)
-        yield terminology_field
+        self.fields.append(search_text_field)
+        yield search_text_field
 
         explanation_field = InputWithLabel(
             "Explanation",
@@ -371,7 +371,7 @@ class ExtKnowledgePanel(Vertical):
         yield explanation_field
 
     def _fill_data(self):
-        self.fields[0].set_value(self.entry.get("terminology", ""))
+        self.fields[0].set_value(self.entry.get("search_text", ""))
         self.fields[1].set_value(self.entry.get("explanation", ""))
 
     def set_readonly(self, readonly: bool) -> None:
@@ -769,7 +769,7 @@ class SubjectScreen(ContextScreen):
         tree.root.expand()
 
         if not tree_data:
-            tree.root.add_leaf("📂 No metrics or reference SQL found", data={"type": "empty"})
+            tree.root.add_leaf("📂 No entry found", data={"type": "empty"})
             return
 
         # Recursively build tree for each root node
@@ -1616,8 +1616,8 @@ class SubjectScreen(ContextScreen):
             details.add_column("Key", style="bright_cyan", width=12)
             details.add_column("Value", style="yellow", ratio=1)
 
-            if terminology := entry.get("terminology"):
-                details.add_row("Terminology", terminology)
+            if search_text := entry.get("search_text"):
+                details.add_row("SearchText", search_text)
             if explanation := entry.get("explanation"):
                 details.add_row("Explanation", explanation)
 

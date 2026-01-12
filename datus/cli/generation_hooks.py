@@ -1228,9 +1228,9 @@ class GenerationHooks(AgentHooks):
                 subject_path = [p.strip() for p in subject_path_str.split("/") if p.strip()]
 
                 # Generate ID for duplicate check
-                terminology = doc.get("terminology", "")
-                item_id = gen_ext_knowledge_id(subject_path, terminology)
-                name = doc.get("name", terminology)
+                search_text = doc.get("search_text", "")
+                item_id = gen_ext_knowledge_id(subject_path, search_text)
+                name = doc.get("name", search_text)
 
                 # Check for duplicate
                 if item_id in existing_ids:
@@ -1243,7 +1243,7 @@ class GenerationHooks(AgentHooks):
                 knowledge_store.store_knowledge(
                     subject_path=subject_path,
                     name=name,
-                    terminology=terminology,
+                    search_text=search_text,
                     explanation=doc.get("explanation", ""),
                 )
 

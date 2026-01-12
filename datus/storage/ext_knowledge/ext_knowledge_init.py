@@ -53,7 +53,7 @@ def init_ext_knowledge(
         logger.info(f"Loaded CSV file with {len(df)} rows: {args.ext_knowledge}")
 
         # Validate required columns
-        required_columns = ["subject_path", "name", "terminology", "explanation"]
+        required_columns = ["subject_path", "name", "search_text", "explanation"]
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             raise ValueError(f"Missing required columns in CSV: {missing_columns}")
@@ -115,14 +115,14 @@ def process_row(
         # Extract and validate required fields
         subject_path = str(row.get("subject_path", "")).strip()
         name = str(row.get("name", "")).strip()
-        terminology = str(row.get("terminology", "")).strip()
+        search_text = str(row.get("search_text", "")).strip()
         explanation = str(row.get("explanation", "")).strip()
 
         # Validate required fields are not empty
-        if not all([subject_path, name, terminology, explanation]):
+        if not all([subject_path, name, search_text, explanation]):
             logger.warning(
                 f"Row {index}: Missing required fields - subject_path: '{subject_path}', "
-                f"name: '{name}', terminology: '{terminology}', explanation: '{explanation}'"
+                f"name: '{name}', search_text: '{search_text}', explanation: '{explanation}'"
             )
             return "skipped"
 
@@ -133,20 +133,20 @@ def process_row(
             return "skipped"
 
         # Generate unique ID using the new function that accepts path list
-        knowledge_id = gen_ext_knowledge_id(path_components, terminology)
+        knowledge_id = gen_ext_knowledge_id(path_components, search_text)
 
         # Check if already exists (for incremental mode)
         if knowledge_id in existing_knowledge:
             logger.debug(f"Row {index}: Knowledge '{knowledge_id}' already exists, skipping")
             return "skipped"
 
-        storage.store_knowledge(path_components, name, terminology, explanation)
+        storage.store_knowledge(path_components, name, search_text, explanation)
 
         # Add to existing set to avoid duplicates within the same batch
         with existing_knowledge_lock:
             existing_knowledge.add(knowledge_id)
 
-        logger.debug(f"Row {index}: Successfully stored knowledge '{terminology}' at path '{subject_path}'")
+        logger.debug(f"Row {index}: Successfully stored knowledge '{search_text}' at path '{subject_path}'")
         return "processed"
 
     except Exception as e:

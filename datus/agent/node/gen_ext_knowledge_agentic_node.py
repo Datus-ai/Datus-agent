@@ -6,7 +6,7 @@
 GenExtKnowledgeAgenticNode implementation for external knowledge generation workflow.
 
 This module provides a specialized implementation of AgenticNode focused on
-business terminology and concept management with support for filesystem tools,
+business search_text and concept management with support for filesystem tools,
 generation tools, and hooks.
 """
 
@@ -32,7 +32,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
     """
     External knowledge generation agentic node with enhanced configuration.
 
-    This node provides specialized business terminology and concept management with:
+    This node provides specialized business search_text and concept management with:
     - Enhanced system prompt with template variables
     - Filesystem tools for file operations
     - Generation tools for knowledge ID generation
@@ -342,9 +342,9 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             enhanced_message = user_input.user_message
             enhanced_parts = []
 
-            # Add terminology context if provided
-            if user_input.terminology:
-                enhanced_parts.append(f"Terminology: {user_input.terminology}")
+            # Add search_text context if provided
+            if user_input.search_text:
+                enhanced_parts.append(f"search_text: {user_input.search_text}")
 
             if user_input.explanation:
                 enhanced_parts.append(f"Existing Explanation: {user_input.explanation}")

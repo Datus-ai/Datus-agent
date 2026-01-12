@@ -850,7 +850,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             subject_path: Subject hierarchy path
             top_n: Number of results to return
             selected_fields: List of fields to return
-            name_field: Field name for parent+name matching (e.g., "terminology", "name")
+            name_field: Field name for parent+name matching (e.g., "search_text", "name")
             additional_conditions: Additional filter conditions
 
         Returns:
