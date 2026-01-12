@@ -201,13 +201,14 @@ class BenchmarkTutorial:
                 "california_schools/Continuation_School/Free_Rate," "california_schools/Charter/Education_Location"
             )
 
-            return init_metrics(
+            successful, _ = init_metrics(
                 success_path=success_path,
                 agent_config=agent_config,
                 subject_tree=subject_tree,
                 console=self.console,
                 build_model="overwrite",
             )
+            return successful
 
         except Exception as e:
             print_rich_exception(self.console, e, "Metrics initialization failed", logger)

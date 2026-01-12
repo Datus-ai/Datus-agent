@@ -111,7 +111,7 @@ class BiDashboardCommands:
             # Select charts for reference SQL initialization
             chart_indices_ref = self._select_charts(chart_details, purpose="reference SQL")
             if not chart_indices_ref:
-                self.console.print("[yellow]No charts selected for reference SQL. Aborting.[/]")
+                self.console.print("[yellow]No charts selected for reference SQL or metrics. Aborting.[/]")
                 return
 
             chart_selections_ref = self._load_chart_selections(

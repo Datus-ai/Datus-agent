@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 import argparse
 import os
 import shutil
@@ -9,11 +12,6 @@ from rich.console import Console
 
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger, print_rich_exception
-
-# Copyright 2025-present DatusAI, Inc.
-# Licensed under the Apache License, Version 2.0.
-# See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 
 logger = get_logger(__name__)
 console = Console()

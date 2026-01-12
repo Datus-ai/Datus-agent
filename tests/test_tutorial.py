@@ -423,7 +423,7 @@ class TestBenchmarkTutorialInitMetrics:
         mock_parse_subject_tree = MagicMock(return_value=[])
         monkeypatch.setattr(tutorial_module, "parse_subject_tree", mock_parse_subject_tree)
 
-        mock_init_metrics = MagicMock(return_value=(True, ""))
+        mock_init_metrics = MagicMock(return_value=(True, "", ""))
         monkeypatch.setattr(
             "datus.storage.metric.metric_init.init_success_story_metrics",
             mock_init_metrics,
@@ -517,7 +517,7 @@ class TestBenchmarkTutorialInitMetrics:
         mock_parse_subject_tree = MagicMock(return_value=[])
         monkeypatch.setattr(tutorial_module, "parse_subject_tree", mock_parse_subject_tree)
 
-        mock_init_metrics = MagicMock(return_value=(True, ""))
+        mock_init_metrics = MagicMock(return_value=(True, "", "mock.yaml"))
         monkeypatch.setattr(
             "datus.storage.metric.metric_init.init_success_story_metrics",
             mock_init_metrics,
@@ -566,7 +566,7 @@ def test_init_success_story_metrics_returns_error_on_exception(monkeypatch):
     monkeypatch.setattr(metric_init, "GenMetricsAgenticNode", FailingNode)
 
     args = Namespace(success_story="anything.csv")
-    success, error_message = metric_init.init_success_story_metrics(args, DummyAgentConfig())
+    success, error_message, _ = metric_init.init_success_story_metrics(args, DummyAgentConfig())
 
     assert success is False
     assert "metrics generation failed" in error_message
@@ -597,7 +597,7 @@ def test_init_success_story_metrics_success(monkeypatch):
     monkeypatch.setattr(metric_init, "GenMetricsAgenticNode", SuccessNode)
 
     args = Namespace(success_story="anything.csv")
-    success, error_message = metric_init.init_success_story_metrics(args, DummyAgentConfig())
+    success, error_message, _ = metric_init.init_success_story_metrics(args, DummyAgentConfig())
 
     assert success is True
     assert error_message == ""

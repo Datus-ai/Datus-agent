@@ -114,7 +114,6 @@ def init_success_story_metrics(
             total_items=1,
             completed_items=1,
             failed_items=0,
-            payload=result,
         )
         return True, "", result.get("result")
     else:
