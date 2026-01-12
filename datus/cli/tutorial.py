@@ -196,7 +196,7 @@ class BenchmarkTutorial:
     def _init_metrics(self, success_path: Path):
         """Initialize metrics using success stories."""
         from datus.schemas.batch_events import BatchEvent, BatchStage
-        from datus.storage.metric.metrics_init import init_success_story_metrics
+        from datus.storage.metric.metric_init import init_success_story_metrics
         from datus.utils.stream_output import StreamOutputManager
 
         logger.info(f"Metrics initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
@@ -283,7 +283,6 @@ class BenchmarkTutorial:
                     agent_config,
                     subject_tree,
                     emit=emit,
-                    pool_size=1,
                 )
             finally:
                 output_mgr.stop()
