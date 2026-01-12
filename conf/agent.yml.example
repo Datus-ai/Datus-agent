@@ -123,13 +123,6 @@ agent:
       password: ${STARROCKS_PASSWORD}
       database: ${STARROCKS_DATABASE}
 
-  metrics:
-    duckdb:
-      domain: sale
-      layer1: layer1
-      layer2: layer2
-      ext_knowledge: ""
-
   storage:
     # Data path is now fixed at {agent.home}/data
     # Final storage paths: {home}/data/datus_db_{namespace}, {home}/data/sub_agents/{agent_name}, etc.
