@@ -47,16 +47,8 @@ class StreamOutputManager:
         self.show_progress = show_progress
         self.title = title
 
-        # progress bar
-        self.progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TextColumn("({task.completed}/{task.total})"),
-            console=console,
-            transient=False,
-        )
+        # Progress bar will be created in start() based on total_items
+        self.progress: Optional[Progress] = None
 
         # Message Queue (keep last N rows, auto-scroll)
         self.messages = deque(maxlen=max_message_lines)
@@ -71,6 +63,33 @@ class StreamOutputManager:
         self.progress_task: Optional[TaskID] = None
         self._is_running = False
 
+    def _create_progress(self, total_items: int) -> Progress:
+        """
+        Create progress bar based on total items count.
+
+        For single item (total_items <= 1), use spinner-only style without count.
+        For multiple items, use full progress bar with percentage and count.
+        """
+        if total_items <= 1:
+            # Single task mode: spinner + description only
+            return Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=self.console,
+                transient=False,
+            )
+        else:
+            # Multi-task mode: full progress bar with count
+            return Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("({task.completed}/{task.total})"),
+                console=self.console,
+                transient=False,
+            )
+
     def start(self, total_items: int, description: Optional[str] = None):
         """
         Start the output manager
@@ -81,6 +100,9 @@ class StreamOutputManager:
         """
         if self._is_running:
             return
+
+        # Create progress bar based on total_items count
+        self.progress = self._create_progress(total_items)
 
         desc = description or self.title
         self.progress_task = self.progress.add_task(desc, total=total_items)
@@ -108,7 +130,7 @@ class StreamOutputManager:
             advance: Progress increments
             description: New description (optional)
         """
-        if self.progress_task is not None:
+        if self.progress is not None and self.progress_task is not None:
             self.progress.update(self.progress_task, advance=advance)
             if description:
                 self.progress.update(self.progress_task, description=description)
@@ -122,7 +144,7 @@ class StreamOutputManager:
             completed: Completed quantity
             description: New description (optional)
         """
-        if self.progress_task is not None:
+        if self.progress is not None and self.progress_task is not None:
             self.progress.update(self.progress_task, completed=completed)
             if description:
                 self.progress.update(self.progress_task, description=description)
@@ -239,7 +261,7 @@ class StreamOutputManager:
         components = []
 
         # 1. Progress bar (fixed at the top)
-        if self.show_progress and self.progress_task is not None:
+        if self.show_progress and self.progress is not None and self.progress_task is not None:
             components.append(self.progress)
             components.append("")  # Empty line separation
 

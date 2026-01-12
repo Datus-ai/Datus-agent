@@ -33,7 +33,7 @@ def init_success_story_metrics(
     agent_config: AgentConfig,
     subject_tree: Optional[list] = None,
     emit: Optional[BatchEventEmitter] = None,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """
     Initialize metrics from success story CSV by batch processing.
 
@@ -83,10 +83,11 @@ def init_success_story_metrics(
     metrics_node.input = metrics_input
 
     # Emit task processing
-    event_helper.task_processing(total_items=len(df))
+    event_helper.task_processing(total_items=1)
 
     async def process_batch() -> dict:
         try:
+            final_result = None
             async for action in metrics_node.execute_stream(action_history_manager):
                 if event_helper:
                     event_helper.item_processing(
@@ -97,31 +98,31 @@ def init_success_story_metrics(
                         output=action.output,
                     )
                 if action.status == ActionStatus.SUCCESS and action.output:
+                    final_result = action.output
                     logger.debug(f"Metrics generation action: {action.messages}")
-
             logger.info("Batch metrics extraction completed successfully")
-            return {"successful": True, "error": ""}
+            return {"successful": True, "error": "", "result": final_result}
         except Exception as e:
             logger.error(f"Error in batch metrics extraction: {e}")
             return {"successful": False, "error": str(e)}
 
     result = asyncio.run(process_batch())
 
-    # Emit task completed
+    # Emit task completed (single batch)
     if result.get("successful"):
         event_helper.task_completed(
-            total_items=len(df),
-            completed_items=len(df),
+            total_items=1,
+            completed_items=1,
             failed_items=0,
+            payload=result,
         )
-        return True, ""
+        return True, "", result.get("result")
     else:
-        event_helper.task_completed(
-            total_items=len(df),
-            completed_items=0,
-            failed_items=len(df),
+        error = result.get("error", "Unknown error")
+        event_helper.task_failed(
+            error=error,
         )
-        return False, result.get("error", "Unknown error")
+        return False, error, None
 
 
 def init_semantic_yaml_metrics(

@@ -7,14 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 
-from datus.tools.bi_tools.base_adaptor import (
-    BIAdaptorBase,
-    ChartInfo,
-    DashboardInfo,
-    DatasetInfo,
-    DimensionDef,
-    MetricDef,
-)
+from datus.tools.bi_tools.base_adaptor import BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names, metadata_identifier, normalize_sql
@@ -23,7 +16,7 @@ logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
-class ReferenceSqlCandidate:
+class SelectedSqlCandidate:
     chart_id: Union[int, str]
     chart_name: str
     description: Optional[str]
@@ -71,29 +64,9 @@ class DashboardAssemblyResult:
     dashboard: DashboardInfo
     charts: List[ChartInfo]
     datasets: List[DatasetInfo]
-    reference_sqls: List[ReferenceSqlCandidate]
-    metrics: List[MetricDef]
-    dimensions: List[DimensionDef]
+    reference_sqls: List[SelectedSqlCandidate]
+    metric_sqls: List[SelectedSqlCandidate]
     tables: List[str]
-
-    def scoped_context(self) -> Dict[str, List[str]]:
-        return {
-            "tables": [table for table in self.tables if table],
-            "metrics": [metric.name for metric in self.metrics if metric.name],
-            "sqls": [item.question() for item in self.reference_sqls if item.question()],
-        }
-
-    def to_payload(self) -> Dict[str, Any]:
-        return {
-            "dashboard": self.dashboard.model_dump(),
-            "charts": [chart.model_dump() for chart in self.charts],
-            "datasets": [dataset.model_dump() for dataset in self.datasets],
-            "reference_sqls": [item.to_payload() for item in self.reference_sqls],
-            "metrics": [metric.model_dump() for metric in self.metrics],
-            "dimensions": [dimension.model_dump() for dimension in self.dimensions],
-            "tables": list(self.tables),
-            "scoped_context": self.scoped_context(),
-        }
 
 
 class DashboardAssembler:
@@ -143,59 +116,22 @@ class DashboardAssembler:
     def assemble(
         self,
         dashboard: DashboardInfo,
-        chart_selections: Sequence[ChartSelection],
+        chart_selections_ref: Sequence[ChartSelection],
+        chart_selections_metrics: Sequence[ChartSelection],
         datasets: Sequence[DatasetInfo],
     ) -> DashboardAssemblyResult:
-        selected_charts = [selection.chart for selection in chart_selections]
+        selected_charts = [selection.chart for selection in chart_selections_ref]
         dataset_by_id = {str(dataset.id): dataset for dataset in datasets}
         dataset_by_name = {dataset.name: dataset for dataset in datasets if dataset.name}
 
-        reference_sqls: List[ReferenceSqlCandidate] = []
-        metrics: List[MetricDef] = []
-        dimensions: List[DimensionDef] = []
         tables: List[str] = []
+        reference_sqls: List[SelectedSqlCandidate] = self._parse_to_sql_candidate(
+            chart_selections_ref, dataset_by_id, dataset_by_name, tables
+        )
+        metric_sqls: List[SelectedSqlCandidate] = self._parse_to_sql_candidate(
+            chart_selections_metrics, dataset_by_id, dataset_by_name, tables
+        )
 
-        for selection in chart_selections:
-            chart = selection.chart
-            query = chart.query
-            dataset = self._resolve_chart_dataset(chart, dataset_by_id, dataset_by_name)
-            dialect = dataset.dialect if dataset else self.default_dialect
-            sqls = list(query.sql or []) if query else []
-            indices = selection.sql_indices or list(range(len(sqls)))
-            indices = [idx for idx in indices if 0 <= idx < len(sqls)]
-
-            if query:
-                if query.metrics:
-                    metrics.extend(query.metrics)
-                if query.dimensions:
-                    dimensions.extend(query.dimensions)
-                if query.tables:
-                    tables.extend(self._normalize_tables(query.tables, dataset=dataset, dialect=dialect))
-
-            for idx in indices:
-                sql_text = sqls[idx]
-                reference_sqls.append(
-                    ReferenceSqlCandidate(
-                        chart_id=chart.id,
-                        chart_name=chart.name,
-                        description=chart.description,
-                        sql=sql_text,
-                        index=idx,
-                    )
-                )
-                raw_tables = self._tables_from_sql(sql_text, dialect)
-                tables.extend(self._normalize_tables(raw_tables, dataset=dataset, dialect=dialect))
-
-        for dataset in datasets:
-            if dataset.metrics:
-                metrics.extend(dataset.metrics)
-            if dataset.dimensions:
-                dimensions.extend(dataset.dimensions)
-            if dataset.tables:
-                tables.extend(self._normalize_tables(dataset.tables, dataset=dataset, dialect=dataset.dialect))
-
-        metrics = self._dedupe_metrics(metrics)
-        dimensions = self._dedupe_dimensions(dimensions)
         tables = self._dedupe_tables(tables)
 
         return DashboardAssemblyResult(
@@ -203,10 +139,44 @@ class DashboardAssembler:
             charts=selected_charts,
             datasets=list(datasets),
             reference_sqls=reference_sqls,
-            metrics=metrics,
-            dimensions=dimensions,
+            metric_sqls=metric_sqls,
             tables=tables,
         )
+
+    def _parse_to_sql_candidate(
+        self,
+        chart_selections: Sequence[ChartSelection],
+        dataset_by_id: Dict[str, DatasetInfo],
+        dataset_by_name: Dict[str, DatasetInfo],
+        tables: List[str],
+    ) -> List[SelectedSqlCandidate]:
+        result: List[SelectedSqlCandidate] = []
+        for selection in chart_selections:
+            chart = selection.chart
+            query = chart.query
+            dataset = self._resolve_chart_dataset(chart, dataset_by_id, dataset_by_name)
+            sqls = list(query.sql or []) if query else []
+            indices = selection.sql_indices or list(range(len(sqls)))
+            indices = [idx for idx in indices if 0 <= idx < len(sqls)]
+
+            if query:
+                if query.tables:
+                    tables.extend(self._normalize_tables(query.tables, dataset=dataset))
+
+            for idx in indices:
+                sql_text = sqls[idx]
+                result.append(
+                    SelectedSqlCandidate(
+                        chart_id=chart.id,
+                        chart_name=chart.name,
+                        description=chart.description,
+                        sql=sql_text,
+                        index=idx,
+                    )
+                )
+                raw_tables = self._tables_from_sql(sql_text)
+                tables.extend(self._normalize_tables(raw_tables, dataset=dataset))
+        return result
 
     def _load_charts(self, dashboard_id: Union[int, str], dashboard: DashboardInfo) -> List[ChartInfo]:
         chart_metas = self.adaptor.list_charts(dashboard_id)
@@ -254,18 +224,14 @@ class DashboardAssembler:
                 return dataset_by_name.get(ds_name)
         return None
 
-    def _tables_from_sql(self, sql: str, dialect: Optional[str]) -> List[str]:
+    def _tables_from_sql(self, sql: str) -> List[str]:
         if not sql:
             return []
-        read_dialect = dialect or self.default_dialect or DBType.SNOWFLAKE
-        table_names = extract_table_names(sql, read_dialect, ignore_empty=True)
+        table_names = extract_table_names(sql, self.default_dialect, ignore_empty=True)
         return [name for name in table_names if name]
 
-    def _normalize_tables(
-        self, tables: Iterable[str], dataset: Optional[DatasetInfo] = None, dialect: Optional[str] = None
-    ) -> List[str]:
+    def _normalize_tables(self, tables: Iterable[str], dataset: Optional[DatasetInfo] = None) -> List[str]:
         catalog_name, database_name, schema_name = self._resolve_table_context(dataset)
-        read_dialect = dialect or self.default_dialect or DBType.SNOWFLAKE
         normalized: List[str] = []
         for table in tables:
             raw = (table or "").strip()
@@ -274,7 +240,7 @@ class DashboardAssembler:
             if "." in raw:
                 normalized.append(raw)
                 continue
-            if not self._can_qualify_table(read_dialect, catalog_name, database_name, schema_name):
+            if not self._can_qualify_table(self.default_dialect, catalog_name, database_name, schema_name):
                 normalized.append(raw)
                 continue
             normalized.append(
@@ -283,7 +249,7 @@ class DashboardAssembler:
                     database_name=database_name,
                     schema_name=schema_name,
                     table_name=raw,
-                    dialect=read_dialect,
+                    dialect=self.default_dialect,
                 )
             )
         return normalized
@@ -322,28 +288,6 @@ class DashboardAssembler:
         if normalized == DBType.SNOWFLAKE:
             return bool(database_name and schema_name)
         return bool(database_name) or bool(schema_name)
-
-    def _dedupe_metrics(self, metrics: Iterable[MetricDef]) -> List[MetricDef]:
-        seen = set()
-        unique: List[MetricDef] = []
-        for metric in metrics:
-            key = (metric.name, metric.expression, metric.table)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(metric)
-        return unique
-
-    def _dedupe_dimensions(self, dimensions: Iterable[DimensionDef]) -> List[DimensionDef]:
-        seen = set()
-        unique: List[DimensionDef] = []
-        for dimension in dimensions:
-            key = (dimension.name, dimension.table)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(dimension)
-        return unique
 
     def _dedupe_tables(self, tables: Iterable[str]) -> List[str]:
         deduped: List[str] = []

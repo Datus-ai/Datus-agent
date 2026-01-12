@@ -80,7 +80,7 @@ class Agent:
         self.metadata_store = None
         self.metrics_store = None
         self._ref_sql_file_sql_counter: Dict[str, int] = {}
-        self._metrics_row_stage_seen: Dict[int, Set[str]] = {}
+        self._metrics_row_stage_seen: Dict[str, Set[str]] = {}
         self._print_lock = threading.Lock()
         self._check_storage_modules()
 
@@ -323,43 +323,37 @@ class Agent:
     def _emit_metrics_event(self, event: BatchEvent) -> None:
         stage = event.stage
         payload = event.payload or {}
-        row_idx = payload.get("row_idx", "?")
-        prefix = f"[row{row_idx}] "
 
-        if stage == BatchStage.ITEM_STARTED:
-            question = payload.get("question") or ""
-            logger.info(f"metrics row start: {row_idx}")
-            print(f"{prefix}start: {question}".strip(), flush=True)
-            table_name = payload.get("table_name")
-            if table_name:
-                print(f"{prefix}  table: {table_name}", flush=True)
+        if stage == BatchStage.TASK_STARTED:
+            logger.info("Metrics batch task started")
+            return
+
+        if stage == BatchStage.TASK_PROCESSING:
+            logger.info("Metrics batch task processing")
+            return
+
+        if stage == BatchStage.TASK_COMPLETED:
+            logger.info("Metrics batch task completed.")
             return
 
         if stage == BatchStage.ITEM_PROCESSING:
             action_name = event.action_name or "action"
             with self._print_lock:
-                seen = self._metrics_row_stage_seen.setdefault(row_idx, set())
+                seen = self._metrics_row_stage_seen.setdefault("", set())
                 if action_name not in seen:
                     seen.add(action_name)
-                    print(f"{prefix}  {action_name}:", flush=True)
-            self._print_stream_lines(payload.get("output", {}).get("raw_output"), indent="    ", prefix=prefix)
+                    print(f"  {action_name}:", flush=True)
+            self._print_stream_lines(payload.get("output", {}).get("raw_output"), indent="    ", prefix="")
             # Check for semantic model output
             output = payload.get("output")
             if isinstance(output, dict):
                 semantic_model_file = output.get("semantic_model")
                 if semantic_model_file:
-                    print(f"{prefix}  semantic_model: {semantic_model_file}", flush=True)
+                    print(f"  semantic_model: {semantic_model_file}", flush=True)
             return
 
         if stage == BatchStage.ITEM_COMPLETED:
-            logger.info(f"metrics row success: {row_idx}")
-            print(f"{prefix}completed", flush=True)
-            return
-
-        if stage == BatchStage.ITEM_FAILED:
-            error = event.error or "unknown error"
-            logger.error(f"metrics row error: {row_idx}")
-            print(f"{prefix}error: {error}", flush=True)
+            logger.info("Metrics item success")
             return
 
     def bootstrap_kb(self):

@@ -1,3 +1,7 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
 from __future__ import annotations
 
 import re
@@ -7,35 +11,26 @@ from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Sequence, Union
 from urllib.parse import urlparse
 
+import pandas as pd
 import yaml
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
 
 from datus.cli._cli_utils import prompt_input
+from datus.cli.init_util import init_metrics
 from datus.cli.interactive_init import ReferenceSqlStreamHandler
 from datus.configuration.agent_config import AgentConfig, DashboardConfig
 from datus.configuration.agent_config_loader import configuration_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
-from datus.storage.reference_sql.init_utils import gen_reference_sql_id
 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 from datus.storage.reference_sql.store import ReferenceSqlRAG
-from datus.tools.bi_tools.base_adaptor import (
-    AuthParam,
-    AuthType,
-    BIAdaptorBase,
-    ChartInfo,
-    DashboardInfo,
-    DatasetInfo,
-    DimensionDef,
-)
+from datus.tools.bi_tools.base_adaptor import AuthParam, AuthType, BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo
 from datus.tools.bi_tools.dashboard_assembler import (
     ChartSelection,
     DashboardAssembler,
     DashboardAssemblyResult,
-    ReferenceSqlCandidate,
-    parts_match,
-    split_table_parts,
+    SelectedSqlCandidate,
 )
 from datus.tools.bi_tools.registry import adaptor_registry
 from datus.utils.constants import SYS_SUB_AGENTS
@@ -55,6 +50,15 @@ class DashboardCliOptions:
     api_base_url: str
     auth_params: AuthParam | None = None
     dialect: Optional[str] = None
+
+
+def _parse_subject_path_for_metrics(tags: List[str]) -> Optional[str]:
+    if not tags:
+        return None
+    for tag in tags:
+        if tag.startswith("subject_tree:"):
+            return ".".join(tag[13:].strip().split("/"))
+    return None
 
 
 class BiDashboardCommands:
@@ -103,34 +107,34 @@ class BiDashboardCommands:
                 return
 
             chart_details = self._hydrate_charts(adaptor, dashboard_id, chart_metas)
-            chart_indices = self._select_charts(chart_details)
-            if not chart_indices:
-                self.console.print("[yellow]No charts selected. Aborting.[/]")
+
+            # Select charts for reference SQL initialization
+            chart_indices_ref = self._select_charts(chart_details, purpose="reference SQL")
+            if not chart_indices_ref:
+                self.console.print("[yellow]No charts selected for reference SQL. Aborting.[/]")
                 return
 
-            chart_selections = self._load_chart_selections(chart_details, chart_indices)
-            if not chart_selections:
-                self.console.print("[yellow]No charts selected. Aborting.[/]")
+            chart_selections_ref = self._load_chart_selections(
+                chart_details, chart_indices_ref, purpose="reference SQL"
+            )
+
+            # Select charts for metrics initialization
+            chart_indices_metrics = self._select_charts(chart_details, purpose="metrics")
+            chart_selections_metrics = self._load_chart_selections(
+                chart_details, chart_indices_metrics, purpose="metrics"
+            )
+
+            if not chart_selections_ref and not chart_selections_metrics:
+                self.console.print("[yellow]No charts selected for reference SQL. Aborting.[/]")
                 return
 
-            # FIXME
-            # with self.console.status("Loading datasets..."):
-            #     dataset_metas = adaptor.list_datasets(dashboard_id)
-            # dataset_selections = self._select_datasets(dataset_metas)
-            # if dataset_selections:
-            #     datasets = self._hydrate_datasets(assembler, dataset_selections, dashboard_id)
-            # else:
-            #     datasets = []
-            datasets = []
+            with self.console.status("Loading datasets..."):
+                datasets = adaptor.list_datasets(dashboard_id)
 
-            result = assembler.assemble(dashboard, chart_selections, datasets)
+            result = assembler.assemble(dashboard, chart_selections_ref, chart_selections_metrics, datasets)
 
             result.tables = self._review_tables(result.tables)
-            # FIXME
-            # result.metrics = self._review_metrics(result.metrics)
-            # result.dimensions = self._review_dimensions(result.dimensions, result.tables)
 
-            # self._render_summary(result)
             self._save_sub_agent(options.platform, dashboard, dashboard_id, result)
             self.console.print("[green]Sub-Agent build successful.[/]")
         except (KeyboardInterrupt, EOFError):
@@ -336,13 +340,20 @@ class BiDashboardCommands:
             allow_interrupt=True,
         )
 
-    def _select_charts(self, charts: Sequence[ChartInfo]) -> List[int]:
+    def _select_charts(self, charts: Sequence[ChartInfo], purpose: str = "reference SQL") -> List[int]:
         if not charts:
             self.console.print("[yellow]No charts found in this dashboard.[/]")
             return []
 
         self._render_chart_table(charts, title="Charts")
-        selection_input = self._prompt_input("Select charts (e.g. 1,3 or all)", default="all")
+
+        # Show hint for metrics selection
+        if "metric" in purpose.lower():
+            self.console.print(
+                "[dim]Tip: For metrics, select charts with aggregation SQL " "(e.g. SUM, COUNT, AVG, MAX, MIN)[/]"
+            )
+
+        selection_input = self._prompt_input(f"Select charts to init {purpose} (e.g. 1,3 or all)", default="all")
         return self._parse_selection(selection_input, len(charts))
 
     def _hydrate_charts(
@@ -368,6 +379,7 @@ class BiDashboardCommands:
         self,
         charts: Sequence[ChartInfo],
         indices: Sequence[int],
+        purpose: str = "reference SQL",
     ) -> List[ChartSelection]:
         selections: List[ChartSelection] = []
         if not indices:
@@ -375,11 +387,11 @@ class BiDashboardCommands:
 
         while True:
             selected_charts = [charts[idx] for idx in indices]
-            self._render_chart_table(selected_charts, title="Selected Charts")
-            confirm = self._prompt_input("Use selected charts?", default="y", choices=["y", "n"])
+            self._render_chart_table(selected_charts, title=f"Selected Charts for {purpose}")
+            confirm = self._prompt_input(f"Use selected charts for {purpose}?", default="y", choices=["y", "n"])
             if confirm == "y":
                 break
-            indices = self._select_charts(charts)
+            indices = self._select_charts(charts, purpose=purpose)
             if not indices:
                 return selections
 
@@ -420,62 +432,6 @@ class BiDashboardCommands:
         indices = self._parse_selection(selection_input, len(datasets))
         return [datasets[idx] for idx in indices]
 
-    def _review_metrics(self, metrics: Sequence[DimensionDef]) -> List:
-        if not metrics:
-            return list(metrics)
-        choice = self._prompt_input("Review metrics list?", default="n", choices=["y", "n"])
-        if choice == "n":
-            return list(metrics)
-
-        table = Table(title="Metrics")
-        table.add_column("#", style="cyan", width=4)
-        table.add_column("Name", style="white")
-        table.add_column("Expression", style="magenta")
-        table.add_column("Table", style="blue")
-        for idx, metric in enumerate(metrics, start=1):
-            table.add_row(str(idx), metric.name or "", metric.expression or "", metric.table or "")
-        self.console.print(table)
-        selection_input = self._prompt_input("Select metrics to keep", default="all")
-        indices = self._parse_selection(selection_input, len(metrics))
-        return [metrics[idx] for idx in indices]
-
-    def _review_dimensions(self, dimensions: Sequence, tables: Sequence) -> List:
-        if not dimensions:
-            return list(dimensions)
-
-        filtered = self._filter_dimensions_by_tables(dimensions, tables)
-        if not filtered:
-            self.console.print("[yellow]No dimensions match the selected tables.[/]")
-            return []
-
-        choice = self._prompt_input("Review dimensions list?", default="n", choices=["y", "n"])
-        if choice == "n":
-            return list(filtered)
-
-        grouped = self._group_dimensions_by_table(filtered)
-        selected: List = []
-        for table_name, group in grouped:
-            title = f"Dimensions - {table_name}" if table_name else "Dimensions - Unknown"
-            table = Table(title=title)
-            table.add_column("#", style="cyan", width=4)
-            table.add_column("Name", style="white")
-            table.add_column("Type", style="magenta")
-            table.add_column("Description", style="magenta")
-            for idx, dimension in enumerate(group, start=1):
-                table.add_row(
-                    str(idx),
-                    dimension.name or "",
-                    dimension.data_type or "",
-                    dimension.description or "",
-                )
-            self.console.print(table)
-            selection_input = self._prompt_input(
-                f"Select dimensions to keep for {table_name or 'unknown'}", default="all"
-            )
-            indices = self._parse_selection(selection_input, len(group))
-            selected.extend([group[idx] for idx in indices])
-        return selected
-
     def _review_tables(self, tables: Sequence) -> List:
         if not tables:
             return list(tables)
@@ -507,60 +463,19 @@ class BiDashboardCommands:
             return
         table_names = self._dedupe_values([table for table in result.tables if table])
         self.console.log("[bold cyan]Start building reference SQL[/]")
-        sql_dir = self._write_chart_sql_files(result.reference_sqls, platform, dashboard, dashboard_id)
-        # Create StreamOutputManager
-        output_mgr = StreamOutputManager(
-            console=self.console,
-            max_message_lines=10,
-            show_progress=True,
-            title="Reference SQL Initialization",
-        )
 
-        # Create stream handler
-        stream_handler = ReferenceSqlStreamHandler(output_mgr)
-        result = init_reference_sql(
-            storage=ReferenceSqlRAG(self.agent_config),
-            global_config=self.agent_config,
-            build_mode="incremental",
-            sql_dir=str(sql_dir),
-            subject_tree=None,
-            emit=stream_handler.handle_event,
-        )
-        output_mgr.stop()
-
-        # Print statistics
-        valid_entries = result.get("valid_entries", 0)
-        invalid_entries = result.get("invalid_entries", 0)
-        processed_entries = result.get("processed_entries", 0)
-        if invalid_entries > 0:
-            self.console.print(f"  [yellow]Warning: {invalid_entries} invalid SQL items skipped[/]")
-        if valid_entries > processed_entries:
-            skipped = valid_entries - processed_entries
-            self.console.print(f"  [dim]({skipped} items already existed, skipped in incremental mode)[/]")
-
-        ref_sqls = []
-        if result.get("status") != "success":
-            self.console.log(f"[bold red]Processed reference SQL failed: {result.get('error')}[/]")
-        else:
-            self.console.log("[bold cyan]Processed reference SQL succeeded.[/]")
-            subject_trees = set()
-            for item in result.get("processed_items", []):
-                subject_tree = item.get("subject_tree")
-                if subject_tree:
-                    parts = subject_tree.split("/")
-                    domain = parts[0].strip() if len(parts) > 0 else ""
-                    layer1 = parts[1].strip() if len(parts) > 1 else ""
-                    layer2 = parts[2].strip() if len(parts) > 2 else ""
-                    layers = f"{domain}.{layer1}.{layer2}.{item.get('name')}"
-                    subject_trees.add(layers)
-            ref_sqls.extend(subject_trees)
-
+        ref_sqls = self._gen_reference_sqls(result.reference_sqls, platform, dashboard)
+        self.console.log("[bold cyan]Start building metrics[/]")
+        metrics = self._gen_metrics(result.metric_sqls, platform, dashboard)
         scoped_context: Optional[ScopedContext] = None
-        if table_names or ref_sqls:
+        if table_names or ref_sqls or metrics:
             scoped_context = ScopedContext(
                 tables=",".join(table_names) if table_names else None,
                 sqls=",".join(ref_sqls) if ref_sqls else None,
+                metrics=",".join(metrics) if metrics else None,
             )
+        self.console.log("[bold cyan]Building metrics completed[/]")
+
         if scoped_context is None:
             self.console.log("[yellow]No scoped context derived. Skipping sub-agent save.[/]")
             return
@@ -658,22 +573,76 @@ class BiDashboardCommands:
             deduped.append(cleaned)
         return deduped
 
+    def _gen_reference_sqls(
+        self, reference_sqls: List[SelectedSqlCandidate], platform: str, dashboard: DashboardInfo
+    ) -> List[str]:
+        sql_dir = self._write_chart_sql_files(reference_sqls, platform, dashboard)
+        # Create StreamOutputManager
+        output_mgr = StreamOutputManager(
+            console=self.console,
+            max_message_lines=10,
+            show_progress=True,
+            title="Reference SQL Initialization",
+        )
+
+        # Create stream handler
+        stream_handler = ReferenceSqlStreamHandler(output_mgr)
+        result = init_reference_sql(
+            storage=ReferenceSqlRAG(self.agent_config),
+            global_config=self.agent_config,
+            build_mode="incremental",
+            sql_dir=str(sql_dir),
+            subject_tree=None,
+            emit=stream_handler.handle_event,
+        )
+        output_mgr.stop()
+
+        # Print statistics
+        valid_entries = result.get("valid_entries", 0)
+        invalid_entries = result.get("invalid_entries", 0)
+        processed_entries = result.get("processed_entries", 0)
+        if invalid_entries > 0:
+            self.console.print(f"  [yellow]Warning: {invalid_entries} invalid SQL items skipped[/]")
+        if valid_entries > processed_entries:
+            skipped = valid_entries - processed_entries
+            self.console.print(f"  [dim]({skipped} items already existed, skipped in incremental mode)[/]")
+
+        ref_sqls = []
+        if result.get("status") != "success":
+            self.console.log(f"[bold red]Processed reference SQL failed: {result.get('error')}[/]")
+        else:
+            self.console.log("[bold cyan]Processed reference SQL succeeded.[/]")
+            subject_trees = set()
+            for item in result.get("processed_items", []):
+                subject_tree = item.get("subject_tree")
+                if subject_tree:
+                    parts = subject_tree.split("/")
+                    domain = parts[0].strip() if len(parts) > 0 else ""
+                    layer1 = parts[1].strip() if len(parts) > 1 else ""
+                    layer2 = parts[2].strip() if len(parts) > 2 else ""
+                    layers = f"{domain}.{layer1}.{layer2}.{item.get('name')}"
+                    subject_trees.add(layers)
+            ref_sqls.extend(subject_trees)
+        return ref_sqls
+
+    def _ensure_file_name(self, platform: str, dashboard: DashboardInfo, suffix: str = ".sql") -> Path:
+        sql_root = get_path_manager(self.agent_config.home).dashboard_path() / platform
+        file_name = self._build_sql_file_name(platform, dashboard)
+        sql_root.mkdir(parents=True, exist_ok=True)
+        return sql_root / f"{file_name}{suffix}"
+
     def _write_chart_sql_files(
         self,
-        reference_sqls: Sequence[ReferenceSqlCandidate],
+        reference_sqls: Sequence[SelectedSqlCandidate],
         platform: str,
         dashboard: DashboardInfo,
-        dashboard_id: Union[int, str],
     ) -> Optional[Path]:
         if not reference_sqls:
             return None
 
-        sql_root = Path(self.agent_config.home).expanduser() / "sqls" / platform
-        file_name = self._build_sql_file_name(platform, dashboard, dashboard_id)
-        sql_root.mkdir(parents=True, exist_ok=True)
-        target_file = sql_root / f"{file_name}.sql"
+        target_file = self._ensure_file_name(platform, dashboard)
 
-        grouped: dict[str, List[ReferenceSqlCandidate]] = {}
+        grouped: dict[str, List[SelectedSqlCandidate]] = {}
         for item in reference_sqls:
             key = str(item.chart_id)
             grouped.setdefault(key, []).append(item)
@@ -696,25 +665,19 @@ class BiDashboardCommands:
                     target_f.write("\n".join(lines))
         return target_file
 
-    def _build_sql_file_name(
-        self,
-        platform: str,
-        dashboard: DashboardInfo,
-        dashboard_id: Union[int, str],
-    ) -> str:
+    def _build_sql_file_name(self, platform: str, dashboard: DashboardInfo) -> str:
         from datetime import datetime
 
         platform_token = self._normalize_identifier(platform, fallback="bi")
         dashboard_token = self._normalize_identifier(dashboard.name or "", max_words=3, fallback="dashboard")
-        suffix = self._normalize_identifier(str(dashboard_id), fallback="id") if dashboard_id is not None else ""
-        parts = [part for part in (platform_token, dashboard_token, suffix) if part] + [
+        parts = [part for part in (platform_token, dashboard_token) if part] + [
             str(datetime.now().strftime("%Y%m%d%H%M"))
         ]
         return "_".join(parts)
 
     def _build_sql_comment_lines(
         self,
-        sql_item: ReferenceSqlCandidate,
+        sql_item: SelectedSqlCandidate,
         dashboard: DashboardInfo,
     ) -> List[str]:
         lines = [
@@ -728,76 +691,6 @@ class BiDashboardCommands:
     def _clean_comment_text(self, text: str) -> str:
         return " ".join(str(text).split())
 
-    def _parse_sql_summary_files(
-        self,
-        summary_files: Sequence[str],
-        summary_subjects: dict[str, str],
-    ) -> tuple[List[dict], List[str]]:
-        if not summary_files:
-            return [], []
-
-        summary_dir = Path(get_path_manager().sql_summary_path(self.agent_config.current_namespace))
-        entries: List[dict] = []
-        tokens: List[str] = []
-
-        for file_name in summary_files:
-            entry, token = self._load_sql_summary_entry(summary_dir, file_name, summary_subjects.get(file_name))
-            if entry:
-                entries.append(entry)
-            if token:
-                tokens.append(token)
-
-        return entries, self._dedupe_values(tokens)
-
-    def _load_sql_summary_entry(
-        self,
-        summary_dir: Path,
-        file_name: str,
-        fallback_subject_tree: Optional[str],
-    ) -> tuple[Optional[dict], Optional[str]]:
-        full_path = summary_dir / file_name
-        if not full_path.exists():
-            self.console.print(f"[yellow]SQL summary file not found:[/] {full_path}")
-            return None, None
-
-        try:
-            with full_path.open("r", encoding="utf-8") as handle:
-                doc = yaml.safe_load(handle)
-        except Exception as exc:
-            self.console.print(f"[yellow]Failed to read SQL summary:[/] {exc}")
-            return None, None
-
-        if not isinstance(doc, dict) or not doc.get("sql"):
-            self.console.print(f"[yellow]Invalid SQL summary format:[/] {file_name}")
-            return None, None
-
-        sql_query = doc.get("sql", "")
-        comment = (doc.get("comment") or "").strip()
-        # If comment exists, prepend it as SQL inline comment
-        if comment:
-            sql_query = f"-- {comment}\n{sql_query}"
-        item_id = doc.get("id") or gen_reference_sql_id(sql_query)
-        subject_tree = doc.get("subject_tree") or fallback_subject_tree or ""
-        domain, layer1, layer2 = self._split_subject_tree(subject_tree)
-        name = (doc.get("name") or "").strip()
-        if not name:
-            name = Path(file_name).stem
-
-        entry = {
-            "id": item_id,
-            "name": name,
-            "sql": sql_query,
-            "comment": "",  # Comment is now embedded in sql
-            "summary": doc.get("summary", ""),
-            "filepath": doc.get("filepath") or file_name,
-            "domain": domain,
-            "layer1": layer1,
-            "layer2": layer2,
-            "tags": doc.get("tags", ""),
-        }
-        token = self._format_reference_token(domain, layer1, layer2, name)
-        return entry, token
-
     def _split_subject_tree(self, subject_tree: str) -> tuple[str, str, str]:
         parts = [part.strip() for part in (subject_tree or "").split("/") if part.strip()]
         domain = parts[0] if len(parts) > 0 else ""
@@ -805,18 +698,42 @@ class BiDashboardCommands:
         layer2 = parts[2] if len(parts) > 2 else ""
         return domain, layer1, layer2
 
-    def _format_reference_token(self, domain: str, layer1: str, layer2: str, name: str) -> str:
-        if not (domain and layer1 and layer2 and name):
-            return ""
-        return ".".join([domain, layer1, layer2, self._quote_reference_part(name)])
+    def _gen_metrics(self, sqls: List[SelectedSqlCandidate], platform: str, dashboard: DashboardInfo):
+        if not sqls:
+            return None
+        target_file = self._ensure_file_name(platform, dashboard, suffix=".csv")
+        file_data = []
+        for sql_item in sqls:
+            question = (
+                f"Dashboard={self._clean_comment_text(dashboard.name or '')};"
+                f"Chart={self._clean_comment_text(sql_item.chart_name or str(sql_item.chart_id))};"
+            )
+            if sql_item.description:
+                question += f"Description={self._clean_comment_text(sql_item.description)};"
+            file_data.append({"question": question, "sql": sql_item.sql})
 
-    def _quote_reference_part(self, value: str) -> str:
-        cleaned = (value or "").replace('"', "'").strip()
-        if not cleaned:
-            return ""
-        if re.search(r"[\\s.]", cleaned):
-            return f'"{cleaned}"'
-        return cleaned
+        with open(target_file, "w", encoding="utf-8") as target_f:
+            pd.DataFrame(file_data, columns=["question", "sql"]).to_csv(target_f, index=False)
+
+        successful, metrics_result = init_metrics(
+            target_file, agent_config=self.agent_config, console=self.console, build_model="incremental"
+        )
+
+        metrics = set()
+        if successful and (files := metrics_result.get("semantic_models", [])):
+            for file in files:
+                with open(file, "r", encoding="utf-8") as f:
+                    # multi documents
+                    for metrics_meta in yaml.safe_load_all(f):
+                        meta = metrics_meta.get("metric")
+                        if not meta:
+                            continue
+                        name = meta.get("name")
+                        subject_tree = _parse_subject_path_for_metrics(meta.get("locked_metadata", {}).get("tags", []))
+                        if name and subject_tree:
+                            metrics.add(f"{subject_tree}.{name}")
+
+        return list(metrics)
 
     def _store_reference_sql_entries(self, sub_agent_name: str, entries: Sequence[dict]) -> None:
         try:
@@ -833,8 +750,7 @@ class BiDashboardCommands:
         summary.add_row("Charts", str(len(result.charts)))
         summary.add_row("Datasets", str(len(result.datasets)))
         summary.add_row("Reference SQL", str(len(result.reference_sqls)))
-        summary.add_row("Metrics", str(len(result.metrics)))
-        summary.add_row("Dimensions", str(len(result.dimensions)))
+        summary.add_row("Metrics", str(len(result.metric_sqls)))
         summary.add_row("Tables", str(len(result.tables)))
         self.console.print(summary)
 
@@ -890,43 +806,6 @@ class BiDashboardCommands:
             )
 
         self.console.print(table)
-
-    def _filter_dimensions_by_tables(self, dimensions: Sequence, tables: Optional[Sequence]) -> List:
-        if tables is None:
-            return list(dimensions)
-        if len(tables) == 0:
-            return []
-        allowed = [table for table in tables if table]
-        if not allowed:
-            return []
-        filtered = []
-        for dimension in dimensions:
-            if self._table_matches(dimension.table, allowed):
-                filtered.append(dimension)
-        return filtered
-
-    def _group_dimensions_by_table(self, dimensions: Sequence) -> List[tuple[str, List[DimensionDef]]]:
-        grouped: List[tuple[str, List[DimensionDef]]] = []
-        index_map: dict[str, int] = {}
-        for dimension in dimensions:
-            key = (dimension.table or "").strip()
-            if key not in index_map:
-                index_map[key] = len(grouped)
-                grouped.append((key, []))
-            grouped[index_map[key]][1].append(dimension)
-        return grouped
-
-    def _table_matches(self, dimension_table: Optional[str], allowed_tables: Sequence[str]) -> bool:
-        if not dimension_table:
-            return False
-        dim_parts = split_table_parts(dimension_table)
-        if not dim_parts:
-            return False
-        for table_name in allowed_tables:
-            table_parts = split_table_parts(table_name)
-            if parts_match(dim_parts, table_parts):
-                return True
-        return False
 
     def _discover_adaptors(self) -> dict[str, type[BIAdaptorBase]]:
         return adaptor_registry.list_adaptors()

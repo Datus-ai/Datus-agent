@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
+import argparse
+import os
+import shutil
+from pathlib import Path
+from typing import Any, List, Literal, Optional
+
+from rich.console import Console
+
+from datus.configuration.agent_config import AgentConfig
+from datus.utils.loggings import get_logger, print_rich_exception
 
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import os
-from pathlib import Path
-
-from rich.console import Console
-
-from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 console = Console()
@@ -70,3 +74,81 @@ def detect_db_connectivity(namespace_name, db_config_data) -> tuple[bool, str]:
         error_msg = str(e)
         logger.error(f"Database connectivity test failed: {error_msg}")
         return False, error_msg
+
+
+def init_metrics(
+    success_path: Path,
+    agent_config: AgentConfig,
+    subject_tree: Optional[List[str]] = None,
+    build_model: Literal["incremental", "overwrite"] = "overwrite",
+    console: Optional[Console] = None,
+) -> tuple[bool, Optional[dict[str, Any]]]:
+    """Initialize metrics using success stories."""
+    from rich.markup import escape
+
+    from datus.schemas.batch_events import BatchEvent, BatchStage
+    from datus.storage.metric.metric_init import init_success_story_metrics
+    from datus.utils.stream_output import StreamOutputManager
+
+    if not console:
+        console = Console(log_path=False)
+    try:
+        storage_path = agent_config.rag_storage_path()
+
+        if build_model == "overwrite":
+            metrics_path = os.path.join(storage_path, "metrics.lance")
+            if os.path.exists(metrics_path):
+                shutil.rmtree(metrics_path)
+                logger.info(f"Deleted existing directory {metrics_path}")
+            agent_config.save_storage_config("metric")
+
+        # Create StreamOutputManager
+        output_mgr = StreamOutputManager(
+            console=console,
+            max_message_lines=10,
+            show_progress=True,
+            title="Metrics Initialization",
+        )
+
+        def emit(event: BatchEvent) -> None:
+            stage = event.stage
+
+            if stage == BatchStage.TASK_STARTED:
+                output_mgr.start(total_items=1, description="Initializing metrics")
+                return
+
+            if stage == BatchStage.ITEM_PROCESSING:
+                payload = event.payload or {}
+                messages = payload.get("messages")
+                if messages:
+                    output_mgr.add_llm_output(str(messages))
+                return
+
+            if stage == BatchStage.TASK_COMPLETED:
+                output_mgr.success("Metrics processing completed.")
+                return
+            if stage == BatchStage.TASK_FAILED:
+                output_mgr.error(f"Failed to initialize metrics: {event.error}")
+
+        args = argparse.Namespace(success_story=str(success_path))
+
+        try:
+            successful, error_message, metrics_result = init_success_story_metrics(
+                args,
+                agent_config,
+                subject_tree,
+                emit=emit,
+            )
+        finally:
+            output_mgr.stop()
+
+        if successful:
+            console.print("[green]Metrics initialized[/]")
+            return True, metrics_result
+        else:
+            console.print(" [red]Error:[/] Metrics initialization failed:")
+            console.print(f"    {escape(str(error_message))}")
+            return False, None
+    except Exception as e:
+        print_rich_exception(console, e, "Metrics initialization failed", logger)
+        return False, None

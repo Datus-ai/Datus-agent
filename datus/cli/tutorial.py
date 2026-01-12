@@ -2,15 +2,12 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import argparse
-import os
-import shutil
 from pathlib import Path
 from typing import Any, Dict
 
 from rich.console import Console
-from rich.markup import escape
 
+from datus.cli.init_util import init_metrics
 from datus.cli.interactive_init import parse_subject_tree
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.agent_models import SubAgentConfig
@@ -146,7 +143,7 @@ class BenchmarkTutorial:
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
                 "--namespace california_schools --components reference_sql --kb_update_strategy overwrite "
                 f"--sql_dir {str(california_schools_path / 'reference_sql')} "
-                f'--subject_tree "'
+                '--subject_tree "'
                 "california_schools/Continuation/Free_Rate,"
                 "california_schools/Charter/Education_Location,"
                 "california_schools/Charter-Fund/Phone,"
@@ -195,105 +192,23 @@ class BenchmarkTutorial:
 
     def _init_metrics(self, success_path: Path):
         """Initialize metrics using success stories."""
-        from datus.schemas.batch_events import BatchEvent, BatchStage
-        from datus.storage.metric.metric_init import init_success_story_metrics
-        from datus.utils.stream_output import StreamOutputManager
 
         logger.info(f"Metrics initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
         try:
             agent_config = load_agent_config(reload=True, config=self.config_path)
             agent_config.current_namespace = self.namespace_name
-
-            storage_path = agent_config.rag_storage_path()
-            semantic_model_path = os.path.join(storage_path, "semantic_model.lance")
-            metrics_path = os.path.join(storage_path, "metrics.lance")
-            if os.path.exists(semantic_model_path):
-                shutil.rmtree(semantic_model_path)
-                logger.info(f"Deleted existing directory {semantic_model_path}")
-            if os.path.exists(metrics_path):
-                shutil.rmtree(metrics_path)
-                logger.info(f"Deleted existing directory {metrics_path}")
-            agent_config.save_storage_config("metric")
-
             subject_tree = parse_subject_tree(
                 "california_schools/Continuation_School/Free_Rate," "california_schools/Charter/Education_Location"
             )
 
-            # Create StreamOutputManager
-            output_mgr = StreamOutputManager(
+            return init_metrics(
+                success_path=success_path,
+                agent_config=agent_config,
+                subject_tree=subject_tree,
                 console=self.console,
-                max_message_lines=10,
-                show_progress=True,
-                title="Metrics Initialization",
+                build_model="overwrite",
             )
 
-            def emit(event: BatchEvent) -> None:
-                stage = event.stage
-
-                if stage == BatchStage.TASK_STARTED:
-                    total_items = event.total_items or 0
-                    output_mgr.start(total_items=total_items, description="Initializing metrics")
-                    return
-
-                if stage == BatchStage.ITEM_STARTED:
-                    payload = event.payload or {}
-                    row_idx = payload.get("row_idx")
-                    question = str(payload.get("question") or "")
-                    output_mgr.start_task(f"Row {row_idx}: {question}")
-
-                    table_name = payload.get("table_name")
-                    if table_name:
-                        output_mgr.add_message(f"Table: {escape(str(table_name))}", style="cyan")
-                    return
-
-                if stage == BatchStage.ITEM_PROCESSING:
-                    payload = event.payload or {}
-                    messages = payload.get("messages")
-                    if messages:
-                        output_mgr.add_llm_output(str(messages))
-                    return
-
-                if stage == BatchStage.ITEM_COMPLETED:
-                    output_mgr.complete_task(success=True)
-                    output_mgr.update_progress(advance=1)
-                    return
-
-                if stage == BatchStage.ITEM_FAILED:
-                    payload = event.payload or {}
-                    row_idx = payload.get("row_idx")
-                    error = event.error or "unknown error"
-                    output_mgr.error(f"Row {row_idx}: {escape(str(error))}")
-                    output_mgr.update_progress(advance=1)
-                    return
-
-                if stage == BatchStage.TASK_COMPLETED:
-                    completed = event.completed_items or 0
-                    failed = event.failed_items or 0
-                    if failed > 0:
-                        output_mgr.warning(f"Completed: {completed} successful, {failed} failed")
-                    else:
-                        output_mgr.success(f"All {completed} rows processed successfully")
-                    return
-
-            args = argparse.Namespace(success_story=str(success_path))
-
-            try:
-                successful, error_message = init_success_story_metrics(
-                    args,
-                    agent_config,
-                    subject_tree,
-                    emit=emit,
-                )
-            finally:
-                output_mgr.stop()
-
-            if successful:
-                self.console.print(" [green]OK[/] Metrics initialized")
-                return True
-            else:
-                self.console.print(" [red]Error:[/] Metrics initialization failed:")
-                self.console.print(f"    {escape(str(error_message))}")
-                return False
         except Exception as e:
             print_rich_exception(self.console, e, "Metrics initialization failed", logger)
             return False
