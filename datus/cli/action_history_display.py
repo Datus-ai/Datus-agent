@@ -131,6 +131,9 @@ class ActionContentGenerator(BaseActionContentGenerator):
         content_lines = []
 
         for action in actions:
+            # Skip TOOL actions that are still PROCESSING (not yet completed)
+            if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
+                continue
             formatted_action = self.format_streaming_action(action)
             content_lines.append(formatted_action)
 

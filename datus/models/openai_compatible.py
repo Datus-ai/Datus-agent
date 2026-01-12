@@ -750,25 +750,29 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                                     # Create complete action with both input and output
                                     # Put result_summary as the status message to replace default "Success"
-                                    output_data = {
-                                        "success": True,
-                                        "raw_output": output_content,  # Add raw output for action_display_app
-                                        "summary": result_summary,
-                                        "status_message": result_summary,
-                                    }
+                                    complete_action = ActionHistory(
+                                        action_id="complete_" + call_id,
+                                        role=ActionRole.TOOL,
+                                        messages=f"Tool call: {tool_name}('{args_display}...')",
+                                        action_type=tool_name,
+                                        input={"function_name": tool_name, "arguments": tool_info["arguments"]},
+                                        output={
+                                            "success": True,
+                                            "raw_output": output_content,  # Add raw output for action_display_app
+                                            "summary": result_summary,
+                                            "status_message": result_summary,
+                                        },
+                                        status=ActionStatus.SUCCESS,
+                                    )
+                                    complete_action.end_time = datetime.now()
+
                                     logger.debug(
                                         f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}"
                                     )
 
-                                    # update action_history_manager before yielding (consistent with thinking messages)
-                                    action_history_manager.update_action_by_id(
-                                        call_id,
-                                        output=output_data,
-                                        end_time=datetime.now(),
-                                        status=ActionStatus.SUCCESS,
-                                    )
-                                    updated_action = action_history_manager.find_action_by_id(call_id)
-                                    yield updated_action
+                                    # Add to action_history_manager before yielding (consistent with thinking messages)
+                                    action_history_manager.add_action(complete_action)
+                                    yield complete_action
 
                                     # Remove from temp storage to avoid duplicates
                                     del temp_tool_calls[call_id]

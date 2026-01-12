@@ -21,7 +21,7 @@ from textual.widgets import Button, Collapsible, DataTable, Footer, Header, Labe
 
 from datus.cli.action_history_display import BaseActionContentGenerator
 from datus.cli.screen.base_app import BaseApp
-from datus.schemas.action_history import ActionHistory, ActionRole
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.json_utils import llm_result2json, to_pretty_str
 from datus.utils.loggings import get_logger
 from datus.utils.rich_util import dict_to_tree
@@ -65,6 +65,8 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
         content_widgets = []
 
         if action.role == ActionRole.TOOL:
+            if action.status == ActionStatus.PROCESSING:
+                return None
             content_widgets.extend(self._create_tool_content(action, index))
         elif action.role == ActionRole.USER:
             start = action.messages.index(":")
