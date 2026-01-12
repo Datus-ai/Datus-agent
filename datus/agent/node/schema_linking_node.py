@@ -11,7 +11,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseInput
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
-from datus.storage.ext_knowledge.store import ExtKnowledgeStore, ExtKnowledgeRAG
+from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
 from datus.utils.loggings import get_logger
 
