@@ -736,6 +736,14 @@ def do_init_sql_and_log_result(
             if os.path.exists(reference_sql_path):
                 shutil.rmtree(reference_sql_path)
                 logger.info(f"Deleted existing directory {reference_sql_path}")
+            # Also clear sql_summaries/{namespace} directory (YAML files)
+            from datus.utils.path_manager import get_path_manager
+
+            path_manager = get_path_manager(datus_home=agent_config.home)
+            sql_summary_dir = path_manager.sql_summary_path(agent_config.current_namespace)
+            if sql_summary_dir.exists():
+                shutil.rmtree(sql_summary_dir)
+                logger.info(f"Deleted existing SQL summary directory {sql_summary_dir}")
             agent_config.save_storage_config("reference_sql")
         else:
             agent_config.check_init_storage_config("reference_sql")

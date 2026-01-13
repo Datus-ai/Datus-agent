@@ -12,6 +12,7 @@ from rich.console import Console
 
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger, print_rich_exception
+from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 console = Console()
@@ -98,6 +99,12 @@ def init_metrics(
             if os.path.exists(metrics_path):
                 shutil.rmtree(metrics_path)
                 logger.info(f"Deleted existing directory {metrics_path}")
+            # Also clear semantic_models/{namespace} directory (YAML files)
+            path_manager = get_path_manager(datus_home=agent_config.home)
+            semantic_yaml_dir = path_manager.semantic_model_path(agent_config.current_namespace)
+            if semantic_yaml_dir.exists():
+                shutil.rmtree(semantic_yaml_dir)
+                logger.info(f"Deleted existing semantic YAML directory {semantic_yaml_dir}")
             agent_config.save_storage_config("metric")
 
         # Create StreamOutputManager
