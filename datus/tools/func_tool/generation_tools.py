@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
-from typing import List
+from typing import Dict, List
 
 from agents import Tool
 
@@ -177,7 +177,9 @@ class GenerationTools:
             logger.error(f"Error completing semantic model generation: {e}")
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
 
-    def end_metric_generation(self, metric_file: str, semantic_model_file: str = "") -> FuncToolResult:
+    def end_metric_generation(
+        self, metric_file: str, semantic_model_file: str = "", metric_sqls_json: str = ""
+    ) -> FuncToolResult:
         """
         Complete metric generation process.
 
@@ -189,13 +191,27 @@ class GenerationTools:
             semantic_model_file: Absolute path to the primary semantic model file that defines
                                  the measure(s) used by this metric. Optional - provide this
                                  if the semantic model was newly created or updated.
+            metric_sqls_json: JSON string mapping metric names to their generated SQL (from query_metrics dry_run).
+                              Example: '{"revenue_total": "SELECT SUM(revenue) FROM orders GROUP BY date"}'
 
         Returns:
-            dict: Result containing confirmation message and file paths
+            dict: Result containing confirmation message, file paths, and metric SQLs
         """
+        import json
+
         try:
+            # Parse JSON string to dict
+            metric_sqls: Dict[str, str] = {}
+            if metric_sqls_json:
+                try:
+                    metric_sqls = json.loads(metric_sqls_json)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse metric_sqls_json: {e}")
+
             logger.info(
-                f"Metric generation completed: metric_file={metric_file}, semantic_model_file={semantic_model_file}"
+                f"Metric generation completed: metric_file={metric_file}, "
+                f"semantic_model_file={semantic_model_file}, "
+                f"metric_sqls={metric_sqls}"
             )
 
             return FuncToolResult(
@@ -203,6 +219,7 @@ class GenerationTools:
                     "message": "Metric generation completed",
                     "metric_file": metric_file,
                     "semantic_model_file": semantic_model_file,
+                    "metric_sqls": metric_sqls,
                 }
             )
 

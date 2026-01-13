@@ -207,9 +207,41 @@ class MetricsPanel(Vertical):
         self.fields.append(description_field)
         yield description_field
 
+        # dimensions is a list, convert to comma-separated string for display
+        dimensions_value = self.entry.get("dimensions", [])
+        dimensions_str = (
+            ", ".join(dimensions_value) if isinstance(dimensions_value, list) else str(dimensions_value or "")
+        )
+        dimensions_field = InputWithLabel(
+            "Dimensions",
+            dimensions_str,
+            lines=2,
+            readonly=self.readonly,
+            language="markdown",
+        )
+        self.fields.append(dimensions_field)
+        yield dimensions_field
+
+        # SQL field
+        sql_field = InputWithLabel(
+            "SQL",
+            self.entry.get("sql", ""),
+            lines=5,
+            readonly=self.readonly,
+            language="sql",
+        )
+        self.fields.append(sql_field)
+        yield sql_field
+
     def _fill_data(self):
         self.fields[0].set_value(self.entry.get("semantic_model_name", ""))
         self.fields[1].set_value(self.entry.get("description", ""))
+        dimensions_value = self.entry.get("dimensions", [])
+        dimensions_str = (
+            ", ".join(dimensions_value) if isinstance(dimensions_value, list) else str(dimensions_value or "")
+        )
+        self.fields[2].set_value(dimensions_str)
+        self.fields[3].set_value(self.entry.get("sql", ""))
 
     def set_readonly(self, readonly: bool) -> None:
         """
@@ -276,11 +308,11 @@ class ReferenceSqlPanel(Vertical):
         )
         self.fields.append(summary_field)
         yield summary_field
-        comment_field = InputWithLabel(
-            "Comment", self.entry.get("comment", ""), lines=2, readonly=self.readonly, language="markdown"
+        search_text_field = InputWithLabel(
+            "Search Text", self.entry.get("search_text", ""), lines=2, readonly=self.readonly, language="markdown"
         )
-        self.fields.append(comment_field)
-        yield comment_field
+        self.fields.append(search_text_field)
+        yield search_text_field
         tags_field = InputWithLabel(
             "Tags",
             self.entry.get("tags", ""),
@@ -295,7 +327,7 @@ class ReferenceSqlPanel(Vertical):
 
     def _fill_data(self):
         self.fields[0].set_value(self.entry.get("summary", ""))
-        self.fields[1].set_value(self.entry.get("comment", ""))
+        self.fields[1].set_value(self.entry.get("search_text", ""))
         self.fields[2].set_value(self.entry.get("tags", ""))
         self.fields[3].set_value(self.entry.get("sql", ""))
 
@@ -326,8 +358,16 @@ class ReferenceSqlPanel(Vertical):
     def get_value(self) -> Dict[str, str]:
         """
         Return a dictionary mapping field labels to their current values.
+
+        Maps field labels to their storage keys.
         """
-        return {field.label_text.lower(): field.get_value() for field in self.fields}
+        values: Dict[str, str] = {}
+        for field in self.fields:
+            key = field.label_text.lower()
+            if key == "search text":
+                key = "search_text"
+            values[key] = field.get_value()
+        return values
 
     def restore(self):
         for field in self.fields:
@@ -1549,6 +1589,10 @@ class SubjectScreen(ContextScreen):
             metric_name = str(metric.get("name", ""))
             semantic_model_name = str(metric.get("semantic_model_name", ""))
             description = str(metric.get("description", ""))
+            dimensions_value = metric.get("dimensions", [])
+            dimensions_str = (
+                ", ".join(dimensions_value) if isinstance(dimensions_value, list) else str(dimensions_value or "")
+            )
 
             table = Table(
                 title=f"[bold cyan]📊 Metric #{idx}: {metric_name}[/bold cyan]",
@@ -1567,6 +1611,14 @@ class SubjectScreen(ContextScreen):
                 table.add_row("Semantic Model Name", semantic_model_name)
             if description:
                 table.add_row("Description", description)
+            if dimensions_str:
+                table.add_row("Dimensions", dimensions_str)
+            sql_value = metric.get("sql", "")
+            if sql_value:
+                table.add_row(
+                    "SQL",
+                    Syntax(sql_value, "sql", theme="monokai", word_wrap=True, line_numbers=True),
+                )
 
             sections.append(table)
 
@@ -1588,8 +1640,8 @@ class SubjectScreen(ContextScreen):
 
             if summary := sql_entry.get("summary"):
                 details.add_row("Summary", summary)
-            if comment := sql_entry.get("comment"):
-                details.add_row("Comment", comment)
+            if search_text := sql_entry.get("search_text"):
+                details.add_row("Search Text", search_text)
             if tags := sql_entry.get("tags"):
                 details.add_row("Tags", build_historical_sql_tags(tags))
 

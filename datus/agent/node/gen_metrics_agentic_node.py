@@ -466,12 +466,16 @@ class GenMetricsAgenticNode(AgenticNode):
             # Auto-save to database in workflow mode
             if self.execution_mode == "workflow" and metric_file:
                 try:
+                    # Extract metric_sqls from end_metric_generation tool call results
+                    metric_sqls = self._extract_metric_sqls_from_actions(action_history_manager)
+
                     self._save_to_db(
                         semantic_model_file=semantic_model_file,
                         metric_file=metric_file,
                         catalog=user_input.catalog,
                         database=user_input.database,
                         db_schema=user_input.db_schema,
+                        metric_sqls=metric_sqls,
                     )
                     logger.info(f"Auto-saved to database: semantic_model={semantic_model_file}, metric={metric_file}")
                 except Exception as e:
@@ -597,6 +601,45 @@ class GenMetricsAgenticNode(AgenticNode):
             logger.error(f"Unexpected error extracting metric_file: {e}", exc_info=True)
             return None, None, None
 
+    def _extract_metric_sqls_from_actions(self, action_history_manager) -> dict:
+        """
+        Extract metric_sqls from end_metric_generation tool call results.
+
+        Args:
+            action_history_manager: Action history manager containing tool call results
+
+        Returns:
+            Dictionary mapping metric names to their generated SQL
+        """
+        metric_sqls = {}
+        try:
+            actions = action_history_manager.get_actions()
+            for action in actions:
+                # Look for tool call results
+                if action.role == "tool" and action.output:
+                    output = action.output
+                    # Check if this is end_metric_generation result
+                    if isinstance(output, dict):
+                        # Handle nested structure: output -> raw_output -> result
+                        raw_output = output.get("raw_output", {})
+                        if isinstance(raw_output, dict):
+                            result = raw_output.get("result", {})
+                        else:
+                            result = output.get("result", {})
+
+                        if isinstance(result, dict) and "metric_sqls" in result:
+                            sqls = result.get("metric_sqls", {})
+                            if isinstance(sqls, dict):
+                                metric_sqls.update(sqls)
+                                logger.info(f"Extracted metric_sqls from tool result: {list(sqls.keys())}")
+
+            if not metric_sqls:
+                logger.warning("No metric_sqls found in action history")
+        except Exception as e:
+            logger.error(f"Error extracting metric_sqls from actions: {e}", exc_info=True)
+
+        return metric_sqls
+
     def _save_to_db(
         self,
         semantic_model_file: Optional[str] = None,
@@ -604,6 +647,7 @@ class GenMetricsAgenticNode(AgenticNode):
         catalog=None,
         database=None,
         db_schema=None,
+        metric_sqls: dict = None,
     ):
         """
         Save generated metrics to database (synchronous).
@@ -614,6 +658,7 @@ class GenMetricsAgenticNode(AgenticNode):
             catalog: Optional catalog override
             database: Optional database override
             db_schema: Optional schema override
+            metric_sqls: Optional dict mapping metric names to their generated SQL
         """
         try:
             import os
@@ -655,7 +700,12 @@ class GenMetricsAgenticNode(AgenticNode):
 
                         # Sync the combined file
                         result = GenerationHooks._sync_semantic_to_db(
-                            temp_file, self.agent_config, catalog=catalog, database=database, schema=db_schema
+                            temp_file,
+                            self.agent_config,
+                            catalog=catalog,
+                            database=database,
+                            schema=db_schema,
+                            metric_sqls=metric_sqls,
                         )
                     finally:
                         # Clean up temp file
@@ -665,13 +715,23 @@ class GenMetricsAgenticNode(AgenticNode):
                     logger.warning(f"Semantic model file not found: {semantic_full_path}, syncing metric only")
                     # Fall back to syncing metric file alone
                     result = GenerationHooks._sync_semantic_to_db(
-                        metric_full_path, self.agent_config, catalog=catalog, database=database, schema=db_schema
+                        metric_full_path,
+                        self.agent_config,
+                        catalog=catalog,
+                        database=database,
+                        schema=db_schema,
+                        metric_sqls=metric_sqls,
                     )
             else:
                 # No semantic model file provided, sync metric file alone
                 logger.info("No semantic model file provided, syncing metric file alone")
                 result = GenerationHooks._sync_semantic_to_db(
-                    metric_full_path, self.agent_config, catalog=catalog, database=database, schema=db_schema
+                    metric_full_path,
+                    self.agent_config,
+                    catalog=catalog,
+                    database=database,
+                    schema=db_schema,
+                    metric_sqls=metric_sqls,
                 )
 
             if result.get("success"):

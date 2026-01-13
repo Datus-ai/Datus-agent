@@ -112,6 +112,37 @@ class SemanticTools:
             self._attribution_tool = DimensionAttributionUtil(self.adapter)
         return self._attribution_tool
 
+    def _reload_adapter(self) -> bool:
+        """
+        Reload the semantic adapter to pick up new configuration changes.
+
+        This is useful after writing new metric/semantic model YAML files,
+        as MetricFlow needs to reload the configuration to know about new metrics.
+
+        Returns:
+            True if reload succeeded, False otherwise
+        """
+        if not self.adapter_type:
+            logger.warning("No adapter type configured, cannot reload")
+            return False
+
+        try:
+            # Clear cached adapter and attribution tool
+            self._adapter = None
+            self._attribution_tool = None
+
+            # Force reload by accessing the property
+            if self.adapter is not None:
+                logger.info(f"Successfully reloaded semantic adapter: {self.adapter_type}")
+                return True
+            else:
+                logger.error("Failed to reload semantic adapter")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error reloading semantic adapter: {e}", exc_info=True)
+            return False
+
     def available_tools(self) -> List[Tool]:
         """
         Get list of available tools.
@@ -387,6 +418,10 @@ class SemanticTools:
         """
         Validate semantic layer configuration (requires adapter).
 
+        After successful validation, the adapter is reloaded to pick up any new
+        metrics or semantic model changes. This ensures that subsequent calls to
+        query_metrics can find newly created metrics.
+
         Returns:
             FuncToolResult with validation status and issues
         """
@@ -405,6 +440,11 @@ class SemanticTools:
                 issue.model_dump() if hasattr(issue, "model_dump") else {"severity": "error", "message": str(issue)}
                 for issue in validation_result.issues
             ]
+
+            # If validation succeeded, reload the adapter to pick up new metrics
+            if validation_result.valid:
+                logger.info("Validation succeeded, reloading adapter to pick up new metrics...")
+                self._reload_adapter()
 
             return FuncToolResult(
                 success=1 if validation_result.valid else 0,

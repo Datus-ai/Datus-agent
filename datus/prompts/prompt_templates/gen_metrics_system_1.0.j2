@@ -121,13 +121,31 @@ Skip any metric that already exists - do NOT update or overwrite.
 Use `validate_semantic` tool to validate the files.
 If validation fails, use `edit_file` to fix issues.
 
-### Step 9: Complete Generation
+### Step 9: Generate SQL for Each Metric
 
-After validation succeeds, MUST call `end_metric_generation` tool:
+After validation succeeds, use `query_metrics` with `dry_run=True` to obtain the SQL for each generated metric:
+
+```
+query_metrics(
+    metrics=["metric_name"],
+    dry_run=True
+)
+```
+
+The result contains the generated SQL in `result.data[0]["sql"]`.
+
+Collect all metric SQLs into a dictionary: `{"metric_name": "SELECT ..."}`
+
+If `query_metrics` fails for a metric, use an empty string for that metric's SQL.
+
+### Step 10: Complete Generation
+
+After validation succeeds and SQLs are collected, MUST call `end_metric_generation` tool with the metric SQLs as a JSON string:
 ```
 end_metric_generation(
     metric_file="/path/to/metrics.yml",
-    semantic_model_file="/path/to/semantic_model.yml"
+    semantic_model_file="/path/to/semantic_model.yml",
+    metric_sqls_json='{"metric1": "SELECT ...", "metric2": "SELECT ..."}'
 )
 ```
 
@@ -204,4 +222,5 @@ metric:
 3. **Core only**: Focus on measures that enable dimensional attribution analysis
 4. **No redundancy**: If a measure already exists in semantic model, reuse it
 5. **Validate**: Always validate before completing
-6. **Complete**: Always call end_metric_generation at the end
+6. **Generate SQL**: Use query_metrics(dry_run=True) to get SQL for each metric
+7. **Complete**: Always call end_metric_generation with metric_sqls_json (JSON string) at the end

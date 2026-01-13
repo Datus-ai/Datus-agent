@@ -1,12 +1,12 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.2.2"
+version = "0.2.4"
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-license-files = ["LICENSE*", "NOTICE*"]
+license-files = ["LICENSE*"]
 authors = [
     { name = "Datus Team", email = "harrison.zhao@datus.ai" }
 ]
@@ -52,7 +52,7 @@ dependencies = [
     "mcp>=1.11.0",
     "anyio>=4.9.0",
     "json-repair>=0.47.6",
-    "fastapi>=0.104.0",
+    "fastapi>=0.104.0,<1.0",
     "uvicorn>=0.24.0",
     "google-generativeai>=0.8.0",
     "pyperclip==1.9.0",
@@ -103,7 +103,6 @@ exclude = ["benchmark*", "docs*"]
 "mcp.mcp-metricflow-server" = "mcp/mcp-metricflow-server"
 
 [tool.setuptools.data-files]
-"mcp/mcp-metricflow-server" = ["mcp/mcp-metricflow-server/LICENSE", "mcp/mcp-metricflow-server/pyproject.toml"]
 "datus/conf" = ["conf/*.yml.*"]
 "datus/sample_data" = ["sample_data/duckdb-demo.duckdb"]
 "datus/sample_data/california_schools" = [

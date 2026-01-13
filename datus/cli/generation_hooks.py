@@ -123,25 +123,26 @@ class GenerationHooks(AgentHooks):
         Handle end_metric_generation tool result.
 
         Args:
-            result: Tool result containing metric_file and optional semantic_model_file
+            result: Tool result containing metric_file, optional semantic_model_file, and metric_sqls
         """
         try:
-            metric_file, semantic_model_file = self._extract_metric_generation_result(result)
+            metric_file, semantic_model_file, metric_sqls = self._extract_metric_generation_result(result)
 
             if not metric_file:
                 logger.warning(f"Could not extract metric_file from end_metric_generation result: {result}")
                 return
 
             logger.debug(
-                f"Processing metric generation: metric_file={metric_file}, semantic_model_file={semantic_model_file}"
+                f"Processing metric generation: metric_file={metric_file}, "
+                f"semantic_model_file={semantic_model_file}, metric_sqls={list(metric_sqls.keys())}"
             )
 
             if semantic_model_file:
                 # Process both files together for proper association
-                await self._process_metric_with_semantic_model(semantic_model_file, metric_file)
+                await self._process_metric_with_semantic_model(semantic_model_file, metric_file, metric_sqls)
             else:
                 # Process metric file alone (semantic model already exists in KB)
-                await self._process_single_file(metric_file)
+                await self._process_single_file(metric_file, metric_sqls=metric_sqls)
 
         except GenerationCancelledException:
             self.console.print("[yellow]Generation workflow cancelled[/]")
@@ -174,14 +175,17 @@ class GenerationHooks(AgentHooks):
 
     def _extract_metric_generation_result(self, result) -> tuple:
         """
-        Extract metric_file and semantic_model_file from tool result.
+        Extract metric_file, semantic_model_file, and metric_sqls from tool result.
 
         Args:
             result: Tool result (dict or FuncToolResult object)
 
         Returns:
-            Tuple of (metric_file, semantic_model_file)
+            Tuple of (metric_file, semantic_model_file, metric_sqls)
         """
+        # Debug: log raw result type and content
+        logger.info(f"_extract_metric_generation_result raw result: type={type(result).__name__}, value={result}")
+
         result_dict = None
         if isinstance(result, dict):
             result_dict = result.get("result", {})
@@ -191,16 +195,20 @@ class GenerationHooks(AgentHooks):
         if isinstance(result_dict, dict):
             metric_file = result_dict.get("metric_file", "")
             semantic_model_file = result_dict.get("semantic_model_file", "")
-            return metric_file, semantic_model_file
+            metric_sqls = result_dict.get("metric_sqls", {})
+            logger.info(f"Extracted from end_metric_generation: metric_sqls={metric_sqls}")
+            return metric_file, semantic_model_file, metric_sqls
 
-        return "", ""
+        logger.warning(f"Could not extract metric_generation_result from: {result}")
+        return "", "", {}
 
-    async def _process_single_file(self, file_path: str):
+    async def _process_single_file(self, file_path: str, metric_sqls: dict = None):
         """
         Process a single YAML file: display and get user confirmation.
 
         Args:
             file_path: Path to the YAML file
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
         """
         # Check if file exists
         if not os.path.exists(file_path):
@@ -239,9 +247,11 @@ class GenerationHooks(AgentHooks):
         await asyncio.sleep(0.2)
 
         # Get user confirmation to sync
-        await self._get_sync_confirmation(yaml_content, file_path, "semantic")
+        await self._get_sync_confirmation(yaml_content, file_path, "semantic", metric_sqls=metric_sqls)
 
-    async def _process_metric_with_semantic_model(self, semantic_model_file: str, metric_file: str):
+    async def _process_metric_with_semantic_model(
+        self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
+    ):
         """
         Process metric file along with its semantic model file.
         Display both files and sync them together so metrics can reference semantic model data.
@@ -249,13 +259,14 @@ class GenerationHooks(AgentHooks):
         Args:
             semantic_model_file: Path to the semantic model YAML file
             metric_file: Path to the metric YAML file
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
         """
         # Check if files exist
         if not os.path.exists(semantic_model_file):
             logger.warning(f"Semantic model file {semantic_model_file} does not exist")
             # Still try to process metric file alone
             if os.path.exists(metric_file):
-                await self._process_single_file(metric_file)
+                await self._process_single_file(metric_file, metric_sqls=metric_sqls)
             return
 
         if not os.path.exists(metric_file):
@@ -307,7 +318,7 @@ class GenerationHooks(AgentHooks):
         await asyncio.sleep(0.2)
 
         # Get user confirmation to sync both files together
-        await self._get_sync_confirmation_for_pair(semantic_model_file, metric_file)
+        await self._get_sync_confirmation_for_pair(semantic_model_file, metric_file, metric_sqls)
 
     async def _clear_output_and_show_sync_prompt(self):
         """Show sync confirmation prompt."""
@@ -477,13 +488,16 @@ class GenerationHooks(AgentHooks):
             logger.error(f"Error handling write_file_ext_knowledge result: {e}", exc_info=True)
             self.console.print(f"[red]Error: {e}[/]")
 
-    async def _get_sync_confirmation_for_pair(self, semantic_model_file: str, metric_file: str):
+    async def _get_sync_confirmation_for_pair(
+        self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
+    ):
         """
         Get user confirmation to sync semantic model and metric files together to Knowledge Base.
 
         Args:
             semantic_model_file: Path to semantic model YAML file
             metric_file: Path to metric YAML file
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
         """
         try:
             # Stop the live display if active
@@ -503,7 +517,7 @@ class GenerationHooks(AgentHooks):
                 if choice == "1":
                     # Sync both files to Knowledge Base
                     self.console.print("[bold green]✓ Syncing to Knowledge Base...[/]")
-                    await self._sync_semantic_and_metric(semantic_model_file, metric_file)
+                    await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
                 elif choice == "2":
                     # Keep files only
                     self.console.print("[yellow]✓ YAMLs saved to files only:[/]")
@@ -512,7 +526,7 @@ class GenerationHooks(AgentHooks):
                 else:
                     self.console.print("[red]✗ Invalid choice. Please enter 1 or 2.[/]")
                     self.console.print("[dim]Please try again...[/]\n")
-                    await self._get_sync_confirmation_for_pair(semantic_model_file, metric_file)
+                    await self._get_sync_confirmation_for_pair(semantic_model_file, metric_file, metric_sqls)
 
             # Print completion separator to prevent action stream from overwriting
             self.console.print("\n" + "=" * 80)
@@ -531,7 +545,7 @@ class GenerationHooks(AgentHooks):
             logger.error(f"Error in sync confirmation: {e}", exc_info=True)
             raise
 
-    async def _get_sync_confirmation(self, yaml_content: str, file_path: str, yaml_type: str):
+    async def _get_sync_confirmation(self, yaml_content: str, file_path: str, yaml_type: str, metric_sqls: dict = None):
         """
         Get user confirmation to sync to Knowledge Base.
 
@@ -539,6 +553,7 @@ class GenerationHooks(AgentHooks):
             yaml_content: Generated YAML content
             file_path: Path where YAML was saved
             yaml_type: YAML type - "semantic" or "sql_summary"
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
         """
         try:
             # Stop the live display if active
@@ -558,14 +573,14 @@ class GenerationHooks(AgentHooks):
                 if choice == "1":
                     # Sync to Knowledge Base
                     self.console.print("[bold green]✓ Syncing to Knowledge Base...[/]")
-                    await self._sync_to_storage(file_path, yaml_type)
+                    await self._sync_to_storage(file_path, yaml_type, metric_sqls=metric_sqls)
                 elif choice == "2":
                     # Keep file only
                     self.console.print(f"[yellow]✓ YAML saved to file only: {file_path}[/]")
                 else:
                     self.console.print("[red]✗ Invalid choice. Please enter 1 or 2.[/]")
                     self.console.print("[dim]Please try again...[/]\n")
-                    await self._get_sync_confirmation(yaml_content, file_path, yaml_type)
+                    await self._get_sync_confirmation(yaml_content, file_path, yaml_type, metric_sqls=metric_sqls)
 
             # Print completion separator to prevent action stream from overwriting
             self.console.print("\n" + "=" * 80)
@@ -585,13 +600,14 @@ class GenerationHooks(AgentHooks):
             raise
 
     @optional_traceable(name="_sync_to_storage", run_type="chain")
-    async def _sync_to_storage(self, file_path: str, yaml_type: str):
+    async def _sync_to_storage(self, file_path: str, yaml_type: str, metric_sqls: dict = None):
         """
         Sync YAML file to RAG storage based on file type.
 
         Args:
             file_path: File path to sync
             yaml_type: YAML type - "semantic" or "sql_summary"
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
         """
         if not self.agent_config:
             self.console.print("[red]Agent configuration not available, cannot sync to RAG[/]")
@@ -604,7 +620,8 @@ class GenerationHooks(AgentHooks):
 
             if yaml_type == "semantic":
                 result = await loop.run_in_executor(
-                    None, GenerationHooks._sync_semantic_to_db, file_path, self.agent_config
+                    None,
+                    lambda: GenerationHooks._sync_semantic_to_db(file_path, self.agent_config, metric_sqls=metric_sqls),
                 )
                 item_type = "semantic model"
             elif yaml_type == "sql_summary":
@@ -641,7 +658,7 @@ class GenerationHooks(AgentHooks):
             self.console.print(f"[yellow]YAML saved to file: {file_path}[/]")
 
     @optional_traceable(name="_sync_semantic_and_metric", run_type="chain")
-    async def _sync_semantic_and_metric(self, semantic_model_file: str, metric_file: str):
+    async def _sync_semantic_and_metric(self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None):
         """
         Sync both semantic model and metric files to RAG storage.
         Creates a combined YAML for syncing so metrics can reference semantic model data.
@@ -649,6 +666,7 @@ class GenerationHooks(AgentHooks):
         Args:
             semantic_model_file: Path to semantic model YAML file
             metric_file: Path to metric YAML file
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
         """
         if not self.agent_config:
             self.console.print("[red]Agent configuration not available, cannot sync to RAG[/]")
@@ -677,7 +695,8 @@ class GenerationHooks(AgentHooks):
 
                 # Sync the combined file
                 result = await loop.run_in_executor(
-                    None, GenerationHooks._sync_semantic_to_db, temp_file, self.agent_config
+                    None,
+                    lambda: GenerationHooks._sync_semantic_to_db(temp_file, self.agent_config, metric_sqls=metric_sqls),
                 )
 
                 if result.get("success"):
@@ -795,6 +814,7 @@ class GenerationHooks(AgentHooks):
         schema: Optional[str] = None,
         include_semantic_objects: bool = True,
         include_metrics: bool = True,
+        metric_sqls: dict = None,
     ) -> dict:
         """
         Sync semantic objects and/or metrics from YAML file to Knowledge Base.
@@ -804,6 +824,7 @@ class GenerationHooks(AgentHooks):
             agent_config: Agent configuration
             include_semantic_objects: Whether to sync tables/columns/entities
             include_metrics: Whether to sync metrics
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
 
         Now parses tables, columns, metrics, and entities as individual 'semantic_objects'.
         """
@@ -1080,6 +1101,8 @@ class GenerationHooks(AgentHooks):
                         "catalog_name": catalog_name,
                         "database_name": database_name,
                         "schema_name": schema_name,
+                        # Generated SQL from dry_run
+                        "sql": metric_sqls.get(m_name, "") if metric_sqls else "",
                     }
                     metric_objects.append(metric_obj)
                     synced_items.append(f"metric:{m_name}")
