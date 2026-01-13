@@ -227,8 +227,13 @@ class SemanticModelRAG:
         return self.storage._search_all(where=where, select_fields=select_fields).to_pylist()
 
     def get_size(self) -> int:
-        """Get count of semantic model objects."""
-        return self.storage.table_size()
+        """Get count of table-level semantic model objects (excluding columns)."""
+        try:
+            self.storage._ensure_table_ready()
+            where_clause = build_where(eq("kind", "table"))
+            return self.storage.table.count_rows(where_clause)
+        except Exception:
+            return 0
 
     def store_batch(self, objects: List[Dict[str, Any]]):
         """Store a batch of semantic model objects."""

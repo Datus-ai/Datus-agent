@@ -18,7 +18,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from datus.cli._cli_utils import prompt_input
-from datus.cli.init_util import init_metrics
+from datus.cli.init_util import init_metrics, init_semantic_model
 from datus.cli.interactive_init import ReferenceSqlStreamHandler
 from datus.configuration.agent_config import AgentConfig, DashboardConfig
 from datus.configuration.agent_config_loader import configuration_manager
@@ -465,8 +465,17 @@ class BiDashboardCommands:
         self.console.log("[bold cyan]Start building reference SQL[/]")
 
         ref_sqls = self._gen_reference_sqls(result.reference_sqls, platform, dashboard)
+
+        # Generate semantic model first (before metrics)
+        self.console.log("[bold cyan]Start building semantic model[/]")
+        self._gen_semantic_model(result.metric_sqls, platform, dashboard)
+        self.console.log("[bold cyan]Building semantic model completed[/]")
+
+        # Generate metrics (after semantic model)
         self.console.log("[bold cyan]Start building metrics[/]")
         metrics = self._gen_metrics(result.metric_sqls, platform, dashboard)
+        self.console.log("[bold cyan]Building metrics completed[/]")
+
         scoped_context: Optional[ScopedContext] = None
         if table_names or ref_sqls or metrics:
             scoped_context = ScopedContext(
@@ -474,7 +483,6 @@ class BiDashboardCommands:
                 sqls=",".join(ref_sqls) if ref_sqls else None,
                 metrics=",".join(metrics) if metrics else None,
             )
-        self.console.log("[bold cyan]Building metrics completed[/]")
 
         if scoped_context is None:
             self.console.log("[yellow]No scoped context derived. Skipping sub-agent save.[/]")
@@ -734,6 +742,51 @@ class BiDashboardCommands:
                             metrics.add(f"{subject_tree}.{name}")
 
         return list(metrics)
+
+    def _gen_semantic_model(self, sqls: List[SelectedSqlCandidate], platform: str, dashboard: DashboardInfo) -> bool:
+        """Generate semantic model from SQL queries.
+
+        Args:
+            sqls: List of SQL candidates from charts
+            platform: BI platform name
+            dashboard: Dashboard info
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not sqls:
+            self.console.log("[yellow]No SQL queries for semantic model generation[/]")
+            return False
+
+        # Reuse the same CSV file as metrics (or create one if not exists)
+        target_file = self._ensure_file_name(platform, dashboard, suffix=".csv")
+
+        # Check if file exists, if not create it
+        if not target_file.exists():
+            file_data = []
+            for sql_item in sqls:
+                question = (
+                    f"Dashboard={self._clean_comment_text(dashboard.name or '')};"
+                    f"Chart={self._clean_comment_text(sql_item.chart_name or str(sql_item.chart_id))};"
+                )
+                if sql_item.description:
+                    question += f"Description={self._clean_comment_text(sql_item.description)};"
+                file_data.append({"question": question, "sql": sql_item.sql})
+
+            with open(target_file, "w", encoding="utf-8") as target_f:
+                pd.DataFrame(file_data, columns=["question", "sql"]).to_csv(target_f, index=False)
+
+        successful, result = init_semantic_model(
+            target_file, agent_config=self.agent_config, console=self.console, build_mode="incremental"
+        )
+
+        if successful:
+            count = result.get("semantic_model_count", 0) if result else 0
+            self.console.log(f"[green]Semantic model generated successfully (count={count})[/]")
+        else:
+            self.console.log("[yellow]Semantic model generation failed or skipped[/]")
+
+        return successful
 
     def _store_reference_sql_entries(self, sub_agent_name: str, entries: Sequence[dict]) -> None:
         try:

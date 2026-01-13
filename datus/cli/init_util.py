@@ -157,3 +157,80 @@ def init_metrics(
     except Exception as e:
         print_rich_exception(console, e, "Metrics initialization failed", logger)
         return False, None
+
+
+def init_semantic_model(
+    success_path: Path,
+    agent_config: AgentConfig,
+    build_mode: Literal["incremental", "overwrite"] = "incremental",
+    console: Optional[Console] = None,
+) -> tuple[bool, Optional[dict[str, Any]]]:
+    """Initialize semantic model using success stories.
+
+    Args:
+        success_path: Path to success story CSV file
+        agent_config: Agent configuration
+        build_mode: Build mode (incremental or overwrite)
+        console: Optional Rich console for output
+
+    Returns:
+        Tuple of (success: bool, result: Optional[dict])
+    """
+    from rich.markup import escape
+
+    from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model
+    from datus.storage.semantic_model.store import SemanticModelRAG
+    from datus.utils.stream_output import StreamOutputManager
+
+    if not console:
+        console = Console(log_path=False)
+
+    try:
+        storage_path = agent_config.rag_storage_path()
+
+        if build_mode == "overwrite":
+            semantic_model_path = os.path.join(storage_path, "semantic_model.lance")
+            if os.path.exists(semantic_model_path):
+                shutil.rmtree(semantic_model_path)
+                logger.info(f"Deleted existing directory {semantic_model_path}")
+            # Also clear semantic_models/{namespace} directory (YAML files)
+            path_manager = get_path_manager(datus_home=agent_config.home)
+            semantic_yaml_dir = path_manager.semantic_model_path(agent_config.current_namespace)
+            if semantic_yaml_dir.exists():
+                shutil.rmtree(semantic_yaml_dir)
+                logger.info(f"Deleted existing semantic YAML directory {semantic_yaml_dir}")
+            agent_config.save_storage_config("semantic_model")
+
+        # Create StreamOutputManager
+        output_mgr = StreamOutputManager(
+            console=console,
+            max_message_lines=10,
+            show_progress=True,
+            title="Semantic Model Initialization",
+        )
+
+        output_mgr.start(total_items=1, description="Initializing semantic model")
+
+        args = argparse.Namespace(success_story=str(success_path))
+
+        try:
+            successful, error_message = init_success_story_semantic_model(args, agent_config)
+        finally:
+            output_mgr.stop()
+
+        if successful:
+            console.print("[green]Semantic model initialized[/]")
+            # Get semantic model count
+            try:
+                semantic_rag = SemanticModelRAG(agent_config)
+                result = {"semantic_model_count": semantic_rag.get_size()}
+            except Exception:
+                result = {}
+            return True, result
+        else:
+            console.print(" [red]Error:[/] Semantic model initialization failed:")
+            console.print(f"    {escape(str(error_message))}")
+            return False, None
+    except Exception as e:
+        print_rich_exception(console, e, "Semantic model initialization failed", logger)
+        return False, None
