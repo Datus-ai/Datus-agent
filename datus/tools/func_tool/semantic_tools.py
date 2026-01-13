@@ -87,11 +87,16 @@ class SemanticTools:
                     # Get namespace from agent_config
                     namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_namespace
 
+                    # Get config_path from ConfigurationManager
+                    from datus.configuration.agent_config_loader import CONFIGURATION_MANAGER
+
+                    config_path = str(CONFIGURATION_MANAGER.config_path) if CONFIGURATION_MANAGER else None
+
                     # Get the registered config class for this adapter type
                     metadata = semantic_adapter_registry.get_metadata(self.adapter_type)
                     if metadata and metadata.config_class:
-                        # Use the adapter's config class
-                        adapter_config = metadata.config_class(namespace=namespace)
+                        # Use the adapter's config class with config_path
+                        adapter_config = metadata.config_class(namespace=namespace, config_path=config_path)
                     else:
                         # Fallback to base config
                         from datus.tools.semantic_tools.config import SemanticAdapterConfig
