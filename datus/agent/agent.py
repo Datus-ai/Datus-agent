@@ -564,6 +564,12 @@ class Agent:
                     if os.path.exists(ext_knowledge_path):
                         shutil.rmtree(ext_knowledge_path)
                         logger.info(f"Deleted existing directory {ext_knowledge_path}")
+                    # Also clear ext_knowledge/{namespace} directory
+                    path_manager = get_path_manager(datus_home=self.global_config.home)
+                    ext_knowledge_dir = path_manager.ext_knowledge_path(self.global_config.current_namespace)
+                    if ext_knowledge_dir.exists():
+                        shutil.rmtree(ext_knowledge_dir)
+                        logger.info(f"Deleted existing ext_knowledge directory {ext_knowledge_dir}")
                     self.global_config.save_storage_config("ext_knowledge")
                 else:
                     self.global_config.check_init_storage_config("ext_knowledge")
