@@ -59,32 +59,26 @@ agent:
     schema_linking:
       model: deepseek
       matching_rate: fast
-      prompt_version: "1.0"
     generate_sql:
       model: deepseek
-      prompt_version: "1.0"
       max_table_schemas_length: 10000
       max_data_details_length: 8000
       max_context_length: 8000
       max_value_length: 500
     reasoning:
       model: deepseek
-      prompt_version: "1.0"
       max_table_schemas_length: 10000
       max_data_details_length: 8000
       max_context_length: 8000
       max_value_length: 500
       max_turns: 20
     reflect:
-      prompt_version: "2.1"
     output:
-      prompt_version: "1.0"
       check_result: true
   agentic_nodes:
     chatbot:
       model: deepseek
       system_prompt: gen_sql
-      prompt_version: "1.0"
       prompt_language: en
       tools: db_tools.*, context_search_tools.*, filesystem_tools.*
       agent_description: "You are a specialized AI assistant for SQL generation"

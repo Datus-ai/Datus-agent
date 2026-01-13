@@ -25,6 +25,7 @@ from rich.table import Table
 from datus.cli.init_util import detect_db_connectivity
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import configure_logging, get_logger, print_rich_exception
+from datus.utils.path_manager import get_path_manager
 from datus.utils.resource_utils import copy_data_file, read_data_file_text
 
 logger = get_logger(__name__)
@@ -40,8 +41,6 @@ class InteractiveInit:
         self.console = Console(log_path=False)
 
         # Use path manager for directory paths
-        from datus.utils.path_manager import get_path_manager
-
         path_manager = get_path_manager()
         self.conf_dir = path_manager.conf_dir
         self.template_dir = path_manager.template_dir
@@ -494,7 +493,6 @@ class InteractiveInit:
             resource_path="sample_data/california_schools",
             target_dir=self.benchmark_dir / "california_schools",
         )
-        copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir)
 
 
 def create_agent(namespace_name: str, components: list, config_path: str, **kwargs):

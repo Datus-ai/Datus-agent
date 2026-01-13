@@ -1,5 +1,5 @@
 - input:
-    contexts: []
+    contexts: [ ]
     data_details:
       - identifier: california_schools.satscores
         database_name: california_schools
@@ -100,8 +100,7 @@
     max_data_details_length: 2000
     max_table_schemas_length: 4000
     max_value_length: 500
-    metrics: []
-    prompt_version: "1.0"
+    metrics: [ ]
     sql_task:
       database_name: california_schools
       database_type: sqlite
@@ -186,4 +185,4 @@
           \          null,\n--     PctGE1500   double      null,\n        foreign\
           \ key (cds) references schools (CDSCode)\n)"
         table_name: satscores
-  metadata: {}
+  metadata: { }

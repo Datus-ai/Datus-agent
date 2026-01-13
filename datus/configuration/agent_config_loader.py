@@ -214,4 +214,8 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     from datus.storage.cache import get_storage_cache_instance
 
     get_storage_cache_instance(agent_config)
+
+    from datus.utils.path_manager import get_path_manager
+
+    get_path_manager().ensure_templates()
     return agent_config

@@ -9,7 +9,7 @@ def get_evaluation_prompt(
     task_description: str,
     sql_generation_result: str,
     sql_execution_result: str,
-    prompt_version: str = "2.1",
+    prompt_version: str = "",
 ) -> str:
     """
     Generate a prompt for evaluating SQL execution results.

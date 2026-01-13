@@ -450,9 +450,7 @@ class GenSQLAgenticNode(AgenticNode):
             workspace_root=self._resolve_workspace_root(),
         )
         context["conversation_summary"] = conversation_summary
-
-        raw_version = prompt_version if prompt_version is not None else self.node_config.get("prompt_version")
-        version = None if raw_version in (None, "") else str(raw_version)
+        prompt_version = prompt_version or self.node_config.get("prompt_version")
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
         template_name = f"{system_prompt_name}_system"
@@ -461,12 +459,12 @@ class GenSQLAgenticNode(AgenticNode):
         from datus.prompts.prompt_manager import prompt_manager
 
         try:
-            return prompt_manager.render_template(template_name=template_name, version=version, **context)
+            return prompt_manager.render_template(template_name=template_name, version=prompt_version, **context)
 
         except FileNotFoundError:
             # Template not found - throw DatusException
             logger.warning(f"Failed to render system prompt '{system_prompt_name}', using the default template instead")
-            return prompt_manager.render_template(template_name="sql_system", version=version, **context)
+            return prompt_manager.render_template(template_name="sql_system", version=prompt_version, **context)
         except Exception as e:
             # Other template errors - wrap in DatusException
             logger.error(f"Template loading error for '{template_name}': {e}")

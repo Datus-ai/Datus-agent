@@ -153,8 +153,9 @@ class NodeType:
 
         if ignore_require_check:
             input_data_cls = cls.make_optional_model(input_data_cls)
-
-        return input_data_cls(**input_data)
+        if input_data:
+            return input_data_cls(**input_data)
+        return input_data_cls()
 
     # By default, Pydantic v2 validates required fields, but since we are using it as a config,
     # we don't need that strict validation. Therefore, we introduce this to relax the checks.

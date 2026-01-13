@@ -672,7 +672,7 @@ class AgentCommands:
                 input.sql_task.subject_path = None
 
             prompt_version = self.cli.prompt_input("Enter prompt version", default=input.prompt_version)
-            input.prompt_version = prompt_version.strip()
+            input.prompt_version = prompt_version.strip() if prompt_version else prompt_version
         elif isinstance(input, CompareInput):
             # Allow user to modify expectation
             if not input.expectation:

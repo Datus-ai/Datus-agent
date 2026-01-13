@@ -361,7 +361,7 @@ class GenerateSQLInput(BaseInput):
     sql_task: SqlTask = Field(..., description="The SQL task to generate SQL from")
     contexts: Optional[List[SQLContext]] = Field(default=[], description="Optional context information for the input")
     external_knowledge: str = Field(default="", description="External knowledge for the input")
-    prompt_version: str = Field(default="1.0", description="Version for prompt")
+    prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
     max_table_schemas_length: int = Field(default=4000, description="Max table schemas length")
     max_data_details_length: int = Field(default=2000, description="Max data details length")
     max_context_length: int = Field(default=8000, description="Max context length")
@@ -583,7 +583,7 @@ class OutputInput(BaseInput):
     table_schemas: List[TableSchema] = Field([], description="The schemas of the tables")
     metrics: List[Metric] = Field(default=[], description="The metrics")
     external_knowledge: str = Field(default="", description="The external knowledge")
-    prompt_version: str = Field(default="1.0", description="Version for prompt")
+    prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
     check_result: bool = Field(default=False, description="Whether to check the result of the previous step")
     file_type: Literal["csv", "sql", "json", "all"] = Field(default="all", description="The output file type")
 
@@ -609,7 +609,7 @@ class ReflectionInput(BaseInput):
 
     task_description: SqlTask = Field(..., description="Task description containing task details")
     sql_context: List[SQLContext] = Field(..., description="Result and explanation of last execution step")
-    prompt_version: str = Field(default="2.1", description="Version for prompt")
+    prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
     sql_return_sample_line: int = Field(
         default=10,
         description="In SQL, the number of rows in the sample data returned" ", where -1 means return all rows.",

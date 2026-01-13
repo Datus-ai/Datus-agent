@@ -106,6 +106,7 @@ class ChatAgenticNode(GenSQLAgenticNode):
                 reference_sql=None,
                 plan_mode=plan_mode,
                 auto_execute_plan=auto_execute_plan,
+                prompt_version=self.node_config.get("prompt_version"),
             )
         else:
             # Update existing input with workflow data
@@ -232,7 +233,8 @@ class ChatAgenticNode(GenSQLAgenticNode):
             session, conversation_summary = self._get_or_create_session()
 
             # Get system instruction from template, passing summary and prompt version if available
-            system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)
+            prompt_version = user_input.prompt_version or self.node_config.get("prompt_version")
+            system_instruction = self._get_system_prompt(conversation_summary, prompt_version)
 
             # Add database context to user message if provided
             from datus.agent.node.gen_sql_agentic_node import build_enhanced_message

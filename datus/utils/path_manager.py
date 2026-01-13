@@ -366,6 +366,17 @@ class DatusPathManager:
                 directory = getattr(self, attr_name)
                 directory.mkdir(parents=True, exist_ok=True)
 
+    def ensure_templates(self):
+        """
+        init prompt templates
+        :return:
+        """
+        self.ensure_dirs("template")
+        from datus.utils.resource_utils import copy_data_file
+
+        # copy new version templates
+        copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir, replace=False)
+
 
 # Global singleton instance and lock for thread-safe initialization
 _path_manager: Optional[DatusPathManager] = None

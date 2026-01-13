@@ -1,5 +1,5 @@
 - input:
-    contexts: []
+    contexts: [ ]
     data_details:
       - identifier: ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES
         database_name: ETHEREUM_BLOCKCHAIN
@@ -112,8 +112,7 @@
     max_data_details_length: 2000
     max_table_schemas_length: 4000
     max_value_length: 500
-    metrics: []
-    prompt_version: "1.0"
+    metrics: [ ]
     table_schemas:
       - identifier: ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES
         database_name: ETHEREUM_BLOCKCHAIN

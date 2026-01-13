@@ -30,7 +30,7 @@ class SchemaLinkingInput(BaseInput):
         description="Match rates of the schema linking, allowed values: fast, medium, slow, from_llm",
     )
     sql_context: Optional[SQLContext] = Field(None, description="The SQL context")
-    prompt_version: str = Field(default="1.0", description="Version for prompt")
+    prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
     top_n: int = Field(default=5, description="Number of top tables to return")
     table_type: TABLE_TYPE = Field(default="table", description="Table type for the task")
 

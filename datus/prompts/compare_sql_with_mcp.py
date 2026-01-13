@@ -18,7 +18,7 @@ def get_compare_prompt(
     sql_result: str = "",
     sql_error: str = "",
     expectation: str = "",
-    prompt_version: str = "1.0",
+    prompt_version: str = "",
 ) -> List[Dict[str, str]]:
     """Generate comparison prompt for MCP streaming."""
 

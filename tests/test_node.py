@@ -421,7 +421,7 @@ class TestNode:
                 ),
                 database_type="sqlite",
                 external_knowledge="",
-                prompt_version="1.0",
+                prompt_version="",
             )
 
             # Create node instance for testing

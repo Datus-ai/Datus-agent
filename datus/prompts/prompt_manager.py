@@ -62,12 +62,11 @@ class PromptManager:
         Returns:
             Actual file_path
         """
-        if version is None:
+        if not version:
             # Find the latest version
-            versions = self.list_template_versions(template_name)
-            if not versions:
+            version = self.get_latest_version(template_name)
+            if not version:
                 raise FileNotFoundError(f"No versions found for template '{template_name}'")
-            version = versions[-1]  # Get the latest version
 
         filename = f"{template_name}_{version}.j2"
 

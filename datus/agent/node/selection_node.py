@@ -112,9 +112,7 @@ class SelectionNode(Node):
         if isinstance(self.input, SelectionInput):
             self.input.candidate_results = parallel_results
         else:
-            self.input = SelectionInput(
-                candidate_results=parallel_results, selection_criteria="best_quality", prompt_version="1.0"
-            )
+            self.input = SelectionInput(candidate_results=parallel_results, selection_criteria="best_quality")
 
         logger.info(f"Setup selection input with {len(parallel_results)} candidates")
         return {"success": True, "message": "Selection node input setup complete"}
@@ -179,7 +177,7 @@ class SelectionNode(Node):
 
     def _llm_based_selection(self, candidates: Dict[str, Any]) -> SelectionResult:
         """Use LLM to select the best candidate"""
-        prompt_version = self.input.prompt_version if self.input else "1.0"
+        prompt_version = self.input.prompt_version if self.input else None
         prompt = create_selection_prompt(candidates, prompt_version=prompt_version)
 
         try:

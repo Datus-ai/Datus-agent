@@ -68,7 +68,7 @@ def get_reasoning_prompt(
     metrics: str,
     question: str,
     context: List[str],
-    prompt_version: str = "1.0",
+    prompt_version: str = "",
     max_table_schemas_length: int = 4000,
     max_data_details_length: int = 2000,
     max_context_length: int = 8000,

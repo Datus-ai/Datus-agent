@@ -28,7 +28,7 @@ class SelectionInput(BaseInput):
 
     candidate_results: Dict[str, Any] = Field(description="Results from parallel nodes to select from")
     selection_criteria: Optional[str] = Field(default="best_quality", description="Criteria for selection")
-    prompt_version: str = Field(default="1.0", description="Version for prompt")
+    prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
 
 
 class SelectionResult(BaseResult):

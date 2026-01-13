@@ -262,8 +262,7 @@ class GenMetricsAgenticNode(AgenticNode):
         Returns:
             System prompt string loaded from the template
         """
-        # Hardcoded prompt version
-        version = "1.0"
+        version = getattr(self.input, "prompt_version", None) or self.node_config.get("prompt_version")
 
         # Hardcoded system_prompt template name
         template_name = f"{self.NODE_NAME}_system"

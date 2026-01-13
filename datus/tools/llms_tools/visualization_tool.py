@@ -40,7 +40,7 @@ class VisualizationTool(BaseTool):
         self,
         agent_config: Optional[AgentConfig] = None,
         model: Optional[LLMBaseModel] = None,
-        prompt_version: str = "1.0",
+        prompt_version: Optional[str] = None,
         preview_rows: int = 5,
         max_preview_char: int = 1500,
         max_y_cols: int = 3,

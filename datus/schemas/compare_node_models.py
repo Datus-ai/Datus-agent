@@ -1,6 +1,7 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
+from typing import Optional
 
 from pydantic import Field
 
@@ -17,7 +18,7 @@ class CompareInput(BaseInput):
     sql_task: SqlTask = Field(..., description="The SQL task of this request")
     sql_context: SQLContext = Field(..., description="The SQL context to compare")
     expectation: str = Field(..., description="Ground truth expectation (SQL query or data text)")
-    prompt_version: str = Field(default="1.0", description="Version for prompt")
+    prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
 
 
 class CompareResult(BaseResult):

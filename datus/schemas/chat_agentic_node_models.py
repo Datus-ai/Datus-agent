@@ -29,7 +29,7 @@ class ChatNodeInput(BaseInput):
     max_turns: int = Field(default=30, description="Maximum conversation turns per interaction")
     external_knowledge: Optional[str] = Field(default="", description="External knowledge")
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
-    prompt_version: Optional[str] = Field(default="1.0", description="Version for prompt template")
+    prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")
     schemas: Optional[list[TableSchema]] = Field(default=None, description="Schemas to use")
     metrics: Optional[list[Metric]] = Field(default=None, description="Metrics to use")
     reference_sql: Optional[list[ReferenceSql]] = Field(

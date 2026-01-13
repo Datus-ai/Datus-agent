@@ -18,7 +18,7 @@ def gen_prompt(
     metrics: List[Metric] = None,
     dialect: str = DBType.SQLITE,
     external_knowledge: str = "",
-    prompt_version: str = "1.0",
+    prompt_version: str = "",
 ) -> List[Dict[str, str]]:
     """Generate a prompt for checking the output of a SQL query.
 

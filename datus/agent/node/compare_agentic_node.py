@@ -110,7 +110,7 @@ class CompareAgenticNode(AgenticNode):
         """
         Render the system instruction, user prompt, and message list for comparison.
         """
-        prompt_version = input_data.prompt_version or "1.0"
+        prompt_version = input_data.prompt_version
 
         system_instruction = prompt_manager.get_raw_template("compare_sql_system_mcp", version=prompt_version)
 

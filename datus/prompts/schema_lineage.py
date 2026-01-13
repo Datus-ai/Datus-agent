@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from datus.utils.json_utils import json2csv
 
@@ -15,7 +15,7 @@ def gen_prompt(
     database_name: str,
     user_question: str,
     table_metadata: List[Dict[str, str]],
-    prompt_version: str = "1.0",
+    prompt_version: Optional[str] = None,
     top_n: int = 5,
 ) -> List[Dict[str, str]]:
     if len(table_metadata) == 0:
@@ -54,7 +54,7 @@ def gen_summary_prompt(
     database_name: str,
     user_question: str,
     table_metadata: List[Dict[str, str]],
-    prompt_version: str = "1.0",
+    prompt_version: Optional[str] = None,
     top_n: int = 5,
 ) -> List[Dict[str, str]]:
     table_metadata_csv = json2csv(table_metadata, ["schema_name", "table_name", "schema_text", "score", "reasons"])

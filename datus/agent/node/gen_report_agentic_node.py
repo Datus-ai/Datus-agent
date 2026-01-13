@@ -261,8 +261,7 @@ class GenReportAgenticNode(AgenticNode):
             context["namespace"] = getattr(self.agent_config, "current_namespace", None)
             context["db_name"] = getattr(self.agent_config, "current_database", None)
 
-        raw_version = prompt_version if prompt_version is not None else self.node_config.get("prompt_version")
-        version = None if raw_version in (None, "") else str(raw_version)
+        version = None if prompt_version in (None, "") else str(prompt_version)
 
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
@@ -357,8 +356,8 @@ class GenReportAgenticNode(AgenticNode):
 
             # Get or create session
             session, conversation_summary = self._get_or_create_session()
-
-            system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)
+            prompt_version = getattr(user_input, "prompt_version", None) or self.node_config.get("prompt_version")
+            system_instruction = self._get_system_prompt(conversation_summary, prompt_version)
 
             # Build enhanced message with context
             enhanced_message = self._build_enhanced_message(user_input)

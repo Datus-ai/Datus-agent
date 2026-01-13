@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from datus.utils.loggings import get_logger
 
@@ -11,7 +11,9 @@ from .prompt_manager import prompt_manager
 logger = get_logger(__name__)
 
 
-def create_selection_prompt(candidates: Dict[str, Any], prompt_version: str = "1.0", max_text_length: int = 500) -> str:
+def create_selection_prompt(
+    candidates: Dict[str, Any], prompt_version: Optional[str] = None, max_text_length: int = 500
+) -> str:
     """
     Create prompt for LLM-based candidate selection.
 

@@ -282,8 +282,6 @@ class SqlSummaryAgenticNode(AgenticNode):
         Returns:
             System prompt string loaded from the template
         """
-        # Hardcoded prompt version
-        version = "1.0"
 
         # Hardcoded system_prompt based on node name
         template_name = f"{self.configured_node_name}_system"
@@ -302,7 +300,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             # Use prompt manager to render the template
             from datus.prompts.prompt_manager import prompt_manager
 
-            return prompt_manager.render_template(template_name=template_name, version=version, **template_vars)
+            return prompt_manager.render_template(template_name=template_name, **template_vars)
 
         except FileNotFoundError as e:
             # Template not found - throw DatusException
@@ -310,7 +308,7 @@ class SqlSummaryAgenticNode(AgenticNode):
 
             raise DatusException(
                 code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
-                message_args={"template_name": template_name, "version": version or "latest"},
+                message_args={"template_name": template_name, "version": prompt_version or "latest"},
             ) from e
         except Exception as e:
             # Other template errors - wrap in DatusException

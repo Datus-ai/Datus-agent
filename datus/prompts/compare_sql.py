@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 
 def compare_sql_prompt(
     sql_task,
-    prompt_version: str = "1.0",
+    prompt_version: str = "",
     sql_query: str = "",
     sql_explanation: str = "",
     sql_result: str = "",

@@ -70,8 +70,12 @@ def do_copy_data_file(src_path: Path, target_dir: Path, replace: bool = False):
     if src_path.is_dir():
         for f in src_path.iterdir():
             if f.is_file():
-                shutil.copy(f, target_dir / f.name)
+                target_file = target_dir / f.name
+                if replace or not target_file.exists():
+                    shutil.copy(f, target_file)
             elif f.is_dir():
                 do_copy_data_file(f, target_dir=target_dir / f.name, replace=replace)
     else:
-        shutil.copy(src_path, target_dir / src_path.name)
+        target_file = target_dir / src_path.name
+        if replace or not target_file.exists():
+            shutil.copy(src_path, target_file)

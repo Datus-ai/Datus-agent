@@ -247,8 +247,6 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         Returns:
             System prompt string loaded from the template
         """
-        # Hardcoded prompt version
-        version = "1.0"
 
         # Hardcoded system_prompt based on node name
         template_name = f"{self.configured_node_name}_system"
@@ -267,7 +265,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             # Use prompt manager to render the template
             from datus.prompts.prompt_manager import prompt_manager
 
-            return prompt_manager.render_template(template_name=template_name, version=version, **template_vars)
+            return prompt_manager.render_template(template_name=template_name, version=prompt_version, **template_vars)
 
         except FileNotFoundError as e:
             # Template not found - throw DatusException
@@ -275,7 +273,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
 
             raise DatusException(
                 code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
-                message_args={"template_name": template_name, "version": version or "latest"},
+                message_args={"template_name": template_name, "version": prompt_version or "latest"},
             ) from e
         except Exception as e:
             # Other template errors - wrap in DatusException
@@ -306,8 +304,8 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         # Get input from self.input
         if self.input is None:
             raise ValueError("External knowledge input not set. Set self.input before calling execute_stream.")
-
         user_input = self.input
+        prompt_version = getattr(user_input, "prompt_version", None) or self.node_config.get("prompt_version")
 
         # Create initial action
         action = ActionHistory.create_action(
@@ -335,8 +333,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             template_context = self._prepare_template_context(user_input)
 
             # Get system instruction from template with enhanced context
-            # prompt_version is now hardcoded to "1.0" in _get_system_prompt
-            system_instruction = self._get_system_prompt(conversation_summary, None, template_context)
+            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
 
             # Add context to user message if provided
             enhanced_message = user_input.user_message

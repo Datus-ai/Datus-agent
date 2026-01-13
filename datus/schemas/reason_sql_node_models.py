@@ -22,7 +22,7 @@ class ReasoningInput(GenerateSQLInput):
     max_value_length: int = Field(default=500, description="Max value length")
     max_sql_return_length: int = Field(default=1000, description="Max SQL return length")
     max_text_mark_length: int = Field(default=16, description="Max text mark length")
-    prompt_version: str = Field(default="1.0", description="Version for prompt")
+    prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
     max_turns: int = Field(default=10, description="Maximum number of conversation turns")
 
 
