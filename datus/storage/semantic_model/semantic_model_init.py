@@ -5,6 +5,7 @@
 import argparse
 import asyncio
 import os
+from typing import Callable, Optional
 
 import pandas as pd
 
@@ -12,6 +13,7 @@ from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAge
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.utils.loggings import get_logger
 
@@ -21,6 +23,7 @@ logger = get_logger(__name__)
 def init_success_story_semantic_model(
     args: argparse.Namespace,
     agent_config: AgentConfig,
+    emit: Optional[Callable[[BatchEvent], None]] = None,
 ) -> tuple[bool, str]:
     """
     Initialize ONLY semantic model from success story CSV using ALL SQL queries.
@@ -92,6 +95,10 @@ def init_success_story_semantic_model(
         """Execute gen_semantic_model node with all SQL context."""
         current_db_config = agent_config.current_db_config()
 
+        # Emit task started event
+        if emit:
+            emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_STARTED))
+
         # Create semantic model generation node (workflow mode, NOT plan mode)
         semantic_node = GenSemanticModelAgenticNode(
             agent_config=agent_config,
@@ -111,6 +118,16 @@ def init_success_story_semantic_model(
         try:
             generated_files = []
             async for action in semantic_node.execute_stream(action_history_manager):
+                # Emit streaming messages
+                if emit and action.messages:
+                    emit(
+                        BatchEvent(
+                            biz_name="semantic_model_init",
+                            stage=BatchStage.ITEM_PROCESSING,
+                            payload={"messages": action.messages},
+                        )
+                    )
+
                 if action.status == ActionStatus.SUCCESS and action.output:
                     if isinstance(action.output, dict):
                         # Check for semantic_models field (from SemanticNodeResult)
@@ -124,14 +141,20 @@ def init_success_story_semantic_model(
             if not generated_files:
                 error_msg = f"Failed to generate any semantic models from {len(all_sqls)} SQL queries in '{csv_path}'"
                 logger.error(error_msg)
+                if emit:
+                    emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
                 return False, error_msg
 
             logger.info(f"Generated {len(generated_files)} semantic model files: {generated_files}")
+            if emit:
+                emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_COMPLETED))
             return True, ""
 
         except Exception as e:
             error_msg = f"Error generating semantic models from '{csv_path}': {e}"
             logger.exception(error_msg)
+            if emit:
+                emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
             return False, error_msg
 
     successful, error_message = asyncio.run(generate_semantic_models())

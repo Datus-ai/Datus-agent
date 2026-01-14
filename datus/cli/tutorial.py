@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 from rich.console import Console
 
-from datus.cli.init_util import init_metrics
+from datus.cli.init_util import init_metrics, init_semantic_model
 from datus.cli.interactive_init import parse_subject_tree
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.agent_models import SubAgentConfig
@@ -103,7 +103,7 @@ class BenchmarkTutorial:
                 "Let's start learning how to prepare for benchmarking step by step using a dataset "
                 "from California schools."
             )
-            self.console.print("[bold yellow][1/5] Ensure data files and configuration[/bold yellow]")
+            self.console.print("[bold yellow][1/6] Ensure data files and configuration[/bold yellow]")
             with self.console.status("Ensuring...") as status:
                 if not self._ensure_config():
                     return 1
@@ -114,7 +114,7 @@ class BenchmarkTutorial:
             california_schools_path = self.benchmark_path / self.namespace_name
             from datus.cli.interactive_init import init_metadata_and_log_result, init_sql_and_log_result
 
-            self.console.print("[bold yellow][2/5] Initialize Metadata using command: [/bold yellow]")
+            self.console.print("[bold yellow][2/6] Initialize Metadata using command: [/bold yellow]")
             self.console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
                 "--namespace california_schools "
@@ -126,8 +126,18 @@ class BenchmarkTutorial:
                 console=self.console,
             )
 
-            self.console.print("[bold yellow][3/5] Initialize Metrics using command: [/bold yellow]")
             success_path = self.benchmark_path / self.namespace_name / "success_story.csv"
+
+            self.console.print("[bold yellow][3/6] Initialize Semantic Model using command: [/bold yellow]")
+            self.console.print(
+                f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
+                f"--namespace california_schools "
+                f"--components semantic_model --kb_update_strategy overwrite --success_story {success_path} "
+                "[/]"
+            )
+            self._init_semantic_model(success_path)
+
+            self.console.print("[bold yellow][4/6] Initialize Metrics using command: [/bold yellow]")
             self.console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
                 f"--namespace california_schools "
@@ -138,7 +148,7 @@ class BenchmarkTutorial:
             )
             self._init_metrics(success_path)
 
-            self.console.print("[bold yellow][4/5] Initialize Reference SQL using command: [/bold yellow]")
+            self.console.print("[bold yellow][5/6] Initialize Reference SQL using command: [/bold yellow]")
             self.console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
                 "--namespace california_schools --components reference_sql --kb_update_strategy overwrite "
@@ -166,7 +176,7 @@ class BenchmarkTutorial:
                 config_path=self.config_path,
                 console=self.console,
             )
-            self.console.print("[bold yellow][5/5] Building sub-agents and workflows: [/bold yellow]")
+            self.console.print("[bold yellow][6/6] Building sub-agents and workflows: [/bold yellow]")
 
             with self.console.status("Sub-Agents Building...") as status:
                 self.add_sub_agents()
@@ -189,6 +199,29 @@ class BenchmarkTutorial:
         except Exception as e:
             print_rich_exception(self.console, e, "Tutorial failed", logger)
             return 1
+
+    def _init_semantic_model(self, success_path: Path):
+        """Initialize semantic model using success stories."""
+
+        logger.info(f"Semantic model initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
+        try:
+            agent_config = load_agent_config(reload=True, config=self.config_path)
+            agent_config.current_namespace = self.namespace_name
+
+            successful, result = init_semantic_model(
+                success_path=success_path,
+                agent_config=agent_config,
+                console=self.console,
+                build_mode="overwrite",
+            )
+            if successful:
+                count = result.get("semantic_model_count", 0) if result else 0
+                self.console.print(f"Semantic model initialized (count={count})")
+            return successful
+
+        except Exception as e:
+            print_rich_exception(self.console, e, "Semantic model initialization failed", logger)
+            return False
 
     def _init_metrics(self, success_path: Path):
         """Initialize metrics using success stories."""

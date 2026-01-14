@@ -240,8 +240,12 @@ class SemanticModelRAG:
                 child_dict = {k: v for k, v in child_dict.items() if v is not None and v != ""}
                 identifiers.append(child_dict)
 
-        # Construct result
+        # Construct result with identifying fields for update operations
         full_result = {
+            "catalog_name": semantic_model.get("catalog_name", ""),
+            "database_name": semantic_model.get("database_name", ""),
+            "schema_name": semantic_model.get("schema_name", ""),
+            "table_name": semantic_model.get("table_name", table_name),
             "semantic_model_name": model_name,
             "description": semantic_model.get("description"),
             "dimensions": dimensions,

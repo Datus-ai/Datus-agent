@@ -49,10 +49,10 @@ class SemanticModelPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         field_specs = [
-            ("Description", "description", 2, "markdown", None),
-            ("Identifiers", "identifiers", 4, "json", None),
-            ("Dimensions", "dimensions", 4, "json", None),
-            ("Measures", "measures", 4, "json", None),
+            ("Description", "description", 3, "markdown", None),
+            ("Identifiers", "identifiers", 8, "json", None),
+            ("Dimensions", "dimensions", 12, "json", None),
+            ("Measures", "measures", 12, "json", None),
         ]
 
         for label, key, lines, lan, regex in field_specs:

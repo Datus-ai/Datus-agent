@@ -702,6 +702,7 @@ class GenerationHooks(AgentHooks):
                         include_semantic_objects=False,  # Semantic model already synced separately
                         include_metrics=True,
                         metric_sqls=metric_sqls,
+                        original_yaml_path=metric_file,  # Use original metric file path, not temp file
                     ),
                 )
 
@@ -821,6 +822,7 @@ class GenerationHooks(AgentHooks):
         include_semantic_objects: bool = True,
         include_metrics: bool = True,
         metric_sqls: dict = None,
+        original_yaml_path: Optional[str] = None,
     ) -> dict:
         """
         Sync semantic objects and/or metrics from YAML file to Knowledge Base.
@@ -831,9 +833,13 @@ class GenerationHooks(AgentHooks):
             include_semantic_objects: Whether to sync tables/columns/entities
             include_metrics: Whether to sync metrics
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
+            original_yaml_path: Original YAML file path to store
+                (if different from file_path, e.g., when using temp files)
 
         Now parses tables, columns, metrics, and entities as individual 'semantic_objects'.
         """
+        # Use original_yaml_path if provided, otherwise use file_path
+        yaml_path_to_store = original_yaml_path if original_yaml_path else file_path
         try:
             # Load YAML file
             with open(file_path, "r", encoding="utf-8") as f:
@@ -924,7 +930,7 @@ class GenerationHooks(AgentHooks):
                     "fq_name": table_fq_name,
                     "table_name": table_name,
                     "description": data_source.get("description", ""),
-                    "yaml_path": file_path,
+                    "yaml_path": yaml_path_to_store,
                     "updated_at": datetime.now().replace(microsecond=0),
                     # Database hierarchy
                     "catalog_name": catalog_name,
@@ -968,7 +974,7 @@ class GenerationHooks(AgentHooks):
                         "is_measure": is_meas,
                         "is_entity_key": is_ent,
                         "is_deprecated": False,
-                        "yaml_path": file_path,
+                        "yaml_path": yaml_path_to_store,
                         "updated_at": datetime.now().replace(microsecond=0),
                         # Database hierarchy
                         "catalog_name": catalog_name,

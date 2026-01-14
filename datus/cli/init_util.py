@@ -99,12 +99,6 @@ def init_metrics(
             if os.path.exists(metrics_path):
                 shutil.rmtree(metrics_path)
                 logger.info(f"Deleted existing directory {metrics_path}")
-            # Also clear semantic_models/{namespace} directory (YAML files)
-            path_manager = get_path_manager(datus_home=agent_config.home)
-            semantic_yaml_dir = path_manager.semantic_model_path(agent_config.current_namespace)
-            if semantic_yaml_dir.exists():
-                shutil.rmtree(semantic_yaml_dir)
-                logger.info(f"Deleted existing semantic YAML directory {semantic_yaml_dir}")
             agent_config.save_storage_config("metric")
 
         # Create StreamOutputManager
@@ -178,6 +172,7 @@ def init_semantic_model(
     """
     from rich.markup import escape
 
+    from datus.schemas.batch_events import BatchEvent, BatchStage
     from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model
     from datus.storage.semantic_model.store import SemanticModelRAG
     from datus.utils.stream_output import StreamOutputManager
@@ -209,12 +204,30 @@ def init_semantic_model(
             title="Semantic Model Initialization",
         )
 
-        output_mgr.start(total_items=1, description="Initializing semantic model")
+        def emit(event: BatchEvent) -> None:
+            stage = event.stage
+
+            if stage == BatchStage.TASK_STARTED:
+                output_mgr.start(total_items=1, description="Initializing semantic model")
+                return
+
+            if stage == BatchStage.ITEM_PROCESSING:
+                payload = event.payload or {}
+                messages = payload.get("messages")
+                if messages:
+                    output_mgr.add_llm_output(str(messages))
+                return
+
+            if stage == BatchStage.TASK_COMPLETED:
+                output_mgr.success("Semantic model processing completed.")
+                return
+            if stage == BatchStage.TASK_FAILED:
+                output_mgr.error(f"Failed to initialize semantic model: {event.error}")
 
         args = argparse.Namespace(success_story=str(success_path))
 
         try:
-            successful, error_message = init_success_story_semantic_model(args, agent_config)
+            successful, error_message = init_success_story_semantic_model(args, agent_config, emit=emit)
         finally:
             output_mgr.stop()
 

@@ -698,14 +698,18 @@ class GenMetricsAgenticNode(AgenticNode):
                         with open(temp_file, "w", encoding="utf-8") as f:
                             yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
 
-                        # Sync the combined file
+                        # Sync the combined file - only sync metrics, not semantic objects
+                        # (semantic model should already be synced separately)
                         result = GenerationHooks._sync_semantic_to_db(
                             temp_file,
                             self.agent_config,
                             catalog=catalog,
                             database=database,
                             schema=db_schema,
+                            include_semantic_objects=False,
+                            include_metrics=True,
                             metric_sqls=metric_sqls,
+                            original_yaml_path=metric_full_path,
                         )
                     finally:
                         # Clean up temp file
