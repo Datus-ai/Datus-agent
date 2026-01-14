@@ -257,23 +257,48 @@ class SemanticTools:
             # Apply pagination
             paginated_metrics = all_metrics[offset : offset + limit]
 
-            if not paginated_metrics and self.adapter:
-                # Fallback to adapter if storage is empty
-                logger.info("Storage empty, falling back to adapter")
-                async_result = _run_async(self.adapter.list_metrics(path=path, limit=limit, offset=offset))
-                paginated_metrics = [
+            if paginated_metrics:
+                # Format storage results
+                formatted_metrics = [
                     {
-                        "name": m.name,
-                        "description": m.description,
-                        "type": m.type,
-                        "dimensions": m.dimensions,
-                        "measures": m.measures,
-                        "unit": m.unit,
-                        "format": m.format,
-                        "path": m.path,
+                        "name": m.get("name"),
+                        "description": m.get("description"),
+                        "type": m.get("metric_type"),
+                        "dimensions": m.get("dimensions", []),
+                        "measures": m.get("base_measures", []),
+                        "unit": m.get("unit"),
+                        "format": m.get("format"),
+                        "path": m.get("subject_path", []),
                     }
-                    for m in async_result
+                    for m in paginated_metrics
                 ]
+                return FuncToolResult(
+                    success=1,
+                    result=formatted_metrics,
+                )
+
+            # Fallback to adapter if storage is empty
+            if not self.adapter:
+                return FuncToolResult(
+                    success=1,
+                    result=[],
+                )
+
+            logger.info("Storage empty, falling back to adapter")
+            async_result = _run_async(self.adapter.list_metrics(path=path, limit=limit, offset=offset))
+            paginated_metrics = [
+                {
+                    "name": m.name,
+                    "description": m.description,
+                    "type": getattr(m, "type", None),
+                    "dimensions": getattr(m, "dimensions", []),
+                    "measures": getattr(m, "measures", []),
+                    "unit": getattr(m, "unit", None),
+                    "format": getattr(m, "format", None),
+                    "path": getattr(m, "path", None),
+                }
+                for m in async_result
+            ]
 
             return FuncToolResult(
                 success=1,

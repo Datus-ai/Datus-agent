@@ -19,7 +19,7 @@ class MetricDefinition(BaseModel):
 
     name: str = Field(..., description="Metric name")
     description: Optional[str] = Field(None, description="Metric description")
-    type: Optional[str] = Field(None, description="Metric type (simple, ratio, derived, etc.)")
+    type: Optional[Any] = Field(None, description="Metric type (simple, ratio, derived, etc.)")
     dimensions: List[str] = Field(default_factory=list, description="Available dimensions for this metric")
     measures: List[str] = Field(default_factory=list, description="Underlying measures used")
     unit: Optional[str] = Field(None, description="Unit of measurement (e.g., 'USD', 'count', 'percent')")
@@ -27,6 +27,7 @@ class MetricDefinition(BaseModel):
     path: Optional[List[str]] = Field(
         None, description="Subject tree hierarchy path (e.g., ['domain', 'layer1', 'layer2'])"
     )
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
 
 class QueryResult(BaseModel):
