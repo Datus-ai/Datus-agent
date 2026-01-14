@@ -778,11 +778,21 @@ class CatalogScreen(ContextScreen):
 
             nested_table = Table(show_header=True, box=box.ROUNDED, border_style="dim", padding=(0, 0), expand=True)
             if parsed_data and isinstance(parsed_data[0], dict):
-                for key in parsed_data[0].keys():
+                # Collect all unique keys from all items to handle heterogeneous dicts
+                all_keys = []
+                seen_keys = set()
+                for item in parsed_data:
+                    for key in item.keys():
+                        if key not in seen_keys:
+                            all_keys.append(key)
+                            seen_keys.add(key)
+
+                for key in all_keys:
                     nested_table.add_column(str(key), style="dim cyan", justify="center")
 
                 for item in parsed_data:
-                    values = [str(value) for value in item.values()]
+                    # Get values in the same order as all_keys, use "-" for missing keys
+                    values = [str(item.get(key, "-")) for key in all_keys]
                     nested_table.add_row(*values)
             else:
                 nested_table.add_column("Value", style="dim cyan")

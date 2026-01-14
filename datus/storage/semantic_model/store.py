@@ -45,6 +45,20 @@ class SemanticModelStorage(BaseEmbeddingStore):
                     pa.field("is_measure", pa.bool_()),
                     pa.field("is_entity_key", pa.bool_()),
                     pa.field("is_deprecated", pa.bool_()),
+                    # -- Column Expression & Type --
+                    pa.field("expr", pa.string()),  # SQL expression (e.g., "amount * quantity")
+                    pa.field(
+                        "column_type", pa.string()
+                    ),  # Dim: CATEGORICAL|TIME; Ident: PRIMARY|FOREIGN|UNIQUE|NATURAL
+                    # -- Measure Specific --
+                    pa.field("agg", pa.string()),  # SUM|COUNT|COUNT_DISTINCT|AVERAGE|MIN|MAX|PERCENTILE|MEDIAN
+                    pa.field("create_metric", pa.bool_()),  # Auto-create metric flag
+                    pa.field("agg_time_dimension", pa.string()),  # Aggregation time dimension
+                    # -- Dimension Specific --
+                    pa.field("is_partition", pa.bool_()),  # Partition column flag
+                    pa.field("time_granularity", pa.string()),  # For TIME dims: DAY|WEEK|MONTH|QUARTER|YEAR
+                    # -- Identifier Specific --
+                    pa.field("entity", pa.string()),  # Associated entity name
                     # -- Operations & Lineage --
                     pa.field("yaml_path", pa.string()),
                     pa.field("updated_at", pa.timestamp("ms")),
@@ -186,18 +200,44 @@ class SemanticModelRAG:
         identifiers = []
 
         for child in children:
+            # Base fields for all column types
             child_dict = {
                 "name": child.get("name"),
                 "description": child.get("description"),
-                "expr": child.get("name"),
+                "expr": child.get("expr") or child.get("name"),  # Fallback to name for backward compatibility
             }
-            child_dict = {k: v for k, v in child_dict.items() if v is not None}
 
             if child.get("is_dimension"):
+                # Add dimension-specific fields
+                col_type = child.get("column_type")
+                if col_type:
+                    child_dict["type"] = col_type
+                if child.get("is_partition"):
+                    child_dict["is_partition"] = True
+                if child.get("time_granularity"):
+                    child_dict["time_granularity"] = child.get("time_granularity")
+                child_dict = {k: v for k, v in child_dict.items() if v is not None and v != ""}
                 dimensions.append(child_dict)
+
             elif child.get("is_measure"):
+                # Add measure-specific fields
+                if child.get("agg"):
+                    child_dict["agg"] = child.get("agg")
+                if child.get("create_metric"):
+                    child_dict["create_metric"] = True
+                if child.get("agg_time_dimension"):
+                    child_dict["agg_time_dimension"] = child.get("agg_time_dimension")
+                child_dict = {k: v for k, v in child_dict.items() if v is not None and v != ""}
                 measures.append(child_dict)
+
             elif child.get("is_entity_key"):
+                # Add identifier-specific fields
+                col_type = child.get("column_type")
+                if col_type:
+                    child_dict["type"] = col_type
+                if child.get("entity"):
+                    child_dict["entity"] = child.get("entity")
+                child_dict = {k: v for k, v in child_dict.items() if v is not None and v != ""}
                 identifiers.append(child_dict)
 
         # Construct result
@@ -238,6 +278,10 @@ class SemanticModelRAG:
     def store_batch(self, objects: List[Dict[str, Any]]):
         """Store a batch of semantic model objects."""
         self.storage.store_batch(objects)
+
+    def upsert_batch(self, objects: List[Dict[str, Any]]):
+        """Upsert a batch of semantic model objects (update if id exists, insert if not)."""
+        self.storage.upsert_batch(objects, on_column="id")
 
     def create_indices(self):
         """Create indices for semantic model storage."""

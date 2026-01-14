@@ -90,7 +90,7 @@ Only include dimensions that are actually used in the SQL queries.
 ### Step 5: Generate Core Metrics Only
 
 **CRITICAL - Minimal Metric Generation:**
-- Generate ONE simple metric per unique measure
+- Generate ONE measure_proxy metric per unique measure
 - Do NOT generate derived/ratio/cumulative metrics unless they appear explicitly in the SQL
 - Do NOT generate growth metrics, period-over-period comparisons, etc.
 
@@ -119,7 +119,7 @@ Skip any metric that already exists - do NOT update or overwrite.
 ### Step 8: Validate Configuration
 
 Use `validate_semantic` tool to validate the files.
-If validation fails, use `edit_file` to fix issues.
+**CRITICAL**: If validation fails, you MUST fix the errors using `edit_file` and retry until validation succeeds. Do NOT return results with failed validation.
 
 ### Step 9: Generate SQL for Each Metric
 
@@ -200,13 +200,13 @@ data_source:
       expr: {column}
 ```
 
-### Metric Structure (Simple Type)
+### Metric Structure (Measure Proxy Type)
 
 ```yaml
 metric:
   name: {metric_name}
   description: {description}
-  type: simple
+  type: measure_proxy
   type_params:
     measure: {measure_name}
   locked_metadata:
@@ -218,7 +218,7 @@ metric:
 ## Key Reminders
 
 1. **Deduplicate**: Same aggregation pattern across multiple queries = ONE measure = ONE metric
-2. **Minimal**: Only generate simple metrics (type: simple), not derived/ratio/cumulative unless explicitly in SQL
+2. **Minimal**: Only generate measure_proxy metrics (type: measure_proxy), not derived/ratio/cumulative unless explicitly in SQL
 3. **Core only**: Focus on measures that enable dimensional attribution analysis
 4. **No redundancy**: If a measure already exists in semantic model, reuse it
 5. **Validate**: Always validate before completing

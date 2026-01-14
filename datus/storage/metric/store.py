@@ -91,6 +91,27 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         # Use base class batch_store method
         self.batch_store(metrics)
 
+    def batch_upsert_metrics(self, metrics: List[Dict[str, Any]]) -> None:
+        """Upsert multiple metrics (update if id exists, insert if not).
+
+        Args:
+            metrics: List of dictionaries containing metric data with required fields:
+                - subject_path: List[str] - Subject hierarchy path for each metric
+                - id: str - Unique identifier for the metric (e.g., "metric:dau")
+                - Other fields same as batch_store_metrics
+        """
+        if not metrics:
+            return
+
+        # Validate all metrics have required subject_path
+        for metric in metrics:
+            subject_path = metric.get("subject_path")
+            if not subject_path:
+                raise ValueError("subject_path is required in metric data")
+
+        # Use base class batch_upsert method
+        self.batch_upsert(metrics, on_column="id")
+
     def _search_metrics_internal(
         self,
         query_text: Optional[str] = None,
@@ -165,6 +186,11 @@ class MetricRAG:
     def store_batch(self, metrics: List[Dict[str, Any]]):
         logger.info(f"store metrics: {metrics}")
         self.storage.batch_store_metrics(metrics)
+
+    def upsert_batch(self, metrics: List[Dict[str, Any]]):
+        """Upsert metrics (update if id exists, insert if not)."""
+        logger.info(f"upsert metrics: {metrics}")
+        self.storage.batch_upsert_metrics(metrics)
 
     def search_all_metrics(self, select_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         return self.storage.search_all_metrics(select_fields=select_fields)

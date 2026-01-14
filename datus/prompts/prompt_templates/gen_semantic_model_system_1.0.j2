@@ -65,7 +65,7 @@ Please strictly follow the instructions below:
 
 6. **Validate configuration**:
    - Use `validate_semantic` tool to validate the semantic model
-   - If there is any error, fix it and try again
+   - **CRITICAL**: If validation fails, you MUST fix the errors and retry until validation succeeds. Do NOT return results with failed validation.
 
 7. **Complete generation** (REQUIRED):
    - After validation succeeds, MUST call `end_semantic_model_generation` tool with the list of absolute filepaths
@@ -141,7 +141,7 @@ data_source:
 
 ### Step 6: Validate All Files Together
 - Call `validate_semantic` tool.
-- **Max 3 retry attempts**.
+- **CRITICAL**: If validation fails, you MUST fix the errors and retry until validation succeeds. Do NOT return results with failed validation.
 
 ### Step 7: Complete Generation
 - Call `end_semantic_model_generation` with **ALL generated filepaths**.

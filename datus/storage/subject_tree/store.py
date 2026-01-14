@@ -834,6 +834,54 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             self.store_batch(batch_data)
             logger.info(f"Successfully stored {len(batch_data)} items in batch")
 
+    def batch_upsert(
+        self,
+        items: List[Dict[str, Any]],
+        on_column: str = "id",
+    ) -> None:
+        """Generic batch upsert with subject_path conversion (update if key exists, insert if not).
+
+        Args:
+            items: List of items to upsert
+            on_column: Column name to match for deduplication (default: "id")
+        """
+        if not items:
+            return
+
+        # Process all items to convert subject_path to subject_node_id
+        batch_data = []
+        for item in items:
+            subject_path = item.get("subject_path", [])
+
+            # Validate required fields
+            if not subject_path:
+                logger.warning(f"Skipping item with missing subject_path: {item}")
+                continue
+
+            # Find or create the subject tree path to get node_id
+            try:
+                subject_node_id = self.subject_tree.find_or_create_path(subject_path)
+
+                # Create new item dict without subject_path field and with subject_node_id
+                processed_item = item.copy()
+                processed_item[SUBJECT_ID_COLUMN_NAME] = subject_node_id
+                processed_item.pop(SUBJECT_PATH_COLUMN_NAME, None)
+
+                # Auto-generate timestamp if needed
+                if CREATED_AT_COLUMN_NAME not in processed_item:
+                    processed_item[CREATED_AT_COLUMN_NAME] = self._get_current_timestamp()
+
+                batch_data.append(processed_item)
+
+            except Exception as e:
+                logger.error(f"Failed to process item with subject_path '{subject_path}': {str(e)}")
+                continue
+
+        # Upsert the batch using the parent class method
+        if batch_data:
+            self.upsert_batch(batch_data, on_column=on_column)
+            logger.info(f"Successfully upserted {len(batch_data)} items in batch")
+
     def search_with_subject_filter(
         self,
         query_text: Optional[str] = None,

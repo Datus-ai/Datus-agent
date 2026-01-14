@@ -617,9 +617,9 @@ class DBFuncTool:
             - columns (list): List of column dictionaries, each containing:
               - name (str): Column name (required)
               - type (str): Column data type (required)
-              - comment (str): Column description/comment (required, empty string if not available)
+              - comment (str): Column description/comment, enriched with semantic model description if available
               - is_dimension (bool): Whether this column is a dimension in semantic model
-                (optional, only present if semantic model exists and has dimensions defined)
+                (semantic fields only present if semantic model exists)
             - table (dict, optional): Table-level metadata from semantic model (only if model exists):
               - name (str): Name of the table
               - description (str): Table description from semantic model
@@ -676,12 +676,16 @@ class DBFuncTool:
                             "description": model.get("description", ""),
                         }
 
-                        # Create dimension lookup map
+                        # Create lookup map using expr (physical column) as key, fallback to name
+                        # expr is the actual column name/expression, name is the semantic name
                         dimensions = model.get("dimensions", [])
-                        dim_map = {d["name"].lower(): d for d in dimensions}
-                        logger.debug(f"Dimension map has {len(dim_map)} entries")
 
-                        # Only add is_dimension field if there are dimensions defined
+                        # Build map: physical_col_name -> dimension_data
+                        dim_map = {(d.get("expr") or d.get("name", "")).lower(): d for d in dimensions}
+
+                        logger.debug(f"Semantic map: {len(dim_map)} dimensions")
+
+                        # Enrich columns with dimension info
                         if dim_map:
                             for col in columns:
                                 col_name = col["name"].lower()
@@ -689,14 +693,12 @@ class DBFuncTool:
                                 if col_name in dim_map:
                                     dim_data = dim_map[col_name]
                                     col["is_dimension"] = True
-
-                                    # Use semantic description if available
                                     if dim_data.get("description"):
                                         col["comment"] = dim_data.get("description")
                                 else:
                                     col["is_dimension"] = False
                         else:
-                            logger.debug("No dimensions defined in semantic model, skipping is_dimension field")
+                            logger.debug("No dimensions defined in model")
                     else:
                         logger.debug("No semantic model found for this table")
                 except Exception as e:

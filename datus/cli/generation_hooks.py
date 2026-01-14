@@ -693,10 +693,16 @@ class GenerationHooks(AgentHooks):
                 with open(temp_file, "w", encoding="utf-8") as f:
                     yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
 
-                # Sync the combined file
+                # Sync the combined file - only sync metrics, not semantic objects (avoid duplicates)
                 result = await loop.run_in_executor(
                     None,
-                    lambda: GenerationHooks._sync_semantic_to_db(temp_file, self.agent_config, metric_sqls=metric_sqls),
+                    lambda: GenerationHooks._sync_semantic_to_db(
+                        temp_file,
+                        self.agent_config,
+                        include_semantic_objects=False,  # Semantic model already synced separately
+                        include_metrics=True,
+                        metric_sqls=metric_sqls,
+                    ),
                 )
 
                 if result.get("success"):
@@ -943,6 +949,13 @@ class GenerationHooks(AgentHooks):
                         return
 
                     col_desc = col_def.get("description", "")
+                    col_expr = col_def.get("expr", col_name)  # Default to column name if no expr
+
+                    # Extract time_granularity from type_params for TIME dimensions
+                    time_granularity = ""
+                    if is_dim and col_def.get("type") == "TIME":
+                        type_params = col_def.get("type_params", {})
+                        time_granularity = type_params.get("time_granularity", "")
 
                     col_obj = {
                         "id": f"column:{table_name}.{col_name}",
@@ -962,6 +975,19 @@ class GenerationHooks(AgentHooks):
                         "database_name": database_name,
                         "schema_name": schema_name,
                         "semantic_model_name": table_name,
+                        "expr": col_expr,
+                        "column_type": col_def.get(
+                            "type", ""
+                        ),  # CATEGORICAL/TIME for dims, PRIMARY/FOREIGN etc for idents
+                        # Measure specific (empty for non-measures)
+                        "agg": col_def.get("agg", "") if is_meas else "",
+                        "create_metric": col_def.get("create_metric", False) if is_meas else False,
+                        "agg_time_dimension": col_def.get("agg_time_dimension", "") if is_meas else "",
+                        # Dimension specific (empty/false for non-dimensions)
+                        "is_partition": col_def.get("is_partition", False) if is_dim else False,
+                        "time_granularity": time_granularity,
+                        # Identifier specific (empty for non-identifiers)
+                        "entity": col_def.get("entity", "") if is_ent else "",
                     }
                     semantic_objects.append(col_obj)
 
@@ -1107,15 +1133,15 @@ class GenerationHooks(AgentHooks):
                     metric_objects.append(metric_obj)
                     synced_items.append(f"metric:{m_name}")
 
-            # Store all objects using the unified interface
+            # Store all objects using upsert (update if id exists, insert if not)
             all_objects = semantic_objects + metric_objects
             if all_objects:
                 if semantic_objects:
-                    semantic_rag.store_batch(semantic_objects)
+                    semantic_rag.upsert_batch(semantic_objects)
                     semantic_rag.create_indices()
 
                 if metric_objects:
-                    metric_rag.store_batch(metric_objects)
+                    metric_rag.upsert_batch(metric_objects)
                     metric_rag.create_indices()
                 return {
                     "success": True,

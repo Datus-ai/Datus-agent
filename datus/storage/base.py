@@ -300,6 +300,65 @@ class BaseEmbeddingStore(StorageBase):
         except Exception as e:
             raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
 
+    def upsert_batch(self, data: List[Dict[str, Any]], on_column: str = "id"):
+        """
+        Upsert a batch of data using merge_insert (update if exists, insert if not).
+
+        Args:
+            data: List of dictionaries to upsert
+            on_column: Column name to match for deduplication (default: "id")
+        """
+        if not data:
+            return
+        self._ensure_table_ready()
+
+        try:
+            with self._write_lock:
+                if len(data) <= self.batch_size:
+                    self._upsert_with_retry(pd.DataFrame(data), on_column)
+                    return
+                # Split the data into batches and upsert them
+                for i in range(0, len(data), self.batch_size):
+                    batch = data[i : i + self.batch_size]
+                    self._upsert_with_retry(pd.DataFrame(batch), on_column)
+        except Exception as e:
+            raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
+
+    def _upsert_with_retry(
+        self, frame: pd.DataFrame, on_column: str, max_attempts: int = 3, initial_delay: float = 0.05
+    ) -> None:
+        """Upsert a DataFrame into LanceDB with simple retry/backoff on commit conflicts."""
+        if self.table is None:
+            raise DatusException(
+                ErrorCode.STORAGE_SAVE_FAILED,
+                message_args={"error_message": "Lance table is not initialized"},
+            )
+
+        last_error: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                self.table.merge_insert(on_column).when_matched_update_all().when_not_matched_insert_all().execute(
+                    frame
+                )
+                return
+            except Exception as err:
+                error_message = str(err)
+                if "Commit conflict" not in error_message:
+                    raise err
+
+                last_error = err
+                delay = initial_delay * (attempt + 1)
+                logger.warning(
+                    f"Commit conflict detected when upserting to LanceDB table '{self.table_name}' "
+                    f"(attempt {attempt + 1}/{max_attempts}). Retrying after {delay:.2f}s."
+                )
+                # Refresh table handle so subsequent attempts see the latest version
+                self.table = self.db.open_table(self.table_name)
+                time.sleep(delay)
+
+        assert last_error is not None  # for type checkers
+        raise last_error
+
     def _add_with_retry(self, frame: pd.DataFrame, max_attempts: int = 3, initial_delay: float = 0.05) -> None:
         """Insert a DataFrame into LanceDB with simple retry/backoff on commit conflicts."""
         if self.table is None:
