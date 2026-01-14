@@ -21,6 +21,7 @@ from datus.tools.bi_tools.base_adaptor import (
     MetricDef,
     QuerySpec,
 )
+from datus.tools.bi_tools.superset_util import QueryContextBuilder
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names
 
@@ -52,6 +53,7 @@ class SupersetAdaptor(BIAdaptorBase):
 
         self._auth_header_value: Optional[str] = None
         self._token_expiration: Optional[float] = None
+        self._csrf_token: Optional[str] = None
         self._dataset_cache: Dict[str, DatasetInfo] = {}
 
     def close(self) -> None:
@@ -235,16 +237,46 @@ class SupersetAdaptor(BIAdaptorBase):
         except SupersetAdaptorError as exc:
             logger.warning(f"Failed to fetch chart {chart_id}: {exc}")
             return None
-        dataset_info = chart_detail.get("dataset_info")
+        dataset_info = chart_detail.get("dataset")
         if not isinstance(dataset_info, dict):
             dataset_info = None
-        if slice := chart_detail.get("slice"):
-            chart_detail = slice
+        outer_form_data = _load_json_field(chart_detail.get("form_data"))
+        if outer_form_data is None:
+            outer_form_data = _load_json_field(chart_detail.get("params"))
+        if not isinstance(outer_form_data, dict):
+            outer_form_data = None
 
-        query_context = self._extract_query_context(chart_detail)
-        form_data = (
-            _load_json_field(chart_detail.get("params")) or _load_json_field(chart_detail.get("form_data")) or {}
-        )
+        slice_detail = chart_detail.get("slice") or chart_detail
+        if slice_detail is not chart_detail:
+            chart_detail = slice_detail
+
+        slice_form_data = _load_json_field(slice_detail.get("form_data"))
+        if slice_form_data is None:
+            slice_form_data = _load_json_field(slice_detail.get("params"))
+        if not isinstance(slice_form_data, dict):
+            slice_form_data = None
+
+        def _matches_chart(fd: Optional[Dict[str, Any]]) -> bool:
+            if not isinstance(fd, dict):
+                return False
+            chart_key = slice_detail.get("slice_id") or slice_detail.get("id") or chart_id
+            if chart_key is None:
+                return False
+            candidate = fd.get("slice_id") or fd.get("chart_id") or fd.get("id")
+            if candidate is None:
+                return False
+            return str(candidate) == str(chart_key)
+
+        form_data: Dict[str, Any] = {}
+        if _matches_chart(outer_form_data):
+            if slice_form_data:
+                form_data.update(slice_form_data)
+            form_data.update(outer_form_data)
+        elif slice_form_data:
+            form_data = slice_form_data
+        elif outer_form_data:
+            form_data = outer_form_data
+        query_context = self._extract_query_context(chart_detail, form_data, dataset_info)
 
         if not dataset_info:
             datasource_ref = self._extract_datasource_ref(
@@ -260,11 +292,13 @@ class SupersetAdaptor(BIAdaptorBase):
 
         sqls: List[str] = []
         used_query_indexes: Optional[set[int]] = None
-        if query_context:
-            try:
-                sqls, used_query_indexes = self._collect_sql_from_chart(chart_id, query_context)
-            except SupersetAdaptorError as exc:
-                logger.warning(f"Failed to fetch SQL for chart {chart_id}: {exc}")
+        try:
+            sqls, used_query_indexes = self._collect_sql_from_chart(
+                chart_id,
+                query_context,
+            )
+        except SupersetAdaptorError as exc:
+            logger.warning(f"Failed to fetch SQL for chart {chart_id}: {exc}")
 
         metrics: List[MetricDef] = []
         dimensions: List[DimensionDef] = []
@@ -302,7 +336,7 @@ class SupersetAdaptor(BIAdaptorBase):
             name=chart_detail.get("slice_name") or chart_detail.get("name") or str(chart_id),
             description=self._chart_description(None, chart_detail=chart_detail),
             query=query_spec,
-            chart_type=chart_detail.get("viz_type") or chart_detail.get("chart_type"),
+            chart_type=chart_detail.get("viz_type") or chart_detail.get("chart_type") or form_data.get("viz_type"),
             extra={"raw": chart_detail, "datasource": datasource_ref},
         )
 
@@ -374,10 +408,18 @@ class SupersetAdaptor(BIAdaptorBase):
             description = chart_detail.get("description") or chart_detail.get("description_markeddown")
         return description
 
-    def _extract_query_context(self, chart_detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _extract_query_context(
+        self, chart_detail: Dict[str, Any], form_data: Dict[str, Any], dataset_info: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         raw_context = chart_detail.get("query_context")
-        parsed_context = _load_json_field(raw_context)
+
+        if raw_context:
+            parsed_context = _load_json_field(raw_context)
+        else:
+            parsed_context = QueryContextBuilder(form_data).build()
+
         if isinstance(parsed_context, dict):
+            _normalize_series_columns_in_query_context(parsed_context)
             return parsed_context
         return None
 
@@ -386,11 +428,41 @@ class SupersetAdaptor(BIAdaptorBase):
         chart_id: Union[str, int],
         query_context: Optional[Dict[str, Any]],
     ) -> tuple[List[str], Optional[set[int]]]:
-        if not query_context:
-            logger.debug(f"No query_context for chart {chart_id}")
-            return [], None
+        """
+        Collect SQL from chart using either chart/data API (new) or explore_json (legacy).
 
+        API selection logic:
+        1. If viz_type is a legacy chart type -> use explore_json directly
+        2. If query_context is available -> try chart/data API first
+        3. Fallback to explore_json if chart/data fails or returns empty
+
+        :param chart_id: The chart identifier
+        :param query_context: Query context for new charts (uses /api/v1/chart/data)
+        :return: Tuple of (sql_list, used_query_indexes)
+        """
+        # For modern viz types, try chart/data API first
+        sqls = []
+        query_indexes = None
+        if query_context:
+            try:
+                sqls, query_indexes = self._collect_sql_via_chart_data(chart_id, query_context)
+            except SupersetAdaptorError as exc:
+                logger.warning(f"chart/data failed for {chart_id}, trying explore_json: {exc}")
+
+        if sqls:
+            return sqls, query_indexes
+
+        logger.debug(f"No query_context or form_data available for chart {chart_id}")
+        return [], None
+
+    def _collect_sql_via_chart_data(
+        self,
+        chart_id: Union[str, int],
+        query_context: Dict[str, Any],
+    ) -> tuple[List[str], Optional[set[int]]]:
+        """Collect SQL using /api/v1/chart/data endpoint (new API)."""
         payload = dict(query_context)
+        _normalize_series_columns_in_query_context(payload)
         payload.setdefault("result_format", "json")
         payload.setdefault("result_type", "query")
 
@@ -452,30 +524,6 @@ class SupersetAdaptor(BIAdaptorBase):
             return base
         return f"{base}/api/v1"
 
-    def _coerce_id(self, value: Any) -> Optional[Union[int, str]]:
-        if value is None:
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
-        return value
-
-    def _parse_datasource_value(self, value: Any) -> tuple[Optional[Union[int, str]], Optional[str]]:
-        if value is None:
-            return None, None
-        if isinstance(value, dict):
-            return self._coerce_id(value.get("id")), value.get("type")
-        if isinstance(value, int):
-            return value, None
-        if isinstance(value, str):
-            if "__" in value:
-                id_part, type_part = value.split("__", 1)
-                return self._coerce_id(id_part), type_part
-            if value.isdigit():
-                return int(value), None
-        return None, None
-
     def _extract_chart_id(self, chart_meta: Dict[str, Any]) -> Optional[Union[int, str]]:
         form_data = _load_json_field(chart_meta.get("form_data")) or {}
         chart_id = (
@@ -501,7 +549,7 @@ class SupersetAdaptor(BIAdaptorBase):
             datasource = query_context.get("datasource")
             if isinstance(datasource, dict):
                 # parse dataset id
-                ds_id = ds_id or self._coerce_id(datasource.get("id"))
+                ds_id = ds_id or _coerce_id(datasource.get("id"))
                 ds_type = ds_type or datasource.get("type") or datasource.get("datasource_type")
                 name = (
                     name or datasource.get("name") or datasource.get("datasource_name") or datasource.get("table_name")
@@ -526,22 +574,20 @@ class SupersetAdaptor(BIAdaptorBase):
         if chart_meta:
             ds_id = ds_id or chart_meta.get("datasource_id") or chart_meta.get("dataset_id")
             ds_type = ds_type or chart_meta.get("datasource_type")
-            name = name or chart_meta.get("datasource_name")
 
         if form_data:
             ds_id = ds_id or form_data.get("datasource_id") or form_data.get("dataset_id")
             ds_type = ds_type or form_data.get("datasource_type")
-            name = name or form_data.get("datasource_name") or form_data.get("dataset_name")
             if not ds_id and "datasource" in form_data:
-                parsed_id, parsed_type = self._parse_datasource_value(form_data.get("datasource"))
+                parsed_id, parsed_type = _parse_datasource_value(form_data.get("datasource"))
                 ds_id = parsed_id or ds_id
                 ds_type = parsed_type or ds_type
 
-        ds_id = self._coerce_id(ds_id)
+        ds_id = _coerce_id(ds_id)
         if ds_id is None:
             return None
 
-        return {"id": ds_id, "type": ds_type, "name": name}
+        return {"id": ds_id, "type": ds_type}
 
     def _resolve_tables(self, datasource_ref: Optional[Dict[str, Any]]) -> List[str]:
         if not datasource_ref:
@@ -812,19 +858,24 @@ class SupersetAdaptor(BIAdaptorBase):
 
         return self._dedupe_dimensions(dimensions)
 
-    def _request_json(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
-        response = self._request(method, endpoint, **kwargs)
+    def _request_json(self, method: str, endpoint: str, need_csrf_token: bool = False, **kwargs) -> Dict[str, Any]:
+        response = self._request(method, endpoint, need_csrf_token=need_csrf_token, **kwargs)
         try:
             return response.json()
         except json.JSONDecodeError as exc:
             raise SupersetAdaptorError(f"Invalid JSON response for {endpoint}: {exc}") from exc
 
-    def _request(self, method: str, endpoint: str, require_auth: bool = True, **kwargs) -> httpx.Response:
+    def _request(
+        self, method: str, endpoint: str, require_auth: bool = True, need_csrf_token: bool = False, **kwargs
+    ) -> httpx.Response:
         url = f"{self._api_base}/{endpoint.lstrip('/')}"
         headers = kwargs.pop("headers", {})
         if require_auth:
             self._ensure_authenticated()
             headers.update(self._auth_headers())
+            if need_csrf_token:
+                token = self._get_csrf_token()
+                headers["X-Csrftoken"] = token
 
         try:
             response = self._client.request(method, url, headers=headers, **kwargs)
@@ -874,8 +925,137 @@ class SupersetAdaptor(BIAdaptorBase):
         else:
             self._token_expiration = time.time() + 3600
 
+        # Clear CSRF token when re-authenticating
+        self._csrf_token = None
 
-SupersetAdaptor.register("superset", auth_type=AuthType.LOGIN, display_name="Superset")
+    def _get_csrf_token(self) -> str:
+        """Get CSRF token for legacy API endpoints like explore_json."""
+        if self._csrf_token:
+            return self._csrf_token
+
+        self._ensure_authenticated()
+        try:
+            response = self._request_json("GET", "security/csrf_token/", need_csrf_token=False)
+            self._csrf_token = response.get("result")
+            if not self._csrf_token:
+                raise SupersetAdaptorError("CSRF token not found in response")
+            return self._csrf_token
+        except SupersetAdaptorError as exc:
+            raise SupersetAdaptorError(f"Failed to get CSRF token: {exc}") from exc
+
+
+# --- Viz type classification helpers ---
+
+
+def _is_timeseries_viz(viz_type: str) -> bool:
+    """Check if the viz_type is a timeseries chart that needs pivot/flatten post-processing."""
+    if not viz_type:
+        return False
+    # ECharts timeseries family
+    if viz_type.startswith("echarts_timeseries"):
+        return True
+    # Other timeseries-like charts
+    return viz_type in ("mixed_timeseries", "area", "line", "big_number_total")
+
+
+def _is_pivot_viz(viz_type: str) -> bool:
+    """Check if the viz_type is a pivot table."""
+    return viz_type in ("pivot_table", "pivot_table_v2")
+
+
+def _is_table_viz(viz_type: str) -> bool:
+    """Check if the viz_type is a table or big number chart."""
+    return viz_type in ("table", "big_number")
+
+
+def _is_categorical_viz(viz_type: str) -> bool:
+    """Check if the viz_type is a categorical chart (bar, pie, etc.)."""
+    return viz_type in ("echarts_bar", "pie", "dist_bar", "bar", "sunburst", "sunburst_v2", "treemap", "treemap_v2")
+
+
+def _normalize_series_columns_in_query_context(query_context: Dict[str, Any]) -> None:
+    queries = query_context.get("queries")
+    if not isinstance(queries, list):
+        return
+    for query in queries:
+        if not isinstance(query, dict):
+            continue
+        _normalize_series_columns_in_query(query)
+
+
+def _normalize_series_columns_in_query(query: Dict[str, Any]) -> None:
+    series_columns = query.get("series_columns")
+    if series_columns is None:
+        return
+
+    def _ensure_list(value: Any) -> Optional[List[Any]]:
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return value
+        return [value]
+
+    def _column_name(item: Any) -> Optional[str]:
+        if isinstance(item, dict):
+            return item.get("column_name") or item.get("name") or item.get("label")
+        if item is None:
+            return None
+        return str(item)
+
+    def _dedupe(items: List[str]) -> List[str]:
+        seen: set[str] = set()
+        unique: List[str] = []
+        for item in items:
+            if item in seen:
+                continue
+            seen.add(item)
+            unique.append(item)
+        return unique
+
+    series_list = _ensure_list(series_columns)
+    if series_list is None:
+        return
+
+    series_names = _dedupe([name for item in series_list if (name := _column_name(item))])
+
+    columns_list = _ensure_list(query.get("columns")) or []
+    column_names = _dedupe([name for item in columns_list if (name := _column_name(item))])
+
+    if series_names:
+        for name in series_names:
+            if name not in column_names:
+                column_names.append(name)
+        query["columns"] = column_names
+    elif columns_list:
+        query["columns"] = columns_list
+
+    query["series_columns"] = series_names
+
+
+def _parse_datasource_value(value: Any) -> tuple[Optional[Union[int, str]], Optional[str]]:
+    if value is None:
+        return None, None
+    if isinstance(value, dict):
+        return _coerce_id(value.get("id")), value.get("type") or value.get("datasource_type")
+    if isinstance(value, int):
+        return value, None
+    if isinstance(value, str):
+        if "__" in value:
+            id_part, type_part = value.split("__", 1)
+            return _coerce_id(id_part), type_part
+        if value.isdigit():
+            return int(value), None
+    return None, None
+
+
+def _coerce_id(value: Any) -> Optional[Union[int, str]]:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return value
 
 
 def _load_json_field(value: Any) -> Any:
@@ -887,3 +1067,6 @@ def _load_json_field(value: Any) -> Any:
         except json.JSONDecodeError:
             logger.debug(f"Failed to decode JSON field: {value[:128]}")
     return None
+
+
+SupersetAdaptor.register("superset", auth_type=AuthType.LOGIN, display_name="Superset")

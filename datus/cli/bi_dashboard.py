@@ -135,7 +135,7 @@ class BiDashboardCommands:
 
             result.tables = self._review_tables(result.tables)
 
-            self._save_sub_agent(options.platform, dashboard, dashboard_id, result)
+            self._save_sub_agent(options.platform, dashboard, result)
             self.console.print("[green]Sub-Agent build successful.[/]")
         except (KeyboardInterrupt, EOFError):
             self.console.print("\n[yellow]Cancelled.[/]")
@@ -353,7 +353,9 @@ class BiDashboardCommands:
                 "[dim]Tip: For metrics, select charts with aggregation SQL " "(e.g. SUM, COUNT, AVG, MAX, MIN)[/]"
             )
 
-        selection_input = self._prompt_input(f"Select charts to init {purpose} (e.g. 1,3 or all)", default="all")
+        selection_input = self._prompt_input(
+            f"Select chart indexes to init {purpose} (e.g. 1,3,... or all)", default="all"
+        )
         return self._parse_selection(selection_input, len(charts))
 
     def _hydrate_charts(
@@ -408,7 +410,7 @@ class BiDashboardCommands:
             return []
 
         table = Table(title="Datasets")
-        table.add_column("#", style="cyan", width=4)
+        table.add_column("Index", style="cyan", width=4)
         table.add_column("Dataset ID", style="green")
         table.add_column("Name", style="white")
         table.add_column("Dialect", style="magenta")
@@ -428,7 +430,7 @@ class BiDashboardCommands:
             )
 
         self.console.print(table)
-        selection_input = self._prompt_input("Select datasets (e.g. 1,2 or all)", default="all")
+        selection_input = self._prompt_input("Select datasets (e.g. 1,2,... or all)", default="all")
         indices = self._parse_selection(selection_input, len(datasets))
         return [datasets[idx] for idx in indices]
 
@@ -442,7 +444,9 @@ class BiDashboardCommands:
         for idx, table in enumerate(tables, start=1):
             table_view.add_row(str(idx), str(table or ""))
         self.console.print(table_view)
-        selection_input = self._prompt_input("Select tables to keep", default="all")
+        selection_input = self._prompt_input(
+            "Select table index for scoped context(e.g. 1,2,... or all)", default="all"
+        )
         indices = self._parse_selection(selection_input, len(tables))
         return [tables[idx] for idx in indices]
 
@@ -450,7 +454,6 @@ class BiDashboardCommands:
         self,
         platform: str,
         dashboard: DashboardInfo,
-        dashboard_id: Union[int, str],
         result: DashboardAssemblyResult,
     ) -> None:
         sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
@@ -790,7 +793,7 @@ class BiDashboardCommands:
 
     def _render_chart_table(self, charts: Sequence[ChartInfo], title: str) -> None:
         table = Table(title=title, show_lines=True)
-        table.add_column("#", style="cyan", width=4)
+        table.add_column("Index", style="cyan", width=4)
         table.add_column("Chart ID", style="green")
         table.add_column("Name", style="white")
         table.add_column("Type", style="magenta")
