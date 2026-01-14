@@ -534,8 +534,8 @@ class TestBenchmarkTutorialInitMetrics:
         result = tutorial._init_metrics(success_path)
 
         assert result is True
-        # Verify existing directories were deleted
-        assert not semantic_model_path.exists()
+        # Verify metrics.lance was deleted but semantic_model.lance was preserved
+        assert semantic_model_path.exists()
         assert not metrics_path.exists()
 
 
@@ -554,6 +554,9 @@ def test_init_success_story_metrics_returns_error_on_exception(monkeypatch):
         ]
     )
     monkeypatch.setattr(metric_init.pd, "read_csv", lambda path: df)
+
+    # Mock semantic model check to skip it (return empty set)
+    monkeypatch.setattr(metric_init, "extract_tables_from_sql_list", lambda sql_list, config: set())
 
     # Create a node class that raises an exception during execute_stream
     class FailingNode:
@@ -580,6 +583,9 @@ def test_init_success_story_metrics_success(monkeypatch):
         ]
     )
     monkeypatch.setattr(metric_init.pd, "read_csv", lambda path: df)
+
+    # Mock semantic model check to skip it (return empty set)
+    monkeypatch.setattr(metric_init, "extract_tables_from_sql_list", lambda sql_list, config: set())
 
     # Create a node class that succeeds
     class SuccessNode:

@@ -955,7 +955,9 @@ class GenerationHooks(AgentHooks):
                         return
 
                     col_desc = col_def.get("description", "")
-                    col_expr = col_def.get("expr", col_name)  # Default to column name if no expr
+                    # Strip backticks from expr since YAML may contain quoted column names like `County Name`
+                    raw_expr = col_def.get("expr", col_name)  # Default to column name if no expr
+                    col_expr = raw_expr.strip("`") if raw_expr else raw_expr
 
                     # Extract time_granularity from type_params for TIME dimensions
                     time_granularity = ""
