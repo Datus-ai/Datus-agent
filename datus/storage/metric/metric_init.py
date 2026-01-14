@@ -14,6 +14,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.storage.semantic_model.auto_create import ensure_semantic_models_exist_sync, extract_tables_from_sql_list
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -51,6 +52,25 @@ def init_success_story_metrics(
 
     # Emit task started
     event_helper.task_started(total_items=len(df), success_story=args.success_story)
+
+    # Step 0: Check and create missing semantic models
+    sql_list = [row["sql"] for _, row in df.iterrows() if row.get("sql")]
+    all_tables = extract_tables_from_sql_list(sql_list, agent_config)
+
+    if all_tables:
+        logger.info(f"Found {len(all_tables)} tables in success story SQL: {all_tables}")
+
+        # Check and create missing semantic models
+        success, error, created_tables = ensure_semantic_models_exist_sync(all_tables, agent_config, emit=None)
+
+        if not success:
+            error_msg = f"Failed to create semantic models: {error}"
+            logger.error(error_msg)
+            event_helper.task_failed(error=error_msg)
+            return False, error_msg, None
+
+        if created_tables:
+            logger.info(f"Created semantic models for tables: {created_tables}")
 
     # Build batch message with all SQL queries
     sql_queries = []

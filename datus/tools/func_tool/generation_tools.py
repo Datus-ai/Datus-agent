@@ -150,7 +150,7 @@ class GenerationTools:
         """
         return self.check_semantic_object_exists(metric_name, kind="metric")
 
-    def end_semantic_model_generation(self, filepaths: List[str]) -> FuncToolResult:
+    def end_semantic_model_generation(self, semantic_model_files: List[str]) -> FuncToolResult:
         """
         Complete semantic model generation process.
 
@@ -158,18 +158,20 @@ class GenerationTools:
         This tool triggers user confirmation workflow for syncing to LanceDB.
 
         Args:
-            filepaths: List of absolute paths to generated semantic model YAML files
+            semantic_model_files: List of absolute paths to generated semantic model YAML files
 
         Returns:
-            dict: Result containing confirmation message and filepaths
+            dict: Result containing confirmation message and semantic_model_files
         """
         try:
-            logger.info(f"Semantic model generation completed for {len(filepaths)} files: {filepaths}")
+            logger.info(
+                f"Semantic model generation completed for {len(semantic_model_files)} files: {semantic_model_files}"
+            )
 
             return FuncToolResult(
                 result={
-                    "message": f"Semantic model generation completed for {len(filepaths)} file(s)",
-                    "filepaths": filepaths,
+                    "message": f"Semantic model generation completed for {len(semantic_model_files)} file(s)",
+                    "semantic_model_files": semantic_model_files,
                 }
             )
 

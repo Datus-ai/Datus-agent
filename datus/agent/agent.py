@@ -518,11 +518,6 @@ class Agent:
                     self.global_config.check_init_storage_config("metric")
                 self._reset_metrics_stream_state()
 
-                # Check semantic_model dependency (warning only)
-                semantic_model_path = os.path.join(dir_path, "semantic_model.lance")
-                if not os.path.exists(semantic_model_path):
-                    logger.warning("semantic_model not initialized, metrics may lack context")
-
                 # Initialize metrics
                 if hasattr(self.args, "from_adapter") and self.args.from_adapter:
                     # Pull from semantic adapter

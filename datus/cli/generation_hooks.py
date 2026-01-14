@@ -96,7 +96,7 @@ class GenerationHooks(AgentHooks):
         Handle end_semantic_model_generation tool result.
 
         Args:
-            result: Tool result containing filepaths list
+            result: Tool result containing semantic_model_files list
         """
         try:
             file_paths = self._extract_filepaths_from_result(result)
@@ -152,7 +152,7 @@ class GenerationHooks(AgentHooks):
 
     def _extract_filepaths_from_result(self, result) -> list:
         """
-        Extract filepaths list from tool result.
+        Extract semantic_model_files list from tool result.
 
         Args:
             result: Tool result (dict or FuncToolResult object)
@@ -167,7 +167,7 @@ class GenerationHooks(AgentHooks):
             result_dict = result.result
 
         if isinstance(result_dict, dict):
-            filepaths = result_dict.get("filepaths", [])
+            filepaths = result_dict.get("semantic_model_files", [])
             if filepaths and isinstance(filepaths, list):
                 return filepaths
 

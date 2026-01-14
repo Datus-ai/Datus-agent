@@ -50,6 +50,20 @@ Consider adding subject_tree classification to help organize metrics. You can:
 
 ## Step-by-Step Process
 
+### Step 0: Check Semantic Model Prerequisites
+
+Before generating metrics, verify that semantic models exist for all tables involved:
+
+1. **Extract table names** from the SQL queries (FROM/JOIN clauses)
+2. **Check each table** using `check_semantic_object_exists(name="{table_name}", kind="table")`
+3. **If any table is missing a semantic model**:
+   - STOP the metric generation process
+   - Inform the user which tables are missing semantic models
+   - Suggest running `/gen_semantic_model` first to create the required semantic models
+   - Example response: "Cannot generate metrics because semantic models are missing for tables: {table_list}. Please run gen_semantic_model first to create semantic models for these tables."
+
+Only proceed to Step 1 if ALL required semantic models exist.
+
 ### Step 1: Analyze ALL SQL Queries
 
 Parse each SQL query and extract:
