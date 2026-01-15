@@ -450,36 +450,39 @@ class ContextSearchTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_knowledge")
-    def get_knowledge(self, subject_path: List[str], name: str = "") -> FuncToolResult:
+    def get_knowledge(self, paths: List[List[str]]) -> FuncToolResult:
         """
-        Get external business knowledge by subject path and name.
+        Get multiple external business knowledge entries by their full paths.
+        MUST call `list_subject_tree` first to get the tree structure and available knowledge paths.
 
         Args:
-            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
-            name: The name of the knowledge entry
+            paths: List of full paths, where each path is a list containing
+                   subject_path components followed by the knowledge name.
+                   e.g., [['Finance', 'Revenue', 'Q1', 'knowledge_name1'],
+                          ['Sales', 'Marketing', 'knowledge_name2']]
 
         Returns:
             FuncToolResult with keys:
                 - 'success' (int): 1 if the search succeeded, 0 otherwise.
                 - 'error' (str or None): Error message if any.
-                - 'result' (dict): On success, the knowledge entry containing:
+                - 'result' (list): On success, list of knowledge entries, each containing:
                     - 'search_text': Business search_text/concept
                     - 'explanation': Detailed explanation of the search_text
         """
         # Normalize null values from LLM
         name = _normalize_null(name) or ""
         try:
-            result = self.ext_knowledge_rag.get_knowledge_detail(
-                subject_path=subject_path,
-                name=name,
-            )
+            if not paths:
+                return FuncToolResult(success=0, error="No paths provided", result=None)
+
+            result = self.ext_knowledge_rag.get_knowledge_batch(paths=paths)
             logger.debug(f"result of get_knowledge: {result}")
             if result:
-                return FuncToolResult(success=1, error=None, result=result[0])
+                return FuncToolResult(success=1, error=None, result=result)
             else:
                 return FuncToolResult(success=0, error="No matched result", result=None)
         except Exception as e:
-            logger.error(f"Failed to get knowledge for `{'/'.join(subject_path)}/{name}`: {e}")
+            logger.error(f"Failed to get knowledge for paths `{paths}`: {e}")
             return FuncToolResult(success=0, error=str(e))
 
 

@@ -1665,8 +1665,8 @@ class SubjectScreen(ContextScreen):
                 expand=True,
                 padding=(0, 1),
             )
-            details.add_column("Key", style="bright_cyan", width=12)
-            details.add_column("Value", style="yellow", ratio=1)
+            details.add_column("Key", style="bright_cyan", width=12, no_wrap=True)
+            details.add_column("Value", style="yellow", ratio=1, no_wrap=False, overflow="fold")
 
             if search_text := entry.get("search_text"):
                 details.add_row("SearchText", search_text)

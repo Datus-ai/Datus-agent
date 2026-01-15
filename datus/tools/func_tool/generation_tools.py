@@ -44,7 +44,6 @@ class GenerationTools:
                 self.generate_sql_summary_id,
                 self.end_semantic_model_generation,
                 self.end_metric_generation,
-                self.generate_ext_knowledge_id,
             )
         ]
 
@@ -236,45 +235,4 @@ class GenerationTools:
 
         except Exception as e:
             logger.error(f"Error generating reference SQL ID: {e}")
-            return FuncToolResult(success=0, error=f"Failed to generate ID: {str(e)}")
-
-    def generate_ext_knowledge_id(self, search_text: str, subject_path: str = "") -> FuncToolResult:
-        """
-        Generate a unique ID for external knowledge entry based on search_text and subject path.
-
-        This tool helps create consistent, unique IDs for external knowledge entries.
-        Use this tool when you need to generate an ID for a new knowledge entry.
-
-        Args:
-            search_text: The business search_text/concept that will be used to generate the ID
-            subject_path: Optional subject path string (format: "domain/layer1/layer2")
-
-        Returns:
-            dict: A dictionary with the execution result, containing these keys:
-                  - 'success' (int): 1 for success, 0 for failure
-                  - 'error' (Optional[str]): Error message on failure
-                  - 'result' (str): The generated unique ID
-
-        Example:
-            result = generate_ext_knowledge_id(
-                search_text="GMV",
-                subject_path="Finance/Revenue/Metrics"
-            )
-        """
-        try:
-            from datus.storage.ext_knowledge.init_utils import gen_ext_knowledge_id
-
-            # Parse subject_path string into list
-            subject_path_list = []
-            if subject_path:
-                subject_path_list = [part.strip() for part in subject_path.split("/") if part.strip()]
-
-            # Generate the ID using the same utility as the storage system
-            generated_id = gen_ext_knowledge_id(subject_path_list, search_text)
-
-            logger.info(f"Generated external knowledge ID: {generated_id}")
-            return FuncToolResult(result=generated_id)
-
-        except Exception as e:
-            logger.error(f"Error generating external knowledge ID: {e}")
             return FuncToolResult(success=0, error=f"Failed to generate ID: {str(e)}")

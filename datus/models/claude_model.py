@@ -261,7 +261,7 @@ class ClaudeModel(LLMBaseModel):
         # conforms to the following schema:\n{json.dumps(json_schema, indent=2)}"
 
         # Generate the response
-        response_text = self.generate(prompt, response_format={"type": "json_object"}, **kwargs)
+        response_text = self.generate(prompt, **kwargs)
 
         # Parse the JSON response
         try:

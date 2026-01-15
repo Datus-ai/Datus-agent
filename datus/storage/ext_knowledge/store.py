@@ -31,6 +31,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             schema=pa.schema(
                 base_schema_columns()
                 + [
+                    pa.field("id", pa.string()),
                     pa.field("search_text", pa.string()),
                     pa.field("explanation", pa.string()),
                     pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
@@ -65,7 +66,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         if not knowledge_entries:
             return
 
-        # Validate and filter entries
+        # Validate and filter entries, add id field
         valid_entries = []
         for entry in knowledge_entries:
             subject_path = entry.get("subject_path", [])
@@ -78,7 +79,10 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
                 logger.warning(f"Skipping entry with missing required fields: {entry}")
                 continue
 
-            valid_entries.append(entry)
+            # Generate id from subject_path + name
+            entry_with_id = entry.copy()
+            entry_with_id["id"] = gen_subject_item_id(subject_path, name)
+            valid_entries.append(entry_with_id)
 
         # Use base class batch_store method
         self.batch_store(valid_entries)
@@ -101,8 +105,12 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         # Find or create the subject tree path to get node_id
         subject_node_id = self.subject_tree.find_or_create_path(subject_path)
 
+        # Generate id from subject_path + name
+        knowledge_id = gen_subject_item_id(subject_path, name)
+
         data = [
             {
+                "id": knowledge_id,
                 "subject_node_id": subject_node_id,
                 "name": name,
                 "search_text": search_text,
@@ -111,6 +119,95 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             }
         ]
         self.store_batch(data)
+
+    def upsert_knowledge(
+        self,
+        subject_path: List[str],
+        name: str,
+        search_text: str,
+        explanation: str,
+    ):
+        """Upsert a knowledge entry (update if exists, insert if not).
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
+            name: Name for the knowledge entry
+            search_text: Business search_text/concept
+            explanation: Detailed explanation
+        """
+
+        # Generate id from subject_path + name
+        knowledge_id = gen_subject_item_id(subject_path, name)
+
+        data = [
+            {
+                "id": knowledge_id,
+                "subject_path": subject_path,
+                "name": name,
+                "search_text": search_text,
+                "explanation": explanation,
+                "created_at": self._get_current_timestamp(),
+            }
+        ]
+        self.batch_upsert(data, on_column="id")
+
+    def batch_upsert_knowledge(
+        self,
+        knowledge_entries: List[Dict],
+    ) -> List[str]:
+        """Upsert multiple knowledge entries in batch.
+
+        Uses id (subject_path/name) for deduplication,
+        so entries with the same subject path and name will be updated.
+
+        Args:
+            knowledge_entries: List of knowledge entry dictionaries, each containing:
+                - subject_path: List[str] - subject hierarchy path components
+                - name: str - name for the knowledge entry
+                - search_text: str - business search_text/concept
+                - explanation: str - detailed explanation
+
+        Returns:
+            List[str]: List of names of upserted knowledge entries
+        """
+        if not knowledge_entries:
+            return []
+
+        data = []
+        upserted_names = []
+
+        for entry in knowledge_entries:
+            subject_path = entry.get("subject_path", [])
+            name = entry.get("name")
+            search_text = entry.get("search_text", "")
+            explanation = entry.get("explanation", "")
+
+            # Validate required fields
+            if not all([subject_path, name, search_text, explanation]):
+                logger.warning(f"Skipping entry with missing required fields: {entry}")
+                continue
+
+            upserted_names.append(name)
+
+            # Generate id from subject_path + name
+            knowledge_id = gen_subject_item_id(subject_path, name)
+
+            data.append(
+                {
+                    "id": knowledge_id,
+                    "subject_path": subject_path,
+                    "name": name,
+                    "search_text": search_text,
+                    "explanation": explanation,
+                    "created_at": self._get_current_timestamp(),
+                }
+            )
+
+        if data:
+            # Use id for deduplication
+            self.batch_upsert(data, on_column="id")
+
+        return upserted_names
 
     def search_knowledge(
         self,
@@ -175,6 +272,20 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             )
         """
         return self.delete_entry(subject_path, name)
+
+
+def gen_subject_item_id(subject_path: List[str], name: str) -> str:
+    """Generate a unique ID from subject_path and name.
+
+    Args:
+        subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue'])
+        name: Item name
+
+    Returns:
+        ID string in format: "path/component1/component2/.../name"
+    """
+    parts = list(subject_path) + [name]
+    return "/".join(parts)
 
 
 class ExtKnowledgeRAG:
@@ -248,3 +359,23 @@ class ExtKnowledgeRAG:
             True if deleted successfully, False if entry not found
         """
         return self.store.delete_knowledge(subject_path, name)
+
+    def get_knowledge_batch(self, paths: List[List[str]]) -> List[Dict[str, Any]]:
+        """Get multiple knowledge entries by their full paths.
+
+        Args:
+            paths: List of full paths, where each path is a list containing
+                   subject_path components followed by the knowledge name.
+                   e.g., [['Finance', 'Revenue', 'Q1', 'knowledge_name1'],
+                          ['Sales', 'Marketing', 'knowledge_name2']]
+
+        Returns:
+            List of matching knowledge entry details
+        """
+        results = []
+        for path in paths:
+            if not path:
+                continue
+            entries = self.store.search_all_knowledge(subject_path=path)
+            results.extend(entries)
+        return results

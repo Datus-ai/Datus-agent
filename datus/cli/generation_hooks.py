@@ -1207,10 +1207,11 @@ class GenerationHooks(AgentHooks):
     @staticmethod
     def _sync_ext_knowledge_to_db(file_path: str, agent_config: AgentConfig, build_mode: str = "incremental") -> dict:
         """
-        Sync external knowledge YAML file to Knowledge Base.
+        Sync external knowledge YAML file to Knowledge Base using upsert.
 
         Supports multi-document YAML files (documents separated by ---).
         Each document is treated as a separate knowledge entry.
+        If a knowledge entry with the same subject_path + search_text exists, it will be updated.
 
         Args:
             file_path: Path to the external knowledge YAML file
@@ -1222,7 +1223,6 @@ class GenerationHooks(AgentHooks):
         """
         try:
             from datus.storage.cache import get_storage_cache_instance
-            from datus.storage.ext_knowledge.init_utils import exists_ext_knowledge, gen_ext_knowledge_id
 
             # Load YAML file - supports multiple documents
             with open(file_path, "r", encoding="utf-8") as f:
@@ -1233,72 +1233,70 @@ class GenerationHooks(AgentHooks):
 
             # Get storage instance
             knowledge_store = get_storage_cache_instance(agent_config).ext_knowledge_storage()
-            existing_ids = exists_ext_knowledge(knowledge_store, build_mode=build_mode)
 
-            # Process each document
-            synced_count = 0
-            skipped_count = 0
-            synced_names = []
-            skipped_names = []
+            # Collect all valid entries for batch upsert
+            knowledge_entries = []
+            invalid_count = 0
 
             for i, doc in enumerate(docs):
                 if not doc:
                     logger.warning(f"Document {i+1} in {file_path} is empty, skipping")
+                    invalid_count += 1
                     continue
 
-                # Parse subject_path
-                subject_path_str = doc.get("subject_path", "")
-                subject_path = [p.strip() for p in subject_path_str.split("/") if p.strip()]
+                # Parse subject_path - supports both list and string formats
+                subject_path_raw = doc.get("subject_path", "")
+                if isinstance(subject_path_raw, list):
+                    subject_path = subject_path_raw
+                else:
+                    subject_path = [p.strip() for p in str(subject_path_raw).split("/") if p.strip()]
 
-                # Generate ID for duplicate check
                 search_text = doc.get("search_text", "")
-                item_id = gen_ext_knowledge_id(subject_path, search_text)
                 name = doc.get("name", search_text)
+                explanation = doc.get("explanation", "")
 
-                # Check for duplicate
-                if item_id in existing_ids:
-                    logger.info(f"External knowledge {item_id} already exists in Knowledge Base, skipping")
-                    skipped_count += 1
-                    skipped_names.append(name)
+                # Validate required fields
+                if not subject_path or not search_text:
+                    logger.warning(f"Document {i+1} missing required fields (subject_path or search_text), skipping")
+                    invalid_count += 1
                     continue
 
-                # Store to Knowledge Base
-                knowledge_store.store_knowledge(
-                    subject_path=subject_path,
-                    name=name,
-                    search_text=search_text,
-                    explanation=doc.get("explanation", ""),
+                knowledge_entries.append(
+                    {
+                        "subject_path": subject_path,
+                        "name": name,
+                        "search_text": search_text,
+                        "explanation": explanation,
+                    }
                 )
 
-                logger.info(f"Successfully synced external knowledge {item_id} to Knowledge Base")
-                synced_count += 1
-                synced_names.append(name)
+            if not knowledge_entries:
+                return {"success": False, "error": "No valid knowledge entries found in YAML file"}
+
+            # Batch upsert all entries (update if exists, insert if not)
+            upserted_ids = knowledge_store.batch_upsert_knowledge(knowledge_entries)
 
             # Build result message
-            messages = []
-            if synced_count > 0:
-                if synced_count == 1:
-                    messages.append(f"Synced 1 knowledge entry: {synced_names[0]}")
-                else:
-                    messages.append(f"Synced {synced_count} knowledge entries: {', '.join(synced_names[:3])}")
-                    if synced_count > 3:
-                        messages[-1] += f" and {synced_count - 3} more"
+            upserted_count = len(upserted_ids)
+            upserted_names = [e["name"] for e in knowledge_entries[:3]]
 
-            if skipped_count > 0:
-                if skipped_count == 1:
-                    messages.append(f"Skipped 1 existing entry: {skipped_names[0]}")
-                else:
-                    messages.append(f"Skipped {skipped_count} existing entries")
+            if upserted_count == 1:
+                message = f"Upserted 1 knowledge entry: {upserted_names[0]}"
+            else:
+                message = f"Upserted {upserted_count} knowledge entries: {', '.join(upserted_names)}"
+                if upserted_count > 3:
+                    message += f" and {upserted_count - 3} more"
 
-            total_processed = synced_count + skipped_count
-            if total_processed == 0:
-                return {"success": False, "error": "No valid knowledge entries found in YAML file"}
+            if invalid_count > 0:
+                message += f"; Skipped {invalid_count} invalid entries"
+
+            logger.info(f"Successfully upserted {upserted_count} external knowledge entries to Knowledge Base")
 
             return {
                 "success": True,
-                "message": "; ".join(messages),
-                "synced_count": synced_count,
-                "skipped_count": skipped_count,
+                "message": message,
+                "upserted_count": upserted_count,
+                "invalid_count": invalid_count,
             }
 
         except Exception as e:

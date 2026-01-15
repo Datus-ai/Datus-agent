@@ -10,22 +10,42 @@ business search_text and concept management with support for filesystem tools,
 generation tools, and hooks.
 """
 
+from dataclasses import dataclass
 from typing import AsyncGenerator, Optional
 
+import pandas as pd
+
 from datus.agent.node.agentic_node import AgenticNode
+from datus.agent.node.compare_agentic_node import CompareAgenticNode
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput, ExtKnowledgeNodeResult
+from datus.schemas.node_models import SQLContext, SqlTask
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.utils.benchmark_utils import ComparisonOutcome, TableComparator
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class VerifyResult:
+    """Result of SQL verification without suggestions."""
+
+    success: bool
+    match_rate: float
+    error: Optional[str] = None
+    user_df: Optional[pd.DataFrame] = None
+    gold_df: Optional[pd.DataFrame] = None
+    outcome: Optional[ComparisonOutcome] = None
 
 
 class GenExtKnowledgeAgenticNode(AgenticNode):
@@ -70,6 +90,18 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
+
+        # Verification retry configuration and state tracking
+        self.max_verification_retries = 3
+        if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
+            agentic_node_config = agent_config.agentic_nodes[node_name]
+            if isinstance(agentic_node_config, dict):
+                self.max_verification_retries = agentic_node_config.get("max_verification_retries", 3)
+
+        # Verification state tracking
+        self._verification_passed: bool = False
+        self._last_verification_result: Optional[VerifyResult] = None
+        self._verification_attempt_count: int = 0
 
         path_manager = get_path_manager()
         self.ext_knowledge_dir = str(path_manager.ext_knowledge_path(agent_config.current_namespace))
@@ -119,13 +151,12 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         self.tools = []
 
         # Hardcoded tool configuration: specific methods from generation_tools and filesystem_tools
-        # tools: generation_tools.generate_ext_knowledge_id,
         # filesystem_tools.read_file, filesystem_tools.read_multiple_files, filesystem_tools.write_file,
         # filesystem_tools.edit_file, filesystem_tools.list_directory
         # Chat node uses all available tools by default
         db_manager = db_manager_instance(self.agent_config.namespaces)
-        conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-        self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
+        self.conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+        self.db_func_tool = DBFuncTool(self.conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         if self.db_func_tool:
             self.tools.extend(self.db_func_tool.available_tools())
@@ -143,14 +174,271 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             self._setup_hooks()
 
     def _setup_specific_generation_tools(self):
-        """Setup specific generation tools: generate_ext_knowledge_id."""
+        """Setup specific generation tools: verify_sql, end_knowledge_generation."""
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
             self.generation_tools = GenerationTools(self.agent_config)
-            self.tools.append(trans_to_function_tool(self.generation_tools.generate_ext_knowledge_id))
+
+            # Add verify_sql tool for SQL result verification (replaces get_gold_sql)
+            self.tools.append(trans_to_function_tool(self.verify_sql))
+
+            # Add end_knowledge_generation tool to finalize and verify completion
+            # self.tools.append(trans_to_function_tool(self.end_knowledge_generation))
         except Exception as e:
             logger.error(f"Failed to setup specific generation tools: {e}")
+
+    def _reset_verification_state(self):
+        """Reset verification state for a new agentic loop attempt."""
+        self._verification_passed = False
+        self._last_verification_result = None
+        logger.debug("Verification state reset for new attempt")
+
+    def _get_retry_prompt(self, attempt: int) -> str:
+        """
+        Generate a retry prompt to inject when verification failed.
+
+        Args:
+            attempt: Current retry attempt number (1-based)
+
+        Returns:
+            Prompt string to inject for retry
+        """
+        last_result = self._last_verification_result
+        match_rate = last_result.match_rate if last_result else 0.0
+
+        return f"""[VERIFICATION RETRY - Attempt {attempt}/{self.max_verification_retries}]
+
+Your previous SQL verification FAILED with match_rate={match_rate * 100:.1f}%.
+
+IMPORTANT: You MUST create or correct the external knowledge to fix the SQL.
+
+Actions required:
+1. Review the suggestions and column differences from the last verify_sql call
+2. Identify what knowledge is missing or incorrect
+3. Use write_file to CREATE NEW knowledge entries or CORRECT existing ones in the external knowledge file
+4. Based on the new/corrected knowledge, modify your SQL to match expected results
+5. Call verify_sql again with your corrected SQL
+
+Focus on adding or fixing knowledge entries that help generate the correct SQL.
+Do NOT give up. Continue iterating until verify_sql returns success=1.
+"""
+
+    def _verify_result(self, sql: str) -> VerifyResult:
+        """
+        Core SQL verification logic - compare results without generating suggestions.
+
+        Used by both verify_sql tool and AccomplishHook.
+
+        Args:
+            sql: The SQL to validate.
+
+        Returns:
+            VerifyResult with success, match_rate, and optional error/dataframes.
+        """
+        # Check if reference SQL is available
+        if not hasattr(self, "_gold_sql") or not self._gold_sql:
+            return VerifyResult(success=True, match_rate=1.0)
+
+        connector = self.conn
+
+        # Execute user SQL
+        try:
+            user_result = connector.execute_query(sql, result_format="pandas")
+            if not user_result.success:
+                return VerifyResult(success=False, match_rate=0.0, error=f"SQL execution failed: {user_result.error}")
+            user_df = user_result.sql_return
+            if not isinstance(user_df, pd.DataFrame):
+                user_df = pd.DataFrame(user_df) if user_result.sql_return else pd.DataFrame()
+        except Exception as e:
+            return VerifyResult(success=False, match_rate=0.0, error=str(e))
+
+        # Execute gold SQL
+        try:
+            gold_result = connector.execute_query(self._gold_sql, result_format="pandas")
+            if not gold_result.success:
+                return VerifyResult(success=False, match_rate=0.0, error=f"Gold SQL error: {gold_result.error}")
+            gold_df = gold_result.sql_return
+            if not isinstance(gold_df, pd.DataFrame):
+                gold_df = pd.DataFrame(gold_df) if gold_result.sql_return else pd.DataFrame()
+        except Exception as e:
+            return VerifyResult(success=False, match_rate=0.0, error=f"Gold SQL error: {e}")
+
+        # Compare using TableComparator
+        comparator = TableComparator()
+        outcome = comparator.compare(user_df, gold_df)
+
+        return VerifyResult(
+            success=(outcome.match_rate == 1.0),
+            match_rate=outcome.match_rate,
+            user_df=user_df,
+            gold_df=gold_df,
+            outcome=outcome,
+        )
+
+    def verify_sql(self, sql: str) -> FuncToolResult:
+        """
+        Validate SQL against a hidden reference. The reference SQL is not exposed.
+
+        This tool compares execution results of the provided SQL with a hidden reference.
+        The model cannot see the reference SQL - it can only learn from comparison feedback
+        (match rate, column differences, data preview, and improvement suggestions).
+
+        Args:
+            sql: The SQL to validate.
+
+        Returns:
+            FuncToolResult:
+                - success=1: SQL matches the reference, or no reference available
+                - success=0: Mismatch detected, includes suggestions for improvement
+        """
+        # Use _verify_result for core verification logic
+        result = self._verify_result(sql)
+
+        # Update verification state for retry logic
+        self._last_verification_result = result
+        self._verification_passed = result.success
+        logger.info(f"Verification status updated: passed={self._verification_passed}, match_rate={result.match_rate}")
+
+        # No reference available
+        if not hasattr(self, "_gold_sql") or not self._gold_sql:
+            self._verification_passed = True  # Mark as passed when no gold_sql
+            return FuncToolResult(
+                success=1,
+                result="No reference available. Your SQL will be accepted.",
+            )
+
+        # Success - SQL matches
+        if result.success:
+            return FuncToolResult(
+                success=1,
+                result={
+                    "message": "SQL verification PASSED!",
+                    "match_rate": 1.0,
+                    "your_result_shape": f"{result.user_df.shape[0]} rows x {result.user_df.shape[1]} columns"
+                    if result.user_df is not None
+                    else "N/A",
+                },
+            )
+
+        # Failure - generate suggestions
+        logger.warning(f"SQL verification failed: match_rate={result.match_rate}")
+
+        # Prepare user/gold result strings for suggestions
+        user_result_str = (
+            result.user_df.to_csv(index=False) if result.user_df is not None and not result.user_df.empty else ""
+        )
+        gold_result_str = (
+            result.gold_df.to_csv(index=False) if result.gold_df is not None and not result.gold_df.empty else ""
+        )
+
+        suggestions = self._generate_compare_suggestions(
+            user_sql=sql,
+            gold_sql=self._gold_sql,
+            user_result=user_result_str,
+            gold_result=gold_result_str,
+            user_error=result.error,
+        )
+
+        # Return error result with suggestions
+        if result.error:
+            return FuncToolResult(
+                success=0,
+                error=f"SQL execution error: {result.error}",
+                result={
+                    "match_rate": 0,
+                    "suggestions": suggestions,
+                },
+            )
+
+        outcome = result.outcome
+        return FuncToolResult(
+            success=0,
+            error=f"SQL verification FAILED! Match rate: {result.match_rate * 100:.1f}%",
+            result={
+                "match_rate": result.match_rate,
+                "your_result_shape": f"{outcome.actual_shape[0] if outcome and outcome.actual_shape else 0} rows x "
+                f"{outcome.actual_shape[1] if outcome and outcome.actual_shape else 0} columns",
+                "expected_result_shape": (
+                    f"{outcome.expected_shape[0] if outcome and outcome.expected_shape else 0} rows x "
+                    f"{outcome.expected_shape[1] if outcome and outcome.expected_shape else 0} columns"
+                ),
+                "column_differences": {
+                    "matched": outcome.matched_columns if outcome else [],
+                    "missing": outcome.missing_columns if outcome else [],
+                    "extra": outcome.extra_columns if outcome else [],
+                },
+                "data_preview_yours": outcome.actual_preview if outcome else None,
+                "data_preview_expected": outcome.expected_preview if outcome else None,
+                "suggestions": suggestions,
+            },
+        )
+
+    def _generate_compare_suggestions(
+        self,
+        user_sql: str,
+        gold_sql: str,
+        user_result: str,
+        gold_result: str,
+        user_error: str = None,
+        generated_knowledge: list = None,
+    ) -> dict:
+        """
+        Generate suggestions for SQL improvement using CompareAgenticNode.
+
+        Args:
+            user_sql: The user's SQL query.
+            gold_sql: The expected gold SQL query.
+            user_result: The execution result of user's SQL (as string).
+            gold_result: The execution result of gold SQL (as string).
+            user_error: Error message if user SQL failed to execute.
+            generated_knowledge: List of already generated knowledge items.
+
+        Returns:
+            dict: Contains 'explanation' and 'suggest' from CompareAgenticNode.
+        """
+        try:
+            # Build SqlTask from agent_config
+            sql_task = SqlTask(
+                database_type=self.agent_config.database_type if hasattr(self.agent_config, "database_type") else "",
+                database_name=self.agent_config.current_database
+                if hasattr(self.agent_config, "current_database")
+                else "",
+                task=getattr(self, "_current_question", "SQL verification task"),
+                external_knowledge=str(generated_knowledge) if generated_knowledge else "",
+            )
+
+            # Build SQLContext from user's SQL
+            sql_context = SQLContext(
+                sql_query=user_sql,
+                explanation="User generated SQL for verification",
+                sql_return=user_result,
+                sql_error=user_error or "",
+            )
+
+            # Build CompareInput
+            compare_input = CompareInput(
+                sql_task=sql_task,
+                sql_context=sql_context,
+                expectation=f"Expected SQL:\n{gold_sql}\n\nExpected Result:\n{gold_result}",
+            )
+
+            # Use CompareAgenticNode to generate suggestions
+            _, _, messages = CompareAgenticNode._prepare_prompt_components(compare_input)
+            raw_result = self.model.generate_with_json_output(messages)
+            result_dict = CompareAgenticNode._parse_comparison_output(raw_result)
+
+            return {
+                "explanation": result_dict.get("explanation", "No explanation provided"),
+                "suggest": result_dict.get("suggest", "No suggestions provided"),
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to generate compare suggestions: {e}")
+            return {
+                "explanation": f"Failed to generate suggestions: {str(e)}",
+                "suggest": "Please manually compare your SQL with the gold SQL and identify the differences.",
+            }
 
     def _setup_specific_filesystem_tool(self):
         """Setup specific filesystem tools"""
@@ -227,6 +515,112 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
 
         logger.debug(f"Prepared template context: {context}")
         return context
+
+    async def _parse_user_message(self, user_message: str) -> tuple[str, Optional[str]]:
+        """
+        Use lightweight LLM to find SQL boundaries in user_message.
+
+        This is used in agentic mode when question/gold_sql fields are not provided directly.
+        SQL may appear anywhere in the message (beginning, middle, or end).
+
+        Args:
+            user_message: Raw user input message
+
+        Returns:
+            tuple[str, Optional[str]]: (question, gold_sql)
+            - If SQL found: question = text before + after SQL, gold_sql = extracted SQL
+            - If no SQL: question = user_message, gold_sql = None
+        """
+        parse_prompt = """Identify the SQL statement in the following input and return its start and end substrings.
+
+Input:
+```
+{user_message}
+```
+
+Output in JSON format:
+```json
+{{
+  "sql_start_string": "<first 30-50 characters of the SQL statement, must be UNIQUE in the input, or null if no SQL>",
+  "sql_end_string": "<last 30-50 characters of the SQL statement, must be UNIQUE in the input, or null if no SQL>"
+}}
+```
+
+Rules:
+- SQL typically starts with SELECT, WITH, INSERT, UPDATE, DELETE, CREATE, etc.
+- SQL may be in code blocks (```sql), after labels like "SQL:", "Answer:", "Reference:", or standalone
+- SQL may appear at the beginning, middle, or end of the input
+- sql_start_string: first 30-50 characters of the SQL, enough to be UNIQUE in the input
+- sql_end_string: last 30-50 characters of the SQL (including the final semicolon if present), enough to be UNIQUE
+- If the same substring appears multiple times, extend it to make it unique
+- Return null for both if no SQL found
+- Do NOT include code block markers (```) in the returned strings"""
+
+        try:
+            # Use lightweight model for fast parsing with JSON output
+            result = self.model.generate_with_json_output(
+                prompt=parse_prompt.format(user_message=user_message),
+            )
+
+            if result:
+                sql_start_string = result.get("sql_start_string")
+                sql_end_string = result.get("sql_end_string")
+                if sql_start_string:
+                    # Find the start index
+                    sql_start_index = user_message.find(sql_start_string)
+                    if sql_start_index < 0:
+                        logger.warning(f"SQL start string '{sql_start_string[:30]}...' not found in message")
+                        return user_message, None
+
+                    # Verify start uniqueness
+                    if user_message.count(sql_start_string) > 1:
+                        logger.warning(
+                            f"SQL start string '{sql_start_string[:30]}...' " "is not unique, appears multiple times"
+                        )
+                        return user_message, None
+
+                    # Find the end index
+                    if sql_end_string:
+                        sql_end_pos = user_message.find(sql_end_string)
+                        if sql_end_pos >= sql_start_index:
+                            if user_message.count(sql_end_string) > 1:
+                                logger.warning(
+                                    f"SQL end string '{sql_end_string[:30]}...' "
+                                    "is not unique, appears multiple times"
+                                )
+                                return user_message, None
+                            sql_end_index = sql_end_pos + len(sql_end_string)
+                        else:
+                            # End string not found after start, fall back to end of message
+                            logger.warning("SQL end string not found after start, using end of message")
+                            sql_end_index = len(user_message)
+                    else:
+                        # No end string provided, assume SQL goes to end
+                        sql_end_index = len(user_message)
+
+                    # Extract question (text before + after SQL) and gold_sql
+                    text_before = user_message[:sql_start_index].strip()
+                    text_after = user_message[sql_end_index:].strip()
+                    gold_sql = user_message[sql_start_index:sql_end_index].strip()
+
+                    if text_before and text_after:
+                        question = f"{text_before}\n{text_after}"
+                    else:
+                        question = text_before or text_after
+
+                    logger.info(
+                        f"Parsed user message: sql_range=[{sql_start_index}:{sql_end_index}], "
+                        f"question_len={len(question)}, sql_len={len(gold_sql)}"
+                    )
+                    return question, gold_sql
+                else:
+                    logger.info("No SQL found in user message (sql_start_string is null)")
+                    return user_message, None
+        except Exception as e:
+            logger.warning(f"Failed to parse user message: {e}. Using original message.")
+
+        # Parse failed, return original input
+        return user_message, None
 
     def _get_system_prompt(
         self,
@@ -333,8 +727,25 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             # Get system instruction from template with enhanced context
             system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
 
-            # Add context to user message if provided
-            enhanced_message = user_input.user_message
+            # Determine question and gold_sql based on mode
+            # workflow mode: use fields directly; agentic mode: parse user_message
+            if user_input.question is not None:
+                # workflow mode: use provided question and gold_sql directly
+                question = user_input.question
+                gold_sql = user_input.gold_sql
+                logger.info("Using directly provided question and gold_sql (workflow mode)")
+            else:
+                # agentic mode: parse user_message to extract question and gold_sql
+                question, gold_sql = await self._parse_user_message(user_input.user_message)
+                logger.info(f"Parsed from user_message (agentic mode): has_gold_sql={gold_sql is not None}")
+
+            # Store gold_sql for get_gold_sql tool access (not exposed in prompt)
+            self._current_question = question
+            if gold_sql:
+                self._gold_sql = gold_sql
+
+            # Build enhanced message using question only (gold_sql accessed via tool)
+            enhanced_message = question
             enhanced_parts = []
 
             # Add search_text context if provided
@@ -348,7 +759,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
                 enhanced_parts.append(f"Subject Path: {user_input.subject_path}")
 
             if enhanced_parts:
-                enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {user_input.user_message}"
+                enhanced_message = f"{'\n\n'.join(enhanced_parts)}\n\nUser question: {question}"
 
             # Create assistant action for processing
             assistant_action = ActionHistory.create_action(
@@ -364,36 +775,82 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             logger.debug(f"Tools available: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.info(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
 
-            # Initialize response collection variables
+            # Initialize verification retry loop
+            self._verification_attempt_count = 0
+            current_prompt = enhanced_message
+
+            # Initialize response collection variables (outside retry loop to preserve final values)
             response_content = ""
             ext_knowledge_file = None
             tokens_used = 0
             last_successful_output = None
 
-            # Stream response using the model's generate_with_tools_stream
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=enhanced_message,
-                tools=self.tools,
-                mcp_servers=self.mcp_servers,
-                instruction=system_instruction,
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                hooks=self.hooks if self.execution_mode == "interactive" else None,
-            ):
-                yield stream_action
+            # Verification retry loop - continues if verification fails
+            while self._verification_attempt_count <= self.max_verification_retries:
+                # Reset verification state for this attempt
+                self._reset_verification_state()
 
-                # Collect response content from successful actions
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                    if isinstance(stream_action.output, dict):
-                        last_successful_output = stream_action.output
-                        # Look for content in various possible fields
-                        raw_output = stream_action.output.get("raw_output", "")
-                        # Handle case where raw_output is already a dict
-                        if isinstance(raw_output, dict):
-                            response_content = raw_output
-                        elif raw_output:
-                            response_content = raw_output
+                # Stream response using the model's generate_with_tools_stream
+                async for stream_action in self.model.generate_with_tools_stream(
+                    prompt=current_prompt,
+                    tools=self.tools,
+                    mcp_servers=self.mcp_servers,
+                    instruction=system_instruction,
+                    max_turns=self.max_turns,
+                    session=session,
+                    action_history_manager=action_history_manager,
+                    hooks=self.hooks if self.execution_mode == "interactive" else None,
+                ):
+                    yield stream_action
+
+                    # Collect response content from successful actions
+                    if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                        if isinstance(stream_action.output, dict):
+                            last_successful_output = stream_action.output
+                            # Look for content in various possible fields
+                            raw_output = stream_action.output.get("raw_output", "")
+                            # Handle case where raw_output is already a dict
+                            if isinstance(raw_output, dict):
+                                response_content = raw_output
+                            elif raw_output:
+                                response_content = raw_output
+
+                # Agentic loop ended, check verification status
+                logger.info(
+                    f"Agentic loop ended. Verification passed: {self._verification_passed}, "
+                    f"attempt: {self._verification_attempt_count + 1}/{self.max_verification_retries + 1}"
+                )
+
+                # Exit retry loop if verification passed or no gold_sql to verify against
+                if self._verification_passed or not hasattr(self, "_gold_sql") or not self._gold_sql:
+                    logger.info("Verification passed or no gold_sql available, exiting retry loop")
+                    break
+
+                # Verification failed, check if we have retries left
+                self._verification_attempt_count += 1
+                if self._verification_attempt_count > self.max_verification_retries:
+                    logger.warning(
+                        f"Max verification retries ({self.max_verification_retries}) exceeded, "
+                        f"giving up on verification"
+                    )
+                    break
+
+                # Inject retry prompt and continue agentic loop
+                current_prompt = self._get_retry_prompt(self._verification_attempt_count)
+
+                # Create retry notification action
+                retry_action = ActionHistory.create_action(
+                    role=ActionRole.ASSISTANT,
+                    action_type="verification_retry",
+                    messages=f"Verification failed, retrying "
+                    f"({self._verification_attempt_count}/{self.max_verification_retries})...",
+                    input_data={"retry_prompt": current_prompt},
+                    status=ActionStatus.PROCESSING,
+                )
+                action_history_manager.add_action(retry_action)
+                yield retry_action
+
+                logger.info(f"Starting verification retry attempt {self._verification_attempt_count}")
 
             # If we still don't have response_content, check the last successful output
             if not response_content and last_successful_output:

@@ -140,7 +140,7 @@ def process_row(
             logger.debug(f"Row {index}: Knowledge '{knowledge_id}' already exists, skipping")
             return "skipped"
 
-        storage.store_knowledge(path_components, name, search_text, explanation)
+        storage.upsert_knowledge(path_components, name, search_text, explanation)
 
         # Add to existing set to avoid duplicates within the same batch
         with existing_knowledge_lock:
@@ -221,12 +221,12 @@ async def process_knowledge_line(
     if not question:
         return {"successful": False, "error": "Missing question field"}
 
-    # Build user_message combining question and sql
-    user_message = f"Generate external knowledge for the following question:\nQuestion: {question}\nSQL: {sql}"
-
-    # Create ExtKnowledgeNodeInput
+    # Create ExtKnowledgeNodeInput with separated question and gold_sql
+    # workflow mode: pass question and gold_sql directly (gold_sql accessed via tool, not in prompt)
     ext_knowledge_input = ExtKnowledgeNodeInput(
-        user_message=user_message,
+        user_message=question,  # for compatibility
+        question=question,  # pass directly for workflow mode
+        gold_sql=sql,  # pass directly, accessed via get_gold_sql() tool
         subject_path=subject_path if subject_path else None,
     )
 
