@@ -308,7 +308,7 @@ class SqlSummaryAgenticNode(AgenticNode):
 
             raise DatusException(
                 code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
-                message_args={"template_name": template_name, "version": prompt_version or "latest"},
+                message_args={"template_name": template_name, "version": prompt_version},
             ) from e
         except Exception as e:
             # Other template errors - wrap in DatusException
