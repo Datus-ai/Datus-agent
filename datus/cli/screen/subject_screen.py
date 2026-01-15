@@ -45,8 +45,8 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
     """Dialog for editing a tree node name and reparenting within siblings."""
 
     BINDINGS = [
-        Binding("ctrl+w", "save_exist", "Save and Exit", show=True, priority=True),
-        Binding("escape", "action_cancel_exist", "Exist", show=True, priority=True),
+        Binding("ctrl+w", "save_exit", "Save and Exit", show=True, priority=True),
+        Binding("escape", "cancel_exit", "Exit", show=True, priority=True),
     ]
 
     CSS = """
@@ -121,7 +121,7 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
     def on_key(self, event: events.Key) -> None:
         """Handle key events at the screen level to ensure global shortcuts work"""
         if hasattr(event, "ctrl") and event.ctrl and event.key == "w":
-            self.action_save_exist()
+            self.action_save_exit()
             event.prevent_default()
             event.stop()
             return
@@ -138,7 +138,7 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
         self.set_focus(name_input)
         name_input.cursor_position = len(self.current_name)
 
-    def action_save_exist(self):
+    def action_save_exit(self):
         name_input = self.query_one("#tree-edit-name-input", InputWithLabel)
         new_name = name_input.get_value().strip()
         parent_value = self.current_parent
@@ -151,7 +151,7 @@ class TreeEditDialog(ModalScreen[Optional[Dict[str, Any]]]):
 
         self.dismiss({"name": new_name, "parent": parent_value})
 
-    def action_cancel_exist(self):
+    def action_cancel_exit(self):
         self.dismiss(None)
         return
 
