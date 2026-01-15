@@ -21,7 +21,7 @@ from datus.tools.bi_tools.base_adaptor import (
     MetricDef,
     QuerySpec,
 )
-from datus.tools.bi_tools.superset_util import QueryContextBuilder
+from datus.tools.bi_tools.superset.superset_util import build_query_context
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names
 
@@ -416,7 +416,7 @@ class SupersetAdaptor(BIAdaptorBase):
         if raw_context:
             parsed_context = _load_json_field(raw_context)
         else:
-            parsed_context = QueryContextBuilder(form_data).build()
+            parsed_context = build_query_context(form_data=form_data)
 
         if isinstance(parsed_context, dict):
             _normalize_series_columns_in_query_context(parsed_context)
@@ -452,7 +452,7 @@ class SupersetAdaptor(BIAdaptorBase):
         if sqls:
             return sqls, query_indexes
 
-        logger.debug(f"No query_context or form_data available for chart {chart_id}")
+        logger.debug(f"No sqls for chart {chart_id}")
         return [], None
 
     def _collect_sql_via_chart_data(

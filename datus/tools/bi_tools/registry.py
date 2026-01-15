@@ -93,7 +93,7 @@ class BIAdaptorRegistry:
     @classmethod
     def _load_builtin_adaptors(cls) -> None:
         try:
-            import datus.tools.bi_tools.superset_adaptor  # noqa: F401
+            import datus.tools.bi_tools.superset.superset_adaptor  # noqa: F401
         except Exception as exc:
             logger.debug("Failed to import built-in BI adaptor(s): %s", exc)
 

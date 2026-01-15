@@ -98,9 +98,9 @@ extraEnv:
 # -- Extra environment variables in RAW format that will be passed into pods
 extraEnvRaw: [ ]
   # Load DB password from other secret (e.g. for zalando operator)
-  # - name: DB_PASS
-  #   valueFrom:
-  #     secretKeyRef:
+# - name: DB_PASS
+#   valueFrom:
+#     secretKeyRef:
 #       name: superset.superset-postgres.credentials.postgresql.acid.zalan.do
 #       key: password
 
@@ -121,9 +121,9 @@ extraConfigs: { }
   #       allow_ctas: true
   #       allow_cvas: true
   #       database_name: example-db
-  #       extra: "{\r\n    \"metadata_params\": {},\r\n    \"engine_params\": {},\r\n    \"\
-  #         metadata_cache_timeout\": {},\r\n    \"schemas_allowed_for_file_upload\": []\r\n\
-  #         }"
+#       extra: "{\r\n    \"metadata_params\": {},\r\n    \"engine_params\": {},\r\n    \"\
+#         metadata_cache_timeout\": {},\r\n    \"schemas_allowed_for_file_upload\": []\r\n\
+#         }"
 #       sqlalchemy_uri: example://example-db.local
 #       tables: []
 
@@ -133,16 +133,16 @@ extraSecrets: { }
 extraVolumes: [ ]
   # - name: customConfig
   #   configMap:
-  #     name: '{{ template "superset.fullname" . }}-custom-config'
-  # - name: additionalSecret
-  #   secret:
+#     name: '{{ template "superset.fullname" . }}-custom-config'
+# - name: additionalSecret
+#   secret:
 #     secretName: my-secret
 #     defaultMode: 0600
 
 extraVolumeMounts: [ ]
-  # - name: customConfig
-  #   mountPath: /mnt/config
-  #   readOnly: true
+# - name: customConfig
+#   mountPath: /mnt/config
+#   readOnly: true
 # - name: additionalSecret:
 #   mountPath: /mnt/secret
 
@@ -230,497 +230,7 @@ ingress:
   enabled: false
   ingressClassName: ~
   annotations: { }
-    # kubernetes.io/tls-acme: "true"
-    ## Extend timeout to allow long running queries.
-    # nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
-  # nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
-  # nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
-  path: /
-  pathType: ImplementationSpecific
-  hosts:
-    - chart-example.local
-  tls: [ ]
-  extraHostsRaw: [ ]
-  #  - secretName: chart-example-tls
-  #    hosts:
-  #      - chart-example.local
-
-resources: { }
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # The limits below will apply to all Superset components. To set individual resource limitations refer to the pod specific values below.
-  # The pod specific values will overwrite anything that is set here.
-  # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-#   cpu: 100m
-#   memory: 128Mi
-
-# -- Custom hostAliases for all superset pods
-## https://kubernetes.io/docs/tasks/network/customize-hosts-file-for-pods/
-hostAliases: [ ]
-# - hostnames:
-#   - nodns.my.lan
-#   ip: 18.27.36.45
-
-# Superset node configuration
-supersetNode:
-  replicas:
-    enabled: true
-    replicaCount: 1
-  autoscaling:
-    enabled: false
-    minReplicas: 1
-    maxReplicas: 100
-    targetCPUUtilizationPercentage: 80
-    # targetMemoryUtilizationPercentage: 80
-  # -- Sets the [pod disruption budget](https://kubernetes.io/docs/tasks/run-application/configure-pdb/) for supersetNode pods
-  podDisruptionBudget:
-    # -- Whether the pod disruption budget should be created
-    enabled: false
-    # -- If set, maxUnavailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    minAvailable: 1
-    # -- If set, minAvailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    maxUnavailable: 1
-
-  # -- Startup command
-  # @default -- See `values.yaml`
-  command:
-    - "/bin/sh"
-    - "-c"
-    - ". {{ .Values.configMountPath }}/superset_bootstrap.sh; /usr/bin/run-server.sh"
-  connections:
-    # -- Change in case of bringing your own redis and then also set redis.enabled:false
-    redis_host: "{{ .Release.Name }}-redis-headless"
-    redis_port: "6379"
-    redis_user: ""
-    # redis_password: superset
-    redis_cache_db: "1"
-    redis_celery_db: "0"
-    # Or SSL port is usually 6380
-    # Update following for using Redis with SSL
-    redis_ssl:
-      enabled: false
-      ssl_cert_reqs: CERT_NONE
-    # You need to change below configuration incase bringing own PostgresSQL instance and also set postgresql.enabled:false
-    # -- Database type for Superset metadata (Supported types: "postgresql", "mysql")
-    db_type: "postgresql"
-    db_host: "{{ .Release.Name }}-postgresql"
-    db_port: "5432"
-    db_user: superset
-    db_pass: superset
-    db_name: superset
-  env: { }
-  # -- If true, forces deployment to reload on each upgrade
-  forceReload: false
-  # -- Init containers
-  # @default -- a container waiting for postgres
-  initContainers:
-    - name: wait-for-postgres
-      image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag }}"
-      imagePullPolicy: "{{ .Values.initImage.pullPolicy }}"
-      envFrom:
-        - secretRef:
-            name: "{{ tpl .Values.envFromSecret . }}"
-      command:
-        - /bin/sh
-        - -c
-        - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -timeout 120s
-
-  # -- Launch additional containers into supersetNode pod
-  extraContainers: [ ]
-  # -- Annotations to be added to supersetNode deployment
-  deploymentAnnotations: { }
-  # -- Labels to be added to supersetNode deployment
-  deploymentLabels: { }
-  # -- Affinity to be added to supersetNode deployment
-  affinity: { }
-  # -- TopologySpreadConstrains to be added to supersetNode deployments
-  topologySpreadConstraints: [ ]
-  # -- Annotations to be added to supersetNode pods
-  podAnnotations: { }
-  # -- Labels to be added to supersetNode pods
-  podLabels: { }
-  startupProbe:
-    httpGet:
-      path: /health
-      port: http
-    initialDelaySeconds: 15
-    timeoutSeconds: 1
-    failureThreshold: 180
-    periodSeconds: 5
-    successThreshold: 1
-  livenessProbe:
-    httpGet:
-      path: /health
-      port: http
-    initialDelaySeconds: 15
-    timeoutSeconds: 1
-    failureThreshold: 3
-    periodSeconds: 15
-    successThreshold: 1
-  readinessProbe:
-    httpGet:
-      path: /health
-      port: http
-    initialDelaySeconds: 15
-    timeoutSeconds: 1
-    failureThreshold: 3
-    periodSeconds: 15
-    successThreshold: 1
-  # -- Resource settings for the supersetNode pods - these settings overwrite might existing values from the global resources object defined above.
-  resources: { }
-    # limits:
-    #  cpu: 100m
-    #  memory: 128Mi
-    # requests:
-  #  cpu: 100m
-  #  memory: 128Mi
-  podSecurityContext: { }
-  containerSecurityContext: { }
-  strategy: { }
-    # type: RollingUpdate
-    # rollingUpdate:
-  #   maxSurge: 25%
-  #   maxUnavailable: 25%
-
-# Superset Celery worker configuration
-supersetWorker:
-  replicas:
-    enabled: true
-    replicaCount: 0
-  autoscaling:
-    enabled: false
-    minReplicas: 1
-    maxReplicas: 100
-    targetCPUUtilizationPercentage: 80
-    # targetMemoryUtilizationPercentage: 80
-  # -- Sets the [pod disruption budget](https://kubernetes.io/docs/tasks/run-application/configure-pdb/) for supersetWorker pods
-  podDisruptionBudget:
-    # -- Whether the pod disruption budget should be created
-    enabled: false
-    # -- If set, maxUnavailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    minAvailable: 1
-    # -- If set, minAvailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    maxUnavailable: 1
-  # -- Worker startup command
-  # @default -- a `celery worker` command
-  command:
-    - "/bin/sh"
-    - "-c"
-    - ". {{ .Values.configMountPath }}/superset_bootstrap.sh; celery --app=superset.tasks.celery_app:app worker"
-  # -- If true, forces deployment to reload on each upgrade
-  forceReload: false
-  # -- Init container
-  # @default -- a container waiting for postgres and redis
-  initContainers:
-    - name: wait-for-postgres-redis
-      image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag }}"
-      imagePullPolicy: "{{ .Values.initImage.pullPolicy }}"
-      envFrom:
-        - secretRef:
-            name: "{{ tpl .Values.envFromSecret . }}"
-      command:
-        - /bin/sh
-        - -c
-        - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -wait "tcp://$REDIS_HOST:$REDIS_PORT" -timeout 120s
-  # -- Launch additional containers into supersetWorker pod
-  extraContainers: [ ]
-  # -- Annotations to be added to supersetWorker deployment
-  deploymentAnnotations: { }
-  # -- Labels to be added to supersetWorker deployment
-  deploymentLabels: { }
-  # -- Affinity to be added to supersetWorker deployment
-  affinity: { }
-  # -- TopologySpreadConstrains to be added to supersetWorker deployments
-  topologySpreadConstraints: [ ]
-  # -- Annotations to be added to supersetWorker pods
-  podAnnotations: { }
-  # -- Labels to be added to supersetWorker pods
-  podLabels: { }
-  # -- Resource settings for the supersetWorker pods - these settings overwrite might existing values from the global resources object defined above.
-  resources: { }
-    # limits:
-    #  cpu: 100m
-    #  memory: 128Mi
-    # requests:
-  #  cpu: 100m
-  #  memory: 128Mi
-  podSecurityContext: { }
-  containerSecurityContext: { }
-  strategy: { }
-    # type: RollingUpdate
-    # rollingUpdate:
-  #   maxSurge: 25%
-  #   maxUnavailable: 25%
-  livenessProbe:
-    exec:
-      # -- Liveness probe command
-      # @default -- a `celery inspect ping` command
-      command:
-        - sh
-        - -c
-        - celery -A superset.tasks.celery_app:app inspect ping -d celery@$HOSTNAME
-    initialDelaySeconds: 120
-    timeoutSeconds: 60
-    failureThreshold: 3
-    periodSeconds: 60
-    successThreshold: 1
-  # -- No startup/readiness probes by default since we don't really care about its startup time (it doesn't serve traffic)
-  startupProbe: { }
-  # -- No startup/readiness probes by default since we don't really care about its startup time (it doesn't serve traffic)
-  readinessProbe: { }
-  # -- Set priorityClassName for supersetWorker pods
-  priorityClassName: ~
-
-# Superset beat configuration (to trigger scheduled jobs like reports)
-supersetCeleryBeat:
-  # -- This is only required if you intend to use alerts and reports
-  enabled: false
-  # -- Sets the [pod disruption budget](https://kubernetes.io/docs/tasks/run-application/configure-pdb/) for supersetCeleryBeat pods
-  podDisruptionBudget:
-    # -- Whether the pod disruption budget should be created
-    enabled: false
-    # -- If set, maxUnavailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    minAvailable: 1
-    # -- If set, minAvailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    maxUnavailable: 1
-  # -- Command
-  # @default -- a `celery beat` command
-  command:
-    - "/bin/sh"
-    - "-c"
-    - ". {{ .Values.configMountPath }}/superset_bootstrap.sh; celery --app=superset.tasks.celery_app:app beat --pidfile /tmp/celerybeat.pid --schedule /tmp/celerybeat-schedule"
-  # -- If true, forces deployment to reload on each upgrade
-  forceReload: false
-  # -- List of init containers
-  # @default -- a container waiting for postgres
-  initContainers:
-    - name: wait-for-postgres-redis
-      image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag }}"
-      imagePullPolicy: "{{ .Values.initImage.pullPolicy }}"
-      envFrom:
-        - secretRef:
-            name: "{{ tpl .Values.envFromSecret . }}"
-      command:
-        - /bin/sh
-        - -c
-        - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -wait "tcp://$REDIS_HOST:$REDIS_PORT" -timeout 120s
-  # -- Launch additional containers into supersetCeleryBeat pods
-  extraContainers: [ ]
-  # -- Annotations to be added to supersetCeleryBeat deployment
-  deploymentAnnotations: { }
-  # -- Affinity to be added to supersetCeleryBeat deployment
-  affinity: { }
-  # -- TopologySpreadConstrains to be added to supersetCeleryBeat deployments
-  topologySpreadConstraints: [ ]
-  # -- Annotations to be added to supersetCeleryBeat pods
-  podAnnotations: { }
-  # -- Labels to be added to supersetCeleryBeat pods
-  podLabels: { }
-  # -- Resource settings for the CeleryBeat pods - these settings overwrite might existing values from the global resources object defined above.
-  resources: { }
-    # limits:
-    #  cpu: 100m
-    #  memory: 128Mi
-    # requests:
-  #  cpu: 100m
-  #  memory: 128Mi
-  podSecurityContext: { }
-  containerSecurityContext: { }
-  # -- Set priorityClassName for CeleryBeat pods
-  priorityClassName: ~
-
-supersetCeleryFlower:
-  # -- Enables a Celery flower deployment (management UI to monitor celery jobs)
-  # WARNING: on superset 1.x, this requires a Superset image that has `flower<1.0.0` installed (which is NOT the case of the default images)
-  # flower>=1.0.0 requires Celery 5+ which Superset 1.5 does not support
-  enabled: false
-  replicaCount: 1
-  # -- Sets the [pod disruption budget](https://kubernetes.io/docs/tasks/run-application/configure-pdb/) for supersetCeleryFlower pods
-  podDisruptionBudget:
-    # -- Whether the pod disruption budget should be created
-    enabled: false
-    # -- If set, maxUnavailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    minAvailable: 1
-    # -- If set, minAvailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    maxUnavailable: 1
-  # -- Command
-  # @default -- a `celery flower` command
-  command:
-    - "/bin/sh"
-    - "-c"
-    - "celery --app=superset.tasks.celery_app:app flower"
-  service:
-    type: ClusterIP
-    annotations: { }
-    loadBalancerIP: ~
-    port: 5555
-    nodePort:
-      # -- (int)
-      http: nil
-  startupProbe:
-    httpGet:
-      path: /api/workers
-      port: flower
-    initialDelaySeconds: 5
-    timeoutSeconds: 1
-    failureThreshold: 60
-    periodSeconds: 5
-    successThreshold: 1
-  livenessProbe:
-    httpGet:
-      path: /api/workers
-      port: flower
-    initialDelaySeconds: 5
-    timeoutSeconds: 1
-    failureThreshold: 3
-    periodSeconds: 5
-    successThreshold: 1
-  readinessProbe:
-    httpGet:
-      path: /api/workers
-      port: flower
-    initialDelaySeconds: 5
-    timeoutSeconds: 1
-    failureThreshold: 3
-    periodSeconds: 5
-    successThreshold: 1
-  # -- List of init containers
-  # @default -- a container waiting for postgres and redis
-  initContainers:
-    - name: wait-for-postgres-redis
-      image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag }}"
-      imagePullPolicy: "{{ .Values.initImage.pullPolicy }}"
-      envFrom:
-        - secretRef:
-            name: "{{ tpl .Values.envFromSecret . }}"
-      command:
-        - /bin/sh
-        - -c
-        - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -wait "tcp://$REDIS_HOST:$REDIS_PORT" -timeout 120s
-  # -- Launch additional containers into supersetCeleryFlower pods
-  extraContainers: [ ]
-  # -- Annotations to be added to supersetCeleryFlower deployment
-  deploymentAnnotations: { }
-  # -- Affinity to be added to supersetCeleryFlower deployment
-  affinity: { }
-  # -- TopologySpreadConstrains to be added to supersetCeleryFlower deployments
-  topologySpreadConstraints: [ ]
-  # -- Annotations to be added to supersetCeleryFlower pods
-  podAnnotations: { }
-  # -- Labels to be added to supersetCeleryFlower pods
-  podLabels: { }
-  # -- Resource settings for the CeleryBeat pods - these settings overwrite might existing values from the global resources object defined above.
-  resources: { }
-    # limits:
-    #  cpu: 100m
-    #  memory: 128Mi
-    # requests:
-  #  cpu: 100m
-  #  memory: 128Mi
-  podSecurityContext: { }
-  containerSecurityContext: { }
-  # -- Set priorityClassName for supersetCeleryFlower pods
-  priorityClassName: ~
-
-supersetWebsockets:
-  # -- This is only required if you intend to use `GLOBAL_ASYNC_QUERIES` in `ws` mode
-  # see https://github.com/apache/superset/blob/master/CONTRIBUTING.md#async-chart-queries
-  enabled: false
-  replicaCount: 1
-  # -- Sets the [pod disruption budget](https://kubernetes.io/docs/tasks/run-application/configure-pdb/) for supersetWebsockets pods
-  podDisruptionBudget:
-    # -- Whether the pod disruption budget should be created
-    enabled: false
-    # -- If set, maxUnavailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    minAvailable: 1
-    # -- If set, minAvailable must not be set - see https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
-    maxUnavailable: 1
-  ingress:
-    path: /ws
-    pathType: Prefix
-  image:
-    # -- There is no official image (yet), this one is community-supported
-    repository: oneacrefund/superset-websocket
-    tag: latest
-    pullPolicy: IfNotPresent
-  # -- The config.json to pass to the server, see https://github.com/apache/superset/tree/master/superset-websocket
-  # Note that the configuration can also read from environment variables (which will have priority), see https://github.com/apache/superset/blob/master/superset-websocket/src/config.ts for a list of supported variables
-  # @default -- see `values.yaml`
-  config:
-    {
-      "port": 8080,
-      "logLevel": "debug",
-      "logToFile": false,
-      "logFilename": "app.log",
-      "statsd": { "host": "127.0.0.1", "port": 8125, "globalTags": [ ] },
-      "redis":
-        {
-          "port": 6379,
-          "host": "127.0.0.1",
-          "password": "",
-          "db": 0,
-          "ssl": false,
-        },
-      "redisStreamPrefix": "async-events-",
-      "jwtSecret": "CHANGE-ME",
-      "jwtCookieName": "async-token",
-    }
-  service:
-    type: ClusterIP
-    annotations: { }
-    loadBalancerIP: ~
-    port: 8080
-    nodePort:
-      # -- (int)
-      http: 8080
-  command: [ ]
-  resources: { }
-  # -- Launch additional containers into supersetWebsockets pods
-  extraContainers: [ ]
-  deploymentAnnotations: { }
-  # -- Affinity to be added to supersetWebsockets deployment
-  affinity: { }
-  # -- TopologySpreadConstrains to be added to supersetWebsockets deployments
-  topologySpreadConstraints: [ ]
-  podAnnotations: { }
-  podLabels: { }
-  strategy: { }
-  podSecurityContext: { }
-  containerSecurityContext: { }
-  startupProbe:
-    httpGet:
-      path: /health
-      port: ws
-    initialDelaySeconds: 5
-    timeoutSeconds: 1
-    failureThreshold: 60
-    periodSeconds: 5
-    successThreshold: 1
-  livenessProbe:
-    httpGet:
-      path: /health
-      port: ws
-    initialDelaySeconds: 5
-    timeoutSeconds: 1
-    failureThreshold: 3
-    periodSeconds: 5
-    successThreshold: 1
-  readinessProbe:
-    httpGet:
-      path: /health
-      port: ws
-    initialDelaySeconds: 5
-    timeoutSeconds: 1
-    failureThreshold: 3
-    periodSeconds: 5
-    successThreshold: 1
-  # -- Set priorityClassName for supersetWebsockets pods
-  priorityClassName: ~
+  # kubernetes.io/tls-acme: "true"
 
 init:
   # Configure resources
@@ -730,9 +240,9 @@ init:
   # Also change the admin email to your own custom email.
   resources: { }
     # limits:
-    #   cpu:
-    #   memory:
-    # requests:
+  #   cpu:
+  #   memory:
+  # requests:
   #   cpu:
   #   memory:
   # -- Command
@@ -792,6 +302,202 @@ init:
     if [ -f "{{ .Values.extraConfigMountPath }}/import_datasources.yaml" ]; then
       echo "Importing database connections.... "
       superset import_datasources -p {{ .Values.extraConfigMountPath }}/import_datasources.yaml
+    fi
+    
+    # ============================================
+    # Browser Init: Visit all chart explore pages
+    # to trigger query_context updates
+    # ============================================
+    echo "Starting browser init to update query_context..."
+    
+    # Configuration - use kubernetes service name
+    SUPERSET_URL="http://{{ template "superset.fullname" . }}:{{ .Values.service.port }}"
+    SUPERSET_USER="{{ .Values.init.adminUser.username }}"
+    SUPERSET_PASS="{{ .Values.init.adminUser.password }}"
+    WAIT_TIME="${WAIT_TIME:-0.3}"
+    MAX_WAIT_RETRIES=60
+    
+    # Find Python
+    PYTHON_BIN=""
+    if [ -x "/app/.venv/bin/python3" ]; then
+        PYTHON_BIN="/app/.venv/bin/python3"
+    elif [ -x "/app/.venv/bin/python" ]; then
+        PYTHON_BIN="/app/.venv/bin/python"
+    elif command -v python3 > /dev/null 2>&1; then
+        PYTHON_BIN="python3"
+    fi
+    
+    if [ -z "$PYTHON_BIN" ]; then
+        echo "[WARN] Python not found, skipping browser init"
+    else
+        echo "Using Python: $PYTHON_BIN"
+        echo "Superset URL: $SUPERSET_URL"
+    
+        # Wait for Superset service to be ready
+        echo "Waiting for Superset service to be ready..."
+        RETRY_COUNT=0
+        while [ $RETRY_COUNT -lt $MAX_WAIT_RETRIES ]; do
+            if curl -s -o /dev/null -w "%{http_code}" "${SUPERSET_URL}/health" 2>/dev/null | grep -q "200"; then
+                echo "[OK] Superset service is ready"
+                break
+            fi
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "Waiting for Superset... ($RETRY_COUNT/$MAX_WAIT_RETRIES)"
+            sleep 5
+        done
+    
+        if [ $RETRY_COUNT -ge $MAX_WAIT_RETRIES ]; then
+            echo "[WARN] Superset service not ready after waiting, skipping browser init"
+        else
+            # Find pip
+            PIP_BIN=""
+            if [ -x "/app/.venv/bin/pip" ]; then
+                PIP_BIN="/app/.venv/bin/pip"
+            elif command -v pip3 > /dev/null 2>&1; then
+                PIP_BIN="pip3"
+            else
+                PIP_BIN="$PYTHON_BIN -m pip"
+            fi
+    
+            echo "Using pip: $PIP_BIN"
+    
+            # Install dependencies
+            echo "Installing playwright..."
+            $PIP_BIN install playwright requests -q || true
+            $PYTHON_BIN -m playwright install chromium || true
+            $PYTHON_BIN -m playwright install-deps chromium 2>/dev/null || true
+    
+            # Export env vars and run browser init
+            export SUPERSET_URL SUPERSET_USER SUPERSET_PASS WAIT_TIME
+    
+            $PYTHON_BIN << 'BROWSER_INIT_SCRIPT'
+    import os
+    import sys
+    import json
+    import time
+    import requests
+    import re
+    
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+    except ImportError:
+        print("[WARN] Playwright not available, skipping browser init")
+        sys.exit(0)
+    
+    SUPERSET_URL = os.environ.get('SUPERSET_URL', 'http://127.0.0.1:8088')
+    SUPERSET_USER = os.environ.get('SUPERSET_USER', 'admin')
+    SUPERSET_PASS = os.environ.get('SUPERSET_PASS', 'admin')
+    WAIT_TIME = float(os.environ.get('WAIT_TIME', '0.3'))
+    
+    def get_all_slice_ids():
+        print("Fetching all chart slice_ids...")
+        session = requests.Session()
+        try:
+            login_page = session.get(f"{SUPERSET_URL}/login/", timeout=10)
+        except Exception as e:
+            print(f"[ERROR] Cannot connect to Superset: {e}")
+            return []
+    
+        csrf_match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', login_page.text)
+        csrf_token = csrf_match.group(1) if csrf_match else ""
+        session.post(f"{SUPERSET_URL}/login/", data={
+            'username': SUPERSET_USER, 'password': SUPERSET_PASS, 'csrf_token': csrf_token
+        })
+    
+        slice_ids = []
+        page = 0
+        while True:
+            try:
+                resp = session.get(f"{SUPERSET_URL}/api/v1/chart/",
+                    params={'q': json.dumps({"page": page, "page_size": 100})})
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                results = data.get('result', [])
+                if not results:
+                    break
+                for chart in results:
+                    slice_ids.append({'id': chart.get('id'), 'name': chart.get('slice_name', '')})
+                if len(slice_ids) >= data.get('count', 0):
+                    break
+                page += 1
+            except Exception as e:
+                print(f"Error: {e}")
+                break
+        print(f"[OK] Found {len(slice_ids)} charts")
+        return slice_ids
+    
+    def main():
+        charts = get_all_slice_ids()
+        if not charts:
+            print("No charts found")
+            return 0
+    
+        print(f"Visiting {len(charts)} chart pages...")
+        success, failed = 0, 0
+    
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+                )
+                page = browser.new_page(viewport={'width': 1920, 'height': 1080})
+    
+                # Login
+                print("Logging in...")
+                page.goto(f"{SUPERSET_URL}/login/", timeout=30000)
+                page.wait_for_load_state('networkidle', timeout=10000)
+                page.fill('input[name="username"]', SUPERSET_USER)
+                page.fill('input[name="password"]', SUPERSET_PASS)
+                page.click('input[type="submit"]')
+                page.wait_for_load_state('networkidle', timeout=15000)
+    
+                if '/login' in page.url:
+                    print("[ERROR] Login failed")
+                    return 1
+                print("[OK] Login successful")
+    
+                # Visit each explore page
+                for i, chart in enumerate(charts, 1):
+                    url = f"{SUPERSET_URL}/explore/?slice_id={chart['id']}"
+                    print(f"[{i}/{len(charts)}] slice_id={chart['id']} {chart['name'][:30]}")
+                    try:
+                        page.goto(url, timeout=60000)
+                        page.wait_for_load_state('domcontentloaded', timeout=30000)
+                        try:
+                            page.wait_for_selector('.chart-container, .slice_container, [data-test="chart-container"], #app', timeout=15000)
+                        except:
+                            pass
+                        try:
+                            page.wait_for_selector('.loading, .ant-spin-spinning', state='hidden', timeout=20000)
+                        except:
+                            pass
+                        try:
+                            page.wait_for_load_state('networkidle', timeout=30000)
+                        except:
+                            pass
+                        if WAIT_TIME > 0:
+                            time.sleep(WAIT_TIME)
+                        success += 1
+                    except PlaywrightTimeout:
+                        success += 1
+                    except Exception as e:
+                        print(f"    [ERROR] {e}")
+                        failed += 1
+    
+                browser.close()
+        except Exception as e:
+            print(f"[ERROR] Browser init failed: {e}")
+            return 1
+    
+        print(f"\n[OK] Browser init complete: success={success}, failed={failed}")
+        return 0
+    
+    if __name__ == '__main__':
+        sys.exit(main())
+    BROWSER_INIT_SCRIPT
+        fi
     fi
   # -- Launch additional containers into init job pod
   extraContainers: [ ]

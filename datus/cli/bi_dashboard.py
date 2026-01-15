@@ -797,7 +797,7 @@ class BiDashboardCommands:
         table.add_column("Chart ID", style="green")
         table.add_column("Name", style="white")
         table.add_column("Type", style="magenta")
-        table.add_column("SQL/Query Context", style="white")
+        table.add_column("SQL", style="white")
 
         for idx, chart in enumerate(charts, start=1):
             table.add_row(
@@ -832,5 +832,5 @@ def _sql_format(sqls: Optional[List[str]]) -> Syntax | str:
         else:
             final_sqls.append(sql)
     if final_sqls:
-        return Syntax("\n".join(final_sqls), lexer="sql")
+        return Syntax("\n".join(final_sqls), lexer="sql", word_wrap=True)
     return "-"
