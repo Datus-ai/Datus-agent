@@ -729,8 +729,12 @@ class BiDashboardCommands:
 
         metrics = set()
         if successful and (files := metrics_result.get("semantic_models", [])):
+            # Get base directory for semantic models
+            base_dir = get_path_manager(self.agent_config.home).semantic_model_path(self.agent_config.current_namespace)
             for file in files:
-                with open(file, "r", encoding="utf-8") as f:
+                # Convert relative path to absolute path if needed
+                file_path = file if Path(file).is_absolute() else base_dir / file
+                with open(file_path, "r", encoding="utf-8") as f:
                     # multi documents
                     for metrics_meta in yaml.safe_load_all(f):
                         meta = metrics_meta.get("metric")
@@ -787,14 +791,6 @@ class BiDashboardCommands:
             self.console.log("[yellow]Semantic model generation failed or skipped[/]")
 
         return successful
-
-    def _store_reference_sql_entries(self, sub_agent_name: str, entries: Sequence[dict]) -> None:
-        try:
-            sql_store = ReferenceSqlRAG(self.agent_config, sub_agent_name)
-            sql_store.store_batch(list(entries))
-            sql_store.after_init()
-        except Exception as exc:
-            self.console.print(f"[yellow]Failed to store reference SQL for sub-agent:[/] {exc}")
 
     def _render_summary(self, result: DashboardAssemblyResult) -> None:
         summary = Table(title="Dashboard Assembly Summary")

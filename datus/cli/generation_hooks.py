@@ -24,6 +24,7 @@ from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
+from datus.utils.path_manager import get_path_manager
 from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
@@ -131,6 +132,16 @@ class GenerationHooks(AgentHooks):
             if not metric_file:
                 logger.warning(f"Could not extract metric_file from end_metric_generation result: {result}")
                 return
+
+            # Convert relative paths to absolute paths
+            if self.agent_config:
+                base_dir = str(
+                    get_path_manager(self.agent_config.home).semantic_model_path(self.agent_config.current_namespace)
+                )
+                if metric_file and not os.path.isabs(metric_file):
+                    metric_file = os.path.join(base_dir, metric_file)
+                if semantic_model_file and not os.path.isabs(semantic_model_file):
+                    semantic_model_file = os.path.join(base_dir, semantic_model_file)
 
             logger.debug(
                 f"Processing metric generation: metric_file={metric_file}, "
@@ -1226,8 +1237,8 @@ class GenerationHooks(AgentHooks):
                 "tags": reference_sql_data.get("tags", ""),
             }
 
-            # Store to Knowledge Base
-            storage.store_batch([reference_sql_dict])
+            # Store to Knowledge Base (use upsert to handle duplicates)
+            storage.upsert_batch([reference_sql_dict])
 
             logger.info(f"Successfully synced reference SQL {item_id} to Knowledge Base")
             return {"success": True, "message": f"Synced reference SQL: {reference_sql_dict['name']}"}

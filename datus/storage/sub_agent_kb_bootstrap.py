@@ -455,7 +455,7 @@ class SubAgentBootstrapper:
         # Store to sub-agent scoped KB
         self._clear_component("semantic_model")
         target = SemanticModelRAG(self.agent_config, self.sub_agent.system_prompt)
-        target.storage.store_batch(semantic_rows)
+        target.upsert_batch(semantic_rows)
         target.storage.create_indices()
 
         details = {
@@ -539,8 +539,8 @@ class SubAgentBootstrapper:
         self._clear_component("metrics")
 
         target = MetricRAG(self.agent_config, self.sub_agent.system_prompt)
-        target.storage.store_batch(metric_rows)
-        target.storage.create_indices()
+        target.upsert_batch(metric_rows)
+        target.after_init()
 
         details = {
             "stored_metrics": len(metric_rows),
@@ -626,7 +626,7 @@ class SubAgentBootstrapper:
         self._clear_component("reference_sql")
 
         target = ReferenceSqlRAG(self.agent_config, self.sub_agent.system_prompt)
-        target.store_batch(sql_rows)
+        target.upsert_batch(sql_rows)
         target.after_init()
 
         details = {

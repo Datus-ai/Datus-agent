@@ -100,6 +100,27 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         # Use base class batch_store method
         self.batch_store(valid_items)
 
+    def batch_upsert_sql(self, sql_items: List[Dict[str, Any]]) -> None:
+        """Upsert multiple reference SQL items (update if id exists, insert if not).
+
+        Args:
+            sql_items: List of SQL item dictionaries with required fields:
+                - id: str - Unique identifier for the SQL item
+                - subject_path: List[str] - Subject hierarchy path
+                - Other fields same as batch_store_sql
+        """
+        if not sql_items:
+            return
+
+        # Validate all items have required subject_path
+        for item in sql_items:
+            subject_path = item.get("subject_path")
+            if not subject_path:
+                raise ValueError("subject_path is required in SQL item data")
+
+        # Use base class batch_upsert method
+        self.batch_upsert(sql_items, on_column="id")
+
     def search_reference_sql(
         self,
         query_text: Optional[str] = None,
@@ -150,6 +171,11 @@ class ReferenceSqlRAG:
         """Store batch of reference SQL items."""
         logger.info(f"store reference SQL items: {len(reference_sql_items)} items")
         self.reference_sql_storage.batch_store_sql(reference_sql_items)
+
+    def upsert_batch(self, reference_sql_items: List[Dict[str, Any]]):
+        """Upsert batch of reference SQL items (update if id exists, insert if not)."""
+        logger.info(f"upsert reference SQL items: {len(reference_sql_items)} items")
+        self.reference_sql_storage.batch_upsert_sql(reference_sql_items)
 
     def search_all_reference_sql(
         self,
