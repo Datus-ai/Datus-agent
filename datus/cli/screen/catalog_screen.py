@@ -776,7 +776,14 @@ class CatalogScreen(ContextScreen):
             if not parsed_data:
                 return "[dim]Empty list[/dim]"
 
-            nested_table = Table(show_header=True, box=box.ROUNDED, border_style="dim", padding=(0, 0), expand=True)
+            nested_table = Table(
+                show_header=True,
+                box=box.ROUNDED,
+                border_style="dim",
+                padding=(0, 0),
+                expand=True,
+                row_styles=["on grey15", "on grey23"],
+            )
             if parsed_data and isinstance(parsed_data[0], dict):
                 # Collect all unique keys from all items to handle heterogeneous dicts
                 all_keys = []
