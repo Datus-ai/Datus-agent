@@ -25,7 +25,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Box, Button, CheckboxList, Dialog, Frame, Label, TextArea
+from prompt_toolkit.widgets import Box, Button, CheckboxList, Dialog, Frame, Label, RadioList, TextArea
 from pygments.lexers.data import YamlLexer
 from pygments.lexers.html import HtmlLexer
 
@@ -183,6 +183,12 @@ class SubAgentWizard:
             self.description_area.text = self.data.agent_description or ""
         except Exception:
             self.description_area.text = ""
+        # Node class selection
+        try:
+            node_class_value = self.data.node_class or "gen_sql"
+            self.node_class_radio.current_value = node_class_value
+        except Exception:
+            pass
 
         # 2) Rules (preserve order)
         try:
@@ -494,6 +500,14 @@ class SubAgentWizard:
         self.name_buffer.on_text_changed += self._update_previews
         self.description_area = TextArea(text="", multiline=True, wrap_lines=True, style="class:textarea")
         self.description_area.buffer.on_text_changed += self._update_previews
+        # Node class selection (gen_sql or gen_report)
+        self.node_class_radio = RadioList(
+            values=[
+                ("gen_sql", "gen_sql - SQL generation (default)"),
+                ("gen_report", "gen_report - Report/analysis generation"),
+            ],
+            default="gen_sql",
+        )
 
     def _init_step2_tools_mcp(self):
         # Native Tools
@@ -1493,6 +1507,8 @@ class SubAgentWizard:
         """Collect data from all steps into self.data (SubAgentConfig)."""
         self.data.system_prompt = self.name_buffer.text.strip()
         self.data.agent_description = self.description_area.text.strip()
+        # Node class
+        self.data.node_class = self.node_class_radio.current_value
         # Build native tools string with category awareness
         native_parts: List[str] = []
         for entry in getattr(self, "native_category_entries", []):
@@ -1587,6 +1603,7 @@ class SubAgentWizard:
         res: Dict[str, Any] = {
             "system_prompt": self.data.system_prompt or "your_agent_name",
             "prompt_version": self.data.prompt_version,
+            "node_class": self.data.node_class or "gen_sql",
             "agent_description": self.data.agent_description,
             "prompt_language": self.data.prompt_language,
             "tools": self.data.tools,
@@ -1639,8 +1656,11 @@ class SubAgentWizard:
             agent_config=self.cli_instance.agent_config,
             workspace_root=self.cli_instance.agent_config.workspace_root,
         )
+        # Select template based on node_class for preview
+        node_class = self.data.node_class or "gen_sql"
+        preview_template = "gen_report_system" if node_class == "gen_report" else "sql_system"
         try:
-            prompt_text = prompt_manager.render_template(self.prompt_template_name, **prompt_context)
+            prompt_text = prompt_manager.render_template(preview_template, **prompt_context)
         except FileNotFoundError:
             prompt_text = prompt_manager.render_template("sql_system", **prompt_context)
         try:
@@ -1666,6 +1686,9 @@ class SubAgentWizard:
                         height=1,
                         style="class:input-window",
                     ),
+                    Window(height=1, char=" "),
+                    Label("Node Class (determines prompt template):", style="class:label"),
+                    self.node_class_radio,
                     Window(height=1, char=" "),
                     Label("Description / System Prompt (required, multi-line):", style="class:label"),
                     self.description_area,
@@ -1834,10 +1857,12 @@ class SubAgentWizard:
 
     def native_tools_choices(self) -> Dict[str, List[str]]:
         from datus.tools.func_tool import ContextSearchTools, DBFuncTool
+        from datus.tools.func_tool.semantic_tools import SemanticTools
 
         return {
             "db_tools": DBFuncTool.all_tools_name(),
             "context_search_tools": ContextSearchTools.all_tools_name(),
+            "semantic_tools": SemanticTools.all_tools_name(),
             "date_parsing_tools": ["parse_temporal_expressions", "get_current_date"],
         }
 

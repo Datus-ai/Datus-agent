@@ -509,6 +509,30 @@ class BiDashboardCommands:
             return
         manager.bootstrap_agent(sub_agent, components=["metadata", "reference_sql"])
         self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` bootstrapped.")
+
+        # Create attribution subagent (gen_report type) for metric attribution analysis
+        attribution_agent_name = f"{sub_agent_name}_attribution"
+        if attribution_agent_name not in SYS_SUB_AGENTS:
+            attribution_tools = (
+                "semantic_tools,context_search_tools,"
+                "db_tools.search_table,db_tools.describe_table,db_tools.read_query"
+            )
+            attribution_agent = SubAgentConfig(
+                system_prompt=attribution_agent_name,
+                agent_description=f"Attribution analysis for {description}",
+                node_class="gen_report",
+                tools=attribution_tools,
+                scoped_context=scoped_context,
+            )
+            try:
+                manager.save_agent(attribution_agent, previous_name=attribution_agent_name)
+                self.console.log(f"[bold green]Attribution Sub-Agent `{attribution_agent_name}` saved.")
+            except Exception as exc:
+                self.console.log(f"[bold yellow]Failed to persist attribution sub-agent:[/] {exc}")
+            else:
+                manager.bootstrap_agent(attribution_agent, components=["metadata", "reference_sql"])
+                self.console.log(f"[bold green]Attribution Sub-Agent `{attribution_agent_name}` bootstrapped.")
+
         self._refresh_agent_config(manager)
 
     def _refresh_agent_config(self, manager: SubAgentManager) -> None:

@@ -539,7 +539,7 @@ class SubAgentBootstrapper:
         self._clear_component("metrics")
 
         target = MetricRAG(self.agent_config, self.sub_agent.system_prompt)
-        target.storage.store_batch(metric_rows)
+        target.store_batch(metric_rows)
         target.storage.create_indices()
 
         details = {
