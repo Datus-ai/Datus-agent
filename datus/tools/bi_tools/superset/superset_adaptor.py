@@ -944,35 +944,6 @@ class SupersetAdaptor(BIAdaptorBase):
             raise SupersetAdaptorError(f"Failed to get CSRF token: {exc}") from exc
 
 
-# --- Viz type classification helpers ---
-
-
-def _is_timeseries_viz(viz_type: str) -> bool:
-    """Check if the viz_type is a timeseries chart that needs pivot/flatten post-processing."""
-    if not viz_type:
-        return False
-    # ECharts timeseries family
-    if viz_type.startswith("echarts_timeseries"):
-        return True
-    # Other timeseries-like charts
-    return viz_type in ("mixed_timeseries", "area", "line", "big_number_total")
-
-
-def _is_pivot_viz(viz_type: str) -> bool:
-    """Check if the viz_type is a pivot table."""
-    return viz_type in ("pivot_table", "pivot_table_v2")
-
-
-def _is_table_viz(viz_type: str) -> bool:
-    """Check if the viz_type is a table or big number chart."""
-    return viz_type in ("table", "big_number")
-
-
-def _is_categorical_viz(viz_type: str) -> bool:
-    """Check if the viz_type is a categorical chart (bar, pie, etc.)."""
-    return viz_type in ("echarts_bar", "pie", "dist_bar", "bar", "sunburst", "sunburst_v2", "treemap", "treemap_v2")
-
-
 def _normalize_series_columns_in_query_context(query_context: Dict[str, Any]) -> None:
     queries = query_context.get("queries")
     if not isinstance(queries, list):
