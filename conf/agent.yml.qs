@@ -43,11 +43,3 @@ agent:
   nodes:
     schema_linking:
       matching_rate: fast
-    generate_sql:
-      prompt_version: "1.0"
-    reasoning:
-      prompt_version: "1.0"
-    reflect:
-      prompt_version: "2.1"
-    chat:
-      prompt_version: "1.0"

@@ -96,11 +96,12 @@ class SubAgentManager:
             result["kb_action"] = "none"
         elif previous_name and previous_name != config.system_prompt and current_has_context:
             # update configuration
-            prompt_version = str(config.prompt_version)
+            prompt_version = config.prompt_version
             if previous_config:
-                prompt_version = previous_config.get("prompt_version", prompt_version)
-                if prompt_version:
-                    prompt_version = str(prompt_version)
+                pre_version = previous_config.get("prompt_version", str(prompt_version))
+                if float(pre_version) > float(prompt_version):
+                    prompt_version = pre_version
+
             self._remove_prompt_template(previous_name, prompt_version)
             agents.pop(previous_name, None)
 

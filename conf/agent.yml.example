@@ -33,25 +33,19 @@ agent:
     schema_linking:
       model: openai
       matching_rate: fast
-      prompt_version: "1.0"
     generate_sql:
       model: deepseek_v3
-      prompt_version: "1.0"
       max_table_schemas_length: 4000
       max_data_details_length: 2000
       max_context_length: 8000
       max_value_length: 500
     reasoning:
       model: anthropic
-      prompt_version: "1.0"
       max_table_schemas_length: 4000
       max_data_details_length: 2000
       max_context_length: 8000
       max_value_length: 500
-    reflect:
-      prompt_version: "1.0"
     output:
-      prompt_version: "1.0"
       check_result: true # Whether to check the results of the previous step, the default value is false
     chat:
       workspace_root: sql2
