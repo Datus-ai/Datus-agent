@@ -50,6 +50,18 @@ def _run_async(coro):
 class SemanticTools:
     """Function tool wrapper for semantic layer operations."""
 
+    @classmethod
+    def all_tools_name(cls) -> List[str]:
+        """Return list of all tool method names for wizard display."""
+        return [
+            "search_metrics",
+            "list_metrics",
+            "get_dimensions",
+            "query_metrics",
+            "validate_semantic",
+            "attribution_analyze",
+        ]
+
     def __init__(
         self,
         agent_config: AgentConfig,

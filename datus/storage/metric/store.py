@@ -192,8 +192,12 @@ class MetricRAG:
         logger.info(f"upsert metrics: {metrics}")
         self.storage.batch_upsert_metrics(metrics)
 
-    def search_all_metrics(self, select_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        return self.storage.search_all_metrics(select_fields=select_fields)
+    def search_all_metrics(
+        self,
+        subject_path: Optional[List[str]] = None,
+        select_fields: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        return self.storage.search_all_metrics(subject_path=subject_path, select_fields=select_fields)
 
     def after_init(self):
         self.storage.create_indices()

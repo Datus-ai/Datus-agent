@@ -42,6 +42,13 @@ class SubAgentCommands:
         try:
             if hasattr(self.cli_instance.agent_config, "agentic_nodes"):
                 self.cli_instance.agent_config.agentic_nodes = self.sub_agent_manager.list_agents()
+            # Also update available_subagents set for command parsing
+            if hasattr(self.cli_instance, "available_subagents"):
+                self.cli_instance.available_subagents = set(SYS_SUB_AGENTS)
+                if self.cli_instance.agent_config.agentic_nodes:
+                    self.cli_instance.available_subagents.update(
+                        name for name in self.cli_instance.agent_config.agentic_nodes.keys() if name != "chat"
+                    )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to refresh in-memory agent config: %s", exc)
 

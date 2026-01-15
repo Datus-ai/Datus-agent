@@ -89,6 +89,9 @@ class SubAgentConfig(BaseModel):
             "rules": list(self.rules or []),
         }
 
+        if self.node_class:
+            payload["node_class"] = self.node_class
+
         if self.scoped_kb_path:
             payload["scoped_kb_path"] = self.scoped_kb_path
 

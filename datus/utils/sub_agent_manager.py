@@ -175,9 +175,16 @@ class SubAgentManager:
         return SubAgentBootstrapper(sub_agent=config, agent_config=self._agent_config, check_exists=False)
 
     def _write_prompt_template(self, config: SubAgentConfig) -> str:
+        # Select source template based on node_class
+        node_class = config.node_class or "gen_sql"
+        if node_class == "gen_report":
+            source_template = "gen_report_system"
+        else:
+            source_template = "sql_system"
+
         try:
             file_name = self._prompt_manager.copy_to(
-                "sql_system", f"{config.system_prompt}_system", config.prompt_version
+                source_template, f"{config.system_prompt}_system", config.prompt_version
             )
         except IOError as exc:
             logger.error("Failed to write prompt template for '%s': %s", config.system_prompt, exc)
