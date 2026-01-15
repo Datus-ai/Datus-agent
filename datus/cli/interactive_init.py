@@ -61,8 +61,6 @@ class InteractiveInit:
                     "storage": {"embedding_device_type": "cpu"},  # base_path removed - now fixed at {home}/data
                     "nodes": {
                         "schema_linking": {"matching_rate": "fast"},
-                        "generate_sql": {"prompt_version": "1.0"},
-                        "reflect": {"prompt_version": "2.1"},
                         "date_parser": {"language": "en"},
                     },
                 }

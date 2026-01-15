@@ -275,7 +275,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             System prompt string loaded from the template
         """
         # Hardcoded prompt version
-        version = "1.0"
+        version = self.node_config.get("prompt_version")
 
         # Hardcoded system_prompt template name
         template_name = f"{self.NODE_NAME}_system"
@@ -302,7 +302,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
             raise DatusException(
                 code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
-                message_args={"template_name": template_name, "version": version or "latest"},
+                message_args={"template_name": template_name, "version": version},
             ) from e
         except Exception as e:
             # Other template errors - wrap in DatusException
