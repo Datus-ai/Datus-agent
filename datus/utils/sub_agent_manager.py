@@ -96,7 +96,7 @@ class SubAgentManager:
             result["kb_action"] = "none"
         elif previous_name and previous_name != config.system_prompt and current_has_context:
             # update configuration
-            prompt_version = config.prompt_version
+            prompt_version = config.prompt_version or "1.0"
             if previous_config:
                 pre_version = previous_config.get("prompt_version", str(prompt_version))
                 if float(pre_version) > float(prompt_version):
