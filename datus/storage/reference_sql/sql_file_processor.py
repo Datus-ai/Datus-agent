@@ -200,8 +200,9 @@ def preprocess_parameterized_sql(sql: str) -> str:
         string_literals.append(match.group(0))
         return placeholder_template.format(idx)
 
-    # Match single-quoted and double-quoted strings (handling escaped quotes)
-    sql = re.sub(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"", save_string, sql)
+    # Match single-quoted and double-quoted strings (handling SQL-style escaped quotes)
+    # SQL uses doubled quotes for escaping: 'it''s' and "say ""hello"""
+    sql = re.sub(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"", save_string, sql)
 
     # Replace #parameter# style parameters with dummy values
     sql = re.sub(r"#\w+#", "'2023-01-01'", sql)
