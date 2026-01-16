@@ -102,6 +102,8 @@ class ChatExecutor:
                     """Wrapper to iterate the async generator to completion"""
                     try:
                         async for action in current_node.execute_stream(cli.actions):
+                            if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
+                                continue
                             incremental_actions.append(action)
                             yield action
                         self.last_actions = incremental_actions
