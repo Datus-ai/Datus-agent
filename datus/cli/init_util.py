@@ -81,6 +81,7 @@ def init_metrics(
     subject_tree: Optional[List[str]] = None,
     build_model: Literal["incremental", "overwrite"] = "overwrite",
     console: Optional[Console] = None,
+    extra_instructions: Optional[str] = None,
 ) -> tuple[bool, Optional[dict[str, Any]]]:
     """Initialize metrics using success stories."""
     from rich.markup import escape
@@ -137,6 +138,7 @@ def init_metrics(
                 agent_config,
                 subject_tree,
                 emit=emit,
+                extra_instructions=extra_instructions,
             )
         finally:
             output_mgr.stop()

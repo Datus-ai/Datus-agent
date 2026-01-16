@@ -1116,6 +1116,7 @@ class GenerationHooks(AgentHooks):
                     # Extract dimensions and entities from data_source if available
                     dimensions = []
                     entities = []
+                    metric_table_name = table_name  # Track semantic model name for this metric
                     if data_source:
                         # Get dimension names
                         for dim in data_source.get("dimensions", []):
@@ -1127,12 +1128,47 @@ class GenerationHooks(AgentHooks):
                             ident_name = ident.get("name")
                             if ident_name:
                                 entities.append(ident_name)
+                    elif base_measures:
+                        # Fallback: query dimensions/entities from Knowledge Base
+                        # when data_source is not in the same YAML file (multi-table scenario)
+                        try:
+                            # Find semantic model containing the first base measure
+                            measure_name = base_measures[0]
+                            # Query semantic objects to find the measure's table
+                            measure_objs = semantic_rag.storage._search_all(
+                                where=f"kind = 'column' AND is_measure = true AND name = '{measure_name}'"
+                            ).to_pylist()
+                            if measure_objs:
+                                measure_table = measure_objs[0].get("table_name", "")
+                                if measure_table:
+                                    metric_table_name = measure_table
+                                    # Now query dimensions and entities for this table
+                                    sm_result = semantic_rag.get_semantic_model(
+                                        table_name=measure_table,
+                                        select_fields=["dimensions", "identifiers"],
+                                    )
+                                    if sm_result:
+                                        for dim in sm_result.get("dimensions", []):
+                                            dim_name = dim.get("name")
+                                            if dim_name:
+                                                dimensions.append(dim_name)
+                                        for ident in sm_result.get("identifiers", []):
+                                            ident_name = ident.get("name")
+                                            if ident_name:
+                                                entities.append(ident_name)
+                                        logger.debug(
+                                            f"Retrieved dims/ents from KB for metric {m_name} "
+                                            f"(table: {measure_table}): {len(dimensions)} dims, "
+                                            f"{len(entities)} ents"
+                                        )
+                        except Exception as e:
+                            logger.warning(f"Failed to query dimensions from KB for metric {m_name}: {e}")
 
                     # Build metric object for MetricStorage
                     metric_obj = {
                         "name": m_name,
                         "subject_path": subject_path,
-                        "semantic_model_name": table_name,
+                        "semantic_model_name": metric_table_name,
                         "id": f"metric:{m_name}",
                         "description": m_desc,
                         "metric_type": m_type,

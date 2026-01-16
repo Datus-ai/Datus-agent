@@ -622,6 +622,16 @@ class BiDashboardCommands:
 
         # Create stream handler
         stream_handler = ReferenceSqlStreamHandler(output_mgr)
+        # Derive subject_tree constraint from dashboard info
+        subject_tree_hint = (
+            f"{platform}/{self._normalize_identifier(dashboard.name or '', max_words=3, fallback='dashboard')}"
+        )
+        extra_instructions = (
+            f"IMPORTANT: All SQL summaries from this batch MUST use the SAME subject_tree classification. "
+            f'Suggested subject_tree: "{subject_tree_hint}". '
+            f"You may adjust the classification based on SQL content, but ensure consistency across all items."
+        )
+
         result = init_reference_sql(
             storage=ReferenceSqlRAG(self.agent_config),
             global_config=self.agent_config,
@@ -629,6 +639,7 @@ class BiDashboardCommands:
             sql_dir=str(sql_dir),
             subject_tree=None,
             emit=stream_handler.handle_event,
+            extra_instructions=extra_instructions,
         )
         output_mgr.stop()
 
@@ -750,8 +761,22 @@ class BiDashboardCommands:
         with open(target_file, "w", encoding="utf-8") as target_f:
             pd.DataFrame(file_data, columns=["question", "sql"]).to_csv(target_f, index=False)
 
+        # Derive subject_tree constraint from dashboard info
+        subject_tree_hint = (
+            f"{platform}/{self._normalize_identifier(dashboard.name or '', max_words=3, fallback='dashboard')}"
+        )
+        extra_instructions = (
+            f"IMPORTANT: All metrics from this batch MUST use the SAME subject_tree classification. "
+            f'Suggested subject_tree: "{subject_tree_hint}". '
+            f"You may adjust the classification based on SQL content, but ensure consistency across all metrics."
+        )
+
         successful, metrics_result = init_metrics(
-            target_file, agent_config=self.agent_config, console=self.console, build_model="incremental"
+            target_file,
+            agent_config=self.agent_config,
+            console=self.console,
+            build_model="incremental",
+            extra_instructions=extra_instructions,
         )
 
         metrics = set()

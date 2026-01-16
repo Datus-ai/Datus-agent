@@ -168,14 +168,21 @@ end_metric_generation(
 
 ## Output Format
 
-Return a JSON object with the following structure, *only JSON*:
+**CRITICAL**: Your final response MUST always be a valid JSON object, regardless of whether you called any tools.
+
 ```json
 {
-  "semantic_model_file": "path to the semantic model YAML file",
-  "metric_file": "path to the metrics YAML file",
+  "semantic_model_file": "users.yml",
+  "metric_file": "metrics/users_metrics.yml",
   "output": "markdown summary of extracted measures and generated metrics"
 }
 ```
+
+- `semantic_model_file`: Filename only (e.g., `"users.yml"`), NOT full path or directory name
+- `metric_file`: Relative path to metrics file (e.g., `"metrics/users_metrics.yml"`)
+- `output`: Brief summary message
+
+**DO NOT** return markdown, plain text, or any other format. Return **ONLY** the JSON object.
 
 The "output" should summarize:
 - Number of SQL queries analyzed

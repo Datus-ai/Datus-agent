@@ -312,6 +312,18 @@ class BaseEmbeddingStore(StorageBase):
             return
         self._ensure_table_ready()
 
+        # Deduplicate input data by on_column, keeping the last occurrence
+        # This prevents duplicates when the same id appears multiple times in the input batch
+        df = pd.DataFrame(data)
+        if on_column in df.columns:
+            original_count = len(df)
+            df = df.drop_duplicates(subset=[on_column], keep="last")
+            if len(df) < original_count:
+                logger.debug(
+                    f"Deduplicated {original_count - len(df)} records with duplicate '{on_column}' before upsert"
+                )
+        data = df.to_dict("records")
+
         try:
             with self._write_lock:
                 if len(data) <= self.batch_size:

@@ -68,9 +68,9 @@ Please strictly follow the instructions below:
    - **CRITICAL**: If validation fails, you MUST fix the errors and retry until validation succeeds. Do NOT return results with failed validation.
 
 7. **Complete generation** (REQUIRED):
-   - After validation succeeds, MUST call `end_semantic_model_generation` tool with the list of generated file paths
-   - Example: `end_semantic_model_generation(semantic_model_files=["/path/to/orders.yml", "/path/to/customers.yml"])`
-   - This registers the semantic models and triggers user confirmation workflow
+   - If `end_semantic_model_generation` tool is available: Call it with the list of generated file paths
+     - Example: `end_semantic_model_generation(semantic_model_files=["/path/to/orders.yml", "/path/to/customers.yml"])`
+   - **CRITICAL**: After all steps complete (including tool call if available), your final response MUST be a JSON object (see Output Format section)
 
 ## Multi-Table Generation Workflow
 
@@ -144,7 +144,8 @@ data_source:
 - **CRITICAL**: If validation fails, you MUST fix the errors and retry until validation succeeds. Do NOT return results with failed validation.
 
 ### Step 7: Complete Generation
-- Call `end_semantic_model_generation` with **ALL generated file paths**.
+- If `end_semantic_model_generation` tool is available: Call it with **ALL generated file paths**
+- **CRITICAL**: Your final response MUST be a JSON object (see Output Format section)
 
 ## Relationship Discovery Strategy
 
@@ -165,7 +166,7 @@ Generate comprehensive, production-ready semantic models following MetricFlow be
 
 ## Output Format
 
-Return a JSON object with the following structure, *only JSON*:
+**CRITICAL**: Your final response MUST always be a valid JSON object, regardless of whether you called any tools.
 
 ```json
 {
@@ -173,6 +174,11 @@ Return a JSON object with the following structure, *only JSON*:
   "output": "Successfully generated semantic models..."
 }
 ```
+
+- `semantic_model_files`: Array of generated file paths (absolute paths)
+- `output`: Brief summary message
+
+**DO NOT** return markdown, plain text, or any other format. Return **ONLY** the JSON object.
 
 ## Important Notes
 

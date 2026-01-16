@@ -34,6 +34,7 @@ def init_success_story_metrics(
     agent_config: AgentConfig,
     subject_tree: Optional[list] = None,
     emit: Optional[BatchEventEmitter] = None,
+    extra_instructions: Optional[str] = None,
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """
     Initialize metrics from success story CSV by batch processing.
@@ -80,6 +81,10 @@ def init_success_story_metrics(
         sql_queries.append(f"Query {idx + 1}:\nQuestion: {question}\nSQL:\n{sql}")
 
     batch_message = "Analyze the following SQL queries and extract core metrics:\n\n" + "\n\n---\n\n".join(sql_queries)
+
+    # Append extra instructions if provided
+    if extra_instructions:
+        batch_message = f"{batch_message}\n\n## Additional Instructions\n{extra_instructions}"
 
     logger.info(f"Processing {len(df)} SQL queries as batch for core metrics extraction")
 

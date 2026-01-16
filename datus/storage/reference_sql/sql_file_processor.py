@@ -190,14 +190,30 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
 def preprocess_parameterized_sql(sql: str) -> str:
     import re
 
+    # First, protect string literals by replacing them with placeholders
+    # This prevents replacing patterns inside quoted strings (like time formats)
+    string_literals = []
+    placeholder_template = "__STRING_LITERAL_{}_PLACEHOLDER__"
+
+    def save_string(match):
+        idx = len(string_literals)
+        string_literals.append(match.group(0))
+        return placeholder_template.format(idx)
+
+    # Match single-quoted and double-quoted strings (handling escaped quotes)
+    sql = re.sub(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"", save_string, sql)
+
     # Replace #parameter# style parameters with dummy values
     sql = re.sub(r"#\w+#", "'2023-01-01'", sql)
 
-    # Replace other common parameter styles - but be more careful to avoid time formats
-    # Only replace :param if it's not part of a time format (like 04:00:00)
-    sql = re.sub(r"(?<!\d):\w+(?!\d)", "'dummy_value'", sql)  # :param (not preceded/followed by digits)
+    # Replace other common parameter styles
+    sql = re.sub(r":\w+", "'dummy_value'", sql)  # :param
     sql = re.sub(r"@\w+\b", "'dummy_value'", sql)  # @param (word boundary)
     sql = re.sub(r"\$\{\w+\}", "'dummy_value'", sql)  # ${param}
+
+    # Restore string literals
+    for idx, literal in enumerate(string_literals):
+        sql = sql.replace(placeholder_template.format(idx), literal)
 
     return sql
 

@@ -8,6 +8,7 @@ from typing import Dict, List
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.lancedb_conditions import And, build_where, eq
 from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
@@ -68,14 +69,28 @@ class GenerationTools:
             dict: Check results containing existence status and details.
         """
         try:
-            # Route search based on kind
-            if kind == "metric":
+            # Extract the final segment as target name (e.g., "public.orders" -> "orders")
+            target_name = object_name.split(".")[-1].lower()
+
+            found_object = None
+
+            if kind == "table":
+                # Exact match for table using SQL WHERE condition
+                storage = self.semantic_rag.storage
+                where = build_where(And([eq("kind", "table"), eq("name", target_name)]))
+                results = storage.search_all(where=where, select_fields=["id", "name", "kind"])
+                if results:
+                    found_object = results[0]
+            elif kind == "metric":
+                # For metrics, search all and filter by name
                 storage = self.metric_rag.storage
-                # MetricStorage doesn't have kinds=[], it only stores metrics
-                results = storage.search_all(
-                    select_fields=["id", "name"],
-                )
+                results = storage.search_all(select_fields=["id", "name"])
+                for obj in results:
+                    if obj.get("name", "").lower() == target_name:
+                        found_object = obj
+                        break
             else:
+                # For column, use vector search + post-filter
                 storage = self.semantic_rag.storage
                 results = storage.search_objects(
                     query_text=object_name,
@@ -83,30 +98,15 @@ class GenerationTools:
                     table_name=table_context if table_context else None,
                     top_n=5,
                 )
+                # Determine target table from explicit context or dotted name
+                target_table = None
+                if table_context:
+                    target_table = table_context.lower()
+                elif "." in object_name:
+                    target_table = object_name.rsplit(".", 1)[0].lower()
 
-            # Post-filter for exact name match
-            # Extract the final segment as target name (e.g., "orders.amount" -> "amount")
-            target_name = object_name.split(".")[-1].lower()
-
-            # Determine target table from explicit context or dotted name
-            target_table = None
-            if table_context:
-                target_table = table_context.lower()
-            elif "." in object_name:
-                target_table = object_name.rsplit(".", 1)[0].lower()
-
-            found_object = None
-
-            for obj in results:
-                name_match = obj.get("name", "").lower() == target_name
-
-                # For metrics, only check name (no table_name field)
-                if kind == "metric":
-                    if name_match:
-                        found_object = obj
-                        break
-                else:
-                    # For semantic objects (table/column), check both name and table if applicable
+                for obj in results:
+                    name_match = obj.get("name", "").lower() == target_name
                     if target_table:
                         table_match = obj.get("table_name", "").lower() == target_table
                         if name_match and table_match:

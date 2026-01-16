@@ -35,6 +35,7 @@ async def process_sql_item(
     subject_tree: Optional[list] = None,
     event_helper: Optional[BatchEventHelper] = None,
     sql_id: Optional[str] = None,
+    extra_instructions: Optional[str] = None,
 ) -> Optional[str]:
     """
     Process a single SQL item using SqlSummaryAgenticNode in workflow mode.
@@ -56,8 +57,12 @@ async def process_sql_item(
 
     try:
         # Create input for SqlSummaryAgenticNode
+        user_message = "Analyze and summarize this SQL query"
+        if extra_instructions:
+            user_message = f"{user_message}\n\n## Additional Instructions\n{extra_instructions}"
+
         sql_input = SqlSummaryNodeInput(
-            user_message="Analyze and summarize this SQL query",
+            user_message=user_message,
             sql_query=item.get("sql"),
         )
 
@@ -131,6 +136,7 @@ def init_reference_sql(
     pool_size: int = 1,
     subject_tree: Optional[list] = None,
     emit: Optional[BatchEventEmitter] = None,
+    extra_instructions: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Initialize reference SQL from SQL files directory.
 
@@ -294,6 +300,7 @@ def init_reference_sql(
                             subject_tree,
                             event_helper=event_helper,
                             sql_id=sql_id,
+                            extra_instructions=extra_instructions,
                         )
                     except Exception as exc:
                         error = exc
