@@ -154,4 +154,5 @@ dev = [
     "flake8>=7.3.0",
     "isort>=6.0.1",
     "langsmith>=0.0.77",
+    "langsmith-fetch>=0.1.0",
 ]

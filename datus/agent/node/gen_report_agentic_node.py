@@ -20,6 +20,7 @@ from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -411,6 +412,7 @@ class GenReportAgenticNode(AgenticNode):
             logger.error(f"Unexpected error extracting report: {e}", exc_info=True)
             return "", None
 
+    @optional_traceable(name="gen_report_stream", run_type="chain")
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:

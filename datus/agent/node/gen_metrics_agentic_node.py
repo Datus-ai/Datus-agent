@@ -21,6 +21,7 @@ from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -299,6 +300,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
             ) from e
 
+    @optional_traceable(name="gen_metrics_stream", run_type="chain")
     async def execute_stream(
         self,
         action_history_manager: Optional[ActionHistoryManager] = None,

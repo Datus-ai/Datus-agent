@@ -46,6 +46,7 @@ from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 from datus.utils.path_utils import safe_rmtree
 from datus.utils.time_utils import format_duration_human
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -362,6 +363,7 @@ class Agent:
             logger.info("Metrics item success")
             return
 
+    @optional_traceable(name="bootstrap_kb", log_trace_url=True)
     def bootstrap_kb(self):
         """Initialize knowledge base storage components."""
         logger.info("Initializing knowledge base components")

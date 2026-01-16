@@ -168,7 +168,7 @@ class CompareAgenticNode(AgenticNode):
         logger.debug(f"Unexpected comparison output type: {type(raw_output)}")
         return {}
 
-    @optional_traceable()
+    @optional_traceable(name="compare_stream", run_type="chain")
     async def execute_stream(
         self,
         action_history_manager: Optional[ActionHistoryManager] = None,

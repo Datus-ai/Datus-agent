@@ -31,7 +31,6 @@ class GenerationCancelledException(Exception):
     """Exception raised when user cancels generation flow."""
 
 
-@optional_traceable(name="GenerationHooks", run_type="chain")
 class GenerationHooks(AgentHooks):
     """Hooks for handling generation tool results and user interaction."""
 
@@ -82,7 +81,6 @@ class GenerationHooks(AgentHooks):
     async def on_end(self, context, agent, output) -> None:
         pass
 
-    @optional_traceable(name="_handle_end_semantic_model_generation", run_type="chain")
     async def _handle_end_semantic_model_generation(self, result):
         """
         Handle end_semantic_model_generation tool result.
@@ -108,7 +106,6 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error handling end_semantic_model_generation: {e}", exc_info=True)
 
-    @optional_traceable(name="_handle_end_metric_generation", run_type="chain")
     async def _handle_end_metric_generation(self, result):
         """
         Handle end_metric_generation tool result.
@@ -300,7 +297,6 @@ class GenerationHooks(AgentHooks):
             semantic_model_file, metric_file, metric_sqls, display_content=display_content
         )
 
-    @optional_traceable(name="_handle_sql_summary_result", run_type="chain")
     async def _handle_sql_summary_result(self, result):
         """
         Handle sql_summary tool result.
@@ -367,7 +363,6 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error handling write_file_reference_sql result: {e}", exc_info=True)
 
-    @optional_traceable(name="_handle_ext_knowledge_result", run_type="chain")
     async def _handle_ext_knowledge_result(self, result):
         """
         Handle ext_knowledge tool result.
@@ -537,7 +532,6 @@ class GenerationHooks(AgentHooks):
             logger.error(f"Error in sync confirmation: {e}", exc_info=True)
             raise
 
-    @optional_traceable(name="_sync_to_storage", run_type="chain")
     async def _sync_to_storage(self, file_path: str, yaml_type: str, metric_sqls: dict = None) -> str:
         """
         Sync YAML file to RAG storage based on file type.
@@ -593,7 +587,6 @@ class GenerationHooks(AgentHooks):
             logger.error(f"Error syncing to storage: {e}")
             return f"**Sync error:** {e}\n\nYAML saved to file: `{file_path}`"
 
-    @optional_traceable(name="_sync_semantic_and_metric", run_type="chain")
     async def _sync_semantic_and_metric(
         self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
     ) -> str:

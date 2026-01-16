@@ -43,6 +43,7 @@ from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 from datus.utils.stream_output import StreamOutputManager
 from datus.utils.sub_agent_manager import SubAgentManager
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -82,6 +83,7 @@ class BiDashboardCommands:
             self._configuration_manager = None
         self._adaptor_registry = self._discover_adaptors()
 
+    @optional_traceable(name="bootstrap_bi", log_trace_url=True)
     def cmd(self, args: str = "") -> None:
         try:
             options = self._prompt_options()
