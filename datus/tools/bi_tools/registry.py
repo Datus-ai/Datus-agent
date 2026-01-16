@@ -63,7 +63,7 @@ class BIAdaptorRegistry:
             auth_type=auth_type,
             display_name=display_name,
         )
-        logger.debug("Registered BI adaptor: %s -> %s", key, adaptor_class.__name__)
+        logger.debug(f"Registered BI adaptor: {key} -> {adaptor_class.__name__}")
 
     @classmethod
     def list_adaptors(cls) -> Dict[str, Type[BIAdaptorBase]]:

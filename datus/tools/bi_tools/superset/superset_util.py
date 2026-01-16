@@ -43,6 +43,49 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, TypedDict, cast
 
+LEGACY_VIZ_TYPES = {
+    # nvd3 Charts
+    "bubble",  # Legacy Bubble Chart
+    "bullet",  # Bullet Chart
+    "compare",  # Time-series Percent Change (Deprecated)
+    "time_pivot",  # Time Pivot
+    # Tables
+    "time_table",  # Time-series Table
+    # Mapping Charts
+    "cal_heatmap",  # Calendar Heatmap
+    "country_map",  # Country Map
+    "mapbox",  # MapBox
+    "world_map",  # World Map
+    # deck.gl Charts (ALL 11 in released versions)
+    # ⚠️ Note: In the master branch (unreleased), only geojson and multi use the legacy API
+    # But in all released versions, all deck.gl charts use the legacy API
+    "deck_arc",  # deck.gl Arc
+    "deck_contour",  # deck.gl Contour
+    "deck_geojson",  # deck.gl GeoJSON
+    "deck_grid",  # deck.gl Grid
+    "deck_heatmap",  # deck.gl Heatmap
+    "deck_hex",  # deck.gl Hexagon
+    "deck_multi",  # deck.gl Multiple Layers
+    "deck_path",  # deck.gl Path
+    "deck_polygon",  # deck.gl Polygon
+    "deck_scatter",  # deck.gl Scatterplot
+    "deck_screengrid",  # deck.gl Screen Grid
+    # Statistical & Analytical
+    "paired_ttest",  # Paired t-test
+    "para",  # Parallel Coordinates
+    # Other Visualizations
+    "chord",  # Chord Diagram
+    "horizon",  # Horizon Chart
+    "partition",  # Partition Chart
+    "rose",  # Nightingale Rose
+}
+
+
+def uses_legacy_api(viz_type: str) -> bool:
+    """检查 viz_type 是否使用 legacy API"""
+    return viz_type in LEGACY_VIZ_TYPES
+
+
 # =============================================================================
 # Enums and Constants
 # =============================================================================

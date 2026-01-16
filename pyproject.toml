@@ -62,7 +62,7 @@ dependencies = [
     # Optional: install torch manually to enable reranker models.
     "uv>=0.9.9",
     "plotly>=6.5.0",
-    "charset-normalizer>=3.4.4",
+    "charset-normalizer>=3.4.2",
 ]
 
 [project.optional-dependencies]
@@ -90,7 +90,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["datus*", "mcp*"]
+include = ["datus*"]
 exclude = ["benchmark*", "docs*"]
 
 [tool.setuptools.package-data]
@@ -112,6 +112,9 @@ exclude = ["benchmark*", "docs*"]
 ]
 "datus/sample_data/california_schools/reference_sql" = [
     "sample_data/california_schools/reference_sql/*.sql",
+]
+"datus/sample_data/superset" = [
+    "sample_data/superset/*.*",
 ]
 
 [tool.uv.pip]

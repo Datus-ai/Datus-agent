@@ -127,3 +127,10 @@ agent:
   storage:
     base_path: data
     embedding_device_type: cpu
+
+  dashboard:
+    superset:
+      username: admin
+      password: admin
+      extra:
+        provider: db

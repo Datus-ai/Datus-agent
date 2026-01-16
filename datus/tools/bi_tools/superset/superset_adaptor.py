@@ -21,7 +21,7 @@ from datus.tools.bi_tools.base_adaptor import (
     MetricDef,
     QuerySpec,
 )
-from datus.tools.bi_tools.superset.superset_util import build_query_context
+from datus.tools.bi_tools.superset.superset_util import build_query_context, uses_legacy_api
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names
 
@@ -46,14 +46,19 @@ class SupersetAdaptor(BIAdaptorBase):
 
         self.auth_params = auth_params
         self._api_base = self._normalize_api_base(self.api_base_url)
+        self.base_url = api_base_url
+        if self.base_url.endswith("/api/v1"):
+            self.base_url = self.base_url[:-7]
         self._client = httpx.Client(
-            timeout=timeout, verify=self.api_base_url.startswith("https://"), follow_redirects=True
+            base_url=self.base_url,
+            timeout=timeout,
+            verify=self.api_base_url.startswith("https://"),
+            follow_redirects=True,
         )
         self._owns_client = True
 
-        self._auth_header_value: Optional[str] = None
+        self._auth_header_value: Optional[Dict[str, str]] = None
         self._token_expiration: Optional[float] = None
-        self._csrf_token: Optional[str] = None
         self._dataset_cache: Dict[str, DatasetInfo] = {}
 
     def close(self) -> None:
@@ -294,7 +299,9 @@ class SupersetAdaptor(BIAdaptorBase):
         used_query_indexes: Optional[set[int]] = None
         try:
             sqls, used_query_indexes = self._collect_sql_from_chart(
-                chart_id,
+                dashboard_id,
+                slice_detail,
+                form_data,
                 query_context,
             )
         except SupersetAdaptorError as exc:
@@ -425,7 +432,9 @@ class SupersetAdaptor(BIAdaptorBase):
 
     def _collect_sql_from_chart(
         self,
-        chart_id: Union[str, int],
+        dashboard_id: Any,
+        chart_info: Dict[str, Any],
+        form_data: Dict[str, Any],
         query_context: Optional[Dict[str, Any]],
     ) -> tuple[List[str], Optional[set[int]]]:
         """
@@ -440,9 +449,16 @@ class SupersetAdaptor(BIAdaptorBase):
         :param query_context: Query context for new charts (uses /api/v1/chart/data)
         :return: Tuple of (sql_list, used_query_indexes)
         """
-        # For modern viz types, try chart/data API first
+        viz_type = form_data.get("viz_type")
         sqls = []
         query_indexes = None
+        if uses_legacy_api(viz_type):
+            sqls, query_indexes = self._collect_sql_via_explore_json(chart_info, dashboard_id)
+        if sqls:
+            return sqls, query_indexes
+        # For modern viz types, try chart/data API first
+        chart_id = chart_info.get("slice_id")
+
         if query_context:
             try:
                 sqls, query_indexes = self._collect_sql_via_chart_data(chart_id, query_context)
@@ -453,6 +469,34 @@ class SupersetAdaptor(BIAdaptorBase):
             return sqls, query_indexes
 
         logger.debug(f"No sqls for chart {chart_id}")
+        return [], None
+
+    def _collect_sql_via_explore_json(
+        self, chart_info: Dict[str, Any], dashboard_id: Any
+    ) -> tuple[List[str], Optional[set[int]]]:
+        chart_id = chart_info.get("slice_id")
+        try:
+            form_data = chart_info.get("form_data")
+            if "url_params" not in form_data:
+                form_data["url_params"] = {}
+            if dashboard_id:
+                form_data["dashboard_id"] = dashboard_id
+
+            explore_json_resp = self._client.post(
+                url="/superset/explore_json/",
+                params={
+                    "query": "true",
+                    "form_data": json.dumps({"slice_id": chart_id}),
+                },
+                data={"form_data": json.dumps(form_data)},
+                headers={"Referer": f"{self.base_url}/superset/explore/?slice_id={chart_id}"},
+            )
+            if not explore_json_resp.is_success:
+                return [], None
+            if sql := explore_json_resp.json().get("query"):
+                return ([sql], {0})
+        except Exception as exc:
+            logger.warning(f"Explore_json failed for {chart_id} {exc}")
         return [], None
 
     def _collect_sql_via_chart_data(
@@ -858,24 +902,19 @@ class SupersetAdaptor(BIAdaptorBase):
 
         return self._dedupe_dimensions(dimensions)
 
-    def _request_json(self, method: str, endpoint: str, need_csrf_token: bool = False, **kwargs) -> Dict[str, Any]:
-        response = self._request(method, endpoint, need_csrf_token=need_csrf_token, **kwargs)
+    def _request_json(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+        response = self._request(method, endpoint, **kwargs)
         try:
             return response.json()
         except json.JSONDecodeError as exc:
             raise SupersetAdaptorError(f"Invalid JSON response for {endpoint}: {exc}") from exc
 
-    def _request(
-        self, method: str, endpoint: str, require_auth: bool = True, need_csrf_token: bool = False, **kwargs
-    ) -> httpx.Response:
+    def _request(self, method: str, endpoint: str, require_auth: bool = True, **kwargs) -> httpx.Response:
         url = f"{self._api_base}/{endpoint.lstrip('/')}"
         headers = kwargs.pop("headers", {})
         if require_auth:
             self._ensure_authenticated()
             headers.update(self._auth_headers())
-            if need_csrf_token:
-                token = self._get_csrf_token()
-                headers["X-Csrftoken"] = token
 
         try:
             response = self._client.request(method, url, headers=headers, **kwargs)
@@ -891,7 +930,7 @@ class SupersetAdaptor(BIAdaptorBase):
     def _auth_headers(self) -> Dict[str, str]:
         if not self._auth_header_value:
             return {}
-        return {"Authorization": self._auth_header_value}
+        return self._auth_header_value
 
     def _ensure_authenticated(self) -> None:
         if self._auth_header_value and self._token_expiration and time.time() < self._token_expiration:
@@ -899,6 +938,11 @@ class SupersetAdaptor(BIAdaptorBase):
         self._authenticate()
 
     def _authenticate(self) -> None:
+        # try login by browser:
+        if self._try_login_by_browser():
+            logger.info("Login by browser succeeded")
+            return
+        logger.info("Login by api succeeded")
         payload = {
             "username": self.auth_params.username,
             "password": self.auth_params.password,
@@ -919,29 +963,48 @@ class SupersetAdaptor(BIAdaptorBase):
         if not access_token:
             raise SupersetAdaptorError("Superset login response missing access_token")
 
-        self._auth_header_value = f"{token_type} {access_token}".strip()
+        self._auth_header_value = {"Authorization": f"{token_type} {access_token}".strip()}
         if isinstance(expires_in, (int, float)) and expires_in > 0:
             self._token_expiration = time.time() + expires_in - 60
         else:
             self._token_expiration = time.time() + 3600
 
-        # Clear CSRF token when re-authenticating
-        self._csrf_token = None
+    def _try_login_by_browser(self) -> bool:
+        import re
 
-    def _get_csrf_token(self) -> str:
-        """Get CSRF token for legacy API endpoints like explore_json."""
-        if self._csrf_token:
-            return self._csrf_token
+        browser_base_url = f"{self.api_base_url[:-7]}"
+        login_page_resp = self._client.get("/login")
+        if not login_page_resp.is_success:
+            return False
+        login_page_html = login_page_resp.text
 
-        self._ensure_authenticated()
-        try:
-            response = self._request_json("GET", "security/csrf_token/", need_csrf_token=False)
-            self._csrf_token = response.get("result")
-            if not self._csrf_token:
-                raise SupersetAdaptorError("CSRF token not found in response")
-            return self._csrf_token
-        except SupersetAdaptorError as exc:
-            raise SupersetAdaptorError(f"Failed to get CSRF token: {exc}") from exc
+        csrf_match = re.search(r'name="csrf_token" type="hidden" value="([^"]+)"', login_page_html)
+        csrf_token = csrf_match.group(1) if csrf_match else None
+        if not csrf_token:
+            return False
+        login_resp = self._client.post(
+            "/login/",
+            data={
+                "username": self.auth_params.username,
+                "password": self.auth_params.password,
+                "csrf_token": csrf_token,
+            },
+            headers={
+                "Referer": f"{browser_base_url}/login/",
+            },
+            follow_redirects=True,
+        )
+        if not login_resp.is_success:
+            return False
+        csrf_response = self._client.get("/api/v1/security/csrf_token/")
+        if not csrf_response.is_success:
+            return False
+        csrf_token = csrf_response.json().get("result")
+        if csrf_token:
+            self._auth_header_value = {"X-CSRFToken": csrf_token}
+            self._token_expiration = time.time() + 3600
+            return True
+        return False
 
 
 def _normalize_series_columns_in_query_context(query_context: Dict[str, Any]) -> None:
