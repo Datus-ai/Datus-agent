@@ -46,7 +46,7 @@ class SupersetAdaptor(BIAdaptorBase):
 
         self.auth_params = auth_params
         self._api_base = self._normalize_api_base(self.api_base_url)
-        self.base_url = api_base_url
+        self.base_url = api_base_url.rstrip("/")
         if self.base_url.endswith("/api/v1"):
             self.base_url = self.base_url[:-7]
         self._client = httpx.Client(
@@ -477,11 +477,13 @@ class SupersetAdaptor(BIAdaptorBase):
         chart_id = chart_info.get("slice_id")
         try:
             form_data = chart_info.get("form_data")
-            if "url_params" not in form_data:
-                form_data["url_params"] = {}
+            form_data.setdefault("url_params", {})
+
             if dashboard_id:
                 form_data["dashboard_id"] = dashboard_id
-
+            self._ensure_authenticated()
+            headers = {"Referer": f"{self.base_url}/superset/explore/?slice_id={chart_id}"}
+            headers.update(self._auth_headers())
             explore_json_resp = self._client.post(
                 url="/superset/explore_json/",
                 params={
@@ -489,7 +491,7 @@ class SupersetAdaptor(BIAdaptorBase):
                     "form_data": json.dumps({"slice_id": chart_id}),
                 },
                 data={"form_data": json.dumps(form_data)},
-                headers={"Referer": f"{self.base_url}/superset/explore/?slice_id={chart_id}"},
+                headers=headers,
             )
             if not explore_json_resp.is_success:
                 return [], None

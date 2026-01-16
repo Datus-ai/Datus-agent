@@ -669,7 +669,7 @@ metric:
         assert "Dashboard=Test Dashboard" in content
 
     @patch("datus.cli.bi_dashboard.get_path_manager")
-    def test_write_chart_sql_files_empty(self, mock_path_manager, agent_config, sample_dashboard):
+    def test_write_chart_sql_files_empty(self, agent_config, sample_dashboard):
         """Test _write_chart_sql_files with empty list."""
         commands = BiDashboardCommands(agent_config)
 

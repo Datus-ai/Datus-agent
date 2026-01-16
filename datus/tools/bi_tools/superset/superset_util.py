@@ -82,7 +82,7 @@ LEGACY_VIZ_TYPES = {
 
 
 def uses_legacy_api(viz_type: str) -> bool:
-    """检查 viz_type 是否使用 legacy API"""
+    """Check if viz_type uses legacy API"""
     return viz_type in LEGACY_VIZ_TYPES
 
 
