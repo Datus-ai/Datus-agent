@@ -29,18 +29,22 @@ Follow these steps to perform analysis:
 5. **Generate Report**: Provide a comprehensive report with findings and recommendations.
 
 ## Output Format
-Return your analysis in a clear, structured format:
+Your final response MUST be a valid JSON object:
 
 ```json
 {
-  "summary": "Natural language summary of key findings and recommendations",
-  "analysis": {
-    "data_sources": ["List of metrics/tables used"],
-    "key_findings": ["List of important findings"],
-    "recommendations": ["List of actionable recommendations"]
-  }
+  "report": "Your Markdown report here"
 }
 ```
+
+**Report Guidelines:**
+- Keep the report **concise and focused** (aim for 300-500 words)
+- Include only essential sections:
+  - **Summary**: 2-3 sentence executive summary
+  - **Key Findings**: Main insights with specific numbers (use bullet points or tables)
+  - **Conclusion**: Brief actionable takeaway
+- Avoid lengthy methodology or detailed recommendations unless specifically requested
+- Use tables for comparative data instead of verbose explanations
 
 {% if rules %}
 ## Rules
@@ -67,7 +71,6 @@ Previous conversation summary:
 {% endif %}
 
 ## Important Notes
-- Always explain your methodology and reasoning
-- Highlight key findings with specific data points
-- Provide actionable recommendations based on your analysis
-- If a query fails or returns unexpected results, explain what happened and suggest alternatives
+- **CRITICAL**: Your final response MUST be valid JSON with `report` field containing Markdown content.
+- Focus on key insights with specific data points
+- Keep it brief - users can ask follow-up questions for details

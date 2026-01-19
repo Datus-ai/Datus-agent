@@ -420,7 +420,6 @@ class GenMetricsAgenticNode(AgenticNode):
 
             # If we still don't have response_content, check the last successful output
             if not response_content and last_successful_output:
-                logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
                 # Try different fields that might contain the response
                 raw_output = last_successful_output.get("raw_output", "")
                 if isinstance(raw_output, dict):
@@ -436,9 +435,6 @@ class GenMetricsAgenticNode(AgenticNode):
             )
             if extracted_output:
                 response_content = extracted_output
-
-            logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
-            logger.debug(f"Extracted files: semantic_model={semantic_model_file}, metric={metric_file}")
 
             # Extract token usage (only in interactive mode with session)
             tokens_used = 0
@@ -727,7 +723,6 @@ class GenMetricsAgenticNode(AgenticNode):
                     )
             else:
                 # No semantic model file provided, sync metric file alone
-                logger.info("No semantic model file provided, syncing metric file alone")
                 result = GenerationHooks._sync_semantic_to_db(
                     metric_full_path,
                     self.agent_config,

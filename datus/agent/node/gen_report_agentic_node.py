@@ -17,7 +17,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput, GenReportNodeResult
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.func_tool import DBFuncTool
+from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import get_logger
 
@@ -75,6 +75,7 @@ class GenReportAgenticNode(AgenticNode):
         # which may reference these attributes
         self.db_func_tool: Optional[DBFuncTool] = None
         self.semantic_tools: Optional[SemanticTools] = None
+        self.context_search_tools: Optional[ContextSearchTools] = None
 
         # Call parent constructor with all required Node parameters
         super().__init__(
@@ -130,8 +131,10 @@ class GenReportAgenticNode(AgenticNode):
         Supports patterns like:
         - "semantic_tools.*" -> all semantic tools
         - "db_tools.*" -> all db tools
+        - "context_search_tools.*" -> all context search tools
         - "semantic_tools.search_metrics" -> specific method
         - "db_tools.list_tables" -> specific method
+        - "context_search_tools.list_subject_tree" -> specific method
         """
         try:
             # Handle wildcard patterns (e.g., "semantic_tools.*")
@@ -141,6 +144,8 @@ class GenReportAgenticNode(AgenticNode):
                     self._setup_semantic_tools()
                 elif base_type == "db_tools":
                     self._setup_db_tools()
+                elif base_type == "context_search_tools":
+                    self._setup_context_search_tools()
                 else:
                     logger.warning(f"Unknown tool type: {base_type}")
 
@@ -149,6 +154,8 @@ class GenReportAgenticNode(AgenticNode):
                 self._setup_semantic_tools()
             elif pattern == "db_tools":
                 self._setup_db_tools()
+            elif pattern == "context_search_tools":
+                self._setup_context_search_tools()
 
             # Handle specific method patterns (e.g., "db_tools.describe_table")
             elif "." in pattern:
@@ -191,6 +198,17 @@ class GenReportAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup semantic tools: {e}")
 
+    def _setup_context_search_tools(self):
+        """Setup context search tools."""
+        try:
+            self.context_search_tools = ContextSearchTools(
+                self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+            )
+            self.tools.extend(self.context_search_tools.available_tools())
+            logger.debug("Added context search tools from ContextSearchTools")
+        except Exception as e:
+            logger.error(f"Failed to setup context search tools: {e}")
+
     def _setup_specific_tool_method(self, tool_type: str, method_name: str):
         """Setup a specific tool method."""
         try:
@@ -213,6 +231,12 @@ class GenReportAgenticNode(AgenticNode):
                         sub_agent_name=self.node_config.get("system_prompt"),
                     )
                 tool_instance = self.db_func_tool
+            elif tool_type == "context_search_tools":
+                if not self.context_search_tools:
+                    self.context_search_tools = ContextSearchTools(
+                        self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+                    )
+                tool_instance = self.context_search_tools
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
                 return
@@ -318,6 +342,75 @@ class GenReportAgenticNode(AgenticNode):
         # Base implementation returns None - subclasses should override
         return None
 
+    def _extract_report_from_response(self, output: dict) -> tuple[str, Optional[Dict[str, Any]]]:
+        """
+        Extract report content and metadata from model response.
+
+        Per prompt template requirements, LLM should return JSON format:
+        {"report": "markdown content", "data_sources": [...], "key_findings": [...]}
+
+        Args:
+            output: Output dictionary from model generation
+
+        Returns:
+            Tuple of (report_markdown: str, metadata: Optional[Dict])
+            - report_markdown: The markdown report to display to user
+            - metadata: Additional metadata (data_sources, key_findings) or None
+        """
+        try:
+            from datus.utils.json_utils import strip_json_str
+
+            # Check both 'content' and 'raw_output' fields (claude_model uses 'raw_output')
+            content = output.get("content", "") or output.get("raw_output", "") or output.get("response", "")
+            logger.debug(f"_extract_report_from_response input: {str(content)[:200]} (type: {type(content)})")
+
+            # Case 1: content is already a dict
+            if isinstance(content, dict):
+                report = content.get("report", "")
+                if report:
+                    metadata = {
+                        "data_sources": content.get("data_sources", []),
+                        "key_findings": content.get("key_findings", []),
+                    }
+                    logger.debug(f"Extracted from dict: report length={len(report)}")
+                    return report, metadata
+                else:
+                    # No report field, return content as-is
+                    logger.debug("Dict format but no 'report' field, returning raw content")
+                    return str(content), None
+
+            # Case 2: content is a JSON string (possibly wrapped in markdown code blocks)
+            elif isinstance(content, str) and content.strip():
+                # Use strip_json_str to handle markdown code blocks and extract JSON
+                cleaned_json = strip_json_str(content)
+                if cleaned_json:
+                    try:
+                        import json_repair
+
+                        parsed = json_repair.loads(cleaned_json)
+                        if isinstance(parsed, dict):
+                            report = parsed.get("report", "")
+                            if report:
+                                metadata = {
+                                    "data_sources": parsed.get("data_sources", []),
+                                    "key_findings": parsed.get("key_findings", []),
+                                }
+                                logger.debug(f"Extracted from JSON string: report length={len(report)}")
+                                return report, metadata
+                    except Exception as e:
+                        logger.warning(f"Failed to parse cleaned JSON: {e}. Returning raw content.")
+
+                # If JSON parsing failed or no report field, return original content
+                return content, None
+
+            # Fallback: return empty string if content is empty
+            logger.warning(f"Could not extract report from response. Content type: {type(content)}")
+            return str(content) if content else "", None
+
+        except Exception as e:
+            logger.error(f"Unexpected error extracting report: {e}", exc_info=True)
+            return "", None
+
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
@@ -390,8 +483,6 @@ class GenReportAgenticNode(AgenticNode):
                 session=session,
                 action_history_manager=action_history_manager,
             ):
-                yield stream_action
-
                 # Collect response content from successful actions
                 if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
                     if isinstance(stream_action.output, dict):
@@ -403,6 +494,31 @@ class GenReportAgenticNode(AgenticNode):
                             or response_content
                         )
 
+                        # Try to extract report from JSON and update action for display
+                        # This prevents raw JSON from being displayed in the stream
+                        if stream_action.role == ActionRole.ASSISTANT and response_content:
+                            # Check if response looks like JSON (contains {"report": pattern)
+                            is_json_response = '{"report"' in response_content or '"report":' in response_content
+                            if is_json_response:
+                                extracted_report, _ = self._extract_report_from_response(stream_action.output)
+                                if extracted_report:
+                                    # Update the action's output to show extracted report instead of raw JSON
+                                    stream_action.output["content"] = extracted_report
+                                    stream_action.output["response"] = extracted_report
+                                    stream_action.output["raw_output"] = extracted_report
+                                    response_content = extracted_report
+                                    # Also update messages field (used by action_history_display)
+                                    # Truncate for display, show first 200 chars with "..." if longer
+                                    preview = (
+                                        extracted_report[:200] + "..."
+                                        if len(extracted_report) > 200
+                                        else extracted_report
+                                    )
+                                    stream_action.messages = f"Report generated: {preview}"
+                                    logger.debug("Updated stream action with extracted report")
+
+                yield stream_action
+
             # If we still don't have response_content, check the last successful output
             if not response_content and last_successful_output:
                 response_content = (
@@ -412,9 +528,21 @@ class GenReportAgenticNode(AgenticNode):
                     or str(last_successful_output)
                 )
 
+            # Extract report markdown from JSON response (if LLM returned structured output)
+            report_metadata = None
+            if last_successful_output:
+                extracted_report, report_metadata = self._extract_report_from_response(last_successful_output)
+                if extracted_report:
+                    response_content = extracted_report
+                    logger.debug(f"Extracted report from JSON response, length={len(response_content)}")
+
             # Extract report result from tool calls (subclass-specific)
             all_actions = action_history_manager.get_actions()
             report_result = self._extract_report_result(all_actions)
+
+            # Merge report metadata into report_result if available
+            if report_metadata and not report_result:
+                report_result = report_metadata
 
             # Extract token usage
             for action in reversed(all_actions):

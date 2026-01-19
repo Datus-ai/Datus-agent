@@ -25,6 +25,8 @@ from datus.configuration.agent_config_loader import configuration_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 from datus.storage.reference_sql.store import ReferenceSqlRAG
+from datus.storage.schema_metadata.local_init import init_local_schema
+from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.bi_tools.base_adaptor import AuthParam, AuthType, BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo
 from datus.tools.bi_tools.dashboard_assembler import (
     ChartSelection,
@@ -33,6 +35,7 @@ from datus.tools.bi_tools.dashboard_assembler import (
     SelectedSqlCandidate,
 )
 from datus.tools.bi_tools.registry import adaptor_registry
+from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.path_manager import get_path_manager
@@ -465,11 +468,17 @@ class BiDashboardCommands:
             self.console.print(f"[bold red]Error:[/] '{sub_agent_name}' is reserved for built-in sub-agents.")
             return
         table_names = self._dedupe_values([table for table in result.tables if table])
+
+        # Generate metadata first (before semantic model)
+        self.console.log("[bold cyan]Start building metadata[/]")
+        self._gen_metadata(table_names)
+        self.console.log("[bold cyan]Building metadata completed[/]")
+
         self.console.log("[bold cyan]Start building reference SQL[/]")
 
         ref_sqls = self._gen_reference_sqls(result.reference_sqls, platform, dashboard)
 
-        # Generate semantic model first (before metrics)
+        # Generate semantic model (before metrics)
         self.console.log("[bold cyan]Start building semantic model[/]")
         self._gen_semantic_model(result.metric_sqls, platform, dashboard)
         self.console.log("[bold cyan]Building semantic model completed[/]")
@@ -510,16 +519,13 @@ class BiDashboardCommands:
         except Exception as exc:
             self.console.log(f"[bold red]Failed to persist sub-agent:[/] {exc}")
             return
-        manager.bootstrap_agent(sub_agent, components=["metadata", "reference_sql"])
+        manager.bootstrap_agent(sub_agent, components=["metadata", "semantic_model", "metrics", "reference_sql"])
         self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` bootstrapped.")
 
         # Create attribution subagent (gen_report type) for metric attribution analysis
         attribution_agent_name = f"{sub_agent_name}_attribution"
         if attribution_agent_name not in SYS_SUB_AGENTS:
-            attribution_tools = (
-                "semantic_tools,context_search_tools,"
-                "db_tools.search_table,db_tools.describe_table,db_tools.read_query"
-            )
+            attribution_tools = "semantic_tools,context_search_tools.list_subject_tree"
             attribution_agent = SubAgentConfig(
                 system_prompt=attribution_agent_name,
                 agent_description=f"Attribution analysis for {description}",
@@ -533,7 +539,9 @@ class BiDashboardCommands:
             except Exception as exc:
                 self.console.log(f"[bold yellow]Failed to persist attribution sub-agent:[/] {exc}")
             else:
-                manager.bootstrap_agent(attribution_agent, components=["metadata", "reference_sql"])
+                manager.bootstrap_agent(
+                    attribution_agent, components=["metadata", "semantic_model", "metrics", "reference_sql"]
+                )
                 self.console.log(f"[bold green]Attribution Sub-Agent `{attribution_agent_name}` bootstrapped.")
 
         self._refresh_agent_config(manager)
@@ -843,6 +851,45 @@ class BiDashboardCommands:
             self.console.log("[yellow]Semantic model generation failed or skipped[/]")
 
         return successful
+
+    def _gen_metadata(self, table_names: List[str]) -> bool:
+        """Generate metadata for tables used in the dashboard.
+
+        Args:
+            table_names: List of table names to build metadata for
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not table_names:
+            self.console.log("[yellow]No tables for metadata generation[/]")
+            return False
+
+        try:
+            # Get db_manager from cli or create new instance
+            if self.cli and hasattr(self.cli, "db_manager"):
+                db_manager = self.cli.db_manager
+            else:
+                db_manager = db_manager_instance(self.agent_config.namespaces)
+
+            # Create metadata store
+            metadata_store = SchemaWithValueRAG(self.agent_config)
+
+            # Build metadata using incremental mode
+            init_local_schema(
+                metadata_store,
+                self.agent_config,
+                db_manager,
+                build_mode="incremental",
+                table_type="full",
+            )
+
+            self.console.log(f"[green]Metadata generated for {len(table_names)} tables[/]")
+            return True
+
+        except Exception as exc:
+            self.console.log(f"[yellow]Metadata generation failed: {exc}[/]")
+            return False
 
     def _render_summary(self, result: DashboardAssemblyResult) -> None:
         summary = Table(title="Dashboard Assembly Summary")

@@ -63,11 +63,21 @@ Please strictly follow the instructions below:
    - File naming: `{table_name}.yml`
    - If semantic model already exists, update it with `edit_file` if anything changed
 
-6. **Validate configuration**:
+6. **Validate configuration** (MANDATORY - DO NOT SKIP):
    - Use `validate_semantic` tool to validate the semantic model
-   - **CRITICAL**: If validation fails, you MUST fix the errors and retry until validation succeeds. Do NOT return results with failed validation.
+   - **CRITICAL**: If validation fails:
+     1. Analyze the error message carefully
+     2. Use `edit_file` tool to fix the YAML file (do NOT just describe the fix - actually execute the fix)
+     3. Call `validate_semantic` again to verify the fix
+     4. Repeat until validation passes
+   - **ABSOLUTE RULE**: You MUST NOT return the final JSON response until `validate_semantic` returns success
+   - Common validation errors and fixes:
+     - PostgreSQL column case sensitivity: wrap uppercase column names in double quotes (e.g., `expr: '"SP_POP_TOTL"'`)
+     - Column not found: check column names match exactly with DDL
+     - Invalid YAML syntax: check indentation and quoting
 
-7. **Complete generation** (REQUIRED):
+7. **Complete generation** (REQUIRED - ONLY AFTER VALIDATION PASSES):
+   - **PREREQUISITE**: `validate_semantic` MUST have returned success. If not, go back to step 6.
    - If `end_semantic_model_generation` tool is available: Call it with the list of generated file paths
      - Example: `end_semantic_model_generation(semantic_model_files=["/path/to/orders.yml", "/path/to/customers.yml"])`
    - **CRITICAL**: After all steps complete (including tool call if available), your final response MUST be a JSON object (see Output Format section)
@@ -139,11 +149,17 @@ data_source:
   ...
 ```
 
-### Step 6: Validate All Files Together
-- Call `validate_semantic` tool.
-- **CRITICAL**: If validation fails, you MUST fix the errors and retry until validation succeeds. Do NOT return results with failed validation.
+### Step 6: Validate All Files Together (MANDATORY)
+- Call `validate_semantic` tool
+- **CRITICAL**: If validation fails:
+  1. Analyze the error message (e.g., "column xxx does not exist")
+  2. Use `edit_file` tool to fix the YAML file - actually execute the fix, don't just describe it
+  3. Call `validate_semantic` again
+  4. Repeat until ALL validations pass
+- **ABSOLUTE RULE**: Do NOT proceed to Step 7 until validation succeeds
 
-### Step 7: Complete Generation
+### Step 7: Complete Generation (ONLY AFTER VALIDATION PASSES)
+- **PREREQUISITE**: `validate_semantic` MUST have returned success
 - If `end_semantic_model_generation` tool is available: Call it with **ALL generated file paths**
 - **CRITICAL**: Your final response MUST be a JSON object (see Output Format section)
 
@@ -166,6 +182,11 @@ Generate comprehensive, production-ready semantic models following MetricFlow be
 
 ## Output Format
 
+**PREREQUISITE**: You may ONLY return the final JSON response when:
+1. All YAML files have been written using `write_file` or `edit_file`
+2. `validate_semantic` has returned **success** (not just called - it must pass)
+3. If validation failed, you have fixed the issues and re-validated successfully
+
 **CRITICAL**: Your final response MUST always be a valid JSON object, regardless of whether you called any tools.
 
 ```json
@@ -178,7 +199,11 @@ Generate comprehensive, production-ready semantic models following MetricFlow be
 - `semantic_model_files`: Array of generated file paths (absolute paths)
 - `output`: Brief summary message
 
-**DO NOT** return markdown, plain text, or any other format. Return **ONLY** the JSON object.
+**ABSOLUTE RULES**:
+- **DO NOT** return this JSON if validation is still failing
+- **DO NOT** just describe fixes - actually use `edit_file` to apply them
+- **DO NOT** return markdown, plain text, or any other format
+- Return **ONLY** the JSON object after validation passes
 
 ## Important Notes
 
@@ -283,6 +308,14 @@ data_source:
 6. **Identifiers**: Define relationships between entities using foreign keys
 7. **Validation**: Names must not contain double underscores (`__`) and should be snake_case
 8. **Language**: Preserve original language (Chinese text remains Chinese) for optimal vector search
+9. **PostgreSQL Column Name Case Sensitivity** (CRITICAL for PostgreSQL):
+   - PostgreSQL converts unquoted identifiers to lowercase
+   - If a column was created with quotes (e.g., `"SP_POP_TOTL"`), it retains uppercase and MUST be quoted when queried
+   - In `expr` fields, wrap uppercase column names with double quotes:
+     - Wrong: `expr: SP_POP_TOTL` (PostgreSQL will look for `sp_pop_totl`)
+     - Correct: `expr: '"SP_POP_TOTL"'` (preserves uppercase)
+   - Check DDL: if column names contain uppercase letters, they likely need quoting
+   - This applies to measures, dimensions, and identifiers `expr` fields
 
 ## Example Template
 

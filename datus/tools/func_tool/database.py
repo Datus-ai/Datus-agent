@@ -142,10 +142,18 @@ class DBFuncTool:
         parts = [self._normalize_identifier_part(part) for part in token.split(".") if part.strip()]
         if not parts:
             return None
+        # Align parts from right to left (table is always rightmost)
+        # e.g., for "public.wb_health_population" with field_order ["database", "schema", "table"]:
+        #   - parts = ["public", "wb_health_population"]
+        #   - align from right: schema="public", table="wb_health_population"
         values: Dict[str, str] = {field: "" for field in self._field_order}
-        for idx, part in enumerate(parts[: len(self._field_order)]):
-            field = self._field_order[idx]
-            values[field] = part
+        num_parts = len(parts)
+        num_fields = len(self._field_order)
+        start_field_idx = max(0, num_fields - num_parts)
+        for i, part in enumerate(parts):
+            field_idx = start_field_idx + i
+            if field_idx < num_fields:
+                values[self._field_order[field_idx]] = part
         return ScopedTablePattern(raw=token, **values)
 
     def _get_semantic_model(
@@ -419,11 +427,21 @@ class DBFuncTool:
 
         Args:
             query_text: Description of the table you want (e.g. "daily active users per country").
-            catalog_name: Optional catalog filter to narrow the search.
-            database_name: Optional database filter to narrow the search.
-            schema_name: Optional schema filter to narrow the search.
+            catalog_name: Catalog filter. Only use for databases that support catalogs (StarRocks, Databricks).
+                Leave empty for PostgreSQL, MySQL, Snowflake, SQLite, DuckDB.
+            database_name: Database filter. Use for PostgreSQL, MySQL, Snowflake, StarRocks, DuckDB.
+                Leave empty for SQLite (uses file path instead).
+            schema_name: Schema filter. Use for PostgreSQL, Snowflake, DuckDB (e.g., "public").
+                Leave empty for MySQL (database = schema), StarRocks, SQLite.
             top_n: Maximum number of rows to return after scoping filters.
             simple_sample_data: If True, sample rows omit catalog/database/schema fields for brevity.
+
+        Database-specific parameter usage:
+            - PostgreSQL: database_name + schema_name (e.g., database_name="mydb", schema_name="public")
+            - MySQL: database_name only (schema = database)
+            - Snowflake: database_name + schema_name
+            - StarRocks: catalog_name + database_name
+            - SQLite/DuckDB: database_name only or leave all empty
 
         Returns:
             FuncToolResult where:

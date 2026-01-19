@@ -187,42 +187,7 @@ def parse_comment_sql_pairs(file_path: str) -> List[Tuple[str, str, int]]:
     return pairs
 
 
-def preprocess_parameterized_sql(sql: str) -> str:
-    import re
-
-    # First, protect string literals by replacing them with placeholders
-    # This prevents replacing patterns inside quoted strings (like time formats)
-    string_literals = []
-    placeholder_template = "__STRING_LITERAL_{}_PLACEHOLDER__"
-
-    def save_string(match):
-        idx = len(string_literals)
-        string_literals.append(match.group(0))
-        return placeholder_template.format(idx)
-
-    # Match single-quoted and double-quoted strings (handling SQL-style escaped quotes)
-    # SQL uses doubled quotes for escaping: 'it''s' and "say ""hello"""
-    sql = re.sub(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"", save_string, sql)
-
-    # Replace #parameter# style parameters with dummy values
-    sql = re.sub(r"#\w+#", "'2023-01-01'", sql)
-
-    # Replace other common parameter styles
-    sql = re.sub(r":\w+", "'dummy_value'", sql)  # :param
-    sql = re.sub(r"@\w+\b", "'dummy_value'", sql)  # @param (word boundary)
-    sql = re.sub(r"\$\{\w+\}", "'dummy_value'", sql)  # ${param}
-
-    # Restore string literals
-    for idx, literal in enumerate(string_literals):
-        sql = sql.replace(placeholder_template.format(idx), literal)
-
-    return sql
-
-
 def validate_sql(sql: str) -> Tuple[bool, str, str]:
-    # Preprocess SQL to handle parameter placeholders
-    preprocessed_sql = preprocess_parameterized_sql(sql)
-
     # Try MySQL, Hive, Spark dialects with sqlglot
     dialects_to_try = ["mysql", "hive", "spark"]
 
@@ -230,7 +195,7 @@ def validate_sql(sql: str) -> Tuple[bool, str, str]:
 
     for dialect in dialects_to_try:
         try:
-            parsed = sqlglot.parse(preprocessed_sql, read=dialect)
+            parsed = sqlglot.parse(sql, read=dialect)
             if not parsed or not parsed[0]:
                 continue
 

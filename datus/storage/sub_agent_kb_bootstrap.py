@@ -343,9 +343,18 @@ class SubAgentBootstrapper:
             field_order.append("schema_name")
         field_order.append("table_name")
 
+        # Align parts from right to left (table_name is always rightmost)
+        # e.g., for "public.wb_health_population" with field_order ["database_name", "schema_name", "table_name"]:
+        #   - parts = ["public", "wb_health_population"]
+        #   - align from right: schema_name="public", table_name="wb_health_population"
         values: Dict[str, str] = {field: "" for field in field_order}
-        for idx, part in enumerate(parts[: len(field_order)]):
-            values[field_order[idx]] = part
+        num_parts = len(parts)
+        num_fields = len(field_order)
+        start_field_idx = max(0, num_fields - num_parts)
+        for i, part in enumerate(parts):
+            field_idx = start_field_idx + i
+            if field_idx < num_fields:
+                values[field_order[field_idx]] = part
         conditions: List[Node] = []
         for field, value in values.items():
             if not value:

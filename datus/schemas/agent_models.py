@@ -60,7 +60,7 @@ class SubAgentConfig(BaseModel):
         default=None, init=True, description="Scoped context for sub-agents"
     )
     rules: List[str] = Field(default_factory=list, init=True, description="Rules to be used by sub-agents")
-    prompt_version: Optional[str] = Field(default="1.0", init=True, description="System Prompt version")
+    prompt_version: Optional[str] = Field(default=None, init=True, description="System Prompt version")
     prompt_language: str = Field(default="en", init=True, description="System Prompt language")
     scoped_kb_path: Optional[str] = Field(default=None, init=True, description="Path to scoped KB storage")
 
