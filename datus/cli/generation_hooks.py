@@ -1184,6 +1184,7 @@ class GenerationHooks(AgentHooks):
                         "schema_name": schema_name,
                         # Generated SQL from dry_run
                         "sql": metric_sqls.get(m_name, "") if metric_sqls else "",
+                        "yaml_path": yaml_path_to_store,
                     }
                     metric_objects.append(metric_obj)
                     synced_items.append(f"metric:{m_name}")

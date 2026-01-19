@@ -248,6 +248,7 @@ class SemanticModelRAG:
             "table_name": semantic_model.get("table_name", table_name),
             "semantic_model_name": model_name,
             "description": semantic_model.get("description"),
+            "yaml_path": semantic_model.get("yaml_path", ""),
             "dimensions": dimensions,
             "measures": measures,
             "identifiers": identifiers,

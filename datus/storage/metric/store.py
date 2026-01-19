@@ -43,6 +43,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     # -- Generated SQL --
                     pa.field("sql", pa.string()),  # SQL generated from query_metrics dry_run
                     # -- Operations & Lineage --
+                    pa.field("yaml_path", pa.string()),
                     pa.field("updated_at", pa.timestamp("ms")),
                 ]
             ),
