@@ -516,10 +516,14 @@ class ChatCommands:
             response: Clean response text to display as markdown
         """
         try:
-            # Skip JSON responses - they are for backend processing only
+            # Handle JSON responses - try to extract user-facing content
             stripped = response.strip()
             if stripped.startswith("{") and stripped.endswith("}"):
-                return
+                # Try to extract report field from JSON
+                extracted = self._extract_report_from_json(response)
+                if extracted:
+                    response = extracted
+                # If extraction fails, fall through to display raw content
 
             # Display as markdown with proper formatting
             markdown_content = Markdown(response)
