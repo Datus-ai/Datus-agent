@@ -402,17 +402,20 @@ class ChatCommands:
                         clean_output = self._extract_report_from_json(response)
                         if not clean_output:
                             # Fallback: try to parse raw_output from response string
-                            try:
-                                import ast
+                            if response is None:
+                                clean_output = ""
+                            else:
+                                try:
+                                    import ast
 
-                                response_dict = ast.literal_eval(response)
-                                clean_output = (
-                                    response_dict.get("raw_output", response)
-                                    if isinstance(response_dict, dict)
-                                    else response
-                                )
-                            except (ValueError, SyntaxError):
-                                clean_output = response
+                                    response_dict = ast.literal_eval(response)
+                                    clean_output = (
+                                        response_dict.get("raw_output", response)
+                                        if isinstance(response_dict, dict)
+                                        else response
+                                    )
+                                except (ValueError, SyntaxError, TypeError):
+                                    clean_output = response
 
                     # Display using simple, focused methods
                     if sql:
@@ -608,22 +611,26 @@ class ChatCommands:
             return None
 
         try:
-            stripped = response.strip()
-            # Check if it looks like JSON
-            if not (stripped.startswith("{") and stripped.endswith("}")):
-                return None
-
             import json_repair
 
             from datus.utils.json_utils import strip_json_str
 
+            # First try to extract JSON from code blocks or other wrappers
+            stripped = response.strip()
             cleaned_json = strip_json_str(stripped)
-            if cleaned_json:
-                parsed = json_repair.loads(cleaned_json)
-                if isinstance(parsed, dict) and "report" in parsed:
-                    return parsed.get("report", "")
-        except Exception as e:
+            if not cleaned_json:
+                return None
+            # Check if cleaned content looks like JSON
+            if not (cleaned_json.startswith("{") and cleaned_json.endswith("}")):
+                return None
+
+            parsed = json_repair.loads(cleaned_json)
+            if isinstance(parsed, dict) and "report" in parsed:
+                return parsed.get("report", "")
+        except ValueError as e:
             logger.debug(f"Failed to extract report from JSON: {e}")
+        except TypeError as e:
+            logger.debug(f"Invalid input type for JSON extraction: {e}")
 
         return None
 
