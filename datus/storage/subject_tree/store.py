@@ -1299,3 +1299,69 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         except Exception as e:
             logger.error(f"Failed to fetch entries by node_id={node_id}: {e}")
             return []
+
+    def delete_entry(self, subject_path: List[str], name: str) -> bool:
+        """Delete entry by subject_path and name from lancedb.
+
+        This is a generic method for deleting entries from storage using
+        subject_path and name fields. Subclasses may override this method
+        to add additional logic (e.g., yaml file handling for metrics).
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue'])
+            name: Name of the entry to delete
+
+        Returns:
+            True if deleted successfully, False if entry not found
+
+        Raises:
+            ValueError: If subject_path is empty or name is empty
+
+        Examples:
+            # Delete a specific metric
+            deleted = store.delete_entry(
+                subject_path=['Finance', 'Revenue'],
+                name='total_revenue'
+            )
+
+            # Delete a reference SQL
+            deleted = store.delete_entry(
+                subject_path=['Analytics', 'Reports'],
+                name='daily_sales_query'
+            )
+        """
+        if not subject_path:
+            raise ValueError("subject_path cannot be empty")
+
+        if not name or not name.strip():
+            raise ValueError("name cannot be empty")
+
+        name = name.strip()
+
+        # Find subject_node_id from subject_path
+        subject_node = self.subject_tree.get_node_by_path(subject_path)
+        if not subject_node:
+            logger.warning(f"Subject path not found: {'/'.join(subject_path)}")
+            return False
+
+        subject_node_id = subject_node["node_id"]
+
+        # Build where clause to locate the entry
+        self._ensure_table_ready()
+        from datus.storage.lancedb_conditions import and_, build_where, eq
+
+        where_condition = and_(eq(SUBJECT_ID_COLUMN_NAME, subject_node_id), eq(NAME_COLUMN_NAME, name))
+
+        # Check if entry exists
+        where_clause = build_where(where_condition)
+        count = self.table.count_rows(where_clause)
+        if count == 0:
+            logger.warning(f"Entry not found: name='{name}' under subject_path={'/'.join(subject_path)}")
+            return False
+
+        # Delete the entry
+        self.table.delete(where_clause)
+
+        logger.info(f"Deleted entry '{name}' under subject_path={'/'.join(subject_path)}")
+
+        return True

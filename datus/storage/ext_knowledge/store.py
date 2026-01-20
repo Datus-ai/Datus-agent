@@ -156,6 +156,26 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         """After initialization, create indices for the table."""
         self.create_indices()
 
+    def delete_knowledge(self, subject_path: List[str], name: str) -> bool:
+        """Delete knowledge entry by subject_path and name.
+
+        Only deletes from lancedb, does not modify any files.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Business', 'Terms'])
+            name: Name of the knowledge entry to delete
+
+        Returns:
+            True if deleted successfully, False if entry not found
+
+        Examples:
+            deleted = storage.delete_knowledge(
+                subject_path=['Business', 'Terms'],
+                name='annual_revenue'
+            )
+        """
+        return self.delete_entry(subject_path, name)
+
 
 class ExtKnowledgeRAG:
     """RAG interface for external knowledge with CRUD operations suitable for LLM tools.
@@ -214,3 +234,17 @@ class ExtKnowledgeRAG:
         full_path = subject_path.copy()
         full_path.append(name)
         return self.store.search_all_knowledge(subject_path=full_path)
+
+    def delete_knowledge(self, subject_path: List[str], name: str) -> bool:
+        """Delete knowledge entry by subject_path and name.
+
+        Only deletes from lancedb, does not modify any files.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Business', 'Terms'])
+            name: Name of the knowledge entry to delete
+
+        Returns:
+            True if deleted successfully, False if entry not found
+        """
+        return self.store.delete_knowledge(subject_path, name)

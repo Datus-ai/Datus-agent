@@ -160,6 +160,26 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         """
         return self.search_with_subject_filter(subject_path=subject_path, selected_fields=select_fields)
 
+    def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
+        """Delete reference SQL by subject_path and name.
+
+        Only deletes from lancedb, does not modify any files.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Analytics', 'Reports'])
+            name: Name of the reference SQL to delete
+
+        Returns:
+            True if deleted successfully, False if entry not found
+
+        Examples:
+            deleted = storage.delete_reference_sql(
+                subject_path=['Analytics', 'Reports'],
+                name='daily_sales_query'
+            )
+        """
+        return self.delete_entry(subject_path, name)
+
 
 class ReferenceSqlRAG:
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
@@ -240,3 +260,17 @@ class ReferenceSqlRAG:
         """
         full_path = list(subject_path) + [name]
         return self.reference_sql_storage.search_all_reference_sql(full_path, select_fields=selected_fields)
+
+    def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
+        """Delete reference SQL by subject_path and name.
+
+        Only deletes from lancedb, does not modify any files.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Analytics', 'Reports'])
+            name: Name of the reference SQL to delete
+
+        Returns:
+            True if deleted successfully, False if entry not found
+        """
+        return self.reference_sql_storage.delete_reference_sql(subject_path, name)
