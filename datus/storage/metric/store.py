@@ -253,10 +253,12 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                         result["message"] = f"Deleted metric '{name}' from lancedb and yaml file"
                         logger.info(f"Updated yaml file: {yaml_path}")
                     else:
-                        # File would be empty, keep it but log warning
-                        logger.warning(f"Yaml file {yaml_path} is now empty after removing metric '{name}'")
+                        # File is empty after removing the metric, delete the file
+                        os.remove(yaml_path)
                         result["yaml_updated"] = True
-                        result["message"] = f"Deleted metric '{name}' from lancedb and yaml file (file is now empty)"
+                        result["yaml_deleted"] = True
+                        result["message"] = f"Deleted metric '{name}' from lancedb and removed empty yaml file"
+                        logger.info(f"Deleted empty yaml file: {yaml_path}")
 
             except Exception as e:
                 logger.error(f"Failed to update yaml file {yaml_path}: {e}")
