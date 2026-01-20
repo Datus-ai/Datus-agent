@@ -232,7 +232,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     docs = list(yaml.safe_load_all(f))
 
                 # Filter out the metric doc with matching name
-                original_count = len(docs)
                 filtered_docs = []
                 metric_removed = False
                 for doc in docs:
