@@ -763,7 +763,7 @@ class BiDashboardCommands:
 
     def _gen_metrics(self, sqls: List[SelectedSqlCandidate], platform: str, dashboard: DashboardInfo) -> List[str]:
         if not sqls:
-            return None
+            return []
         target_file = self._ensure_file_name(platform, dashboard, suffix=".csv")
         file_data = []
         for sql_item in sqls:

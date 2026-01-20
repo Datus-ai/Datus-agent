@@ -16,7 +16,7 @@ from datus.tools.bi_tools.base_adaptor import AuthParam
 from datus.tools.bi_tools.dashboard_assembler import ChartSelection, DashboardAssembler
 from datus.utils.loggings import configure_logging
 from tests.conftest import load_acceptance_config
-from tests.test_integration_bi_dashboard_fixed import validate_chart_sql
+from tests.test_integration_bi_dashboard import validate_chart_sql
 
 configure_logging(False, console_output=False)
 
