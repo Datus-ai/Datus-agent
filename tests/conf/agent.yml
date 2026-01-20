@@ -123,7 +123,13 @@ agent:
       username: ${STARROCKS_USER}
       password: ${STARROCKS_PASSWORD}
       database: ${STARROCKS_DATABASE}
-
+    superset:
+      type: postgresql
+      host: 127.0.0.1
+      port: 15432
+      username: superset
+      password: superset
+      database: examples
   storage:
     base_path: data
     embedding_device_type: cpu

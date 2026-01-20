@@ -150,15 +150,13 @@ class BIAdaptorBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_datasets(self, dashboard_id: Union[int, str]) -> List[DatasetInfo]:
-        """Return lightweight dataset metadata (id/name)."""
-        raise NotImplementedError
-
-    # ----- Extraction -----
-
-    @abstractmethod
     def get_chart(self, chart_id: Union[int, str], dashboard_id: Union[int, str, None] = None) -> Optional[ChartInfo]:
         """Return ChartInfo with QuerySpec (may or may not include rendered_sql)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_datasets(self, dashboard_id: Union[int, str]) -> List[DatasetInfo]:
+        """Return lightweight dataset metadata (id/name)."""
         raise NotImplementedError
 
     @abstractmethod
