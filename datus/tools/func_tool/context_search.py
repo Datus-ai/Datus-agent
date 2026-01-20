@@ -19,6 +19,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 _NAME = "context_search_tools"
+_NAME_LIST_SUBJECT_TREE = "context_search_tools.list_subject_tree"
 _NAME_METRICS = "context_search_tools.search_metrics"
 _NAME_GET_METRICS = "context_search_tools.get_metrics"
 _NAME_SQL = "context_search_tools.search_reference_sql"
@@ -53,6 +54,7 @@ class ContextSearchTools:
         return self.has_metrics and (
             not self.sub_agent_config
             or _NAME in self.sub_agent_config.tool_list
+            or _NAME_LIST_SUBJECT_TREE in self.sub_agent_config.tool_list
             or _NAME_METRICS in self.sub_agent_config.tool_list
             or _NAME_GET_METRICS in self.sub_agent_config.tool_list
         )
@@ -61,6 +63,7 @@ class ContextSearchTools:
         return self.has_reference_sql and (
             not self.sub_agent_config
             or _NAME in self.sub_agent_config.tool_list
+            or _NAME_LIST_SUBJECT_TREE in self.sub_agent_config.tool_list
             or _NAME_SQL in self.sub_agent_config.tool_list
             or _NAME_GET_SQL in self.sub_agent_config.tool_list
         )
@@ -69,6 +72,7 @@ class ContextSearchTools:
         return self.has_knowledge and (
             not self.sub_agent_config
             or _NAME in self.sub_agent_config.tool_list
+            or _NAME_LIST_SUBJECT_TREE in self.sub_agent_config.tool_list
             or _NAME_KNOWLEDGE in self.sub_agent_config.tool_list
             or _NAME_GET_KNOWLEDGE in self.sub_agent_config.tool_list
         )
@@ -153,7 +157,7 @@ class ContextSearchTools:
 
             _normalize_subject_tree(enriched_tree)
 
-            logger.debug("enriched_tree: %s", enriched_tree)
+            logger.debug(f"enriched_tree: {enriched_tree}")
             return FuncToolResult(result=enriched_tree)
         except ValueError as exc:
             return FuncToolResult(success=0, error=str(exc))

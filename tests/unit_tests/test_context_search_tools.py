@@ -154,11 +154,22 @@ def test_list_domain_layers_tree_combined(build_context_tools):
     assert result.result == {
         "Sales": {
             "Revenue": {
-                "Monthly": {},
-                "Quarterly": {},
+                "Monthly": {
+                    "metrics": ["monthly_sales"],
+                    "reference_sql": ["sales_query"],
+                },
+                "Quarterly": {
+                    "metrics": ["quarterly_sales"],
+                },
             }
         },
-        "Support": {"Tickets": {"Escalations": {}}},
+        "Support": {
+            "Tickets": {
+                "Escalations": {
+                    "reference_sql": ["support_query"],
+                }
+            }
+        },
     }
 
 
@@ -235,7 +246,7 @@ def test_search_historical_sql(build_context_tools):
         query_text="sales report",
         subject_path=["Sales", "Revenue"],
         top_n=2,
-        selected_fields=["name", "sql", "comment", "summary", "tags"],
+        selected_fields=["name", "sql", "summary", "tags"],
     )
 
 
