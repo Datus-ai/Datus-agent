@@ -234,17 +234,19 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                 # Filter out the metric doc with matching name
                 original_count = len(docs)
                 filtered_docs = []
+                metric_removed = False
                 for doc in docs:
                     if doc is None:
                         continue
                     # Check if this is a metric doc with the target name
                     if "metric" in doc and doc["metric"].get("name") == name:
                         logger.info(f"Removing metric '{name}' from yaml file: {yaml_path}")
+                        metric_removed = True
                         continue
                     filtered_docs.append(doc)
 
                 # Write back if we removed something
-                if len(filtered_docs) < original_count:
+                if metric_removed:
                     if filtered_docs:
                         # Write remaining docs back to file
                         with open(yaml_path, "w", encoding="utf-8") as f:
