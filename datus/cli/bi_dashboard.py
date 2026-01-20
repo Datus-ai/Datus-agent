@@ -36,6 +36,7 @@ from datus.tools.bi_tools.dashboard_assembler import (
 )
 from datus.tools.bi_tools.registry import adaptor_registry
 from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.path_manager import get_path_manager
@@ -480,13 +481,20 @@ class BiDashboardCommands:
 
         # Generate semantic model (before metrics)
         self.console.log("[bold cyan]Start building semantic model[/]")
-        self._gen_semantic_model(result.metric_sqls, platform, dashboard)
-        self.console.log("[bold cyan]Building semantic model completed[/]")
+        semantic_model_success = self._gen_semantic_model(result.metric_sqls, platform, dashboard)
 
-        # Generate metrics (after semantic model)
-        self.console.log("[bold cyan]Start building metrics[/]")
-        metrics = self._gen_metrics(result.metric_sqls, platform, dashboard)
-        self.console.log("[bold cyan]Building metrics completed[/]")
+        # Generate metrics (after semantic model, skip if semantic model failed)
+        metrics = []
+        if semantic_model_success:
+            self.console.log("[bold cyan]Building semantic model completed[/]")
+            self.console.log("[bold cyan]Start building metrics[/]")
+            metrics = self._gen_metrics(result.metric_sqls, platform, dashboard)
+            if metrics:
+                self.console.log("[bold cyan]Building metrics completed[/]")
+            else:
+                self.console.log("[yellow]Metrics generation failed or no metrics generated[/]")
+        else:
+            self.console.log("[yellow]Skipping metrics generation due to semantic model failure[/]")
 
         scoped_context: Optional[ScopedContext] = None
         if table_names or ref_sqls or metrics:
@@ -787,8 +795,16 @@ class BiDashboardCommands:
             extra_instructions=extra_instructions,
         )
 
+        if not successful:
+            return None
+
+        # Validate semantic model after metrics generation
+        if not self._validate_semantic_model():
+            self.console.log("[yellow]Metrics validation failed[/]")
+            return None
+
         metrics = set()
-        if successful and (files := metrics_result.get("semantic_models", [])):
+        if files := metrics_result.get("semantic_models", []):
             # Get base directory for semantic models
             base_dir = get_path_manager(self.agent_config.home).semantic_model_path(self.agent_config.current_namespace)
             for file in files:
@@ -845,8 +861,14 @@ class BiDashboardCommands:
         )
 
         if successful:
-            count = result.get("semantic_model_count", 0) if result else 0
-            self.console.log(f"[green]Semantic model generated successfully (count={count})[/]")
+            # Validate semantic model after generation
+            validation_success = self._validate_semantic_model()
+            if validation_success:
+                count = result.get("semantic_model_count", 0) if result else 0
+                self.console.log(f"[green]Semantic model generated successfully (count={count})[/]")
+            else:
+                self.console.log("[yellow]Semantic model validation failed[/]")
+                return False
         else:
             self.console.log("[yellow]Semantic model generation failed or skipped[/]")
 
@@ -889,6 +911,44 @@ class BiDashboardCommands:
 
         except Exception as exc:
             self.console.log(f"[yellow]Metadata generation failed: {exc}[/]")
+            return False
+
+    def _validate_semantic_model(self) -> bool:
+        """Validate semantic model configuration using SemanticTools.
+
+        Returns:
+            True if validation passed, False otherwise
+        """
+        try:
+            # Get adapter_type from agentic_nodes config, default to metricflow
+            adapter_type = "metricflow"
+            agentic_nodes = getattr(self.agent_config, "agentic_nodes", None) or {}
+            node_config = agentic_nodes.get("gen_semantic_model", {})
+            if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
+                adapter_type = node_config.get("semantic_adapter")
+
+            semantic_tools = SemanticTools(
+                agent_config=self.agent_config,
+                adapter_type=adapter_type,
+            )
+
+            # Check if adapter is available
+            if not semantic_tools.adapter:
+                self.console.log(
+                    "[red]Semantic adapter not available. " "Install with: pip install datus-semantic-metricflow[/]"
+                )
+                return False
+
+            result = semantic_tools.validate_semantic()
+            if not result.success:
+                error_msg = result.error or "Semantic validation failed"
+                self.console.log(f"[red]Validation error: {error_msg}[/]")
+                return False
+
+            return True
+
+        except Exception as exc:
+            self.console.log(f"[yellow]Validation check failed: {exc}[/]")
             return False
 
     def _render_summary(self, result: DashboardAssemblyResult) -> None:

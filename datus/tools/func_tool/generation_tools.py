@@ -40,8 +40,7 @@ class GenerationTools:
         return [
             trans_to_function_tool(func)
             for func in (
-                self.check_semantic_object_exists,  # Updated name to reflect broader scope
-                self.check_metric_exists,  # Kept for backward compat or specific metric checks
+                self.check_semantic_object_exists,
                 self.generate_sql_summary_id,
                 self.end_semantic_model_generation,
                 self.end_metric_generation,
@@ -82,13 +81,12 @@ class GenerationTools:
                 if results:
                     found_object = results[0]
             elif kind == "metric":
-                # For metrics, search all and filter by name
+                # Exact match for metric using SQL WHERE condition
                 storage = self.metric_rag.storage
-                results = storage.search_all(select_fields=["id", "name"])
-                for obj in results:
-                    if obj.get("name", "").lower() == target_name:
-                        found_object = obj
-                        break
+                where = build_where(eq("name", target_name))
+                results = storage.search_all(where=where, select_fields=["id", "name"])
+                if results:
+                    found_object = results[0]
             else:
                 # For column, use vector search + post-filter
                 storage = self.semantic_rag.storage
@@ -143,12 +141,6 @@ class GenerationTools:
     ) -> FuncToolResult:
         """Legacy wrapper for checking table existence."""
         return self.check_semantic_object_exists(table_name, kind="table")
-
-    def check_metric_exists(self, metric_name: str) -> FuncToolResult:
-        """
-        Check if metric already exists.
-        """
-        return self.check_semantic_object_exists(metric_name, kind="metric")
 
     def end_semantic_model_generation(self, semantic_model_files: List[str]) -> FuncToolResult:
         """
