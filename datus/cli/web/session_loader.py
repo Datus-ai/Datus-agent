@@ -35,6 +35,11 @@ class SessionLoader:
         if last_action.role == ActionRole.ASSISTANT and last_action.messages:
             result_json = llm_result2json(last_action.messages)
             if result_json and ("sql" in result_json or "output" in result_json):
+                output = {}
+                if "sql" in result_json:
+                    output["sql"] = result_json["sql"]
+                if "output" in result_json:
+                    output["response"] = result_json["output"]
                 current_assistant_group["content"] = result_json.get("output", "")
                 current_assistant_group["sql"] = result_json.get("sql", "")
                 # Create final action
@@ -43,7 +48,7 @@ class SessionLoader:
                     action_type="chat_response",
                     messages="Chat interaction completed successfully",
                     input_data={},
-                    output_data=result_json,
+                    output_data=output,
                     status=ActionStatus.SUCCESS,
                 )
                 return final_action
