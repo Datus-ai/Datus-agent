@@ -79,6 +79,7 @@ Repository = "https://github.com/datus-ai/datus-agent"
 datus-agent = "datus.main:main"
 datus-cli = "datus.cli.main:main"
 datus = "datus.cli.main:main"
+datus-mcp = "datus.mcp_server:main"
 
 [[tool.uv.index]]
 url = "http://mirrors.aliyun.com/pypi/simple"

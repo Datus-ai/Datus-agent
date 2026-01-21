@@ -367,4 +367,125 @@ metric:
 
 For more details about metrics: [Metrics](./metrics/metrics.md)
 
+### **🔌 4. Datus MCP Server (Claude Desktop Integration)**
+
+Expose Datus's database and context search tools via the **Model Context Protocol (MCP)**, enabling integration with
+Claude Desktop, Claude Code, and other MCP-compatible clients.
+
+**Supported Transport Modes:**
+
+- `http`: Streamable HTTP (bidirectional, default)
+- `sse`: Server-Sent Events over HTTP (for web clients)
+- `stdio`: Standard input/output (for Claude Desktop and CLI tools)
+
+#### Quick Start
+
+- Install Datus:
+
+```bash
+pip install datus-agent
+```
+
+- Run the MCP server:
+
+```bash
+# Run with uvx (recommended)
+uvx --from datus-agent datus-mcp --namespace local_duckdb
+
+# Or run with python directly
+python -m datus.mcp_server --namespace local_duckdb
+```
+
+#### Claude Desktop Configuration
+
+Add the following to your `claude_desktop_config.json`:
+
+- **Using uvx (recommended):**
+
+```json
+{
+  "mcpServers": {
+    "datus": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "datus-agent",
+        "datus-mcp",
+        "--namespace",
+        "local_duckdb",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+- **Using python directly:**
+
+```json
+{
+  "mcpServers": {
+    "datus": {
+      "command": "python",
+      "args": [
+        "-m",
+        "datus.mcp_server",
+        "--namespace",
+        "local_duckdb",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+<aside>
+💡 The config file location:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+</aside>
+
+#### HTTP Server Mode
+
+For web clients or multi-client scenarios, run the server in HTTP mode:
+
+```bash
+# Streamable HTTP (default, bidirectional)
+datus-mcp --namespace local_duckdb --host 0.0.0.0 --port 8000
+
+# SSE mode (for web clients)
+datus-mcp --namespace local_duckdb --transport sse --port 8000
+```
+
+Connect to:
+
+- Streamable HTTP: `http://localhost:8000/mcp`
+- SSE: `http://localhost:8000/sse`
+
+#### Available Tools
+
+The MCP server exposes the following tools:
+
+| Category           | Tools                                                                                                                                                             |
+|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Database**       | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `get_table_ddl`, `read_query`                                                  |
+| **Context Search** | `list_subject_tree`, `search_metrics`, `get_metrics`, `search_reference_sql`, `get_reference_sql`, `search_semantic_objects`, `search_knowledge`, `get_knowledge` |
+
+#### Command Line Options
+
+```bash
+datus-mcp --help
+
+Options:
+  --namespace, -n    Database namespace to use (required)
+  --sub-agent, -s    Sub-agent name for scoped context
+  --database, -d     Database name override
+  --config           Path to agent configuration file
+  --transport, -t    Transport type: http (default), sse, stdio
+  --host             Host to bind for HTTP transports (default: 0.0.0.0)
+  --port, -p         Port to bind for HTTP transports (default: 8000)
+  --debug            Enable debug logging
+```
 
