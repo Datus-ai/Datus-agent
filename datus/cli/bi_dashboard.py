@@ -443,14 +443,10 @@ class BiDashboardCommands:
         dashboard: DashboardInfo,
         result: DashboardAssemblyResult,
     ) -> None:
-        sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
         if not getattr(self.agent_config, "current_namespace", ""):
             self.console.print("[yellow]No namespace set. Skipping sub-agent save.[/]")
             return
 
-        if sub_agent_name in SYS_SUB_AGENTS:
-            self.console.print(f"[bold red]Error:[/] '{sub_agent_name}' is reserved for built-in sub-agents.")
-            return
         table_names = self._dedupe_values([table for table in result.tables if table])
 
         # Generate metadata first (before semantic model)
@@ -491,6 +487,7 @@ class BiDashboardCommands:
             namespace=self.agent_config.current_namespace,
             agent_config=self.agent_config,
         )
+        sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
 
         self._do_save_sub_agent(
             sub_agent_manager=manager,
@@ -522,7 +519,7 @@ class BiDashboardCommands:
 
         log_prefix = f"{log_prefix} Sub-Agent `{sub_agent_name}`"
         if sub_agent_name in SYS_SUB_AGENTS:
-            self.console.log(f"[bold yellow]{log_prefix} saved.")
+            self.console.print(f"[bold red]Error:[/] '{sub_agent_name}' is reserved for built-in sub-agents.")
             return
 
         try:
