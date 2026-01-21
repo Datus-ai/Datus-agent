@@ -111,7 +111,6 @@ class StreamOutputManager:
             console=self.console,
             refresh_per_second=4,  # Moderate refresh rate
             transient=False,
-            vertical_overflow="visible",  # Prevent line duplication on height changes
         )
         self.live.start()
         self._is_running = True
