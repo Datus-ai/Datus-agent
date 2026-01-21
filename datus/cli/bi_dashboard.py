@@ -39,9 +39,12 @@ from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 from datus.utils.stream_output import StreamOutputManager
 from datus.utils.sub_agent_manager import SubAgentManager
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
@@ -86,6 +89,7 @@ class BiDashboardCommands:
             self.console.print("\n[yellow]Cancelled.[/]")
             return
         except Exception as exc:
+            logger.error("Failed to initialize BI dashboard options", exc_info=True)
             self.console.print(f"[bold red]Error:[/] {exc}")
             return
 
@@ -252,6 +256,7 @@ class BiDashboardCommands:
                 with self.console.status("Loading dashboard..."):
                     dashboard = adaptor.get_dashboard_info(dashboard_id)
             except Exception as exc:
+                logger.error(f"Failed to load dashboard from {dashboard_url}", exc_info=True)
                 self.console.print(f"[bold red]Failed to load dashboard:[/] {exc}")
                 dashboard = None
 
@@ -376,6 +381,7 @@ class BiDashboardCommands:
                 try:
                     chart_detail = adaptor.get_chart(chart_meta.id, dashboard_id)
                 except Exception as exc:
+                    logger.warning(f"Failed to load chart {chart_meta.id}: {exc}")
                     self.console.print(f"[yellow]Failed to load chart {chart_meta.id}:[/] {exc}")
                     chart_detail = None
                 charts.append(chart_detail or chart_meta)
@@ -525,6 +531,7 @@ class BiDashboardCommands:
             manager.save_agent(sub_agent, previous_name=sub_agent_name)
             self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` saved.")
         except Exception as exc:
+            logger.error(f"Failed to persist sub-agent {sub_agent_name}", exc_info=True)
             self.console.log(f"[bold red]Failed to persist sub-agent:[/] {exc}")
             return
         manager.bootstrap_agent(sub_agent, components=["metadata", "semantic_model", "metrics", "reference_sql"])
@@ -545,6 +552,7 @@ class BiDashboardCommands:
                 manager.save_agent(attribution_agent, previous_name=attribution_agent_name)
                 self.console.log(f"[bold green]Attribution Sub-Agent `{attribution_agent_name}` saved.")
             except Exception as exc:
+                logger.warning(f"Failed to persist attribution sub-agent {attribution_agent_name}: {exc}")
                 self.console.log(f"[bold yellow]Failed to persist attribution sub-agent:[/] {exc}")
             else:
                 manager.bootstrap_agent(
@@ -910,6 +918,7 @@ class BiDashboardCommands:
             return True
 
         except Exception as exc:
+            logger.error(f"Metadata generation failed for tables: {table_names}", exc_info=True)
             self.console.log(f"[yellow]Metadata generation failed: {exc}[/]")
             return False
 
@@ -948,6 +957,7 @@ class BiDashboardCommands:
             return True
 
         except Exception as exc:
+            logger.warning(f"Semantic model validation check failed: {exc}")
             self.console.log(f"[yellow]Validation check failed: {exc}[/]")
             return False
 
