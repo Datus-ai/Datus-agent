@@ -1,0 +1,181 @@
+name: Run Integration Tests
+
+on:
+  schedule:
+    - cron: '1 18 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  run-integration-bi:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install datus-postgresql
+          pip install datus-semantic-metricflow
+
+      - name: Setup config file
+        run: |
+          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
+          cp /home/datus_ci/ci_template/ci.env .env
+
+      - name: Load environment variables
+        run: |
+          echo "Loading environment variables from .env file..."
+          # Export all variables from .env to GITHUB_ENV so they persist across steps
+          while IFS= read -r line || [ -n "$line" ]; do
+            # Skip empty lines and comments
+            if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
+              # Remove any surrounding whitespace and export to GITHUB_ENV
+              var_name=$(echo "$line" | cut -d'=' -f1)
+              echo "Loading variable: $var_name"
+              echo "$line" >> $GITHUB_ENV
+            fi
+          done < .env
+          echo "Environment variables loaded successfully"
+
+      - name: Verify FEISHU_WEBHOOK_URL
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_NOTIFY_CI_URL }}
+        run: |
+          if [ -n "$FEISHU_WEBHOOK_URL" ]; then
+            echo "✅ FEISHU_WEBHOOK_URL is set (length: ${#FEISHU_WEBHOOK_URL} characters)"
+          else
+            echo "❌ FEISHU_WEBHOOK_URL is not set or empty"
+          fi
+
+      - name: Run integration tests
+        id: integration_tests
+        run: |
+          LOG_FILE="test_output_bi_$(date +%Y%m%d_%H%M%S).log"
+          echo "log_file=$LOG_FILE" >> $GITHUB_OUTPUT
+          python -m pytest tests/test_integration_bi_dashboard.py --tb=short --verbose | tee "$LOG_FILE"
+          echo "test_exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results-${{ github.run_number }}
+          path: test_output_bi_*.log
+          retention-days: 7
+
+      - name: Send Feishu notification
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_NOTIFY_CI_URL }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let benchmarkReport = '';
+
+            try {
+              const logFiles = fs.readdirSync('.').filter(file => file.startsWith('test_output_bi_') && file.endsWith('.log'));
+              const latestLogFile = logFiles.sort().pop();
+            
+              // Use execSync to get last 200 lines using tail command
+              const { execSync } = require('child_process');
+              let logContent = '';
+              try {
+                logContent = execSync(`tail -200 "${latestLogFile || 'test_output_bi.log'}"`, { encoding: 'utf8' });
+              } catch (error) {
+                logContent = fs.readFileSync(latestLogFile || 'test_output_bi.log', 'utf8');
+              }
+              let separator = '────────────────────────────────────────────────────────────────────────────────'
+              const benchmarkStart = logContent.indexOf(separator);
+              let benchmarkEnd = logContent.lastIndexOf(separator);
+              if (benchmarkStart !== -1) {
+                benchmarkEnd = benchmarkEnd === -1 ? logContent.length : benchmarkEnd + separator.length;
+                benchmarkReport = logContent.substring(benchmarkStart, benchmarkEnd);
+              } else {
+                benchmarkReport = logContent;
+              }
+            } catch (error) {
+              console.log('Could not read benchmark report from log');
+            }
+
+            const testStatus = '${{ steps.integration_tests.outputs.test_exit_code }}' === '0' ? '✅ PASSED' : '❌ FAILED';
+            const today = new Date().toISOString().split('T')[0];
+
+            const messageBody = `## 🧪 Daily Integration For BI Test Report - ${today}
+
+            **Status:** ${testStatus}
+            **Runs Details:** [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            ### 📊 Test Results Summary
+            \`\`\`
+            ${benchmarkReport || 'Test completed - detailed report in artifacts'}
+            \`\`\`
+
+            ---
+            *This is an automated report generated by the integration test workflow.*
+            `;
+
+            // Send to Feishu
+            const https = require('https');
+            
+            const feishuWebhookUrl = process.env.FEISHU_WEBHOOK_URL;
+            
+            // Safe debugging of the environment variable
+            if (feishuWebhookUrl) {
+              console.log('✅ FEISHU_WEBHOOK_URL is set in JS environment.');
+            } else {
+              console.error('❌ FEISHU_WEBHOOK_URL is not set in JS environment.');
+            }
+            
+            if (!feishuWebhookUrl) {
+              console.error('FEISHU_WEBHOOK_URL environment variable is not set');
+              return;
+            }
+            
+            const url = new URL(feishuWebhookUrl);
+            
+            const data = JSON.stringify({
+              "msg_type": "interactive",
+              "card": {
+                "type": "template",
+                "data": {
+                  "template_id": "AAqz7JC34dHlY",
+                  "template_version_name": "1.0.0",
+                  "template_variable": {
+                    "report_result": messageBody
+                  }
+                }
+              }
+            });
+            
+            const options = {
+              hostname: url.hostname,
+              port: url.port || 443,
+              path: url.pathname + url.search,
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(data)
+              }
+            };
+            
+            const req = https.request(options, (res) => {
+              console.log('Feishu notification sent:', res.statusCode);
+              process.exit(0);
+            });
+            
+            req.on('error', (error) => {
+              console.error('Error sending to Feishu:', error);
+            });
+            
+            req.write(data);
+            req.end();

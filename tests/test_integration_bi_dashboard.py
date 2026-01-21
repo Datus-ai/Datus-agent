@@ -127,7 +127,6 @@ class TestE2EIntegration:
     - REQUIRE full environment setup
     """
 
-    @pytest.mark.acceptance
     def test_complete_workflow(
         self,
         bi_commands: BiDashboardCommands,
@@ -149,6 +148,9 @@ class TestE2EIntegration:
         Cost: ~$0.05-0.20 per run
         Time: ~2-5 minutes
         """
+        # Collect results for final summary
+        test_results = []
+
         for dashboard_item in input_data:
             # Extract configuration
             platform = dashboard_item["platform"]
@@ -167,7 +169,6 @@ class TestE2EIntegration:
                 pytest.skip(f"Dashboard config for platform '{platform}' not found in agent_config")
 
             # Step 0: Create BI adaptor
-            print("Step 0: Creating BI adaptor...")
             bi_adaptor = bi_commands._create_adaptor(
                 DashboardCliOptions(
                     platform=platform,
@@ -183,6 +184,21 @@ class TestE2EIntegration:
                 )
             )
             print(f"✓ Step 0: BI adaptor created for {platform}")
+
+            # Track result for this test case
+            test_result = {
+                "platform": platform,
+                "dashboard_url": dashboard_url,
+                "status": "running",
+                "error": None,
+                "dashboard_name": None,
+                "charts_processed": 0,
+                "reference_sqls": 0,
+                "metrics": 0,
+                "tables": 0,
+                "sql_files": 0,
+                "csv_files": 0,
+            }
 
             try:
                 # Step 1: Extract dashboard from Superset (REAL)
@@ -357,19 +373,68 @@ class TestE2EIntegration:
                     if len(semantic_files) > 0:
                         print(f"           - Semantic files: {len(semantic_files)} files")
 
-                print("\n" + "=" * 70)
-                print(f"✅ E2E TEST PASSED - {platform} dashboard completed successfully!")
-                print("=" * 70)
-                print("\nSummary:")
-                print(f"  - Platform: {platform}")
-                print(f"  - Dashboard: {dashboard.name}")
-                print(f"  - Charts processed: {len(chart_selections)}")
-                print(f"  - Reference SQLs: {len(ref_sqls)}")
-                print(f"  - Metrics: {len(metrics) if metrics else 0}")
-                print(f"  - Tables: {len(result.tables)}")
-                print(f"  - Artifacts: {len(sql_files)} SQL + {len(csv_files)} CSV files")
+                # Update test result with success
+                test_result["status"] = "passed"
+                test_result["dashboard_name"] = dashboard.name
+                test_result["charts_processed"] = len(chart_selections)
+                test_result["reference_sqls"] = len(ref_sqls)
+                test_result["metrics"] = len(metrics) if metrics else 0
+                test_result["tables"] = len(result.tables)
+                test_result["sql_files"] = len(sql_files)
+                test_result["csv_files"] = len(csv_files)
+
+                print(f"\n✅ {platform} dashboard test PASSED")
+
+            except Exception as e:
+                # Capture failure
+                test_result["status"] = "failed"
+                test_result["error"] = str(e)
+                print(f"\n❌ {platform} dashboard test FAILED: {str(e)}")
+                # Re-raise to fail the test
+                raise
 
             finally:
+                # Add result to summary
+                test_results.append(test_result)
+
                 # Clean up
                 if hasattr(bi_adaptor, "close"):
                     bi_adaptor.close()
+
+        # Print final summary after all test cases
+        print("────────────────────────────────────────────────────────────────────────────────")
+        print(" 📊 BI DASHBOARD INTEGRATION TEST SUMMARY")
+        print("-" * 80)
+
+        total_tests = len(test_results)
+        passed_tests = [r for r in test_results if r["status"] == "passed"]
+        failed_tests = [r for r in test_results if r["status"] == "failed"]
+
+        print(f"\nTotal Tests: {total_tests}")
+        print(f" ✅ Passed: {len(passed_tests)}")
+        print(f" ❌ Failed: {len(failed_tests)}")
+
+        if passed_tests:
+            print("\n" + "─" * 80)
+            print(" ✅ PASSED TESTS:")
+            print("─" * 80)
+            for result in passed_tests:
+                print(f"\n  Platform: {result['platform']}")
+                print(f"  Dashboard: {result['dashboard_name']}")
+                print(f"  URL: {result['dashboard_url']}")
+                print(f"  Charts processed: {result['charts_processed']}")
+                print(f"  Reference SQLs: {result['reference_sqls']}")
+                print(f"  Metrics: {result['metrics']}")
+                print(f"  Tables: {result['tables']}")
+                print(f"  Artifacts: {result['sql_files']} SQL + {result['csv_files']} CSV files")
+
+        if failed_tests:
+            print("\n" + "─" * 80)
+            print(" ❌ FAILED TESTS:")
+            print("─" * 80)
+            for result in failed_tests:
+                print(f"\n  Platform: {result['platform']}")
+                print(f"  URL: {result['dashboard_url']}")
+                print(f"  Error: {result['error']}")
+
+        print("\n" + "-" * 80)

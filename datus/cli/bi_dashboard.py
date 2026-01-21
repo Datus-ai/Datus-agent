@@ -433,7 +433,7 @@ class BiDashboardCommands:
 
     def _review_tables(self, tables: Sequence) -> List:
         if not tables:
-            return list(tables)
+            return []
 
         table_view = Table(title="Tables")
         table_view.add_column("#", style="cyan", width=4)
