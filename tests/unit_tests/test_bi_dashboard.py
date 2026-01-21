@@ -771,7 +771,7 @@ class TestChartSelection:
         """Test the chart selection flow with user rejecting then accepting."""
         commands = BiDashboardCommands(agent_config, Console(log_path=False))
 
-        mock_inputs = ["1,2"]
+        mock_inputs = ["1,3"]
 
         with patch.object(commands, "_prompt_input", side_effect=mock_inputs):
             selections = commands._load_chart_selections(

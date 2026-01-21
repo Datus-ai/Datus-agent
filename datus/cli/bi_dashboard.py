@@ -447,6 +447,10 @@ class BiDashboardCommands:
             self.console.print("[yellow]No namespace set. Skipping sub-agent save.[/]")
             return
 
+        sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
+        if sub_agent_name in SYS_SUB_AGENTS:
+            self.console.print(f"[bold red]Error:[/] '{sub_agent_name}' is reserved for built-in sub-agents.")
+            return
         table_names = self._dedupe_values([table for table in result.tables if table])
 
         # Generate metadata first (before semantic model)
@@ -487,8 +491,6 @@ class BiDashboardCommands:
             namespace=self.agent_config.current_namespace,
             agent_config=self.agent_config,
         )
-        sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
-
         self._do_save_sub_agent(
             sub_agent_manager=manager,
             sub_agent=SubAgentConfig(
@@ -498,6 +500,7 @@ class BiDashboardCommands:
                 scoped_context=scoped_context,
             ),
         )
+
         # Create attribution subagent (gen_report type) for metric attribution analysis
 
         self._do_save_sub_agent(
@@ -518,9 +521,6 @@ class BiDashboardCommands:
         log_prefix = "" if not prefix else f"{prefix} "
 
         log_prefix = f"{log_prefix}Sub-Agent `{sub_agent_name}`"
-        if sub_agent_name in SYS_SUB_AGENTS:
-            self.console.print(f"[bold red]Error:[/] '{sub_agent_name}' is reserved for built-in sub-agents.")
-            return
 
         try:
             sub_agent_manager.save_agent(sub_agent, previous_name=sub_agent_name)
