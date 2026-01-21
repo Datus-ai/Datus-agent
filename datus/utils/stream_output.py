@@ -66,8 +66,8 @@ class StreamOutputManager:
         self.progress_task: Optional[TaskID] = None
         self._is_running = False
 
-        # Store complete LLM output for markdown rendering
-        self.full_output: list[str] = []
+        # Store complete LLM output for markdown rendering (bounded to prevent memory growth)
+        self.full_output: deque[str] = deque(maxlen=500)
 
     def _create_progress(self, total_items: int) -> Progress:
         """

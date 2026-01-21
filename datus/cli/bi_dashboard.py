@@ -256,7 +256,10 @@ class BiDashboardCommands:
                 with self.console.status("Loading dashboard..."):
                     dashboard = adaptor.get_dashboard_info(dashboard_id)
             except Exception as exc:
-                logger.error(f"Failed to load dashboard from {dashboard_url}", exc_info=True)
+                # Sanitize URL to avoid leaking sensitive query parameters in logs
+                parsed = urlparse(dashboard_url)
+                safe_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                logger.error(f"Failed to load dashboard from {safe_url}", exc_info=True)
                 self.console.print(f"[bold red]Failed to load dashboard:[/] {exc}")
                 dashboard = None
 
