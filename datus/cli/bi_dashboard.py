@@ -517,7 +517,7 @@ class BiDashboardCommands:
         sub_agent_name = sub_agent.system_prompt
         log_prefix = "" if not prefix else f"{prefix} "
 
-        log_prefix = f"{log_prefix} Sub-Agent `{sub_agent_name}`"
+        log_prefix = f"{log_prefix}Sub-Agent `{sub_agent_name}`"
         if sub_agent_name in SYS_SUB_AGENTS:
             self.console.print(f"[bold red]Error:[/] '{sub_agent_name}' is reserved for built-in sub-agents.")
             return
