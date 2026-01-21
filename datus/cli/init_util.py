@@ -126,7 +126,6 @@ def init_metrics(
 
             if stage == BatchStage.TASK_COMPLETED:
                 output_mgr.success("Metrics processing completed.")
-                output_mgr.render_markdown_summary(title="Metrics Summary")
                 return
             if stage == BatchStage.TASK_FAILED:
                 output_mgr.error(f"Failed to initialize metrics: {event.error}")
@@ -143,6 +142,9 @@ def init_metrics(
             )
         finally:
             output_mgr.stop()
+
+        # Render markdown summary after Live display stops
+        output_mgr.render_markdown_summary(title="Metrics Summary")
 
         if successful:
             console.print("[green]Metrics initialized[/]")
@@ -223,7 +225,6 @@ def init_semantic_model(
 
             if stage == BatchStage.TASK_COMPLETED:
                 output_mgr.success("Semantic model processing completed.")
-                output_mgr.render_markdown_summary(title="Semantic Model Summary")
                 return
             if stage == BatchStage.TASK_FAILED:
                 output_mgr.error(f"Failed to initialize semantic model: {event.error}")
@@ -234,6 +235,9 @@ def init_semantic_model(
             successful, error_message = init_success_story_semantic_model(args, agent_config, emit=emit)
         finally:
             output_mgr.stop()
+
+        # Render markdown summary after Live display stops
+        output_mgr.render_markdown_summary(title="Semantic Model Summary")
 
         if successful:
             console.print("[green]Semantic model initialized[/]")
