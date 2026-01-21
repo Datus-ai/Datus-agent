@@ -355,18 +355,6 @@ class BiDashboardCommands:
             allow_interrupt=True,
         )
 
-    def _select_charts(self, charts: Sequence[ChartInfo], purpose: str = "reference SQL") -> List[int]:
-        if not charts:
-            self.console.print("[yellow]No charts found in this dashboard.[/]")
-            return []
-
-        self._render_chart_table(charts, title="Charts")
-
-        selection_input = self._prompt_input(
-            f"Select chart indexes to init {purpose} (e.g. 1,3,... or all)", default="all"
-        )
-        return self._parse_selection(selection_input, len(charts))
-
     def _hydrate_charts(
         self,
         adaptor: BIAdaptorBase,
