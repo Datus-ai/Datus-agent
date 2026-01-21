@@ -12,12 +12,15 @@ Provides a consistent UI for displaying:
 - LLM output (maximized visibility)
 """
 
+import json
+import re
 from collections import deque
 from contextlib import contextmanager
 from typing import Optional
 
 from rich.console import Console, Group
 from rich.live import Live
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskID, TextColumn
 from rich.text import Text
@@ -62,6 +65,9 @@ class StreamOutputManager:
         self.live: Optional[Live] = None
         self.progress_task: Optional[TaskID] = None
         self._is_running = False
+
+        # Store complete LLM output for markdown rendering
+        self.full_output: list[str] = []
 
     def _create_progress(self, total_items: int) -> Progress:
         """
@@ -210,9 +216,12 @@ class StreamOutputManager:
         """
         Add LLM output (priority display, use special styles)
 
+        Also stores the complete output for later markdown rendering.
+
         Args:
             output: LLM output content
         """
+        self.full_output.append(output)
         self.add_message(output, style="white")
 
     def complete_task(self, success: bool = True, message: str = ""):
@@ -256,6 +265,57 @@ class StreamOutputManager:
             message: Success message
         """
         self.add_message(f"✓ {message}", style="green")
+
+    def render_markdown_summary(self, title: str = "Summary"):
+        """
+        Render complete markdown output after task completion.
+
+        This method extracts markdown content from the stored LLM output
+        and displays it in a formatted panel.
+
+        Args:
+            title: Title for the summary panel
+        """
+        if not self.full_output:
+            return
+
+        # Combine all output and extract markdown content
+        full_text = "\n".join(self.full_output)
+        markdown_content = self._extract_markdown_from_output(full_text)
+
+        if markdown_content:
+            md = Markdown(markdown_content)
+            self.console.print(Panel(md, title=f"📋 {title}", border_style="green"))
+
+        # Clear full_output after rendering
+        self.full_output.clear()
+
+    def _extract_markdown_from_output(self, text: str) -> str:
+        """
+        Extract markdown content from LLM output.
+
+        Tries to extract the 'output' field from JSON responses,
+        or returns the raw text if no JSON is found.
+
+        Args:
+            text: Raw LLM output text
+
+        Returns:
+            Extracted markdown content
+        """
+        # Try to extract 'output' field from JSON
+        try:
+            # Look for JSON blocks containing 'output' field
+            json_match = re.search(r'\{[^{}]*"output"[^{}]*\}', text, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                if "output" in data:
+                    return data["output"]
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+        # If no JSON found, return the original text
+        return text
 
     def _render(self):
         """Render the entire output interface"""
