@@ -823,11 +823,20 @@ class StreamlitChatbot:
                 elif message["role"] == "assistant":
                     # Different display based on readonly mode
                     if readonly_mode:
-                        # Session page: Only show expanded action history
+                        # Session page: Show expanded action history and content
                         actions_data = message.get("actions", [])
                         chat_id = message.get("chat_id", "default")
                         if actions_data:
                             self.ui.render_action_history(actions_data, chat_id, expanded=True)
+
+                        # Show AI response as markdown
+                        content = message.get("content", "")
+                        if content:
+                            self.ui.display_markdown_response(content)
+
+                        # Show SQL if available
+                        if message.get("sql"):
+                            self.ui.display_sql(message["sql"], self.cli.db_connector.execute_pandas(message["sql"]))
                     else:
                         # Normal page: Show progress summary, AI response, SQL, and collapsed details at bottom
                         # Show progress summary if available
