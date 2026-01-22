@@ -670,6 +670,9 @@ class BiDashboardCommands:
         )
         output_mgr.stop()
 
+        # Render markdown summary for the last 2 processed items
+        output_mgr.render_markdown_summary(title="Reference SQL Summary", last_n=1)
+
         # Print statistics
         valid_entries = result.get("valid_entries", 0)
         invalid_entries = result.get("invalid_entries", 0)

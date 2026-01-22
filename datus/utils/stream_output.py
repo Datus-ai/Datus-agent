@@ -266,7 +266,7 @@ class StreamOutputManager:
         """
         self.add_message(f"✓ {message}", style="green")
 
-    def render_markdown_summary(self, title: str = "Summary"):
+    def render_markdown_summary(self, title: str = "Summary", last_n: Optional[int] = None):
         """
         Render complete markdown output after task completion.
 
@@ -275,13 +275,26 @@ class StreamOutputManager:
 
         Args:
             title: Title for the summary panel
+            last_n: If specified, only show the last N markdown outputs (useful for batch processing)
         """
         if not self.full_output:
             return
 
         # Combine all output and extract markdown content
         full_text = "\n".join(self.full_output)
-        markdown_content = self._extract_markdown_from_output(full_text)
+        markdown_outputs = self._extract_all_markdown_outputs(full_text)
+
+        if not markdown_outputs:
+            # Clear full_output after rendering
+            self.full_output.clear()
+            return
+
+        # If last_n specified, only show the last N outputs
+        if last_n is not None and last_n > 0:
+            markdown_outputs = markdown_outputs[-last_n:]
+
+        # Combine outputs with separators
+        markdown_content = "\n\n---\n\n".join(markdown_outputs)
 
         if markdown_content:
             md = Markdown(markdown_content)
@@ -290,32 +303,39 @@ class StreamOutputManager:
         # Clear full_output after rendering
         self.full_output.clear()
 
-    def _extract_markdown_from_output(self, text: str) -> str:
+    def _extract_all_markdown_outputs(self, text: str) -> list[str]:
         """
-        Extract markdown content from LLM output.
+        Extract all markdown content from LLM output.
 
-        Tries to extract the 'output' field from JSON responses,
-        or returns the raw text if no JSON is found.
+        Finds all JSON blocks with 'output' field and returns their values.
+        Falls back to returning the original text if no JSON is found.
 
         Args:
             text: Raw LLM output text
 
         Returns:
-            Extracted markdown content
+            List of extracted markdown content strings
         """
-        # Try to extract 'output' field from JSON
-        try:
-            # Look for JSON blocks containing 'output' field
-            json_match = re.search(r'\{[^{}]*"output"[^{}]*\}', text, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group())
-                if "output" in data:
-                    return data["output"]
-        except (json.JSONDecodeError, KeyError):
-            pass
+        outputs = []
 
-        # If no JSON found, return the original text
-        return text
+        # Find all JSON blocks containing 'output' field
+        # Use a more flexible pattern to match JSON objects
+        json_pattern = r'\{[^{}]*"output"\s*:\s*"[^"]*"[^{}]*\}'
+        matches = re.findall(json_pattern, text, re.DOTALL)
+
+        for match in matches:
+            try:
+                data = json.loads(match)
+                if "output" in data and data["output"]:
+                    outputs.append(data["output"])
+            except json.JSONDecodeError:
+                continue
+
+        # If no JSON outputs found, return the original text as a single item
+        if not outputs and text.strip():
+            return [text]
+
+        return outputs
 
     def _render(self):
         """Render the entire output interface"""
