@@ -245,6 +245,12 @@ class AgentConfig:
             )
             self.workspace_root = storage_config.get("workspace_root")
 
+        # Initialize unified permission system
+        self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
+
+        # Initialize skills configuration
+        self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
+
         self._init_dirs()
 
     @property
@@ -347,6 +353,46 @@ class AgentConfig:
                     f"No available database files found under namespace {namespace}, path_pattern: `{path_pattern}`"
                 ),
             )
+
+    def _init_permissions_config(self, permissions_raw: Dict[str, Any]):
+        """Initialize unified permission configuration.
+
+        Args:
+            permissions_raw: Raw permissions config from agent.yml
+
+        Returns:
+            PermissionConfig instance or None
+        """
+        if not permissions_raw:
+            return None
+
+        try:
+            from datus.tools.permission.permission_config import PermissionConfig
+
+            return PermissionConfig.from_dict(permissions_raw)
+        except Exception as e:
+            logger.warning(f"Failed to initialize permissions config: {e}")
+            return None
+
+    def _init_skills_config(self, skills_raw: Dict[str, Any]):
+        """Initialize skills configuration.
+
+        Args:
+            skills_raw: Raw skills config from agent.yml
+
+        Returns:
+            SkillConfig instance or None
+        """
+        if not skills_raw:
+            return None
+
+        try:
+            from datus.tools.skill_tools.skill_config import SkillConfig
+
+            return SkillConfig.from_dict(skills_raw)
+        except Exception as e:
+            logger.warning(f"Failed to initialize skills config: {e}")
+            return None
 
     def current_db_config(self, db_name: str = "") -> DbConfig:
         configs = self.namespaces[self._current_namespace]

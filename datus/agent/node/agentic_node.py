@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 
 from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
@@ -31,6 +31,8 @@ from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.agent.workflow import Workflow
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.skill_tools.skill_manager import SkillManager
 
 logger = get_logger(__name__)
 
@@ -78,8 +80,19 @@ class AgenticNode(Node):
         # InteractionBroker - created per-node instance for async user interactions
         self.interaction_broker: Optional["InteractionBroker"] = None
 
+        # Permission and skill management
+        self.permission_manager: Optional["PermissionManager"] = None
+        self.skill_manager: Optional["SkillManager"] = None
+        self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
+
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
+
+        # Setup permission manager (after node_config is available)
+        self._setup_permission_manager()
+
+        # Setup skill manager (after permission_manager is available)
+        self._setup_skill_manager()
 
         # Initialize model: use node-specific model if configured, otherwise use default from agent_config
         if agent_config:
@@ -361,6 +374,8 @@ class AgenticNode(Node):
             "prompt_language",
             "tools",
             "mcp",
+            "skills",  # AgentSkills pattern filter (e.g., "sql-*, data-*")
+            "permissions",  # Node-specific permission overrides
             "hooks",
             "rules",
             "max_turns",
@@ -395,6 +410,135 @@ class AgenticNode(Node):
 
         logger.info(f"Parsed node configuration for '{node_name}': {config}")
         return config
+
+    def _setup_permission_manager(self) -> None:
+        """
+        Initialize unified permission manager for tools, MCP, and skills.
+
+        The permission manager uses global config from agent.yml and node-specific
+        overrides to control access to tools/MCP/skills with allow/deny/ask levels.
+        """
+        if not self.agent_config or not hasattr(self.agent_config, "permissions_config"):
+            return
+
+        permissions_config = self.agent_config.permissions_config
+        if not permissions_config:
+            return
+
+        try:
+            from datus.tools.permission.permission_manager import PermissionManager
+
+            # Get node-specific permission overrides from node_config
+            node_permissions = self.node_config.get("permissions", {})
+
+            self.permission_manager = PermissionManager(
+                global_config=permissions_config,
+                node_overrides={self.get_node_name(): node_permissions} if node_permissions else {},
+            )
+            logger.debug(f"Permission manager initialized for node '{self.get_node_name()}'")
+
+        except Exception as e:
+            logger.error(f"Failed to setup permission manager: {e}")
+
+    def _setup_skill_manager(self) -> None:
+        """
+        Initialize skill manager from agent config.
+
+        The skill manager coordinates skill discovery, permission checking,
+        and content loading for the AgentSkills integration.
+        """
+        if not self.agent_config or not hasattr(self.agent_config, "skills_config"):
+            return
+
+        skills_config = self.agent_config.skills_config
+        if not skills_config:
+            return
+
+        try:
+            from datus.tools.skill_tools.skill_manager import SkillManager
+
+            self.skill_manager = SkillManager(
+                config=skills_config,
+                permission_manager=self.permission_manager,
+            )
+            logger.debug(
+                f"Skill manager initialized for node '{self.get_node_name()}' "
+                f"with {self.skill_manager.get_skill_count()} skills"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to setup skill manager: {e}")
+
+    def set_permission_callback(
+        self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
+    ) -> None:
+        """
+        Set callback for ASK permission prompts.
+
+        This callback is invoked when a tool/skill requires user confirmation
+        before execution (ASK permission level).
+
+        Args:
+            callback: Async function(tool_category, tool_name, context) -> bool
+                      Returns True if user approves, False otherwise
+        """
+        self._permission_callback = callback
+        logger.debug(f"Permission callback set for node '{self.get_node_name()}'")
+
+    def _get_available_skills_context(self) -> str:
+        """
+        Generate <available_skills> XML context for system prompt injection.
+
+        Returns the XML block listing skills the LLM can use via load_skill tool.
+        Skills with DENY permission are filtered out.
+
+        Returns:
+            XML string for system prompt injection, empty string if no skills
+        """
+        if not self.skill_manager:
+            return ""
+
+        # Get skill patterns from node config (e.g., "sql-*, data-*")
+        skill_patterns_str = self.node_config.get("skills", "")
+        skill_patterns = None
+        if skill_patterns_str:
+            skill_patterns = self.skill_manager.parse_skill_patterns(skill_patterns_str)
+
+        return self.skill_manager.generate_available_skills_xml(
+            node_name=self.get_node_name(),
+            patterns=skill_patterns,
+        )
+
+    def _get_tool_category(self, tool_name: str) -> str:
+        """
+        Determine tool category from tool name for permission checking.
+
+        Args:
+            tool_name: Name of the tool
+
+        Returns:
+            Tool category string: "db_tools", "mcp", "skills", or "tools"
+        """
+        # Check for skill-related tools
+        if tool_name == "load_skill" or tool_name.startswith("skill_"):
+            return "skills"
+
+        # Check for database tools
+        if tool_name.startswith("db_") or tool_name in [
+            "list_tables", "describe_table", "execute_sql", "get_sample_data"
+        ]:
+            return "db_tools"
+
+        # Check for MCP tools (usually have mcp_ prefix or are in mcp_servers)
+        mcp_tool_names = set()
+        for server_name in self.mcp_servers.keys():
+            mcp_tool_names.add(f"{server_name}_")
+        for mcp_prefix in mcp_tool_names:
+            if tool_name.startswith(mcp_prefix):
+                return "mcp"
+
+        # Default to generic tools category
+        return "tools"
 
     def setup_input(self, workflow: "Workflow") -> Dict:
         """

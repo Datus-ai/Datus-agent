@@ -1,0 +1,26 @@
+{# Template for rendering available skills context in system prompts #}
+{# This template is included in other system prompts when skills are enabled #}
+
+{% if has_skill_tools and available_skills_xml %}
+## Available Skills
+
+You have access to specialized skills that provide domain expertise and workflow guidance.
+Skills can be loaded on-demand to get detailed instructions for specific tasks.
+
+{{ available_skills_xml }}
+
+### How to Use Skills
+
+1. Review the available skills above to find one that matches your current task
+2. Call `load_skill(skill_name="<skill_name>")` to load the full skill content
+3. Follow the instructions in the loaded skill to complete the task
+4. Some skills may include script execution capabilities (allowed commands will be specified)
+
+### When to Use Skills
+
+- When you need specialized domain knowledge (e.g., SQL optimization, data analysis)
+- When you need a guided workflow for complex tasks
+- When the user asks about a topic covered by an available skill
+- When you want to ensure best practices for a specific task type
+
+{% endif %}
