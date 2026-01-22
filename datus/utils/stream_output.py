@@ -326,7 +326,7 @@ class StreamOutputManager:
         for match in matches:
             try:
                 data = json.loads(match)
-                if "output" in data and data["output"]:
+                if data.get("output"):
                     outputs.append(data["output"])
             except json.JSONDecodeError:
                 continue
