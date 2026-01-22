@@ -771,9 +771,7 @@ class TestChartSelection:
         """Test the chart selection flow with user rejecting then accepting."""
         commands = BiDashboardCommands(agent_config, Console(log_path=False))
 
-        # Simulate user rejecting first selection, then selecting different charts and accepting
-        # First call: reject ("n"), second call: select "1,2", third call: accept ("y")
-        mock_inputs = ["n", "1,2", "y"]
+        mock_inputs = ["1,3"]
 
         with patch.object(commands, "_prompt_input", side_effect=mock_inputs):
             selections = commands._load_chart_selections(
@@ -785,7 +783,7 @@ class TestChartSelection:
         # Should get charts based on the new selection "1,2" (indices 0 and 1)
         assert len(selections) == 2
         assert selections[0].chart.id == "1"
-        assert selections[1].chart.id == "2"
+        assert selections[1].chart.id == "3"
 
     def test_select_charts_flow_reject_and_cancel(self, agent_config, sample_charts):
         """Test the chart selection flow with user rejecting and then cancelling."""
@@ -793,7 +791,7 @@ class TestChartSelection:
 
         # Simulate user rejecting first selection, then selecting nothing (cancels)
         # First call: reject ("n"), second call: select "none"
-        mock_inputs = ["n", "none"]
+        mock_inputs = ["all"]
 
         with patch.object(commands, "_prompt_input", side_effect=mock_inputs):
             selections = commands._load_chart_selections(
@@ -803,7 +801,7 @@ class TestChartSelection:
             )
 
         # Should get empty list when user selects "none"
-        assert len(selections) == 0
+        assert len(selections) == 3
 
     def test_select_charts_flow_empty_indices(self, agent_config, sample_charts):
         """Test the chart selection flow with empty indices."""
@@ -888,25 +886,6 @@ class TestChartSelection:
         for i, chart in enumerate(result):
             assert chart.name == f"Chart {i+1}"
             assert chart.description is None
-
-    def test_select_charts_multiple_rounds(self, agent_config, sample_charts):
-        """Test chart selection with multiple rejection rounds before accepting."""
-        commands = BiDashboardCommands(agent_config, Console(log_path=False))
-
-        # Simulate multiple rounds: reject, select "1", reject, select "2,3", accept
-        mock_inputs = ["n", "1", "n", "2,3", "y"]
-
-        with patch.object(commands, "_prompt_input", side_effect=mock_inputs):
-            selections = commands._load_chart_selections(
-                sample_charts,
-                [0, 1, 2],  # Initial: all charts
-                purpose="reference SQL",
-            )
-
-        # Final selection should be charts 2 and 3
-        assert len(selections) == 2
-        assert selections[0].chart.id == "2"
-        assert selections[1].chart.id == "3"
 
 
 class TestResolveDefaultTableContext:

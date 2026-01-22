@@ -573,7 +573,7 @@ class SubjectScreen(ContextScreen):
         Binding("f4", "show_path", "Show Path"),
         Binding("f5", "exit_with_selection", "Select"),
         Binding("f7", "create_node", "New Node", show=True),
-        # Binding("f8", "delete_node", "Delete Node", show=True), todo lancedb delete
+        Binding("f8", "delete_entry", "Delete", show=True),
         # Binding("f6", "change_edit_mode", "Change to edit/readonly mode "),
         Binding("q", "quit_if_idle", "Quit", show=False),
         Binding("ctrl+e", "start_edit", "Edit", show=True, priority=True),
@@ -1854,8 +1854,8 @@ class SubjectScreen(ContextScreen):
             self.app.notify("Failed to create node", severity="error")
             logger.error(f"Unexpected error during create: {e}")
 
-    def action_delete_node(self) -> None:
-        """Delete the currently selected node."""
+    def action_delete_entry(self) -> None:
+        """Delete the currently selected node or entry (subject_node or subject_entry)."""
         tree = self.query_one("#subject-tree", EditableTree)
         if not tree.cursor_node:
             self.app.notify("Select a node to delete", severity="warning")
@@ -1865,10 +1865,15 @@ class SubjectScreen(ContextScreen):
         node_data = node.data or {}
         node_type = node_data.get("type")
 
-        if node_type != "subject_node":
-            self.app.notify("Can only delete subject nodes", severity="warning")
-            return
+        if node_type == "subject_node":
+            self._delete_subject_node(node_data)
+        elif node_type == "subject_entry":
+            self._delete_subject_entry(node_data)
+        else:
+            self.app.notify("Selected item cannot be deleted", severity="warning")
 
+    def _delete_subject_node(self, node_data: Dict[str, Any]) -> None:
+        """Delete a subject_node from the subject tree."""
         node_id = node_data.get("node_id")
         node_name = node_data.get("name", "")
 
@@ -1885,6 +1890,21 @@ class SubjectScreen(ContextScreen):
         except Exception:
             pass
 
+        # Check if node has subject_entries (metrics, sql, ext_knowledge)
+        try:
+            metrics_count = len(self.metrics_rag.storage.list_entries(node_id))
+            sql_count = len(self.sql_rag.reference_sql_storage.list_entries(node_id))
+            ext_knowledge_count = len(self.ext_knowledge_rag.store.list_entries(node_id))
+            total_entries = metrics_count + sql_count + ext_knowledge_count
+            if total_entries > 0:
+                self.app.notify(
+                    f"Cannot delete: '{node_name}' has {total_entries} entry(ies). Delete entries first.",
+                    severity="warning",
+                )
+                return
+        except Exception as e:
+            logger.warning(f"Failed to check entries for node {node_id}: {e}")
+
         # Store path for potential refresh
         try:
             node_path = self.subject_tree_store.get_full_path(node_id)
@@ -1900,7 +1920,6 @@ class SubjectScreen(ContextScreen):
             "node_path": node_path,
         }
 
-        # For simplicity, just delete directly (could add confirmation dialog)
         try:
             self.subject_tree_store.delete_node(node_id)
 
@@ -1923,6 +1942,74 @@ class SubjectScreen(ContextScreen):
             self._editing_component = None
             self._update_edit_indicator(None)
             self._last_tree_selection = None
+
+    def _delete_subject_entry(self, node_data: Dict[str, Any]) -> None:
+        """Delete a subject_entry (metric, sql, or ext_knowledge) from lancedb."""
+        node_id = node_data.get("node_id")  # Parent subject node's ID
+        entry_name = node_data.get("name", "")
+        entry_type = node_data.get("entry_type", "")
+
+        if not node_id or not entry_name:
+            self.app.notify("Invalid entry", severity="error")
+            return
+
+        # Get subject_path from node_id
+        try:
+            subject_path = self.subject_tree_store.get_full_path(node_id)
+        except Exception as e:
+            self.app.notify("Failed to get subject path", severity="error")
+            logger.error(f"Failed to get subject path for node_id {node_id}: {e}")
+            return
+
+        self._editing_component = "tree"
+        self._update_edit_indicator("tree")
+
+        try:
+            deleted = False
+            if entry_type == "metric":
+                # Delete metric (from lancedb and yaml file)
+                result = self.metrics_rag.delete_metric(subject_path, entry_name)
+                deleted = result.get("success", False)
+                if deleted:
+                    _fetch_metrics_with_cache.cache_clear()
+                    message = result.get("message", f"Deleted metric: {entry_name}")
+                    self.app.notify(message, severity="success")
+                else:
+                    self.app.notify(result.get("message", "Failed to delete metric"), severity="error")
+
+            elif entry_type == "sql":
+                # Delete reference SQL (only from lancedb)
+                deleted = self.sql_rag.delete_reference_sql(subject_path, entry_name)
+                if deleted:
+                    _sql_details_cache.cache_clear()
+                    self.app.notify(f"Deleted reference SQL: {entry_name}", severity="success")
+                else:
+                    self.app.notify(f"Failed to delete reference SQL: {entry_name}", severity="error")
+
+            elif entry_type == "ext_knowledge":
+                # Delete ext_knowledge (only from lancedb)
+                deleted = self.ext_knowledge_rag.delete_knowledge(subject_path, entry_name)
+                if deleted:
+                    self.app.notify(f"Deleted knowledge: {entry_name}", severity="success")
+                else:
+                    self.app.notify(f"Failed to delete knowledge: {entry_name}", severity="error")
+
+            else:
+                self.app.notify(f"Unknown entry type: {entry_type}", severity="error")
+                return
+
+            if deleted:
+                # Reload tree to reflect changes
+                self._current_loading_task = self.run_worker(self._load_subject_tree_data, thread=True)
+                # Clear selected data since entry is deleted
+                self.selected_data = {}
+
+        except Exception as e:
+            self.app.notify(f"Failed to delete entry: {str(e)}", severity="error")
+            logger.error(f"Unexpected error during entry delete: {e}")
+        finally:
+            self._editing_component = None
+            self._update_edit_indicator(None)
 
     def _get_panel(self, component: str) -> Optional[MetricsPanel | ReferenceSqlPanel | ExtKnowledgePanel]:
         metrics_container = self.query_one("#metrics-panel-container", ScrollableContainer)
@@ -2054,7 +2141,7 @@ class NavigationHelpScreen(ModalScreen):
                 "• F4 - Show path\n"
                 "• F5 - Select and exit\n"
                 "• F7 - Create new node\n"
-                # "• F8 - Delete selected node\n"
+                "• F8 - Delete selected entry\n"
                 "• Ctrl+e - Enter edit mode\n"
                 "• Ctrl+w - Save and exit edit mode\n"
                 "• Esc - Exit editing mode or application\n\n"

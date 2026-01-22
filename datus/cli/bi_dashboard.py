@@ -116,24 +116,36 @@ class BiDashboardCommands:
 
             chart_details = self._hydrate_charts(adaptor, dashboard_id, chart_metas)
 
-            # Select charts for reference SQL initialization
-            chart_indices_ref = self._select_charts(chart_details, purpose="reference SQL")
-            if not chart_indices_ref:
-                self.console.print("[yellow]No charts selected for reference SQL or metrics. Aborting.[/]")
+            if not chart_details:
+                self.console.print("[yellow]No charts found in this dashboard.[/]")
                 return
 
+            self._render_chart_table(chart_details, title="Charts")
+
+            # Select charts for reference SQL initialization
+            ref_selection_input = self._prompt_input(
+                "Select chart indexes to init reference SQL (e.g. 1,3,... or all)", default="all"
+            )
+            chart_indices_ref = self._parse_selection(ref_selection_input, len(chart_details))
             chart_selections_ref = self._load_chart_selections(
                 chart_details, chart_indices_ref, purpose="reference SQL"
             )
 
             # Select charts for metrics initialization
-            chart_indices_metrics = self._select_charts(chart_details, purpose="metrics")
+            self.console.print(
+                "[dim]Tip: For metrics, select charts with aggregation SQL " "(e.g. SUM, COUNT, AVG, MAX, MIN)[/]"
+            )
+
+            metrics_selection_input = self._prompt_input(
+                "Select chart indexes to init metrics (e.g. 1,3,... or all)", default="all"
+            )
+            chart_indices_metrics = self._parse_selection(metrics_selection_input, len(chart_details))
             chart_selections_metrics = self._load_chart_selections(
                 chart_details, chart_indices_metrics, purpose="metrics"
             )
 
             if not chart_selections_ref and not chart_selections_metrics:
-                self.console.print("[yellow]No charts selected for reference SQL. Aborting.[/]")
+                self.console.print("[yellow]No charts selected for reference SQL or metrics. Aborting.[/]")
                 return
 
             with self.console.status("Loading datasets..."):
@@ -352,24 +364,6 @@ class BiDashboardCommands:
             allow_interrupt=True,
         )
 
-    def _select_charts(self, charts: Sequence[ChartInfo], purpose: str = "reference SQL") -> List[int]:
-        if not charts:
-            self.console.print("[yellow]No charts found in this dashboard.[/]")
-            return []
-
-        self._render_chart_table(charts, title="Charts")
-
-        # Show hint for metrics selection
-        if "metric" in purpose.lower():
-            self.console.print(
-                "[dim]Tip: For metrics, select charts with aggregation SQL " "(e.g. SUM, COUNT, AVG, MAX, MIN)[/]"
-            )
-
-        selection_input = self._prompt_input(
-            f"Select chart indexes to init {purpose} (e.g. 1,3,... or all)", default="all"
-        )
-        return self._parse_selection(selection_input, len(charts))
-
     def _hydrate_charts(
         self,
         adaptor: BIAdaptorBase,
@@ -399,16 +393,6 @@ class BiDashboardCommands:
         selections: List[ChartSelection] = []
         if not indices:
             return selections
-
-        while True:
-            selected_charts = [charts[idx] for idx in indices]
-            self._render_chart_table(selected_charts, title=f"Selected Charts for {purpose}")
-            confirm = self._prompt_input(f"Use selected charts for {purpose}?", default="y", choices=["y", "n"])
-            if confirm == "y":
-                break
-            indices = self._select_charts(charts, purpose=purpose)
-            if not indices:
-                return selections
 
         for idx in indices:
             chart = charts[idx]
@@ -469,11 +453,11 @@ class BiDashboardCommands:
         dashboard: DashboardInfo,
         result: DashboardAssemblyResult,
     ) -> None:
-        sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
         if not getattr(self.agent_config, "current_namespace", ""):
             self.console.print("[yellow]No namespace set. Skipping sub-agent save.[/]")
             return
 
+        sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
         if sub_agent_name in SYS_SUB_AGENTS:
             self.console.print(f"[bold red]Error:[/] '{sub_agent_name}' is reserved for built-in sub-agents.")
             return
@@ -518,52 +502,56 @@ class BiDashboardCommands:
             return
 
         description = dashboard.description or dashboard.name or ""
-        sub_agent = SubAgentConfig(
-            system_prompt=sub_agent_name,
-            agent_description=description,
-            tools="context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.read_query",
-            scoped_context=scoped_context,
-        )
 
         manager = SubAgentManager(
             configuration_manager=self._configuration_manager or configuration_manager(),
             namespace=self.agent_config.current_namespace,
             agent_config=self.agent_config,
         )
-        try:
-            manager.save_agent(sub_agent, previous_name=sub_agent_name)
-            self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` saved.")
-        except Exception as exc:
-            logger.error(f"Failed to persist sub-agent {sub_agent_name}", exc_info=True)
-            self.console.log(f"[bold red]Failed to persist sub-agent:[/] {exc}")
-            return
-        manager.bootstrap_agent(sub_agent, components=["metadata", "semantic_model", "metrics", "reference_sql"])
-        self.console.log(f"[bold green]Sub-Agent `{sub_agent_name}` bootstrapped.")
+        self._do_save_sub_agent(
+            sub_agent_manager=manager,
+            sub_agent=SubAgentConfig(
+                system_prompt=sub_agent_name,
+                agent_description=description,
+                tools="context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.read_query",
+                scoped_context=scoped_context,
+            ),
+        )
 
         # Create attribution subagent (gen_report type) for metric attribution analysis
-        attribution_agent_name = f"{sub_agent_name}_attribution"
-        if attribution_agent_name not in SYS_SUB_AGENTS:
-            attribution_tools = "semantic_tools,context_search_tools.list_subject_tree"
-            attribution_agent = SubAgentConfig(
-                system_prompt=attribution_agent_name,
+
+        self._do_save_sub_agent(
+            sub_agent_manager=manager,
+            sub_agent=SubAgentConfig(
+                system_prompt=f"{sub_agent_name}_attribution",
                 agent_description=f"Attribution analysis for {description}",
                 node_class="gen_report",
-                tools=attribution_tools,
+                tools="semantic_tools,context_search_tools.list_subject_tree",
                 scoped_context=scoped_context,
-            )
-            try:
-                manager.save_agent(attribution_agent, previous_name=attribution_agent_name)
-                self.console.log(f"[bold green]Attribution Sub-Agent `{attribution_agent_name}` saved.")
-            except Exception as exc:
-                logger.warning(f"Failed to persist attribution sub-agent {attribution_agent_name}: {exc}")
-                self.console.log(f"[bold yellow]Failed to persist attribution sub-agent:[/] {exc}")
-            else:
-                manager.bootstrap_agent(
-                    attribution_agent, components=["metadata", "semantic_model", "metrics", "reference_sql"]
-                )
-                self.console.log(f"[bold green]Attribution Sub-Agent `{attribution_agent_name}` bootstrapped.")
+            ),
+        )
 
         self._refresh_agent_config(manager)
+
+    def _do_save_sub_agent(self, sub_agent_manager: SubAgentManager, sub_agent: SubAgentConfig, prefix: str = ""):
+        sub_agent_name = sub_agent.system_prompt
+        log_prefix = "" if not prefix else f"{prefix} "
+
+        log_prefix = f"{log_prefix}Sub-Agent `{sub_agent_name}`"
+
+        try:
+            sub_agent_manager.save_agent(sub_agent, previous_name=sub_agent_name)
+            self.console.log(f"[bold green]{log_prefix} saved.")
+        except Exception as exc:
+            self.console.log(f"[bold yellow] {log_prefix} persist failed:[/] {exc}")
+        else:
+            result = sub_agent_manager.bootstrap_agent(
+                sub_agent, components=["metadata", "semantic_model", "metrics", "reference_sql"]
+            )
+            if result.should_bootstrap:
+                self.console.log(f"[bold green]{log_prefix} bootstrapped.")
+            else:
+                self.console.log(f"[bold yellow] {log_prefix} bootstrap failed: {result.reason}[/]")
 
     def _refresh_agent_config(self, manager: SubAgentManager) -> None:
         try:
@@ -639,7 +627,6 @@ class BiDashboardCommands:
         self, reference_sqls: List[SelectedSqlCandidate], platform: str, dashboard: DashboardInfo
     ) -> List[str]:
         sql_dir = self._write_chart_sql_files(reference_sqls, platform, dashboard)
-        # Create StreamOutputManager
         output_mgr = StreamOutputManager(
             console=self.console,
             max_message_lines=10,

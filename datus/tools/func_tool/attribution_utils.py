@@ -25,7 +25,9 @@ class DimensionRanking(BaseModel):
     """Ranking score for a dimension's explanatory power."""
 
     dimension: str = Field(..., description="Dimension name")
-    score: float = Field(..., description="Importance score (0-1)")
+    score: float = Field(
+        ..., description="Max contribution ratio (max_abs_delta / total_delta), can exceed 1 when deltas offset"
+    )
 
 
 class DimensionValueContribution(BaseModel):
@@ -86,9 +88,10 @@ class DimensionAttributionUtil:
         Unified attribution analysis: ranks dimensions and calculates delta contributions.
 
         This method:
-        1. Evaluates all candidate dimensions for explanatory power
-        2. Selects top dimensions (up to max_selected_dimensions)
-        3. Calculates delta attribution for selected dimension values
+        1. Queries total metric values for baseline and current periods
+        2. Evaluates all candidate dimensions (single query per dimension)
+        3. Calculates both dimension scores and value contributions in one pass
+        4. Selects top dimensions and returns top contributing values
 
         Args:
             metric_name: Metric to analyze
@@ -107,82 +110,39 @@ class DimensionAttributionUtil:
             - dimension_ranking: All dimensions ranked by importance score
             - selected_dimensions: Top dimensions selected for analysis
             - top_dimension_values: Delta contributions of top dimension values
-
-        Example:
-            result = await tool.attribution_analyze(
-                metric_name="payment_amount",
-                candidate_dimensions=["project_title", "project_type", "region"],
-                baseline_start="2026-01-01",
-                baseline_end="2026-01-01",
-                current_start="2026-01-08",
-                current_end="2026-01-08",
-                anomaly_context={
-                    "rule": "wow_growth_gt_20pct",
-                    "observed_change_pct": 0.8017
-                }
-            )
         """
-        # Step 1: Rank dimensions by importance
-        dimension_rankings = await self._rank_dimensions(
-            metric_name=metric_name,
-            candidate_dimensions=candidate_dimensions,
-            baseline_start=baseline_start,
-            baseline_end=baseline_end,
-            current_start=current_start,
-            current_end=current_end,
+        # Step 1: Query total metric values (no dimension breakdown)
+        baseline_total_result = await self.adapter.query_metrics(
+            metrics=[metric_name],
+            dimensions=[],
             path=path,
+            time_start=baseline_start,
+            time_end=baseline_end,
         )
-
-        # Step 2: Select top dimensions
-        selected_dimensions = [ranking.dimension for ranking in dimension_rankings[:max_selected_dimensions]]
-
-        # Step 3: Calculate delta contributions for selected dimensions
-        top_dimension_values = await self._calculate_delta_contributions(
-            metric_name=metric_name,
-            dimensions=selected_dimensions,
-            baseline_start=baseline_start,
-            baseline_end=baseline_end,
-            current_start=current_start,
-            current_end=current_end,
+        current_total_result = await self.adapter.query_metrics(
+            metrics=[metric_name],
+            dimensions=[],
             path=path,
-            top_n=top_n_values,
+            time_start=current_start,
+            time_end=current_end,
         )
 
-        return AttributionAnalysisResult(
-            metric_name=metric_name,
-            candidate_dimensions=candidate_dimensions,
-            dimension_ranking=dimension_rankings,
-            selected_dimensions=selected_dimensions,
-            top_dimension_values=top_dimension_values,
-            anomaly_context=anomaly_context,
-            comparison_metadata={
-                "baseline": {"start": baseline_start, "end": baseline_end},
-                "current": {"start": current_start, "end": current_end},
-            },
+        baseline_total = (
+            self._extract_metric_value(baseline_total_result.data[0], metric_name)
+            if baseline_total_result.data
+            else 0.0
         )
+        current_total = (
+            self._extract_metric_value(current_total_result.data[0], metric_name) if current_total_result.data else 0.0
+        )
+        total_delta = current_total - baseline_total
 
-    async def _rank_dimensions(
-        self,
-        metric_name: str,
-        candidate_dimensions: List[str],
-        baseline_start: str,
-        baseline_end: str,
-        current_start: str,
-        current_end: str,
-        path: Optional[List[str]] = None,
-    ) -> List[DimensionRanking]:
-        """
-        Rank dimensions by their explanatory power for the metric change.
-
-        Uses variance-based importance: dimensions with higher variance in delta
-        contributions have more explanatory power.
-        """
-        import math
-
-        rankings = []
+        # Step 2: Analyze each dimension (one query per dimension, calculate both score and contributions)
+        dimension_rankings: List[DimensionRanking] = []
+        all_contributions: Dict[str, List[DimensionValueContribution]] = {}
 
         for dimension in candidate_dimensions:
-            # Query both periods
+            # Query both periods for this dimension
             baseline_result = await self.adapter.query_metrics(
                 metrics=[metric_name],
                 dimensions=[dimension],
@@ -200,7 +160,7 @@ class DimensionAttributionUtil:
             )
 
             logger.debug(
-                f"Ranking dimension '{dimension}': baseline={len(baseline_result.data)} rows, "
+                f"Analyzing dimension '{dimension}': baseline={len(baseline_result.data)} rows, "
                 f"current={len(current_result.data)} rows"
             )
 
@@ -211,8 +171,10 @@ class DimensionAttributionUtil:
                 metric_val = self._extract_metric_value(row, metric_name)
                 baseline_lookup[dim_val] = metric_val
 
-            # Calculate deltas and variance
+            # Calculate contributions for current values
+            contributions = []
             deltas = []
+
             for row in current_result.data:
                 dim_val = self._extract_dimension_value(row, dimension)
                 current_val = self._extract_metric_value(row, metric_name)
@@ -220,137 +182,69 @@ class DimensionAttributionUtil:
                 delta = current_val - baseline_val
                 deltas.append(delta)
 
-            # Precompute current dimension values for O(1) lookup
-            current_dim_vals = {self._extract_dimension_value(row, dimension) for row in current_result.data}
-
-            # Also check values that disappeared (exist in baseline but not in current)
-            for dim_val, baseline_val in baseline_lookup.items():
-                if dim_val not in current_dim_vals:
-                    delta = 0.0 - baseline_val
-                    deltas.append(delta)
-
-            # Calculate variance as importance score
-            if len(deltas) > 1:
-                mean_delta = sum(deltas) / len(deltas)
-                variance = sum((d - mean_delta) ** 2 for d in deltas) / len(deltas)
-                std_dev = math.sqrt(variance)
-
-                # Normalize score using coefficient of variation
-                # Higher variance relative to mean = more explanatory power
-                if abs(mean_delta) > 0:
-                    score = min(1.0, std_dev / abs(mean_delta))
-                else:
-                    score = 0.5 if std_dev > 0 else 0.0
-            else:
-                score = 0.0
-
-            rankings.append(DimensionRanking(dimension=dimension, score=score))
-
-        # Sort by score descending
-        rankings.sort(key=lambda r: r.score, reverse=True)
-
-        return rankings
-
-    async def _calculate_delta_contributions(
-        self,
-        metric_name: str,
-        dimensions: List[str],
-        baseline_start: str,
-        baseline_end: str,
-        current_start: str,
-        current_end: str,
-        path: Optional[List[str]] = None,
-        top_n: int = 10,
-    ) -> List[DimensionValueContribution]:
-        """
-        Calculate delta contributions for dimension values.
-
-        For single dimension: returns top N values by absolute delta
-        For multiple dimensions: returns top N dimension combinations
-        """
-        if not dimensions:
-            return []
-
-        # Query both periods with dimension breakdown
-        baseline_result = await self.adapter.query_metrics(
-            metrics=[metric_name],
-            dimensions=dimensions,
-            path=path,
-            time_start=baseline_start,
-            time_end=baseline_end,
-        )
-
-        current_result = await self.adapter.query_metrics(
-            metrics=[metric_name],
-            dimensions=dimensions,
-            path=path,
-            time_start=current_start,
-            time_end=current_end,
-        )
-
-        # Build lookup for baseline values
-        baseline_lookup = {}
-        for row in baseline_result.data:
-            dim_key = tuple(self._extract_dimension_value(row, dim) for dim in dimensions)
-            metric_val = self._extract_metric_value(row, metric_name)
-            baseline_lookup[dim_key] = metric_val
-
-        # Calculate total delta
-        baseline_total = sum(baseline_lookup.values())
-        current_total = sum(self._extract_metric_value(row, metric_name) for row in current_result.data)
-        total_delta = current_total - baseline_total
-
-        # Calculate contributions
-        contributions = []
-
-        for row in current_result.data:
-            dim_key = tuple(self._extract_dimension_value(row, dim) for dim in dimensions)
-            current_val = self._extract_metric_value(row, metric_name)
-            baseline_val = baseline_lookup.get(dim_key, 0.0)
-            delta = current_val - baseline_val
-
-            # Build dimension_values dict
-            dimension_values = {dim: self._extract_dimension_value(row, dim) for dim in dimensions}
-
-            # Calculate contribution percentage
-            contribution_pct = (delta / total_delta * 100) if total_delta != 0 else 0.0
-
-            contributions.append(
-                DimensionValueContribution(
-                    dimension_values=dimension_values,
-                    baseline=baseline_val,
-                    current=current_val,
-                    delta=delta,
-                    contribution_pct_of_total_delta=contribution_pct,
-                )
-            )
-
-        # Precompute current dimension keys for O(1) lookup
-        current_dim_keys = {
-            tuple(self._extract_dimension_value(row, dim) for dim in dimensions) for row in current_result.data
-        }
-
-        # Also include values that disappeared (exist in baseline but not in current)
-        for dim_key, baseline_val in baseline_lookup.items():
-            if dim_key not in current_dim_keys:
-                delta = 0.0 - baseline_val
-                dimension_values = {dim: dim_key[i] for i, dim in enumerate(dimensions)}
                 contribution_pct = (delta / total_delta * 100) if total_delta != 0 else 0.0
-
                 contributions.append(
                     DimensionValueContribution(
-                        dimension_values=dimension_values,
+                        dimension_values={dimension: dim_val},
                         baseline=baseline_val,
-                        current=0.0,
+                        current=current_val,
                         delta=delta,
                         contribution_pct_of_total_delta=contribution_pct,
                     )
                 )
 
-        # Sort by absolute delta descending
-        contributions.sort(key=lambda c: abs(c.delta), reverse=True)
+            # Also include values that disappeared (exist in baseline but not in current)
+            current_dim_vals = {self._extract_dimension_value(row, dimension) for row in current_result.data}
+            for dim_val, baseline_val in baseline_lookup.items():
+                if dim_val not in current_dim_vals:
+                    delta = 0.0 - baseline_val
+                    deltas.append(delta)
 
-        return contributions[:top_n]
+                    contribution_pct = (delta / total_delta * 100) if total_delta != 0 else 0.0
+                    contributions.append(
+                        DimensionValueContribution(
+                            dimension_values={dimension: dim_val},
+                            baseline=baseline_val,
+                            current=0.0,
+                            delta=delta,
+                            contribution_pct_of_total_delta=contribution_pct,
+                        )
+                    )
+
+            # Calculate dimension score (max contribution ratio)
+            if len(deltas) > 0 and abs(total_delta) > 0:
+                max_abs_delta = max(abs(d) for d in deltas)
+                score = max_abs_delta / abs(total_delta)
+            else:
+                score = 0.0
+
+            dimension_rankings.append(DimensionRanking(dimension=dimension, score=score))
+            all_contributions[dimension] = contributions
+
+        # Step 3: Sort dimensions by score and select top N
+        dimension_rankings.sort(key=lambda r: r.score, reverse=True)
+        selected_dimensions = [ranking.dimension for ranking in dimension_rankings[:max_selected_dimensions]]
+
+        # Step 4: Collect contributions from selected dimensions and sort by contribution percentage
+        selected_contributions = []
+        for dim in selected_dimensions:
+            selected_contributions.extend(all_contributions[dim])
+
+        selected_contributions.sort(key=lambda c: c.contribution_pct_of_total_delta, reverse=True)
+        top_dimension_values = selected_contributions[:top_n_values]
+
+        return AttributionAnalysisResult(
+            metric_name=metric_name,
+            candidate_dimensions=candidate_dimensions,
+            dimension_ranking=dimension_rankings,
+            selected_dimensions=selected_dimensions,
+            top_dimension_values=top_dimension_values,
+            anomaly_context=anomaly_context,
+            comparison_metadata={
+                "baseline": {"start": baseline_start, "end": baseline_end},
+                "current": {"start": current_start, "end": current_end},
+            },
+        )
 
     def _extract_metric_value(self, row: Dict, metric_name: str) -> float:
         """Extract metric value from query result row."""
