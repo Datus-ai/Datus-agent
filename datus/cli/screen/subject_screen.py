@@ -1854,10 +1854,6 @@ class SubjectScreen(ContextScreen):
             self.app.notify("Failed to create node", severity="error")
             logger.error(f"Unexpected error during create: {e}")
 
-    def action_delete_node(self) -> None:
-        """Delete the currently selected subject_node (legacy method, use action_delete_entry instead)."""
-        self.action_delete_entry()
-
     def action_delete_entry(self) -> None:
         """Delete the currently selected node or entry (subject_node or subject_entry)."""
         tree = self.query_one("#subject-tree", EditableTree)
