@@ -25,7 +25,9 @@ class DimensionRanking(BaseModel):
     """Ranking score for a dimension's explanatory power."""
 
     dimension: str = Field(..., description="Dimension name")
-    score: float = Field(..., description="Importance score (max contribution ratio)")
+    score: float = Field(
+        ..., description="Max contribution ratio (max_abs_delta / total_delta), can exceed 1 when deltas offset"
+    )
 
 
 class DimensionValueContribution(BaseModel):
@@ -223,12 +225,12 @@ class DimensionAttributionUtil:
         dimension_rankings.sort(key=lambda r: r.score, reverse=True)
         selected_dimensions = [ranking.dimension for ranking in dimension_rankings[:max_selected_dimensions]]
 
-        # Step 4: Collect contributions from selected dimensions and sort by delta
+        # Step 4: Collect contributions from selected dimensions and sort by contribution percentage
         selected_contributions = []
         for dim in selected_dimensions:
             selected_contributions.extend(all_contributions[dim])
 
-        selected_contributions.sort(key=lambda c: c.delta, reverse=True)
+        selected_contributions.sort(key=lambda c: c.contribution_pct_of_total_delta, reverse=True)
         top_dimension_values = selected_contributions[:top_n_values]
 
         return AttributionAnalysisResult(
