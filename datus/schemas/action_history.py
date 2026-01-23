@@ -19,7 +19,8 @@ class ActionRole(str, Enum):
     - ASSISTANT: The AI assistant role is used to create the response for the user.
     - USER: The user role is used to call the node or send the message
     - TOOL: The tool role is used to create the input for the assistant, it's a MCP tool.
-    - WORKFLOW: The workflow role is
+    - WORKFLOW: The workflow role is used for workflow execution
+    - INTERACTION: The interaction role is used for user input requests from hooks
     """
 
     SYSTEM = "system"
@@ -27,6 +28,7 @@ class ActionRole(str, Enum):
     USER = "user"
     TOOL = "tool"
     WORKFLOW = "workflow"
+    INTERACTION = "interaction"
 
 
 class ActionStatus(str, Enum):

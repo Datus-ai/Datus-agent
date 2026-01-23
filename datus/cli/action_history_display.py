@@ -30,6 +30,7 @@ class BaseActionContentGenerator:
             ActionRole.USER: "bright_green",
             ActionRole.TOOL: "bright_cyan",
             ActionRole.WORKFLOW: "bright_yellow",
+            ActionRole.INTERACTION: "bright_yellow",
         }
         self.status_icons = {
             ActionStatus.PROCESSING: "⏳",
@@ -48,6 +49,7 @@ class BaseActionContentGenerator:
             ActionRole.SYSTEM: "🟣",  # Purple for system
             ActionRole.USER: "🟢",  # Green for user
             ActionRole.WORKFLOW: "🟡",  # Yellow for workflow
+            ActionRole.INTERACTION: "❓",  # Question mark for interaction requests
         }
 
     def _get_action_dot(self, action: ActionHistory) -> str:
@@ -405,6 +407,9 @@ class ActionHistoryDisplay:
         self._action_window: Optional[deque] = None
         self._max_actions: Optional[int] = None
 
+        # Reference to current streaming context for live control
+        self._current_context: Optional["StreamingActionContext"] = None
+
     def _get_terminal_height(self) -> int:
         """Get terminal height, fallback to reasonable default"""
         try:
@@ -562,6 +567,30 @@ class ActionHistoryDisplay:
 
         return StreamingActionContext(actions, self)
 
+    def stop_live(self) -> None:
+        """Stop the live display temporarily for user interaction."""
+        if self._current_context and self._current_context.live:
+            try:
+                self._current_context.live.stop()
+            except Exception as e:
+                logger.debug(f"Error stopping live display: {e}")
+
+    def restart_live(self) -> None:
+        """Restart the live display after user interaction.
+
+        Uses recreate_live_display() to create a fresh Live instance from the
+        current cursor position, avoiding overlap with content printed during
+        the interaction (e.g., success messages).
+        """
+        if self._current_context:
+            try:
+                # Use recreate_live_display() instead of live.start()
+                # This creates a new Live from current cursor position,
+                # preserving any content printed during the interaction
+                self._current_context.recreate_live_display()
+            except Exception as e:
+                logger.debug(f"Error restarting live display: {e}")
+
     def display_final_action_history(self, actions: List[ActionHistory]) -> None:
         """Display the final action history with complete SQL queries and reasoning results"""
         if not actions:
@@ -638,8 +667,6 @@ class StreamingActionContext:
         This is used in plan mode to create a fresh display after showing
         static content (menus, plans), avoiding overlap with previous content.
         """
-        from datus.cli.execution_state import execution_controller
-
         # Stop and discard the old Live display
         if self.live:
             try:
@@ -657,12 +684,6 @@ class StreamingActionContext:
         if self._content_renderer:
             self.live = Live(self._content_renderer, refresh_per_second=4)
             self.live.start()
-
-            # Register with execution controller
-            try:
-                execution_controller.register_live_display(self.live)
-            except Exception as e:
-                logger.warning(f"Failed to register recreated live display: {e}")
 
         return self.live
 
@@ -702,27 +723,18 @@ class StreamingActionContext:
         # Start the live display
         self.live.start()
 
-        # Register with execution controller (including context for recreation)
-        try:
-            from datus.cli.execution_state import execution_controller
-
-            execution_controller.register_live_display(self.live, context=self)
-        except Exception as e:
-            logger.warning(f"Failed to register live display: {e}")
+        # Register this context with the display instance for live control
+        self.display._current_context = self
 
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):  # pylint: disable=unused-argument
-        # Unregister from execution controller
-        try:
-            from datus.cli.execution_state import execution_controller
-
-            execution_controller.unregister_live_display()
-        except Exception as e:
-            logger.warning(f"Failed to unregister live display: {e}")
-
         if self.live:
             self.live.stop()
+
+        # Unregister this context from the display instance
+        if self.display._current_context is self:
+            self.display._current_context = None
 
 
 def create_action_display(console: Optional[Console] = None, enable_truncation: bool = True) -> ActionHistoryDisplay:

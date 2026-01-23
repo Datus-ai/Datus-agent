@@ -101,9 +101,29 @@ class ChatExecutor:
                 async def run_stream():
                     """Wrapper to iterate the async generator to completion"""
                     try:
-                        async for action in current_node.execute_stream(cli.actions):
+                        async for action in current_node.execute_stream_with_interactions(cli.actions):
                             if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                                 continue
+
+                            # Auto-submit default choice for PROCESSING interactions (Web mode)
+                            if (
+                                action.role == ActionRole.INTERACTION
+                                and action.action_type == "request_choice"
+                                and action.status == ActionStatus.PROCESSING
+                            ):
+                                # Get default choice and auto-submit
+                                input_data = action.input or {}
+                                choices = input_data.get("choices", [])
+                                default_idx = input_data.get("default_choice", 0)
+                                if choices and 0 <= default_idx < len(choices):
+                                    default_choice = choices[default_idx]
+                                    broker = current_node.interaction_broker
+                                    if broker:
+                                        broker.submit(action.action_id, default_choice)
+                                        logger.info(f"Web auto-submitted default choice: {default_choice}")
+                                continue  # Don't yield PROCESSING to UI
+
+                            # SUCCESS interactions are yielded for UI rendering
                             incremental_actions.append(action)
                             yield action
                         self.last_actions = incremental_actions

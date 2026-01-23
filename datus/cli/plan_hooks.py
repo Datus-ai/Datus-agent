@@ -4,15 +4,12 @@
 
 """Plan mode hooks implementation for intercepting agent execution flow."""
 
-import asyncio
 import time
 
 from agents import SQLiteSession
 from agents.lifecycle import AgentHooks
-from rich.console import Console
 
-from datus.cli.blocking_input_manager import blocking_input_manager
-from datus.cli.execution_state import execution_controller
+from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -29,8 +26,8 @@ class UserCancelledException(Exception):
 class PlanModeHooks(AgentHooks):
     """Plan Mode hooks for workflow management"""
 
-    def __init__(self, console: Console, session: SQLiteSession, auto_mode: bool = False):
-        self.console = console
+    def __init__(self, broker: InteractionBroker, session: SQLiteSession, auto_mode: bool = False):
+        self.broker = broker
         self.session = session
         self.auto_mode = auto_mode
         from datus.tools.func_tool.plan_tools import SessionTodoStorage
@@ -96,131 +93,119 @@ class PlanModeHooks(AgentHooks):
         self._transition_state("confirming", {"todo_count": len(todo_list.items) if todo_list else 0})
 
         if not todo_list:
-            self.console.print("[red]No plan generated[/]")
+            # No plan generated - need a simple request to show error
+            choice, callback = await self.broker.request(
+                content="**No plan generated**\n\nPlease try again with a different request.",
+                choices=["OK"],
+                context={"hook_type": "plan_mode", "phase": "error"},
+            )
+            await callback("Plan generation failed")
             return
 
-        # Stop live display BEFORE showing the plan (keep registered for restart)
-        # At this point, LLM has finished its turn, so all thinking/tool messages are already displayed
-        execution_controller.stop_live_display()
-        await asyncio.sleep(0.3)
-
-        self.console.print("[bold green]Plan Generated Successfully![/]")
-        self.console.print("[bold cyan]Execution Plan:[/]")
-
+        # Build plan display content (markdown format)
+        plan_content = "## Plan Generated Successfully!\n\n"
+        plan_content += "### Execution Plan:\n"
         for i, item in enumerate(todo_list.items, 1):
-            self.console.print(f"  {i}. {item.content}")
+            plan_content += f"{i}. {item.content}\n"
 
-        # Auto mode: skip user confirmation
+        # Auto mode: skip user confirmation, use a simple request to show plan
         if self.auto_mode:
             self.execution_mode = "auto"
             self._transition_state("executing", {"mode": "auto"})
-            self.console.print("[green]Auto execution mode (workflow/benchmark context)[/]")
+            choice, callback = await self.broker.request(
+                content=f"{plan_content}\n\n**Auto execution mode** (workflow/benchmark context)",
+                choices=["Continue"],
+                context={"hook_type": "plan_mode", "phase": "auto_confirm"},
+            )
+            await callback("Auto execution mode started")
             return
 
-        # Interactive mode: ask for user confirmation
+        # Interactive mode: ask for user confirmation with plan content
         try:
-            await self._get_user_confirmation()
+            await self._get_user_confirmation(plan_content)
         except PlanningPhaseException:
             # Re-raise to be handled by chat_agentic_node.py
             raise
 
-    async def _get_user_confirmation(self):
-        import asyncio
-        import sys
-
+    async def _get_user_confirmation(self, plan_content: str = ""):
         try:
-            sys.stdout.flush()
-            sys.stderr.flush()
+            # Merge plan content into request content
+            request_content = ""
+            if plan_content:
+                request_content = f"{plan_content}\n\n"
+            request_content += "### Choose Execution Mode:"
 
-            self.console.print("\n" + "=" * 50)
-            self.console.print("\n[bold cyan]CHOOSE EXECUTION MODE:[/]")
-            self.console.print("")
-            self.console.print("  1. Manual Confirm - Confirm each step")
-            self.console.print("  2. Auto Execute - Run all steps automatically")
-            self.console.print("  3. Revise - Provide feedback and regenerate plan")
-            self.console.print("  4. Cancel")
-            self.console.print("")
+            choice, callback = await self.broker.request(
+                content=request_content,
+                choices=[
+                    "Manual Confirm - Confirm each step",
+                    "Auto Execute - Run all steps automatically",
+                    "Revise - Provide feedback and regenerate plan",
+                    "Cancel",
+                ],
+                default_choice=0,
+                context={"hook_type": "plan_mode", "phase": "confirming"},
+            )
+            logger.info(f"choice: {choice}")
 
-            # Pause execution while getting user input (live display already stopped by caller)
-            async with execution_controller.pause_execution():
-                # Small delay for console stability after flushing
-                await asyncio.sleep(0.2)
-
-                # Get input using blocking_input_manager
-                def get_user_input():
-                    return blocking_input_manager.get_blocking_input(
-                        lambda: input("Your choice (1-4) [1]: ").strip() or "1"
-                    )
-
-                choice = await execution_controller.request_user_input(get_user_input)
-
-            if choice == "1":
+            if choice.startswith("Manual"):
                 self.execution_mode = "manual"
                 self._transition_state("executing", {"mode": "manual"})
-                self.console.print("[green]Manual confirmation mode selected[/]")
-                # Recreate live display from current cursor position (brand new display)
-                execution_controller.recreate_live_display()
+                await callback("**Manual confirmation mode selected**")
                 return
-            elif choice == "2":
+            elif choice.startswith("Auto"):
                 self.execution_mode = "auto"
                 self._transition_state("executing", {"mode": "auto"})
-                self.console.print("[green]Auto execution mode selected[/]")
-                # Recreate live display from current cursor position (brand new display)
-                execution_controller.recreate_live_display()
+                await callback("**Auto execution mode selected**")
                 return
-            elif choice == "3":
+            elif choice.startswith("Revise"):
+                await callback("Revising plan...")
                 await self._handle_replan()
-                # Recreate live display for regeneration phase
-                execution_controller.recreate_live_display()
                 raise PlanningPhaseException(f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}")
-            elif choice == "4":
+            elif choice.startswith("Cancel"):
                 self._transition_state("cancelled", {})
-                self.console.print("[yellow]Plan cancelled[/]")
+                await callback("**Plan cancelled**")
                 raise UserCancelledException("User cancelled plan execution")
             else:
-                self.console.print("[red]Invalid choice, please try again[/]")
+                await callback("**Invalid choice, please try again**")
                 await self._get_user_confirmation()
 
-        except (KeyboardInterrupt, EOFError):
-            self._transition_state("cancelled", {"reason": "keyboard_interrupt"})
-            self.console.print("\n[yellow]Plan cancelled[/]")
+        except InteractionCancelled:
+            self._transition_state("cancelled", {"reason": "interaction_cancelled"})
+            raise UserCancelledException("Plan cancelled")
 
     async def _handle_replan(self):
         try:
-            # Stop live display before prompting (keep registered for restart)
-            execution_controller.stop_live_display()
+            # Request text input - merge feedback prompt into request content
+            feedback, callback = await self.broker.request(
+                content="### Provide feedback for replanning\n\nEnter your feedback:",
+                choices=["Submit feedback"],
+                context={"hook_type": "plan_mode", "input_mode": "text"},
+            )
 
-            async with execution_controller.pause_execution():
-                await asyncio.sleep(0.1)
-
-                self.console.print("\n[bold yellow]Provide feedback for replanning:[/]")
-
-                def get_user_input():
-                    return blocking_input_manager.get_blocking_input(lambda: input("> ").strip())
-
-                feedback = await execution_controller.request_user_input(get_user_input)
-            if feedback:
+            if feedback and feedback != "Submit feedback":
                 todo_list = self.todo_storage.get_todo_list()
                 completed_items = [item for item in todo_list.items if item.status == "completed"] if todo_list else []
 
+                # Build callback content with status info
+                callback_content = ""
                 if completed_items:
-                    self.console.print(f"[blue]Found {len(completed_items)} completed steps[/]")
+                    callback_content += f"Found {len(completed_items)} completed steps\n\n"
+                callback_content += f"**Replanning with feedback:** {feedback}"
 
-                self.console.print(f"[green]Replanning with feedback: {feedback}[/]")
+                await callback(callback_content)
                 self.replan_feedback = feedback
                 # Transition back to generating phase for replan
                 self._transition_state("generating", {"replan_triggered": True, "feedback": feedback})
             else:
-                self.console.print("[yellow]No feedback provided[/]")
+                await callback("**No feedback provided**")
                 if self.plan_phase == "confirming":
                     await self._get_user_confirmation()
-        except (KeyboardInterrupt, EOFError):
-            self.console.print("\n[yellow]Replan cancelled[/]")
+
+        except InteractionCancelled:
+            pass  # Replan cancelled, no callback needed
 
     async def _handle_execution_step(self, _tool_name: str):
-        import asyncio
-        import sys
-
         logger.info(f"PlanHooks: _handle_execution_step called with tool: {_tool_name}")
 
         # Auto mode: skip all step confirmations
@@ -243,125 +228,71 @@ class PlanModeHooks(AgentHooks):
 
         current_item = pending_items[0]
 
-        # Stop live display BEFORE showing step progress (keep registered for restart)
-        execution_controller.stop_live_display()
+        # Build progress display (markdown format)
+        progress_content = "---\n\n### Plan Progress:\n\n"
 
-        await asyncio.sleep(0.2)
-        sys.stdout.flush()
-        sys.stderr.flush()
+        for i, item in enumerate(todo_list.items, 1):
+            if item.status == "completed":
+                progress_content += f"- [x] ~~{i}. {item.content}~~\n"
+            elif item.id == current_item.id:
+                progress_content += f"- [ ] **{i}. {item.content}** (current)\n"
+            else:
+                progress_content += f"- [ ] {i}. {item.content}\n"
 
-        # Print newlines to push content down and avoid overlap when resuming
-        self.console.print("\n" * 2)
-        self.console.print("-" * 40)
+        progress_content += f"\n**Next step:** {current_item.content}"
 
         try:
             if self.execution_mode == "auto":
-                # Display full todo list with progress indicators in auto mode too
-                self.console.print("\n[bold cyan]Plan Progress:[/]")
-                for i, item in enumerate(todo_list.items, 1):
-                    if item.status == "completed":
-                        status_icon = "[green]✓[/]"
-                        text_style = "[dim]"
-                        close_tag = "[/]"
-                    elif item.id == current_item.id:
-                        status_icon = "[yellow]▶[/]"  # Current step
-                        text_style = "[bold cyan]"
-                        close_tag = "[/]"
-                    else:
-                        status_icon = "[white]○[/]"  # Pending
-                        text_style = ""
-                        close_tag = ""
+                # Merge progress into request content
+                choice, callback = await self.broker.request(
+                    content=f"{progress_content}\n\n**Auto Mode:** {current_item.content}",
+                    choices=["Execute (y)", "Cancel (n)"],
+                    default_choice=0,
+                    context={"hook_type": "plan_mode", "step": current_item.content},
+                )
 
-                    self.console.print(f"  {status_icon} {text_style}{i}. {item.content}{close_tag}")
-
-                self.console.print(f"\n[bold cyan]Auto Mode:[/] {current_item.content}")
-
-                # Pause execution while getting user input (live display already stopped)
-                async with execution_controller.pause_execution():
-                    await asyncio.sleep(0.1)
-
-                    def get_user_input():
-                        return blocking_input_manager.get_blocking_input(
-                            lambda: input("Execute? (y/n) [y]: ").strip().lower() or "y"
-                        )
-
-                    choice = await execution_controller.request_user_input(get_user_input)
-
-                if choice in ["y", "yes"]:
-                    self.console.print("[green]Executing...[/]")
-                    # Recreate live display from current cursor position
-                    execution_controller.recreate_live_display()
+                if choice.startswith("Execute"):
+                    await callback("**Executing...**")
                     return
-                elif choice in ["cancel", "c", "n", "no"]:
-                    self.console.print("[yellow]Execution cancelled[/]")
+                else:
+                    await callback("**Execution cancelled**")
                     self.plan_phase = "cancelled"
                     raise UserCancelledException("Execution cancelled by user")
             else:
-                # Display full todo list with progress indicators
-                self.console.print("\n[bold cyan]Plan Progress:[/]")
-                for i, item in enumerate(todo_list.items, 1):
-                    if item.status == "completed":
-                        status_icon = "[green]✓[/]"
-                        text_style = "[dim]"
-                        close_tag = "[/]"
-                    elif item.id == current_item.id:
-                        status_icon = "[yellow]▶[/]"  # Current step
-                        text_style = "[bold cyan]"
-                        close_tag = "[/]"
-                    else:
-                        status_icon = "[white]○[/]"  # Pending
-                        text_style = ""
-                        close_tag = ""
+                # Manual mode - merge progress into request content
+                choice, callback = await self.broker.request(
+                    content=f"{progress_content}\n\n### Options:",
+                    choices=[
+                        "Execute this step",
+                        "Execute this step and continue automatically",
+                        "Revise remaining plan",
+                        "Cancel",
+                    ],
+                    default_choice=0,
+                    context={"hook_type": "plan_mode", "step": current_item.content},
+                )
 
-                    self.console.print(f"  {status_icon} {text_style}{i}. {item.content}{close_tag}")
+                if choice == "Execute this step":
+                    await callback("**Executing step...**")
+                    return
+                elif choice.startswith("Execute this step and continue"):
+                    self.execution_mode = "auto"
+                    await callback("**Switching to auto mode...**")
+                    return
+                elif choice.startswith("Revise"):
+                    await callback("**Revising plan...**")
+                    await self._handle_replan()
+                    raise PlanningPhaseException(f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}")
+                elif choice.startswith("Cancel"):
+                    self._transition_state("cancelled", {"step": current_item.content, "user_choice": choice})
+                    await callback("**Execution cancelled**")
+                    raise UserCancelledException("User cancelled execution")
+                else:
+                    await callback(f"**Invalid choice '{choice}'. Please enter 1, 2, 3, or 4.**")
 
-                self.console.print(f"\n[bold cyan]Next step:[/] {current_item.content}")
-                self.console.print("Options:")
-                self.console.print("  1. Execute this step")
-                self.console.print("  2. Execute this step and continue automatically")
-                self.console.print("  3. Revise remaining plan")
-                self.console.print("  4. Cancel")
-
-                while True:
-                    # Pause execution while getting user input (live display already stopped)
-                    async with execution_controller.pause_execution():
-                        await asyncio.sleep(0.1)
-
-                        def get_user_input():
-                            return blocking_input_manager.get_blocking_input(
-                                lambda: input("\nYour choice (1-4) [1]: ").strip() or "1"
-                            )
-
-                        choice = await execution_controller.request_user_input(get_user_input)
-
-                    if choice == "1":
-                        self.console.print("[green]Executing step...[/]")
-                        # Recreate live display from current cursor position
-                        execution_controller.recreate_live_display()
-                        return
-                    elif choice == "2":
-                        self.execution_mode = "auto"
-                        self.console.print("[green]Switching to auto mode...[/]")
-                        # Recreate live display from current cursor position
-                        execution_controller.recreate_live_display()
-                        return
-                    elif choice == "3":
-                        await self._handle_replan()
-                        # Recreate live display for regeneration phase
-                        execution_controller.recreate_live_display()
-                        raise PlanningPhaseException(
-                            f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}"
-                        )
-                    elif choice == "4":
-                        self._transition_state("cancelled", {"step": current_item.content, "user_choice": choice})
-                        self.console.print("[yellow]Execution cancelled[/]")
-                        raise UserCancelledException("User cancelled execution")
-                    else:
-                        self.console.print(f"[red]Invalid choice '{choice}'. Please enter 1, 2, 3, or 4.[/]")
-
-        except (KeyboardInterrupt, EOFError):
+        except InteractionCancelled:
             self._transition_state("cancelled", {"reason": "execution_interrupted"})
-            self.console.print("\n[yellow]Execution cancelled[/]")
+            raise UserCancelledException("Execution interrupted")
 
     def _is_pending_update(self, context) -> bool:
         """

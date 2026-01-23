@@ -25,7 +25,7 @@ from pandas.core.dtypes.common import is_numeric_dtype
 from datus.cli.action_history_display import ActionContentGenerator
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
-from datus.schemas.action_history import ActionHistory, ActionRole
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.schemas.visualization import VisualizationInput, VisualizationOutput
 from datus.tools.llms_tools.visualization_tool import VisualizationTool
@@ -571,6 +571,11 @@ class UIComponents:
     def render_action_item(
         self, chat_id: str, index: int, action: ActionHistory, content_generator: ActionContentGenerator
     ):
+        # Handle INTERACTION SUCCESS actions with special rendering
+        if action.role == ActionRole.INTERACTION and action.status == ActionStatus.SUCCESS:
+            self._render_interaction_success(action, index)
+            return
+
         with st.container():
             # Action header with status indicator
             dot = content_generator._get_action_dot(action)
@@ -615,6 +620,39 @@ class UIComponents:
                     st.caption(f"⏱️ Started: {action.start_time.strftime('%H:%M:%S')} | Duration: {duration:.2f}s")
                 elif action.start_time:
                     st.caption(f"⏱️ Started: {action.start_time.strftime('%H:%M:%S')}")
+
+    def _render_interaction_success(self, action: ActionHistory, index: int):
+        """Render INTERACTION SUCCESS action showing input content, choice and result."""
+        input_data = action.input or {}
+        output_data = action.output or {}
+
+        with st.expander(f"Step {index}: ✓ User Interaction", expanded=True):
+            # Render original request content
+            content = input_data.get("content", "")
+            content_type = input_data.get("content_type", "text")
+            if content:
+                if content_type == "markdown":
+                    st.markdown(content)
+                elif content_type == "yaml":
+                    st.code(content, language="yaml")
+                else:
+                    st.write(content)
+
+            # Render user choice (auto-selected in web mode)
+            user_choice = output_data.get("user_choice", "")
+            if user_choice:
+                st.success(f"✓ Auto-selected: {user_choice}")
+
+            # Render callback result content
+            result_content = output_data.get("content", "") or action.messages or ""
+            result_type = output_data.get("content_type", "markdown")
+            if result_content:
+                if result_type == "markdown":
+                    st.markdown(result_content)
+                elif result_type == "yaml":
+                    st.code(result_content, language="yaml")
+                else:
+                    st.write(result_content)
 
     def render_action_history(self, actions: List[ActionHistory], chat_id: str = None, expanded: bool = False) -> None:
         """Render complete action history with full details.

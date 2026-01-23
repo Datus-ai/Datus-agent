@@ -188,10 +188,8 @@ class GenMetricsAgenticNode(AgenticNode):
     def _setup_hooks(self):
         """Setup hooks for interactive mode."""
         try:
-            from rich.console import Console
-
-            console = Console()
-            self.hooks = GenerationHooks(console=console, agent_config=self.agent_config)
+            broker = self._get_or_create_broker()
+            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config)
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")

@@ -20,6 +20,7 @@ from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
 
 from datus.agent.node.node import Node
+from datus.cli.execution_state import InteractionBroker
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
@@ -73,6 +74,9 @@ class AgenticNode(Node):
         self._session_tokens: int = 0
         self.last_summary: Optional[str] = None
         self.context_length: Optional[int] = None
+
+        # InteractionBroker - created per-node instance for async user interactions
+        self.interaction_broker: Optional["InteractionBroker"] = None
 
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
@@ -571,6 +575,46 @@ class AgenticNode(Node):
         Yields:
             ActionHistory: Progress updates during execution
         """
+
+    def _get_or_create_broker(self) -> "InteractionBroker":
+        """
+        Get or create the interaction broker for this node.
+
+        Returns:
+            InteractionBroker instance for this node
+        """
+        if self.interaction_broker is None:
+
+            self.interaction_broker = InteractionBroker()
+        return self.interaction_broker
+
+    async def execute_stream_with_interactions(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """
+        Execute with interaction support, merging execute_stream with broker.
+
+        This is the method that UI components should call instead of execute_stream()
+        when they want to handle interactions from hooks.
+
+        Args:
+            action_history_manager: Optional action history manager for tracking
+
+        Yields:
+            ActionHistory: Progress updates during execution, including INTERACTION actions
+        """
+        from datus.cli.execution_state import merge_interaction_stream
+
+        broker = self._get_or_create_broker()
+
+        action_stream = self.execute_stream(action_history_manager)
+        async for action in merge_interaction_stream(action_stream, broker):
+            yield action
+
+    def reset_broker(self) -> None:
+        """Reset the interaction broker for reuse."""
+        if self.interaction_broker:
+            self.interaction_broker.reset()
 
     def clear_session(self) -> None:
         """Clear the current session and reset token count."""

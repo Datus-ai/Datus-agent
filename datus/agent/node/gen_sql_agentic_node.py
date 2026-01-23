@@ -522,12 +522,11 @@ class GenSQLAgenticNode(AgenticNode):
             is_plan_mode = getattr(user_input, "plan_mode", False)
             if is_plan_mode:
                 self.plan_mode_active = True
-                from rich.console import Console
-
                 from datus.cli.plan_hooks import PlanModeHooks
 
+                broker = self._get_or_create_broker()
                 auto_mode = getattr(user_input, "auto_execute_plan", False)
-                self.plan_hooks = PlanModeHooks(console=Console(), session=session, auto_mode=auto_mode)
+                self.plan_hooks = PlanModeHooks(broker=broker, session=session, auto_mode=auto_mode)
                 logger.info(f"Plan mode activated (auto_mode={auto_mode})")
 
             system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)

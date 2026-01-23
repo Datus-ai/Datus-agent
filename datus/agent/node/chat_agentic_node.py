@@ -199,19 +199,17 @@ class ChatAgenticNode(GenSQLAgenticNode):
         if is_plan_mode:
             self.plan_mode_active = True
 
-            # Create plan mode hooks
-            from rich.console import Console
-
+            # Create plan mode hooks with interaction broker
             from datus.cli.plan_hooks import PlanModeHooks
 
-            console = Console()
+            broker = self._get_or_create_broker()
             session = self._get_or_create_session()[0]
 
             # Workflow sets 'auto_execute_plan' in metadata, CLI REPL does not
             auto_mode = getattr(user_input, "auto_execute_plan", False)
             logger.info(f"Plan mode auto_mode: {auto_mode} (from input)")
 
-            self.plan_hooks = PlanModeHooks(console=console, session=session, auto_mode=auto_mode)
+            self.plan_hooks = PlanModeHooks(broker=broker, session=session, auto_mode=auto_mode)
 
         # Create initial action
         action_type = "plan_mode_interaction" if is_plan_mode else "chat_interaction"
