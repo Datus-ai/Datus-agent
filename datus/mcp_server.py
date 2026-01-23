@@ -187,7 +187,7 @@ class ToolContextManager:
             config_path: Optional path to agent configuration file
             max_size: Maximum number of contexts to cache. When exceeded,
                      the least recently used context is evicted. Default is 64.
-                     Set to 0 or None for unlimited cache.
+                     Set to 0 for unlimited cache.
         """
         self.config_path = config_path
         self._max_size = max_size if max_size is not None else self.DEFAULT_MAX_SIZE
@@ -553,7 +553,7 @@ class LightweightDynamicMCPServer:
                 try:
                     await server.handle_request(scope, receive, send, namespace, subagent)
                 except Exception as e:
-                    logger.exception(f"Error handling request for namespace={namespace}")
+                    logger.error(f"Error handling request for namespace={namespace}: {e}")
                     await self._send_error(send, 500, f"Internal Server Error: {str(e)}")
 
             async def _send_error(self, send, status_code: int, message: str):
