@@ -282,7 +282,9 @@ class PlanModeHooks(AgentHooks):
                 elif choice.startswith("Revise"):
                     await callback("**Revising plan...**")
                     await self._handle_replan()
-                    raise PlanningPhaseException(f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}")
+                    raise PlanningPhaseException(
+                        f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}"
+                    )
                 elif choice.startswith("Cancel"):
                     self._transition_state("cancelled", {"step": current_item.content, "user_choice": choice})
                     await callback("**Execution cancelled**")

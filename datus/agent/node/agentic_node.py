@@ -584,7 +584,6 @@ class AgenticNode(Node):
             InteractionBroker instance for this node
         """
         if self.interaction_broker is None:
-
             self.interaction_broker = InteractionBroker()
         return self.interaction_broker
 

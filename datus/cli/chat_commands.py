@@ -669,9 +669,7 @@ class ChatCommands:
                 def get_input():
                     default_num = default_choice + 1
                     prompt = f"Your choice (1-{len(choices)}) [{default_num}]: "
-                    return blocking_input_manager.get_blocking_input(
-                        lambda: input(prompt).strip() or str(default_num)
-                    )
+                    return blocking_input_manager.get_blocking_input(lambda: input(prompt).strip() or str(default_num))
 
                 choice_str = get_input()
 
@@ -680,13 +678,13 @@ class ChatCommands:
                     idx = int(choice_str) - 1
                     if 0 <= idx < len(choices):
                         selected = choices[idx]
-                        self.console.print(f"[dim]Selected: {selected}[/]")
+                        self.console.print("[dim]Selected: {selected}[/]")
                         return selected
                     else:
-                        self.console.print(f"[yellow]Invalid choice, using default.[/]")
+                        self.console.print("[yellow]Invalid choice, using default.[/]")
                         return choices[default_choice]
                 except ValueError:
-                    self.console.print(f"[yellow]Invalid input, using default.[/]")
+                    self.console.print("[yellow]Invalid input, using default.[/]")
                     return choices[default_choice]
             else:
                 # No choices - just acknowledge

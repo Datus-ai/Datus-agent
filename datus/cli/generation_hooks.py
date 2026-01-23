@@ -12,7 +12,6 @@ from datetime import datetime
 from typing import Optional
 
 import yaml
-
 from agents.lifecycle import AgentHooks
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
@@ -564,7 +563,9 @@ class GenerationHooks(AgentHooks):
             Markdown string describing the result
         """
         if not self.agent_config:
-            return f"**Error:** Agent configuration not available, cannot sync to RAG\n\nYAML saved to file: `{file_path}`"
+            return (
+                f"**Error:** Agent configuration not available, cannot sync to RAG\n\nYAML saved to file: `{file_path}`"
+            )
 
         try:
             # Sync based on yaml_type
@@ -623,7 +624,10 @@ class GenerationHooks(AgentHooks):
         files_info = f"- `{semantic_model_file}`\n- `{metric_file}`"
 
         if not self.agent_config:
-            return f"**Error:** Agent configuration not available, cannot sync to RAG\n\nYAMLs saved to files:\n{files_info}"
+            return (
+                f"**Error:** Agent configuration not available, cannot sync to RAG\n\n"
+                f"YAMLs saved to files:\n{files_info}"
+            )
 
         try:
             loop = asyncio.get_event_loop()
