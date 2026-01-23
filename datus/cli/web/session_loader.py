@@ -106,7 +106,6 @@ class SessionLoader:
                 current_assistant_group = None
                 assistant_progress = []
                 current_actions = []  # Collect ActionHistory objects for detailed view
-                last_timestamp = None
 
                 for message_data, created_at in cursor.fetchall():
                     try:
@@ -118,9 +117,12 @@ class SessionLoader:
                         if role == "user":
                             # Before adding user message, flush any pending assistant group
                             if current_assistant_group:
-                                final_action = self._parse_final_output(current_actions[-1], current_assistant_group)
-                                if final_action:
-                                    current_actions.append(final_action)
+                                if current_actions:
+                                    final_action = self._parse_final_output(
+                                        current_actions[-1], current_assistant_group
+                                    )
+                                    if final_action:
+                                        current_actions.append(final_action)
 
                                 # Add collected actions and progress to the assistant group
                                 if current_actions:
@@ -147,7 +149,6 @@ class SessionLoader:
                             # Initialize assistant group if needed
                             if not current_assistant_group:
                                 current_assistant_group = {"role": "assistant", "content": "", "timestamp": created_at}
-                                last_timestamp = created_at
 
                             # Parse arguments
                             try:
@@ -232,7 +233,6 @@ class SessionLoader:
                                             "content": "",
                                             "timestamp": created_at,
                                         }
-                                        last_timestamp = created_at
 
                                     # Add to progress
                                     assistant_progress.append(f"💭Thinking: {text}")
