@@ -97,7 +97,6 @@ class PlanModeHooks(AgentHooks):
             choice, callback = await self.broker.request(
                 content="**No plan generated**\n\nPlease try again with a different request.",
                 choices=["OK"],
-                context={"hook_type": "plan_mode", "phase": "error"},
             )
             await callback("Plan generation failed")
             return
@@ -115,7 +114,6 @@ class PlanModeHooks(AgentHooks):
             choice, callback = await self.broker.request(
                 content=f"{plan_content}\n\n**Auto execution mode** (workflow/benchmark context)",
                 choices=["Continue"],
-                context={"hook_type": "plan_mode", "phase": "auto_confirm"},
             )
             await callback("Auto execution mode started")
             return
@@ -144,7 +142,6 @@ class PlanModeHooks(AgentHooks):
                     "Cancel",
                 ],
                 default_choice=0,
-                context={"hook_type": "plan_mode", "phase": "confirming"},
             )
             logger.info(f"choice: {choice}")
 
@@ -180,7 +177,6 @@ class PlanModeHooks(AgentHooks):
             feedback, callback = await self.broker.request(
                 content="### Provide feedback for replanning\n\nEnter your feedback:",
                 choices=["Submit feedback"],
-                context={"hook_type": "plan_mode", "input_mode": "text"},
             )
 
             if feedback and feedback != "Submit feedback":
@@ -248,7 +244,6 @@ class PlanModeHooks(AgentHooks):
                     content=f"{progress_content}\n\n**Auto Mode:** {current_item.content}",
                     choices=["Execute (y)", "Cancel (n)"],
                     default_choice=0,
-                    context={"hook_type": "plan_mode", "step": current_item.content},
                 )
 
                 if choice.startswith("Execute"):
@@ -269,7 +264,6 @@ class PlanModeHooks(AgentHooks):
                         "Cancel",
                     ],
                     default_choice=0,
-                    context={"hook_type": "plan_mode", "step": current_item.content},
                 )
 
                 if choice == "Execute this step":

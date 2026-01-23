@@ -9,7 +9,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
@@ -49,7 +49,6 @@ class InteractionBroker:
             content="## Generated YAML\\n```yaml\\n...\\n```\\n\\nSync to Knowledge Base?",
             choices=["Yes - Save to KB", "No - Keep file only"],
             content_type="markdown",
-            context={"file_path": "/path/to/file.yaml"}
         )
         if choice.startswith("Yes"):
             await sync_to_storage(...)
@@ -84,8 +83,7 @@ class InteractionBroker:
         choices: List[str],
         default_choice: int = 0,
         content_type: str = "markdown",
-        context: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, Callable[[str, str, Optional[Dict[str, Any]]], Awaitable[None]]]:
+    ) -> Tuple[str, Callable[[str, str], Awaitable[None]]]:
         """
         Request user input with choices. Blocks until user responds.
 
@@ -94,14 +92,12 @@ class InteractionBroker:
             choices: List of choice strings
             default_choice: Index of default choice (default: 0)
             content_type: Type of content ("text", "yaml", "sql", "markdown")
-            context: Optional metadata for UI handling
 
         Returns:
             Tuple of (choice, callback):
             - choice: The selected choice string
             - callback: Async function to generate SUCCESS action with result content.
-                        Signature: async def callback(content: str, content_type: str = "markdown",
-                                                      context: dict = None) -> None
+                        Signature: async def callback(content: str, content_type: str = "markdown") -> None
 
         Raises:
             InteractionCancelled: If broker is closed while waiting
@@ -135,7 +131,6 @@ class InteractionBroker:
                 "content_type": content_type,
                 "choices": choices,
                 "default_choice": default_choice,
-                "context": context or {},
             },
             output=None,
         )
@@ -152,7 +147,6 @@ class InteractionBroker:
             async def success_callback(
                 callback_content: str,
                 callback_content_type: str = "markdown",
-                callback_context: Optional[Dict[str, Any]] = None,
             ) -> None:
                 """Generate a SUCCESS interaction action with the given content."""
                 if self._closed:
@@ -170,12 +164,10 @@ class InteractionBroker:
                         "content_type": content_type,
                         "choices": choices,
                         "default_choice": default_choice,
-                        "context": context or {},
                     },
                     output={
                         "content": callback_content,
                         "content_type": callback_content_type,
-                        "context": callback_context or {},
                         "user_choice": result,
                     },
                 )

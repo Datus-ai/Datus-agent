@@ -457,12 +457,6 @@ class GenerationHooks(AgentHooks):
                 content=request_content,
                 choices=["Yes - Save to Knowledge Base", "No - Keep file only"],
                 default_choice=0,
-                context={
-                    "semantic_model_file": semantic_model_file,
-                    "metric_file": metric_file,
-                    "metric_sqls": metric_sqls,
-                    "action": "sync_to_kb",
-                },
             )
 
             if choice.startswith("Yes"):
@@ -518,12 +512,6 @@ class GenerationHooks(AgentHooks):
                 content=request_content,
                 choices=["Yes - Save to Knowledge Base", "No - Keep file only"],
                 default_choice=0,
-                context={
-                    "file_path": file_path,
-                    "yaml_type": yaml_type,
-                    "metric_sqls": metric_sqls,
-                    "action": "sync_to_kb",
-                },
             )
 
             if choice.startswith("Yes"):

@@ -361,6 +361,7 @@ class ChatCommands:
                         elif action.status == ActionStatus.SUCCESS:
                             # Success callback: display content and resume rendering
                             self._display_success(action)
+                            incremental_actions.append(action)
                             action_display.restart_live()
                     else:
                         # Regular actions: add to incremental actions for display
@@ -730,7 +731,7 @@ class ChatCommands:
                 self.console.print(Markdown(content))
 
         except Exception as e:
-            logger.error(f"Error displaying success: {e}")
+            logger.exception(f"Error displaying success: {e}")
             # Fallback to simple print
             content = (action.output or {}).get("content", "")
             if content:
