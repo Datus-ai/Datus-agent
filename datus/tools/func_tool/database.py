@@ -3,9 +3,10 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from agents import Tool
 
@@ -14,7 +15,7 @@ from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools import BaseSqlConnector
-from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
@@ -54,15 +55,61 @@ def _pattern_matches(pattern: str, value: str) -> bool:
 
 
 class DBFuncTool:
+    """
+    Database function tool that supports dynamic connector switching.
+
+    This class can work in two modes:
+    1. Single connector mode (legacy): Pass a single BaseSqlConnector
+    2. Multi-connector mode: Pass a DBManager with namespace for dynamic connector lookup
+
+    In multi-connector mode, connectors are cached with LRU eviction to avoid
+    repeated lookups while limiting memory usage.
+    """
+
+    DEFAULT_CONNECTOR_CACHE_SIZE = 8
+
     def __init__(
         self,
-        connector: BaseSqlConnector,
+        connector_or_manager: Union[BaseSqlConnector, DBManager],
         agent_config: Optional[AgentConfig] = None,
         *,
+        default_database: Optional[str] = None,
         sub_agent_name: Optional[str] = None,
         scoped_tables: Optional[Iterable[str]] = None,
+        connector_cache_size: int = DEFAULT_CONNECTOR_CACHE_SIZE,
     ):
-        self.connector = connector
+        """
+        Initialize DBFuncTool.
+
+        Args:
+            connector_or_manager: Either a single BaseSqlConnector (legacy mode)
+                                  or a DBManager (multi-connector mode)
+            agent_config: Optional agent configuration
+            namespace: Required when using DBManager mode
+            default_database: Default database name for multi-database scenarios
+            sub_agent_name: Optional sub-agent name for scoped context
+            scoped_tables: Optional explicit table scope patterns
+            connector_cache_size: Max connectors to cache (LRU eviction), default 8
+        """
+        # Determine mode based on input type
+        if isinstance(connector_or_manager, DBManager):
+            if not agent_config:
+                raise ValueError("AgentConfiguration is required when using DBManager mode")
+            self._db_manager = connector_or_manager
+            self._namespace = agent_config.current_namespace
+            self._default_database = default_database or (agent_config.current_database if agent_config else "")
+            if len(agent_config.current_db_configs()) == 1:
+                self._init_single_db_connector(self._db_manager.first_conn(self._namespace))
+            else:
+                self._databases = list(agent_config.current_db_configs().keys()) if agent_config else []
+                self._connector_cache: OrderedDict[str, BaseSqlConnector] = OrderedDict()
+                self._connector_cache_size = connector_cache_size
+                # Get first connector for dialect detection
+                self._primary_connector = self._db_manager.first_conn(self._namespace)
+                self._is_multi_connector = True
+        else:
+            self._init_single_db_connector(connector_or_manager)
+
         self.compressor = DataCompressor()
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
@@ -73,14 +120,68 @@ class DBFuncTool:
         self.has_schema = self.schema_rag and self.schema_rag.schema_store.table_size() > 0
         self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_size() > 0
 
+    def _init_single_db_connector(self, connector: BaseSqlConnector):
+        # Legacy single connector mode
+        self._db_manager = None
+        self._namespace = None
+        self._default_database = ""
+        self._connector_cache = OrderedDict()
+        self._connector_cache_size = 0
+        self._primary_connector = connector
+        self._is_multi_connector = False
+
+    @property
+    def connector(self) -> BaseSqlConnector:
+        """Get the primary/default connector (for backward compatibility)."""
+        return self._primary_connector
+
+    def _get_connector(self, database: Optional[str] = None) -> BaseSqlConnector:
+        """
+        Get connector for the specified database.
+
+        In single connector mode, always returns the primary connector.
+        In multi-connector mode, returns cached connector or fetches from db_manager.
+
+        Args:
+            database: Database name. If None/empty, uses default database.
+
+        Returns:
+            BaseSqlConnector for the specified database
+        """
+        if self._db_manager is None:
+            # Single connector mode
+            return self._primary_connector
+
+        # Multi-connector mode
+        db_name = database or self._default_database
+
+        # Check cache
+        if db_name in self._connector_cache:
+            # Move to end (most recently used)
+            self._connector_cache.move_to_end(db_name)
+            return self._connector_cache[db_name]
+
+        # Fetch from db_manager
+        connector = self._db_manager.get_conn(self._namespace, db_name)
+
+        # Add to cache with LRU eviction
+        if self._connector_cache_size > 0 and len(self._connector_cache) >= self._connector_cache_size:
+            # Evict least recently used (first item)
+            evicted_name, _ = self._connector_cache.popitem(last=False)
+            logger.debug(f"LRU evicting connector: {evicted_name}")
+
+        self._connector_cache[db_name] = connector
+        return connector
+
     def _reset_database_for_rag(self, database_name: str = "") -> str:
-        if self.connector.dialect in (DBType.SQLITE, DBType.DUCKDB):
-            return self.connector.database_name
+        connector = self._get_connector(database_name)
+        if connector.dialect in (DBType.SQLITE, DBType.DUCKDB):
+            return connector.database_name
         else:
             return database_name
 
     def _determine_field_order(self) -> Sequence[str]:
-        dialect = getattr(self.connector, "dialect", "") or ""
+        dialect = getattr(self._primary_connector, "dialect", "") or ""
         fields: List[str] = []
         if DBType.support_catalog(dialect):
             fields.append("catalog")
@@ -536,8 +637,11 @@ class DBFuncTool:
             FuncToolResult with result as a list of database names ordered by the connector. On failure success=0 with
             an explanatory error message.
         """
+        if self._is_multi_connector:
+            return FuncToolResult(success=1, result=self._databases)
         try:
-            databases = self.connector.get_databases(catalog, include_sys=include_sys)
+            connector = self._get_connector()
+            databases = connector.get_databases(catalog, include_sys=include_sys)
             filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
             return FuncToolResult(result=filtered)
         except Exception as e:
@@ -560,7 +664,8 @@ class DBFuncTool:
         try:
             if database and not self._database_matches_scope(catalog, database):
                 return FuncToolResult(result=[])
-            schemas = self.connector.get_schemas(catalog, database, include_sys=include_sys)
+            connector = self._get_connector(database)
+            schemas = connector.get_schemas(catalog, database, include_sys=include_sys)
             filtered = [schema for schema in schemas if self._schema_matches_scope(catalog, database, schema)]
             return FuncToolResult(result=filtered)
         except Exception as e:
@@ -586,14 +691,15 @@ class DBFuncTool:
             success=0 with an explanatory error message.
         """
         try:
+            connector = self._get_connector(database)
             result = []
-            for tb in self.connector.get_tables(catalog, database, schema_name):
+            for tb in connector.get_tables(catalog, database, schema_name):
                 result.append({"type": "table", "name": tb})
 
             if include_views:
                 # Add views
                 try:
-                    views = self.connector.get_views(catalog, database, schema_name)
+                    views = connector.get_views(catalog, database, schema_name)
                     for view in views:
                         result.append({"type": "view", "name": view})
                 except (NotImplementedError, AttributeError):
@@ -602,7 +708,7 @@ class DBFuncTool:
 
                 # Add materialized views
                 try:
-                    materialized_views = self.connector.get_materialized_views(catalog, database, schema_name)
+                    materialized_views = connector.get_materialized_views(catalog, database, schema_name)
                     for mv in materialized_views:
                         result.append({"type": "materialized_view", "name": mv})
                 except (NotImplementedError, AttributeError):
@@ -660,7 +766,8 @@ class DBFuncTool:
                 )
 
             # 1. Get Physical Schema
-            column_result = self.connector.get_schema(
+            connector = self._get_connector(database)
+            column_result = connector.get_schema(
                 catalog_name=catalog, database_name=database, schema_name=schema_name, table_name=table_name
             )
             logger.debug(f"Got {len(column_result)} columns from connector")
@@ -735,12 +842,13 @@ class DBFuncTool:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return FuncToolResult(success=0, error=error_msg)
 
-    def read_query(self, sql: str) -> FuncToolResult:
+    def read_query(self, sql: str, database: Optional[str] = "") -> FuncToolResult:
         """
         Execute arbitrary SQL and return the result rows (optionally compressed).
 
         Args:
             sql: SQL text to run against the connector.
+            database: Optional database name for multi-database scenarios.
 
         Returns:
             FuncToolResult with result=self.compressor.compress(rows) when successful. On failure success=0 with the
@@ -748,8 +856,9 @@ class DBFuncTool:
         """
         try:
             logger.info(f"read_query sql: {sql}")
-            result = self.connector.execute_query(
-                sql, result_format="arrow" if self.connector.dialect == DBType.SNOWFLAKE else "list"
+            connector = self._get_connector(database)
+            result = connector.execute_query(
+                sql, result_format="arrow" if connector.dialect == DBType.SNOWFLAKE else "list"
             )
             if result.success:
                 data = result.sql_return
@@ -794,7 +903,8 @@ class DBFuncTool:
                     error=f"Table '{table_name}' is outside the scoped context.",
                 )
             # Get tables with DDL
-            tables_with_ddl = self.connector.get_tables_with_ddl(
+            connector = self._get_connector(database)
+            tables_with_ddl = connector.get_tables_with_ddl(
                 catalog_name=catalog, database_name=database, schema_name=schema_name, tables=[table_name]
             )
 
@@ -812,6 +922,12 @@ class DBFuncTool:
 def db_function_tool_instance(
     agent_config: AgentConfig, database_name: str = "", sub_agent_name: Optional[str] = None
 ) -> DBFuncTool:
+    """
+    Create a DBFuncTool instance in single connector mode (legacy).
+
+    For multi-connector mode (e.g., BIRD_DEV with multiple SQLite databases),
+    use db_function_tool_instance_multi instead.
+    """
     db_manager = db_manager_instance(agent_config.namespaces)
     return DBFuncTool(
         db_manager.get_conn(agent_config.current_namespace, database_name or agent_config.current_database),
@@ -820,7 +936,42 @@ def db_function_tool_instance(
     )
 
 
+def db_function_tool_instance_multi(
+    agent_config: AgentConfig,
+    sub_agent_name: Optional[str] = None,
+    connector_cache_size: int = DBFuncTool.DEFAULT_CONNECTOR_CACHE_SIZE,
+) -> DBFuncTool:
+    """
+    Create a DBFuncTool instance in multi-connector mode.
+
+    This mode supports dynamic connector switching for namespaces with multiple
+    databases (e.g., BIRD_DEV with multiple SQLite files). Connectors are cached
+    with LRU eviction to limit memory usage.
+
+    Args:
+        agent_config: Agent configuration
+        sub_agent_name: Optional sub-agent name for scoped context
+        connector_cache_size: Max connectors to cache (LRU eviction), default 8
+
+    Returns:
+        DBFuncTool instance in multi-connector mode
+    """
+    db_manager = db_manager_instance(agent_config.namespaces)
+    return DBFuncTool(
+        db_manager,
+        agent_config=agent_config,
+        default_database=agent_config.current_database,
+        sub_agent_name=sub_agent_name,
+        connector_cache_size=connector_cache_size,
+    )
+
+
 def db_function_tools(
     agent_config: AgentConfig, database_name: str = "", sub_agent_name: Optional[str] = None
 ) -> List[Tool]:
     return db_function_tool_instance(agent_config, database_name, sub_agent_name).available_tools()
+
+
+def db_function_tools_multi(agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> List[Tool]:
+    """Get database function tools in multi-connector mode."""
+    return db_function_tool_instance_multi(agent_config, sub_agent_name).available_tools()

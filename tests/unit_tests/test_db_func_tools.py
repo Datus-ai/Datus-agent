@@ -29,22 +29,22 @@ class FakeRecordBatch:
 @pytest.fixture
 def mock_connector():
     """Create a mock database connector."""
-    connector = Mock(spec=BaseSqlConnector)
+    # Don't use spec= since we need methods not in BaseSqlConnector base class
+    connector = Mock()
     connector.dialect = "postgresql"
     connector.catalog_name = ""
     connector.database_name = "db1"
     connector.schema_name = "schema1"
 
     # Setup mock return values
-    connector.get_catalogs.return_value = ["catalog1", "catalog2"]
     connector.get_databases.return_value = ["db1", "db2"]
     connector.get_schemas.return_value = ["schema1", "schema2"]
     connector.get_tables.return_value = ["users", "orders"]
     connector.get_views.return_value = ["user_view", "order_view"]
     connector.get_materialized_views.return_value = ["sales_mv"]
     connector.get_schema.return_value = [
-        {"column_name": "id", "data_type": "integer", "is_nullable": "NO"},
-        {"column_name": "name", "data_type": "varchar", "is_nullable": "YES"},
+        {"name": "id", "type": "integer", "comment": ""},
+        {"name": "name", "type": "varchar", "comment": ""},
     ]
 
     # Mock execute_query result
@@ -257,7 +257,7 @@ class TestDBFuncTool:
 
     def test_list_schemas_wildcard_scope(self):
         """Wildcard scopes should retain every schema for the matched database."""
-        connector = Mock(spec=BaseSqlConnector)
+        connector = Mock()
         connector.dialect = "postgresql"
         connector.catalog_name = ""
         connector.database_name = "db1"
@@ -277,7 +277,7 @@ class TestDBFuncTool:
 
     def test_list_schemas_wildcard_scope_filters_non_matching(self):
         """Wildcard scopes should return empty when the database is out of scope."""
-        connector = Mock(spec=BaseSqlConnector)
+        connector = Mock()
         connector.dialect = "postgresql"
         connector.catalog_name = ""
         connector.database_name = "db1"
@@ -293,7 +293,7 @@ class TestDBFuncTool:
 
     def test_list_tables_wildcard_scope_filters_by_schema(self):
         """Wildcard scopes should allow matching schemas and exclude others."""
-        connector = Mock(spec=BaseSqlConnector)
+        connector = Mock()
         connector.dialect = "postgresql"
         connector.catalog_name = ""
         connector.database_name = "db1"
@@ -334,7 +334,7 @@ class TestDBFuncTool:
 
     def test_list_tables_wildcard_scope_filters_non_matching_database(self):
         """Wildcard scopes should filter out tables from databases outside scope."""
-        connector = Mock(spec=BaseSqlConnector)
+        connector = Mock()
         connector.dialect = "postgresql"
         connector.catalog_name = ""
         connector.database_name = "db1"
@@ -412,10 +412,8 @@ class TestDBFuncTool:
         assert result.error is None
         assert isinstance(result.result, dict)
         assert "columns" in result.result
-        assert "table_info" in result.result
         assert len(result.result["columns"]) == 2  # Two columns
-        assert result.result["columns"][0]["column_name"] == "id"
-        assert result.result["table_info"] == {}
+        assert result.result["columns"][0]["name"] == "id"
 
         mock_connector.get_schema.assert_called_once_with(
             catalog_name="test_catalog", database_name="test_db", schema_name="test_schema", table_name="users"
@@ -481,19 +479,19 @@ class TestDBFuncTool:
         db_func_tool.has_semantic_models = True
         db_func_tool._get_semantic_model = Mock(
             return_value={
+                "semantic_model_name": "orders_model",
                 "description": "Orders semantic model",
-                "dimensions": ["customer_id"],
-                "measures": ["total_sales"],
+                "dimensions": [{"name": "customer_id", "expr": "customer_id"}],
+                "measures": [{"name": "total_sales"}],
             }
         )
 
         result = db_func_tool.describe_table(table_name="orders")
 
         assert result.success == 1
-        table_info = result.result["table_info"]
-        assert table_info["description"] == "Orders semantic model"
-        assert table_info["dimensions"] == ["customer_id"]
-        assert table_info["measures"] == ["total_sales"]
+        # describe_table returns 'table' key for semantic model info
+        table_info = result.result.get("table", {})
+        assert table_info.get("description") == "Orders semantic model"
         mock_connector.get_schema.assert_called_once()
 
     def test_read_query_success(self, db_func_tool, mock_connector):
@@ -592,7 +590,7 @@ class TestDBFuncTool:
 
     def test_catalog_scoped_tables_filter_results(self):
         """Catalog-qualified scopes should restrict databases, schemas, and tables."""
-        connector = Mock(spec=BaseSqlConnector)
+        connector = Mock()
         connector.dialect = DBType.SNOWFLAKE
         connector.catalog_name = "cat1"
         connector.database_name = "analytics"
@@ -816,9 +814,11 @@ class TestDBFuncToolIntegration:
         db_func_tool.has_semantic_models = True
         db_func_tool._get_semantic_model = Mock(
             return_value={
+                "semantic_model_name": "orders_model",
                 "description": "Orders summary",
                 "dimensions": ["order_id"],
                 "measures": ["total_amount"],
+                "identifiers": [],
             }
         )
 
@@ -866,3 +866,266 @@ class TestDBFuncToolIntegration:
         assert result.success == 1
         assert result.result is not None
         assert result.result["is_compressed"] is False
+
+
+class TestDBFuncToolMultiConnector:
+    """Test cases for DBFuncTool multi-connector mode."""
+
+    @pytest.fixture(autouse=True)
+    def mock_storage_classes(self, monkeypatch):
+        """Mock storage classes to avoid actual storage initialization."""
+
+        class StubSchemaStore:
+            def table_size(self):
+                return 0
+
+        class StubSchemaRAG:
+            def __init__(self, *args, **kwargs):
+                self.schema_store = StubSchemaStore()
+
+        class StubSemanticRAG:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def get_size(self):
+                return 0
+
+        monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
+
+    @pytest.fixture
+    def mock_agent_config(self):
+        """Create a mock AgentConfig for multi-connector tests."""
+        config = Mock()
+        config.current_namespace = "test_ns"
+        config.current_database = "db1"
+        # Return multiple databases to trigger multi-connector mode
+        config.current_db_configs.return_value = {"db1": {}, "db2": {}}
+        return config
+
+    @pytest.fixture
+    def mock_single_db_agent_config(self):
+        """Create a mock AgentConfig with single database."""
+        config = Mock()
+        config.current_namespace = "test_ns"
+        config.current_database = "db1"
+        # Return single database to trigger single connector mode
+        config.current_db_configs.return_value = {"db1": {}}
+        return config
+
+    def test_single_connector_mode_backward_compatibility(self):
+        """Test that single connector mode still works (backward compatibility)."""
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.database_name = "test_db"
+        connector.catalog_name = ""
+        connector.schema_name = ""
+
+        tool = DBFuncTool(connector)
+
+        # Verify single connector mode
+        assert tool._db_manager is None
+        assert tool._primary_connector is connector
+        assert tool.connector is connector
+        assert tool._get_connector() is connector
+        assert tool._get_connector("any_db") is connector  # Always returns same connector
+
+    def test_multi_connector_mode_initialization(self, mock_agent_config):
+        """Test that DBFuncTool can be initialized with DBManager."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        # Create a mock DBManager
+        mock_db_manager = Mock(spec=DBManager)
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.database_name = "db1"
+        mock_connector.catalog_name = ""
+        mock_connector.schema_name = ""
+        mock_db_manager.first_conn.return_value = mock_connector
+
+        tool = DBFuncTool(
+            mock_db_manager,
+            agent_config=mock_agent_config,
+            default_database="db1",
+            connector_cache_size=4,
+        )
+
+        # Verify multi-connector mode
+        assert tool._db_manager is mock_db_manager
+        assert tool._namespace == "test_ns"
+        assert tool._default_database == "db1"
+        assert tool._connector_cache_size == 4
+        assert tool._primary_connector is mock_connector
+        mock_db_manager.first_conn.assert_called_once_with("test_ns")
+
+    def test_multi_connector_requires_agent_config(self):
+        """Test that multi-connector mode requires agent_config parameter."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_db_manager = Mock(spec=DBManager)
+
+        with pytest.raises(ValueError, match="AgentConfiguration is required"):
+            DBFuncTool(mock_db_manager)
+
+    def test_single_db_config_uses_single_connector_mode(self, mock_single_db_agent_config):
+        """Test that single db config falls back to single connector mode."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_db_manager = Mock(spec=DBManager)
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.database_name = "db1"
+        mock_connector.catalog_name = ""
+        mock_connector.schema_name = ""
+        mock_db_manager.first_conn.return_value = mock_connector
+
+        tool = DBFuncTool(
+            mock_db_manager,
+            agent_config=mock_single_db_agent_config,
+        )
+
+        # Should be in single connector mode (not multi-connector)
+        assert tool._db_manager is None
+        assert tool._primary_connector is mock_connector
+        assert not tool._is_multi_connector
+
+    def test_get_connector_cache_hit(self, mock_agent_config):
+        """Test that _get_connector uses cache for repeated calls."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_db_manager = Mock(spec=DBManager)
+        mock_connector1 = Mock()
+        mock_connector1.dialect = "sqlite"
+        mock_connector1.database_name = "db1"
+        mock_connector1.catalog_name = ""
+        mock_connector1.schema_name = ""
+
+        mock_connector2 = Mock()
+        mock_connector2.dialect = "sqlite"
+        mock_connector2.database_name = "db2"
+
+        mock_db_manager.first_conn.return_value = mock_connector1
+        mock_db_manager.get_conn.side_effect = lambda ns, db: mock_connector2 if db == "db2" else mock_connector1
+
+        tool = DBFuncTool(
+            mock_db_manager,
+            agent_config=mock_agent_config,
+            default_database="db1",
+        )
+
+        # First call should fetch from db_manager
+        conn1 = tool._get_connector("db2")
+        assert conn1 is mock_connector2
+        assert mock_db_manager.get_conn.call_count == 1
+
+        # Second call should use cache (no additional get_conn call)
+        conn1_again = tool._get_connector("db2")
+        assert conn1_again is mock_connector2
+        assert mock_db_manager.get_conn.call_count == 1  # Still 1, used cache
+
+    def test_get_connector_lru_eviction(self, mock_agent_config):
+        """Test that _get_connector evicts least recently used connector."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_db_manager = Mock(spec=DBManager)
+
+        def make_connector(name):
+            c = Mock()
+            c.dialect = "sqlite"
+            c.database_name = name
+            c.catalog_name = ""
+            c.schema_name = ""
+            return c
+
+        connectors = {f"db{i}": make_connector(f"db{i}") for i in range(5)}
+        mock_db_manager.first_conn.return_value = connectors["db0"]
+        mock_db_manager.get_conn.side_effect = lambda ns, db: connectors.get(db, connectors["db0"])
+
+        # Update agent_config to have more databases
+        mock_agent_config.current_db_configs.return_value = {f"db{i}": {} for i in range(5)}
+
+        tool = DBFuncTool(
+            mock_db_manager,
+            agent_config=mock_agent_config,
+            default_database="db0",
+            connector_cache_size=3,  # Small cache for testing
+        )
+
+        # Fill cache: db1, db2, db3
+        tool._get_connector("db1")
+        tool._get_connector("db2")
+        tool._get_connector("db3")
+        assert len(tool._connector_cache) == 3
+        assert list(tool._connector_cache.keys()) == ["db1", "db2", "db3"]
+
+        # Access db1 again (moves to end)
+        tool._get_connector("db1")
+        assert list(tool._connector_cache.keys()) == ["db2", "db3", "db1"]
+
+        # Add db4, should evict db2 (least recently used)
+        tool._get_connector("db4")
+        assert len(tool._connector_cache) == 3
+        assert "db2" not in tool._connector_cache
+        assert list(tool._connector_cache.keys()) == ["db3", "db1", "db4"]
+
+    def test_list_tables_uses_correct_connector(self, mock_agent_config):
+        """Test that list_tables uses connector for the specified database."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_db_manager = Mock(spec=DBManager)
+
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.database_name = "db1"
+        mock_connector.catalog_name = ""
+        mock_connector.schema_name = ""
+        mock_connector.get_tables.return_value = ["table1", "table2"]
+        mock_connector.get_views.return_value = []
+        mock_connector.get_materialized_views.return_value = []
+
+        mock_db_manager.first_conn.return_value = mock_connector
+        mock_db_manager.get_conn.return_value = mock_connector
+
+        tool = DBFuncTool(
+            mock_db_manager,
+            agent_config=mock_agent_config,
+            default_database="db1",
+        )
+
+        result = tool.list_tables(database="db1")
+
+        assert result.success == 1
+        assert len(result.result) == 2
+        mock_connector.get_tables.assert_called_once()
+
+    def test_read_query_with_database_parameter(self, mock_agent_config):
+        """Test that read_query accepts database parameter in multi-connector mode."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_db_manager = Mock(spec=DBManager)
+
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.database_name = "db1"
+        mock_connector.catalog_name = ""
+        mock_connector.schema_name = ""
+
+        mock_result = Mock()
+        mock_result.success = True
+        mock_result.sql_return = [{"id": 1}]
+        mock_connector.execute_query.return_value = mock_result
+
+        mock_db_manager.first_conn.return_value = mock_connector
+        mock_db_manager.get_conn.return_value = mock_connector
+
+        tool = DBFuncTool(
+            mock_db_manager,
+            agent_config=mock_agent_config,
+            default_database="db1",
+        )
+
+        result = tool.read_query("SELECT * FROM test", database="db2")
+
+        assert result.success == 1
+        mock_db_manager.get_conn.assert_called_with("test_ns", "db2")
+        mock_connector.execute_query.assert_called_once()

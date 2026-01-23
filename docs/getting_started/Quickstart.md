@@ -372,6 +372,11 @@ For more details about metrics: [Metrics](./metrics/metrics.md)
 Expose Datus's database and context search tools via the **Model Context Protocol (MCP)**, enabling integration with
 Claude Desktop, Claude Code, and other MCP-compatible clients.
 
+**Server Modes:**
+
+- **Static Mode**: Single namespace, suitable for Claude Desktop stdio integration
+- **Dynamic Mode**: Multi-namespace HTTP server, supports all namespaces via URL path
+
 **Supported Transport Modes:**
 
 - `http`: Streamable HTTP (bidirectional, default)
@@ -389,11 +394,15 @@ pip install datus-agent
 - Run the MCP server:
 
 ```bash
-# Run with uvx (recommended)
+# Static Mode: Single namespace (for Claude Desktop)
 uvx --from datus-agent datus-mcp --namespace local_duckdb
+
+# Dynamic Mode: Multi-namespace HTTP server
+uvx --from datus-agent datus-mcp --dynamic
 
 # Or run with python directly
 python -m datus.mcp_server --namespace local_duckdb
+python -m datus.mcp_server --dynamic
 ```
 
 #### Claude Desktop Configuration
@@ -449,7 +458,7 @@ Add the following to your `claude_desktop_config.json`:
 
 #### HTTP Server Mode
 
-For web clients or multi-client scenarios, run the server in HTTP mode:
+**Static Mode (Single Namespace):**
 
 ```bash
 # Streamable HTTP (default, bidirectional)
@@ -460,9 +469,35 @@ datus-mcp --namespace local_duckdb --transport sse --port 8000
 ```
 
 Connect to:
-
 - Streamable HTTP: `http://localhost:8000/mcp`
 - SSE: `http://localhost:8000/sse`
+
+**Dynamic Mode (Multi-Namespace):**
+
+Run a single server that supports all configured namespaces via URL path:
+
+```bash
+# Start dynamic server (lightweight mode with LRU caching)
+datus-mcp --dynamic --host 0.0.0.0 --port 8000
+
+# With custom cache size (default: 16)
+datus-mcp --dynamic --max-cache-size 32
+
+# Legacy mode (separate server per namespace)
+datus-mcp --dynamic --legacy
+```
+
+Connect to specific namespace:
+- `http://localhost:8000/mcp/{namespace}`
+- `http://localhost:8000/mcp/{namespace}?subagent={subagent_name}`
+
+Example:
+- `http://localhost:8000/mcp/local_duckdb`
+- `http://localhost:8000/mcp/snowflake?subagent=sales`
+
+Info endpoints:
+- `http://localhost:8000/` - Server info and available namespaces
+- `http://localhost:8000/health` - Health check
 
 #### Available Tools
 
@@ -478,14 +513,23 @@ The MCP server exposes the following tools:
 ```bash
 datus-mcp --help
 
-Options:
-  --namespace, -n    Database namespace to use (required)
-  --sub-agent, -s    Sub-agent name for scoped context
-  --database, -d     Database name override
-  --config           Path to agent configuration file
-  --transport, -t    Transport type: http (default), sse, stdio
-  --host             Host to bind for HTTP transports (default: 0.0.0.0)
-  --port, -p         Port to bind for HTTP transports (default: 8000)
-  --debug            Enable debug logging
+Mode Selection (mutually exclusive, one required):
+  --dynamic            Run in dynamic mode: support all namespaces via /mcp/{namespace} URL
+  --namespace, -n      Run in static mode with specified namespace
+
+Static Mode Options:
+  --sub-agent, -s      Sub-agent name for scoped context
+  --database, -d       Database name override
+  --transport, -t      Transport type: http (default), sse, stdio
+
+Dynamic Mode Options:
+  --legacy             Use legacy mode with separate FastMCP per namespace
+  --max-cache-size     Max ToolContext cache size with LRU eviction (default: 16, 0=unlimited)
+
+Common Options:
+  --config, -c         Path to agent configuration file
+  --host               Host to bind for HTTP transports (default: 0.0.0.0)
+  --port, -p           Port to bind for HTTP transports (default: 8000)
+  --debug              Enable debug logging
 ```
 
