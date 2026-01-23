@@ -20,6 +20,7 @@ from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
 from datus.utils.loggings import get_logger
+from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
 
@@ -54,6 +55,10 @@ def _pattern_matches(pattern: str, value: str) -> bool:
     return fnmatchcase(value or "", normalized_pattern)
 
 
+@mcp_tool_class(
+    name="db_tool",
+    availability_property="has_db_tools",
+)
 class DBFuncTool:
     """
     Database function tool that supports dynamic connector switching.
@@ -67,6 +72,44 @@ class DBFuncTool:
     """
 
     DEFAULT_CONNECTOR_CACHE_SIZE = 8
+
+    @classmethod
+    def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "DBFuncTool":
+        """
+        Create DBFuncTool instance for dynamic mode (multi-connector).
+
+        Args:
+            agent_config: Agent configuration
+            sub_agent_name: Optional sub-agent name
+
+        Returns:
+            DBFuncTool instance using DBManager for multi-connector support
+        """
+        return db_function_tool_instance_multi(agent_config, sub_agent_name=sub_agent_name)
+
+    @classmethod
+    def create_static(
+        cls,
+        agent_config: AgentConfig,
+        sub_agent_name: Optional[str] = None,
+        database_name: Optional[str] = None,
+    ) -> "DBFuncTool":
+        """
+        Create DBFuncTool instance for static mode (single connector).
+
+        Args:
+            agent_config: Agent configuration
+            sub_agent_name: Optional sub-agent name
+            database_name: Optional database name
+
+        Returns:
+            DBFuncTool instance using single connector
+        """
+        return db_function_tool_instance(
+            agent_config,
+            database_name=database_name or "",
+            sub_agent_name=sub_agent_name,
+        )
 
     def __init__(
         self,
@@ -501,10 +544,11 @@ class DBFuncTool:
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
 
+    @mcp_tool(availability_check="has_schema")
     def search_table(
         self,
         query_text: str,
-        catalog_name: str = "",
+        catalog: str = "",
         database_name: str = "",
         schema_name: str = "",
         top_n: int = 5,
@@ -529,7 +573,7 @@ class DBFuncTool:
 
         Args:
             query_text: Description of the table you want (e.g. "daily active users per country").
-            catalog_name: Catalog filter. Only use for databases that support catalogs (StarRocks, Databricks).
+            catalog: Catalog filter. Only use for databases that support catalogs (StarRocks, Databricks).
                 Leave empty for PostgreSQL, MySQL, Snowflake, SQLite, DuckDB.
             database_name: Database filter. Use for PostgreSQL, MySQL, Snowflake, StarRocks, DuckDB.
                 Leave empty for SQLite (uses file path instead).
@@ -557,7 +601,7 @@ class DBFuncTool:
         try:
             metadata, sample_values = self.schema_rag.search_similar(
                 query_text,
-                catalog_name=catalog_name,
+                catalog_name=catalog,
                 database_name=self._reset_database_for_rag(database_name),
                 schema_name=schema_name,
                 table_type="full",
@@ -625,6 +669,7 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool()
     def list_databases(self, catalog: Optional[str] = "", include_sys: Optional[bool] = False) -> FuncToolResult:
         """
         Enumerate databases accessible through the current connection.
@@ -647,6 +692,7 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool()
     def list_schemas(
         self, catalog: Optional[str] = "", database: Optional[str] = "", include_sys: bool = False
     ) -> FuncToolResult:
@@ -671,6 +717,7 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool()
     def list_tables(
         self,
         catalog: Optional[str] = "",
@@ -720,6 +767,7 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool()
     def describe_table(
         self,
         table_name: str,
@@ -842,6 +890,7 @@ class DBFuncTool:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return FuncToolResult(success=0, error=error_msg)
 
+    @mcp_tool()
     def read_query(self, sql: str, database: Optional[str] = "") -> FuncToolResult:
         """
         Execute arbitrary SQL and return the result rows (optionally compressed).
@@ -868,6 +917,7 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool()
     def get_table_ddl(
         self,
         table_name: str,

@@ -34,16 +34,16 @@ class TestMCPServerCreation:
 
     def test_server_has_tools(self, server):
         """Test that tools are initialized."""
-        assert server._has_db_tools is True or server._has_context_tools is True
+        assert server.db_tool is not None or server.context_tool is not None
 
     def test_db_tools_initialized(self, server):
         """Test database tools are available."""
-        if server._has_db_tools:
+        if server.db_tool:
             assert server.db_tool is not None
 
     def test_context_tools_initialized(self, server):
         """Test context tools are available."""
-        if server._has_context_tools:
+        if server.context_tool:
             assert server.context_tool is not None
 
 
@@ -127,25 +127,25 @@ if __name__ == "__main__":
     # Quick manual test
     async def main():
         print("Creating MCP server...")
-        server = create_server(namespace="bird_sqlite")
-        print(f"Server namespace: {server.namespace}")
-        print(f"Has DB tools: {server._has_db_tools}")
-        print(f"Has Context tools: {server._has_context_tools}")
+        with create_server(namespace="bird_sqlite") as server:
+            print(f"Server namespace: {server.namespace}")
+            print(f"Has DB tools: {server._has_db_tools}")
+            print(f"Has Context tools: {server._has_context_tools}")
 
-        print("\nListing registered tools...")
-        tools = await server.mcp.list_tools()
-        print(f"Found {len(tools)} tools:")
-        for tool in tools:
-            print(f"  - {tool.name}: {tool.description[:60]}...")
+            print("\nListing registered tools...")
+            tools = await server.mcp.list_tools()
+            print(f"Found {len(tools)} tools:")
+            for tool in tools:
+                print(f"  - {tool.name}: {tool.description[:60]}...")
 
-        print("\nTesting list_tables...")
-        result = await server.mcp.call_tool("list_tables", {})
-        print(f"list_tables result: {result}")
+            print("\nTesting list_tables...")
+            result = await server.mcp.call_tool("list_tables", {})
+            print(f"list_tables result: {result}")
 
-        print("\nTesting list_subject_tree...")
-        result = await server.mcp.call_tool("list_subject_tree", {})
-        print(f"list_subject_tree result: {result}")
+            print("\nTesting list_subject_tree...")
+            result = await server.mcp.call_tool("list_subject_tree", {})
+            print(f"list_subject_tree result: {result}")
 
-        print("\nAll tests passed!")
+            print("\nAll tests passed!")
 
     asyncio.run(main())

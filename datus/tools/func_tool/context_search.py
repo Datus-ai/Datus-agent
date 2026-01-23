@@ -15,6 +15,7 @@ from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
+from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
 
@@ -29,7 +30,45 @@ _NAME_KNOWLEDGE = "context_search_tools.search_knowledge"
 _NAME_GET_KNOWLEDGE = "context_search_tools.get_knowledge"
 
 
+@mcp_tool_class(
+    name="context_tool",
+    availability_property="has_context_tools",
+)
 class ContextSearchTools:
+    @classmethod
+    def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "ContextSearchTools":
+        """
+        Create ContextSearchTools instance for dynamic mode.
+
+        Args:
+            agent_config: Agent configuration
+            sub_agent_name: Optional sub-agent name
+
+        Returns:
+            ContextSearchTools instance
+        """
+        return cls(agent_config, sub_agent_name=sub_agent_name)
+
+    @classmethod
+    def create_static(
+        cls,
+        agent_config: AgentConfig,
+        sub_agent_name: Optional[str] = None,
+        database_name: Optional[str] = None,
+    ) -> "ContextSearchTools":
+        """
+        Create ContextSearchTools instance for static mode.
+
+        Args:
+            agent_config: Agent configuration
+            sub_agent_name: Optional sub-agent name
+            database_name: Optional database name (unused, for API compatibility)
+
+        Returns:
+            ContextSearchTools instance
+        """
+        return cls(agent_config, sub_agent_name=sub_agent_name)
+
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
@@ -122,6 +161,7 @@ class ContextSearchTools:
 
         return tools
 
+    @mcp_tool()
     def list_subject_tree(self) -> FuncToolResult:
         """
         Get the domain-layer taxonomy from subject_tree store with metrics and SQL counts.
@@ -195,6 +235,7 @@ class ContextSearchTools:
             logger.warning("Failed to collect ext knowledge: %s", exc)
             return []
 
+    @mcp_tool(availability_check="has_metrics")
     def search_metrics(
         self,
         query_text: str,
@@ -224,6 +265,7 @@ class ContextSearchTools:
             logger.error(f"Failed to search metrics for '{query_text}': {e}")
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool(availability_check="has_metrics")
     def get_metrics(self, subject_path: List[str], name: str = "") -> FuncToolResult:
         """
         Search for business metrics and KPIs using natural language queries.
@@ -249,6 +291,7 @@ class ContextSearchTools:
             logger.error(f"Failed to get metrics details for `{'/'.join(subject_path)}/{name}`: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool(availability_check="has_reference_sql")
     def search_reference_sql(
         self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
     ) -> FuncToolResult:
@@ -283,6 +326,7 @@ class ContextSearchTools:
             logger.error(f"Failed to search reference SQL for `{query_text}`: {e}")
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool(availability_check="has_reference_sql")
     def get_reference_sql(self, subject_path: List[str], name: str = "") -> FuncToolResult:
         """
         Get reference SQL query for a domain and layer combination.
@@ -312,6 +356,7 @@ class ContextSearchTools:
             logger.error(f"Failed to get reference SQL for `{'/'.join(subject_path)}/{name}`: {e}")
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool(availability_check="has_semantic_objects")
     def search_semantic_objects(
         self,
         query_text: str,
@@ -348,6 +393,7 @@ class ContextSearchTools:
             logger.error(f"Failed to search semantic objects for '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool(availability_check="has_knowledge")
     def search_knowledge(
         self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
     ) -> FuncToolResult:
@@ -379,6 +425,7 @@ class ContextSearchTools:
             logger.error(f"Failed to search knowledge for `{query_text}`: {e}")
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool(availability_check="has_knowledge")
     def get_knowledge(self, subject_path: List[str], name: str = "") -> FuncToolResult:
         """
         Get external business knowledge by subject path and name.

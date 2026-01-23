@@ -84,7 +84,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
-from datus.tools.func_tool.database import DBFuncTool, db_function_tool_instance, db_function_tool_instance_multi
+from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.loggings import configure_logging, get_logger
 
 # Re-export for external use
@@ -104,6 +104,14 @@ logger = get_logger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+# Import tool classes to trigger @mcp_tool_class decorator registration
+# This ensures tools are registered in the global registry before server initialization
+from datus.utils.mcp_decorators import get_tool_registry  # noqa: E402
+
+# These imports trigger the @mcp_tool_class decorators, registering tools automatically
+assert DBFuncTool  # Ensure imported and decorator ran
+assert ContextSearchTools  # Ensure imported and decorator ran
+
 
 # ============================================================================
 # Lightweight Dynamic Mode Components
@@ -117,13 +125,23 @@ class ToolContext:
 
     This class holds the AgentConfig and tool instances for a specific
     namespace/subagent combination, enabling tool reuse across requests.
+
+    Tools are automatically discovered via @mcp_tool_class decorated classes.
     """
 
     namespace: str
     subagent: Optional[str]
     agent_config: AgentConfig
-    db_tool: Optional[DBFuncTool]
-    context_tool: Optional[ContextSearchTools]
+    tools: Dict[str, Any]  # Unified tool storage: {tool_name: tool_instance}
+
+    # Backward compatibility properties
+    @property
+    def db_tool(self) -> Optional[DBFuncTool]:
+        return self.tools.get("db_tool")
+
+    @property
+    def context_tool(self) -> Optional[ContextSearchTools]:
+        return self.tools.get("context_tool")
 
     @property
     def has_db_tools(self) -> bool:
@@ -135,14 +153,16 @@ class ToolContext:
 
     def close(self):
         """Release resources held by this context."""
-        if self.db_tool:
-            try:
-                if hasattr(self.db_tool, "connector") and self.db_tool.connector:
-                    self.db_tool.connector.close()
-            except Exception as e:
-                logger.warning(f"Error closing db_tool connector: {e}")
-        self.db_tool = None
-        self.context_tool = None
+        for tool_name, tool_instance in list(self.tools.items()):
+            if tool_instance:
+                try:
+                    # Close database connectors if available
+                    if hasattr(tool_instance, "connector") and tool_instance.connector:
+                        tool_instance.connector.close()
+                        logger.debug(f"Closed connector for {tool_name}")
+                except Exception as e:
+                    logger.warning(f"Error closing {tool_name} connector: {e}")
+        self.tools.clear()
 
 
 class ToolContextManager:
@@ -252,7 +272,7 @@ class ToolContextManager:
         namespace: str,
         subagent: Optional[str] = None,
     ) -> ToolContext:
-        """Create a new ToolContext with initialized tools."""
+        """Create a new ToolContext with initialized tools from global registry."""
         # Load agent config with namespace
         config_kwargs = {"namespace": namespace}
         if self.config_path:
@@ -260,34 +280,25 @@ class ToolContextManager:
 
         agent_config = load_agent_config(**config_kwargs)
 
-        # Initialize database tools (use multi-connector mode for dynamic server)
-        db_tool = None
-        try:
-            db_tool = db_function_tool_instance_multi(
-                agent_config,
-                sub_agent_name=subagent,
-            )
-            logger.info(f"Database tools initialized for namespace: {namespace} (multi-connector mode)")
-        except Exception as e:
-            logger.warning(f"Failed to initialize database tools for {namespace}: {e}")
-
-        # Initialize context search tools
-        context_tool = None
-        try:
-            context_tool = ContextSearchTools(
-                agent_config,
-                sub_agent_name=subagent,
-            )
-            logger.info(f"Context search tools initialized for namespace: {namespace}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize context tools for {namespace}: {e}")
+        # Initialize all tools from global registry
+        tools = {}
+        for tool_config in get_tool_registry():
+            try:
+                tool_instance = tool_config.tool_class.create_dynamic(agent_config, subagent)
+                tools[tool_config.name] = tool_instance
+                logger.info(
+                    f"{tool_config.tool_class.__name__} initialized for namespace: {namespace} "
+                    f"(multi-connector mode)"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize {tool_config.name} for {namespace}: {e}")
+                tools[tool_config.name] = None
 
         return ToolContext(
             namespace=namespace,
             subagent=subagent,
             agent_config=agent_config,
-            db_tool=db_tool,
-            context_tool=context_tool,
+            tools=tools,
         )
 
     def close_all(self):
@@ -386,427 +397,19 @@ class LightweightDynamicMCPServer:
         return {"success": 1, "error": None, "result": result}
 
     def _register_tools(self):
-        """Register all MCP tools that use dynamic context."""
-        self._register_db_tools()
-        self._register_context_tools()
+        """Register all MCP tools from global registry."""
+        from datus.utils.mcp_decorators import register_dynamic_tools
 
-    def _register_db_tools(self):
-        """Register database tools with dynamic context lookup."""
-
-        @self.mcp.tool()
-        def list_databases(
-            catalog: Optional[str] = None,
-            include_sys: bool = False,
-        ) -> Dict[str, Any]:
-            """
-            Enumerate databases accessible through the current connection.
-
-            Args:
-                catalog: Optional catalog to scope the lookup (dialect dependent).
-                include_sys: Set True to include system databases; defaults to False.
-
-            Returns:
-                Dictionary with 'success', 'error', and 'result' (list of database names).
-            """
-            ctx = self._get_context()
-            if not ctx.has_db_tools:
-                return {"success": 0, "error": "Database tools not available", "result": None}
-            result = ctx.db_tool.list_databases(catalog=catalog, include_sys=include_sys)
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def list_schemas(
-            catalog: Optional[str] = None,
-            database: Optional[str] = None,
-            include_sys: bool = False,
-        ) -> Dict[str, Any]:
-            """
-            List schema names under the supplied catalog/database coordinate.
-
-            Args:
-                catalog: Optional catalog filter.
-                database: Optional database filter.
-                include_sys: Set True to include system schemas; defaults to False.
-
-            Returns:
-                Dictionary with 'success', 'error', and 'result' (list of schema names).
-            """
-            ctx = self._get_context()
-            if not ctx.has_db_tools:
-                return {"success": 0, "error": "Database tools not available", "result": None}
-            result = ctx.db_tool.list_schemas(
-                catalog=catalog,
-                database=database,
-                include_sys=include_sys,
+        # Automatically register all tools from global registry
+        for tool_config in get_tool_registry():
+            register_dynamic_tools(
+                mcp=self.mcp,
+                tool_class=tool_config.tool_class,
+                context_getter=self._get_context,
+                instance_attr=tool_config.name,
+                availability_attr=tool_config.availability_property,
+                format_result=self._format_result,
             )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def list_tables(
-            catalog: Optional[str] = None,
-            database: Optional[str] = None,
-            schema_name: Optional[str] = None,
-            include_views: bool = True,
-        ) -> Dict[str, Any]:
-            """
-            Return table-like objects (tables, views, materialized views) visible to the connector.
-
-            Args:
-                catalog: Optional catalog filter.
-                database: Optional database filter.
-                schema_name: Optional schema filter.
-                include_views: When True (default) also include views and materialized views.
-
-            Returns:
-                Dictionary with 'success', 'error', and 'result' (list of table objects).
-            """
-            ctx = self._get_context()
-            if not ctx.has_db_tools:
-                return {"success": 0, "error": "Database tools not available", "result": None}
-            result = ctx.db_tool.list_tables(
-                catalog=catalog,
-                database=database,
-                schema_name=schema_name,
-                include_views=include_views,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def search_table(
-            query_text: str,
-            catalog: Optional[str] = None,
-            database_name: Optional[str] = None,
-            schema_name: Optional[str] = None,
-            top_n: int = 5,
-        ) -> Dict[str, Any]:
-            """
-            Search for tables using semantic similarity over stored schema metadata.
-
-            Use this tool when you need to find tables related to a specific business
-            concept or domain, or discover tables containing certain types of data.
-
-            Args:
-                query_text: Description of the table you want (e.g., "daily active users").
-                catalog: Optional catalog filter.
-                database_name: Optional database filter.
-                schema_name: Optional schema filter.
-                top_n: Maximum number of results to return (default 5).
-
-            Returns:
-                Dictionary with metadata and sample_data for matching tables.
-            """
-            ctx = self._get_context()
-            if not ctx.has_db_tools:
-                return {"success": 0, "error": "Database tools not available", "result": None}
-            if not ctx.db_tool.has_schema:
-                return {"success": 0, "error": "Schema search not available", "result": None}
-            result = ctx.db_tool.search_table(
-                query_text=query_text,
-                catalog_name=catalog,
-                database_name=database_name,
-                schema_name=schema_name or "",
-                top_n=top_n,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def describe_table(
-            table_name: str,
-            catalog: Optional[str] = None,
-            database: Optional[str] = None,
-            schema_name: Optional[str] = None,
-        ) -> Dict[str, Any]:
-            """
-            Fetch detailed column metadata for a table, enriched with Semantic Model info.
-
-            Use this tool to understand the table schema and business meanings of columns.
-
-            Args:
-                table_name: Table identifier to describe.
-                catalog: Optional catalog override.
-                database: Optional database override.
-                schema_name: Optional schema override.
-
-            Returns:
-                Dictionary with 'columns' list and optional 'table' metadata from semantic model.
-            """
-            ctx = self._get_context()
-            if not ctx.has_db_tools:
-                return {"success": 0, "error": "Database tools not available", "result": None}
-            result = ctx.db_tool.describe_table(
-                table_name=table_name,
-                catalog=catalog,
-                database=database,
-                schema_name=schema_name,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def get_table_ddl(
-            table_name: str,
-            catalog: Optional[str] = None,
-            database: Optional[str] = None,
-            schema_name: Optional[str] = None,
-        ) -> Dict[str, Any]:
-            """
-            Return the DDL definition (CREATE statement) for the requested table.
-
-            Use this when you need a full CREATE statement for semantic modelling
-            or schema verification.
-
-            Args:
-                table_name: Target table identifier.
-                catalog: Optional catalog override.
-                database: Optional database override.
-                schema_name: Optional schema override.
-
-            Returns:
-                Dictionary with DDL definition including identifier, table_type, and definition.
-            """
-            ctx = self._get_context()
-            if not ctx.has_db_tools:
-                return {"success": 0, "error": "Database tools not available", "result": None}
-            result = ctx.db_tool.get_table_ddl(
-                table_name=table_name,
-                catalog=catalog,
-                database=database,
-                schema_name=schema_name,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def read_query(sql: str) -> Dict[str, Any]:
-            """
-            Execute SQL query and return the result rows.
-
-            Args:
-                sql: SQL text to run against the database.
-
-            Returns:
-                Dictionary with query results or error message.
-            """
-            ctx = self._get_context()
-            if not ctx.has_db_tools:
-                return {"success": 0, "error": "Database tools not available", "result": None}
-            result = ctx.db_tool.read_query(sql=sql)
-            return self._format_result(result)
-
-    def _register_context_tools(self):
-        """Register context search tools with dynamic context lookup."""
-
-        @self.mcp.tool()
-        def list_subject_tree() -> Dict[str, Any]:
-            """
-            Get the domain-layer taxonomy from subject_tree store.
-
-            Returns a hierarchical structure showing available metrics, reference SQL,
-            and knowledge organized by domain and layer.
-
-            Returns:
-                Dictionary with hierarchical subject tree structure.
-            """
-            ctx = self._get_context()
-            if not ctx.has_context_tools:
-                return {"success": 0, "error": "Context tools not available", "result": None}
-            result = ctx.context_tool.list_subject_tree()
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def search_metrics(
-            query_text: str,
-            subject_path: Optional[List[str]] = None,
-            top_n: int = 5,
-        ) -> Dict[str, Any]:
-            """
-            Search for business metrics and KPIs using natural language queries.
-
-            Args:
-                query_text: Natural language description (e.g., "revenue metrics").
-                subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue']).
-                top_n: Maximum number of results to return (default 5).
-
-            Returns:
-                List of matching metrics with name, description, constraint, and sql_query.
-            """
-            ctx = self._get_context()
-            if not ctx.has_context_tools:
-                return {"success": 0, "error": "Context tools not available", "result": None}
-            if not ctx.context_tool.has_metrics:
-                return {"success": 0, "error": "Metrics search not available", "result": None}
-            result = ctx.context_tool.search_metrics(
-                query_text=query_text,
-                subject_path=subject_path,
-                top_n=top_n,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def get_metrics(
-            subject_path: List[str],
-            name: str = "",
-        ) -> Dict[str, Any]:
-            """
-            Get detailed information about a specific metric.
-
-            Args:
-                subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1']).
-                name: The name of the metric.
-
-            Returns:
-                Metric details including name, description, constraint, and sql_query.
-            """
-            ctx = self._get_context()
-            if not ctx.has_context_tools:
-                return {"success": 0, "error": "Context tools not available", "result": None}
-            if not ctx.context_tool.has_metrics:
-                return {"success": 0, "error": "Metrics not available", "result": None}
-            result = ctx.context_tool.get_metrics(
-                subject_path=subject_path,
-                name=name,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def search_reference_sql(
-            query_text: str,
-            subject_path: Optional[List[str]] = None,
-            top_n: int = 5,
-        ) -> Dict[str, Any]:
-            """
-            Search for reference SQL queries using natural language.
-
-            MUST call `list_subject_tree` first to get available subject paths.
-
-            Args:
-                query_text: Natural language query representing the desired SQL intent.
-                subject_path: Optional subject hierarchy path.
-                top_n: Maximum number of results to return (default 5).
-
-            Returns:
-                List of matching SQL entries with sql, tags, summary, and file_path.
-            """
-            ctx = self._get_context()
-            if not ctx.has_context_tools:
-                return {"success": 0, "error": "Context tools not available", "result": None}
-            if not ctx.context_tool.has_reference_sql:
-                return {"success": 0, "error": "Reference SQL search not available", "result": None}
-            result = ctx.context_tool.search_reference_sql(
-                query_text=query_text,
-                subject_path=subject_path,
-                top_n=top_n,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def get_reference_sql(
-            subject_path: List[str],
-            name: str = "",
-        ) -> Dict[str, Any]:
-            """
-            Get a specific reference SQL query by subject path and name.
-
-            Args:
-                subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue']).
-                name: The name of the reference SQL.
-
-            Returns:
-                SQL entry with sql, tags, summary, and file_path.
-            """
-            ctx = self._get_context()
-            if not ctx.has_context_tools:
-                return {"success": 0, "error": "Context tools not available", "result": None}
-            if not ctx.context_tool.has_reference_sql:
-                return {"success": 0, "error": "Reference SQL not available", "result": None}
-            result = ctx.context_tool.get_reference_sql(
-                subject_path=subject_path,
-                name=name,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def search_semantic_objects(
-            query_text: str,
-            kinds: Optional[List[str]] = None,
-            top_n: int = 5,
-        ) -> Dict[str, Any]:
-            """
-            Search for semantic objects (metrics, columns, tables, entities).
-
-            Args:
-                query_text: Natural language query describing what you're looking for.
-                kinds: List of object kinds to filter by: ["metric", "column", "table", "entity"].
-                       If None, searches all kinds.
-                top_n: Maximum number of results to return (default 5).
-
-            Returns:
-                List of matching objects with kind, name, description, and similarity score.
-            """
-            ctx = self._get_context()
-            if not ctx.has_context_tools:
-                return {"success": 0, "error": "Context tools not available", "result": None}
-            if not ctx.context_tool.has_semantic_objects:
-                return {"success": 0, "error": "Semantic objects search not available", "result": None}
-            result = ctx.context_tool.search_semantic_objects(
-                query_text=query_text,
-                kinds=kinds,
-                top_n=top_n,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def search_knowledge(
-            query_text: str,
-            subject_path: Optional[List[str]] = None,
-            top_n: int = 5,
-        ) -> Dict[str, Any]:
-            """
-            Search for external business knowledge using natural language.
-
-            Args:
-                query_text: Natural language query for searching knowledge entries.
-                subject_path: Optional subject hierarchy path.
-                top_n: Maximum number of results to return (default 5).
-
-            Returns:
-                List of matching entries with search_text and explanation.
-            """
-            ctx = self._get_context()
-            if not ctx.has_context_tools:
-                return {"success": 0, "error": "Context tools not available", "result": None}
-            if not ctx.context_tool.has_knowledge:
-                return {"success": 0, "error": "Knowledge search not available", "result": None}
-            result = ctx.context_tool.search_knowledge(
-                query_text=query_text,
-                subject_path=subject_path,
-                top_n=top_n,
-            )
-            return self._format_result(result)
-
-        @self.mcp.tool()
-        def get_knowledge(
-            subject_path: List[str],
-            name: str = "",
-        ) -> Dict[str, Any]:
-            """
-            Get specific business knowledge by subject path and name.
-
-            Args:
-                subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue']).
-                name: The name of the knowledge entry.
-
-            Returns:
-                Knowledge entry with search_text and explanation.
-            """
-            ctx = self._get_context()
-            if not ctx.has_context_tools:
-                return {"success": 0, "error": "Context tools not available", "result": None}
-            if not ctx.context_tool.has_knowledge:
-                return {"success": 0, "error": "Knowledge not available", "result": None}
-            result = ctx.context_tool.get_knowledge(
-                subject_path=subject_path,
-                name=name,
-            )
-            return self._format_result(result)
 
     @asynccontextmanager
     async def lifespan_context(self):
@@ -1078,41 +681,37 @@ class DatusMCPServer:
             config_kwargs["database"] = database_name
 
         self.agent_config = load_agent_config(**config_kwargs)
-        # Initialize tool instances
-        self._init_db_tools()
-        self._init_context_tools()
+
+        # Initialize all tools from global registry
+        self.tools = {}
+        self._init_tools()
 
         # Register all MCP tools
         self._register_tools()
 
-    def _init_db_tools(self):
-        """Initialize database function tools."""
-        try:
-            self.db_tool = db_function_tool_instance(
-                self.agent_config,
-                database_name=self.database_name,
-                sub_agent_name=self.sub_agent,
-            )
-            self._has_db_tools = True
-            logger.info(f"Database tools initialized for namespace: {self.namespace}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize database tools: {e}")
-            self.db_tool = None
-            self._has_db_tools = False
+    def _init_tools(self):
+        """Initialize all tools from global registry."""
+        for tool_config in get_tool_registry():
+            try:
+                tool_instance = tool_config.tool_class.create_static(
+                    self.agent_config,
+                    self.sub_agent,
+                    self.database_name,
+                )
+                self.tools[tool_config.name] = tool_instance
+                logger.info(f"{tool_config.tool_class.__name__} initialized for namespace: {self.namespace}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize {tool_config.name}: {e}")
+                self.tools[tool_config.name] = None
 
-    def _init_context_tools(self):
-        """Initialize context search tools."""
-        try:
-            self.context_tool = ContextSearchTools(
-                self.agent_config,
-                sub_agent_name=self.sub_agent,
-            )
-            self._has_context_tools = True
-            logger.info("Context search tools initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize context search tools: {e}")
-            self.context_tool = None
-            self._has_context_tools = False
+    # Backward compatibility properties
+    @property
+    def db_tool(self) -> Optional[DBFuncTool]:
+        return self.tools.get("db_tool")
+
+    @property
+    def context_tool(self) -> Optional[ContextSearchTools]:
+        return self.tools.get("context_tool")
 
     def close(self):
         """
@@ -1122,20 +721,19 @@ class DatusMCPServer:
         especially for HTTP transport modes where the server lifecycle
         is managed manually.
         """
-        # Close database connection
-        if self._has_db_tools and self.db_tool:
-            try:
-                if hasattr(self.db_tool, "connector") and self.db_tool.connector:
-                    self.db_tool.connector.close()
-                    logger.info("Database connection closed")
-            except Exception as e:
-                logger.warning(f"Error closing database connection: {e}")
+        # Close all tool instances
+        for tool_name, tool_instance in list(self.tools.items()):
+            if tool_instance:
+                try:
+                    # Close database connectors if available
+                    if hasattr(tool_instance, "connector") and tool_instance.connector:
+                        tool_instance.connector.close()
+                        logger.info(f"{tool_name} connector closed")
+                except Exception as e:
+                    logger.warning(f"Error closing {tool_name} connector: {e}")
 
         # Clear tool references
-        self.db_tool = None
-        self.context_tool = None
-        self._has_db_tools = False
-        self._has_context_tools = False
+        self.tools.clear()
         logger.info("MCP server resources released")
 
     def __enter__(self):
@@ -1148,393 +746,14 @@ class DatusMCPServer:
         return False
 
     def _register_tools(self):
-        """Register all available tools with the MCP server."""
-        if self._has_db_tools:
-            self._register_db_tools()
-        if self._has_context_tools:
-            self._register_context_tools()
+        """Register all available tools from global registry."""
+        from datus.utils.mcp_decorators import register_static_tools
 
-    def _register_db_tools(self):
-        """Register database tools with MCP server."""
-
-        # list_databases
-        @self.mcp.tool()
-        def list_databases(
-            catalog: Optional[str] = None,
-            include_sys: bool = False,
-        ) -> Dict[str, Any]:
-            """
-            Enumerate databases accessible through the current connection.
-
-            Args:
-                catalog: Optional catalog to scope the lookup (dialect dependent).
-                include_sys: Set True to include system databases; defaults to False.
-
-            Returns:
-                Dictionary with 'success', 'error', and 'result' (list of database names).
-            """
-            result = self.db_tool.list_databases(
-                catalog=catalog,
-                include_sys=include_sys,
-            )
-            return self._format_result(result)
-
-        # list_schemas
-        @self.mcp.tool()
-        def list_schemas(
-            catalog: Optional[str] = None,
-            database: Optional[str] = None,
-            include_sys: bool = False,
-        ) -> Dict[str, Any]:
-            """
-            List schema names under the supplied catalog/database coordinate.
-
-            Args:
-                catalog: Optional catalog filter.
-                database: Optional database filter.
-                include_sys: Set True to include system schemas; defaults to False.
-
-            Returns:
-                Dictionary with 'success', 'error', and 'result' (list of schema names).
-            """
-            result = self.db_tool.list_schemas(
-                catalog=catalog,
-                database=database or self.database_name,
-                include_sys=include_sys,
-            )
-            return self._format_result(result)
-
-        # list_tables
-        @self.mcp.tool()
-        def list_tables(
-            catalog: Optional[str] = None,
-            database: Optional[str] = None,
-            schema_name: Optional[str] = None,
-            include_views: bool = True,
-        ) -> Dict[str, Any]:
-            """
-            Return table-like objects (tables, views, materialized views) visible to the connector.
-
-            Args:
-                catalog: Optional catalog filter.
-                database: Optional database filter.
-                schema_name: Optional schema filter.
-                include_views: When True (default) also include views and materialized views.
-
-            Returns:
-                Dictionary with 'success', 'error', and 'result' (list of table objects).
-            """
-            result = self.db_tool.list_tables(
-                catalog=catalog,
-                database=database or self.database_name,
-                schema_name=schema_name,
-                include_views=include_views,
-            )
-            return self._format_result(result)
-
-        # search_table
-        if self.db_tool.has_schema:
-
-            @self.mcp.tool()
-            def search_table(
-                query_text: str,
-                catalog: Optional[str] = None,
-                database_name: Optional[str] = None,
-                schema_name: Optional[str] = None,
-                top_n: int = 5,
-            ) -> Dict[str, Any]:
-                """
-                Search for tables using semantic similarity over stored schema metadata.
-
-                Use this tool when you need to find tables related to a specific business
-                concept or domain, or discover tables containing certain types of data.
-
-                Args:
-                    query_text: Description of the table you want (e.g., "daily active users").
-                    catalog: Optional catalog filter.
-                    database_name: Optional database filter.
-                    schema_name: Optional schema filter.
-                    top_n: Maximum number of results to return (default 5).
-
-                Returns:
-                    Dictionary with metadata and sample_data for matching tables.
-                """
-                result = self.db_tool.search_table(
-                    query_text=query_text,
-                    catalog_name=catalog,
-                    database_name=database_name or self.database_name,
-                    schema_name=schema_name or "",
-                    top_n=top_n,
-                )
-                return self._format_result(result)
-
-        # describe_table
-        @self.mcp.tool()
-        def describe_table(
-            table_name: str,
-            catalog: Optional[str] = None,
-            database: Optional[str] = None,
-            schema_name: Optional[str] = None,
-        ) -> Dict[str, Any]:
-            """
-            Fetch detailed column metadata for a table, enriched with Semantic Model info.
-
-            Use this tool to understand the table schema and business meanings of columns.
-
-            Args:
-                table_name: Table identifier to describe.
-                catalog: Optional catalog override.
-                database: Optional database override.
-                schema_name: Optional schema override.
-
-            Returns:
-                Dictionary with 'columns' list and optional 'table' metadata from semantic model.
-            """
-            result = self.db_tool.describe_table(
-                table_name=table_name,
-                catalog=catalog,
-                database=database or self.database_name,
-                schema_name=schema_name,
-            )
-            return self._format_result(result)
-
-        # get_table_ddl
-        @self.mcp.tool()
-        def get_table_ddl(
-            table_name: str,
-            catalog: Optional[str] = None,
-            database: Optional[str] = None,
-            schema_name: Optional[str] = None,
-        ) -> Dict[str, Any]:
-            """
-            Return the DDL definition (CREATE statement) for the requested table.
-
-            Use this when you need a full CREATE statement for semantic modelling
-            or schema verification.
-
-            Args:
-                table_name: Target table identifier.
-                catalog: Optional catalog override.
-                database: Optional database override.
-                schema_name: Optional schema override.
-
-            Returns:
-                Dictionary with DDL definition including identifier, table_type, and definition.
-            """
-            result = self.db_tool.get_table_ddl(
-                table_name=table_name,
-                catalog=catalog,
-                database=database or self.database_name,
-                schema_name=schema_name,
-            )
-            return self._format_result(result)
-
-        # read_query
-        @self.mcp.tool()
-        def read_query(sql: str) -> Dict[str, Any]:
-            """
-            Execute SQL query and return the result rows.
-
-            Args:
-                sql: SQL text to run against the database.
-
-            Returns:
-                Dictionary with query results or error message.
-            """
-            result = self.db_tool.read_query(sql=sql)
-            return self._format_result(result)
-
-    def _register_context_tools(self):
-        """Register context search tools with MCP server."""
-
-        # list_subject_tree
-        @self.mcp.tool()
-        def list_subject_tree() -> Dict[str, Any]:
-            """
-            Get the domain-layer taxonomy from subject_tree store.
-
-            Returns a hierarchical structure showing available metrics, reference SQL,
-            and knowledge organized by domain and layer.
-
-            Returns:
-                Dictionary with hierarchical subject tree structure.
-            """
-            result = self.context_tool.list_subject_tree()
-            return self._format_result(result)
-
-        # search_metrics
-        if self.context_tool.has_metrics:
-
-            @self.mcp.tool()
-            def search_metrics(
-                query_text: str,
-                subject_path: Optional[List[str]] = None,
-                top_n: int = 5,
-            ) -> Dict[str, Any]:
-                """
-                Search for business metrics and KPIs using natural language queries.
-
-                Args:
-                    query_text: Natural language description (e.g., "revenue metrics").
-                    subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue']).
-                    top_n: Maximum number of results to return (default 5).
-
-                Returns:
-                    List of matching metrics with name, description, constraint, and sql_query.
-                """
-                result = self.context_tool.search_metrics(
-                    query_text=query_text,
-                    subject_path=subject_path,
-                    top_n=top_n,
-                )
-                return self._format_result(result)
-
-            @self.mcp.tool()
-            def get_metrics(
-                subject_path: List[str],
-                name: str = "",
-            ) -> Dict[str, Any]:
-                """
-                Get detailed information about a specific metric.
-
-                Args:
-                    subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1']).
-                    name: The name of the metric.
-
-                Returns:
-                    Metric details including name, description, constraint, and sql_query.
-                """
-                result = self.context_tool.get_metrics(
-                    subject_path=subject_path,
-                    name=name,
-                )
-                return self._format_result(result)
-
-        # search_reference_sql
-        if self.context_tool.has_reference_sql:
-
-            @self.mcp.tool()
-            def search_reference_sql(
-                query_text: str,
-                subject_path: Optional[List[str]] = None,
-                top_n: int = 5,
-            ) -> Dict[str, Any]:
-                """
-                Search for reference SQL queries using natural language.
-
-                MUST call `list_subject_tree` first to get available subject paths.
-
-                Args:
-                    query_text: Natural language query representing the desired SQL intent.
-                    subject_path: Optional subject hierarchy path.
-                    top_n: Maximum number of results to return (default 5).
-
-                Returns:
-                    List of matching SQL entries with sql, tags, summary, and file_path.
-                """
-                result = self.context_tool.search_reference_sql(
-                    query_text=query_text,
-                    subject_path=subject_path,
-                    top_n=top_n,
-                )
-                return self._format_result(result)
-
-            @self.mcp.tool()
-            def get_reference_sql(
-                subject_path: List[str],
-                name: str = "",
-            ) -> Dict[str, Any]:
-                """
-                Get a specific reference SQL query by subject path and name.
-
-                Args:
-                    subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue']).
-                    name: The name of the reference SQL.
-
-                Returns:
-                    SQL entry with sql, tags, summary, and file_path.
-                """
-                result = self.context_tool.get_reference_sql(
-                    subject_path=subject_path,
-                    name=name,
-                )
-                return self._format_result(result)
-
-        # search_semantic_objects
-        if self.context_tool.has_semantic_objects:
-
-            @self.mcp.tool()
-            def search_semantic_objects(
-                query_text: str,
-                kinds: Optional[List[str]] = None,
-                top_n: int = 5,
-            ) -> Dict[str, Any]:
-                """
-                Search for semantic objects (metrics, columns, tables, entities).
-
-                Args:
-                    query_text: Natural language query describing what you're looking for.
-                    kinds: List of object kinds to filter by: ["metric", "column", "table", "entity"].
-                           If None, searches all kinds.
-                    top_n: Maximum number of results to return (default 5).
-
-                Returns:
-                    List of matching objects with kind, name, description, and similarity score.
-                """
-                result = self.context_tool.search_semantic_objects(
-                    query_text=query_text,
-                    kinds=kinds,
-                    top_n=top_n,
-                )
-                return self._format_result(result)
-
-        # search_knowledge
-        if self.context_tool.has_knowledge:
-
-            @self.mcp.tool()
-            def search_knowledge(
-                query_text: str,
-                subject_path: Optional[List[str]] = None,
-                top_n: int = 5,
-            ) -> Dict[str, Any]:
-                """
-                Search for external business knowledge using natural language.
-
-                Args:
-                    query_text: Natural language query for searching knowledge entries.
-                    subject_path: Optional subject hierarchy path.
-                    top_n: Maximum number of results to return (default 5).
-
-                Returns:
-                    List of matching entries with search_text and explanation.
-                """
-                result = self.context_tool.search_knowledge(
-                    query_text=query_text,
-                    subject_path=subject_path,
-                    top_n=top_n,
-                )
-                return self._format_result(result)
-
-            @self.mcp.tool()
-            def get_knowledge(
-                subject_path: List[str],
-                name: str = "",
-            ) -> Dict[str, Any]:
-                """
-                Get specific business knowledge by subject path and name.
-
-                Args:
-                    subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue']).
-                    name: The name of the knowledge entry.
-
-                Returns:
-                    Knowledge entry with search_text and explanation.
-                """
-                result = self.context_tool.get_knowledge(
-                    subject_path=subject_path,
-                    name=name,
-                )
-                return self._format_result(result)
+        # Automatically register all tools from global registry
+        for tool_config in get_tool_registry():
+            tool_instance = self.tools.get(tool_config.name)
+            if tool_instance:
+                register_static_tools(self.mcp, tool_instance, self._format_result)
 
     @staticmethod
     def _format_result(result: Union[FuncToolResult, Any]) -> Dict[str, Any]:
@@ -2217,12 +1436,7 @@ HTTP Client Usage:
         default=None,
         help="Sub-agent name for scoped context (static mode only)",
     )
-    parser.add_argument(
-        "--database",
-        "-d",
-        default=None,
-        help="Database name override (static mode only)",
-    )
+
     parser.add_argument(
         "--config",
         "-c",
