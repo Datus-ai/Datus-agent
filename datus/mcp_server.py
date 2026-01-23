@@ -177,7 +177,7 @@ class ToolContextManager:
     5. Properly closes evicted contexts to release resources
     """
 
-    DEFAULT_MAX_SIZE = 16
+    DEFAULT_MAX_SIZE = 64
 
     def __init__(self, config_path: Optional[str] = None, max_size: Optional[int] = None):
         """
@@ -186,7 +186,7 @@ class ToolContextManager:
         Args:
             config_path: Optional path to agent configuration file
             max_size: Maximum number of contexts to cache. When exceeded,
-                     the least recently used context is evicted. Default is 16.
+                     the least recently used context is evicted. Default is 64.
                      Set to 0 or None for unlimited cache.
         """
         self.config_path = config_path
@@ -342,7 +342,7 @@ class LightweightDynamicMCPServer:
         Args:
             config_path: Optional path to agent configuration file
             max_cache_size: Maximum number of ToolContexts to cache (LRU eviction).
-                           Default is 16. Set to 0 for unlimited.
+                           Default is 64. Set to 0 for unlimited.
         """
         self.config_path = config_path
         self._context_manager = ToolContextManager(config_path, max_size=max_cache_size)
@@ -1214,7 +1214,7 @@ def create_dynamic_app(
                     FastMCP instance and cached tool contexts. If False, use legacy
                     mode with separate DatusMCPServer per namespace.
         max_cache_size: Maximum number of ToolContexts to cache (LRU eviction).
-                       Default is 16. Set to 0 for unlimited. Only applies to lightweight mode.
+                       Default is 64. Set to 0 for unlimited. Only applies to lightweight mode.
 
     Returns:
         Starlette application instance
