@@ -113,14 +113,17 @@ class ChatExecutor:
                             ):
                                 # Get default choice and auto-submit
                                 input_data = action.input or {}
-                                choices = input_data.get("choices", [])
-                                default_idx = input_data.get("default_choice", 0)
-                                if choices and 0 <= default_idx < len(choices):
-                                    default_choice = choices[default_idx]
-                                    broker = current_node.interaction_broker
-                                    if broker:
+                                choices = input_data.get("choices", {})  # dict: {key: display_text}
+                                default_choice = input_data.get("default_choice", "")  # str key
+                                broker = current_node.interaction_broker
+                                if broker:
+                                    if choices and default_choice:
+                                        # Has choices: submit default key
                                         broker.submit(action.action_id, default_choice)
                                         logger.info(f"Web auto-submitted default choice: {default_choice}")
+                                    elif not choices:
+                                        # Free-text input: submit empty string
+                                        broker.submit(action.action_id, "")
                                 continue  # Don't yield PROCESSING to UI
 
                             # SUCCESS interactions are yielded for UI rendering

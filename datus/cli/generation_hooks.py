@@ -455,11 +455,11 @@ class GenerationHooks(AgentHooks):
 
             choice, callback = await self.broker.request(
                 content=request_content,
-                choices=["Yes - Save to Knowledge Base", "No - Keep file only"],
-                default_choice=0,
+                choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
+                default_choice="y",
             )
 
-            if choice.startswith("Yes"):
+            if choice == "y":
                 # Sync both files to Knowledge Base
                 sync_result = await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
                 callback_content = "---\n\n"
@@ -510,11 +510,11 @@ class GenerationHooks(AgentHooks):
 
             choice, callback = await self.broker.request(
                 content=request_content,
-                choices=["Yes - Save to Knowledge Base", "No - Keep file only"],
-                default_choice=0,
+                choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
+                default_choice="y",
             )
 
-            if choice.startswith("Yes"):
+            if choice == "y":
                 # Sync to Knowledge Base
                 sync_result = await self._sync_to_storage(file_path, yaml_type, metric_sqls=metric_sqls)
                 # Build callback content with result

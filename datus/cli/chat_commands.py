@@ -611,16 +611,14 @@ class ChatCommands:
             action: ActionHistory with role=INTERACTION containing input data
 
         Returns:
-            The user's selected choice string, or free-text input if input_mode=="text"
+            The user's selected choice key, or free-text input if choices is empty
         """
         try:
             input_data = action.input or {}
             content = input_data.get("content", "")
-            choices = input_data.get("choices", [])
+            choices = input_data.get("choices", {})  # dict: {key: display_text}
             content_type = input_data.get("content_type", "text")
-            default_choice = input_data.get("default_choice", 0)
-            context = input_data.get("context", {})
-            input_mode = context.get("input_mode", "choice")
+            default_choice = input_data.get("default_choice", "")  # str key
 
             # Display separator
             self.console.print("\n" + "=" * 60)
@@ -640,8 +638,8 @@ class ChatCommands:
                 # text or other - use Rich markup directly
                 self.console.print(content)
 
-            # Handle text input mode (for free-form text like replan feedback)
-            if input_mode == "text":
+            # Empty choices dict means free-text input mode
+            if not choices:
                 self.console.print()
                 self.console.print("[dim](Escape+Enter or Alt+Enter to submit)[/]")
 
@@ -656,49 +654,50 @@ class ChatCommands:
                     return user_text
                 else:
                     self.console.print("[yellow]No input provided.[/]")
-                    return choices[default_choice] if choices else ""
+                    return ""
 
-            # Handle choice selection mode (default)
-            if choices:
-                self.console.print("\n[bold cyan]Options:[/]")
-                for i, choice in enumerate(choices, 1):
-                    marker = "→" if i - 1 == default_choice else " "
-                    self.console.print(f"  {marker} {i}. {choice}")
-                self.console.print()
+            # Handle choice selection mode (choices is non-empty dict)
+            keys = list(choices.keys())
+            self.console.print("\n[bold cyan]Options:[/]")
+            for i, (key, display) in enumerate(choices.items(), 1):
+                marker = "→" if key == default_choice else " "
+                self.console.print(f"  {marker} {i}. {display}")
+            self.console.print()
 
-                # Get user input using blocking_input_manager
-                def get_input():
-                    default_num = default_choice + 1
-                    prompt = f"Your choice (1-{len(choices)}) [{default_num}]: "
-                    return blocking_input_manager.get_blocking_input(lambda: input(prompt).strip() or str(default_num))
+            # Calculate default number for display
+            default_num = keys.index(default_choice) + 1 if default_choice in keys else 1
 
-                choice_str = get_input()
+            # Get user input using blocking_input_manager
+            def get_input():
+                prompt = f"Your choice (1-{len(choices)}) [{default_num}]: "
+                return blocking_input_manager.get_blocking_input(lambda: input(prompt).strip() or str(default_num))
 
-                # Parse choice
-                try:
-                    idx = int(choice_str) - 1
-                    if 0 <= idx < len(choices):
-                        selected = choices[idx]
-                        self.console.print(f"[dim]Selected: {selected}[/]")
-                        return selected
-                    else:
-                        self.console.print("[yellow]Invalid choice, using default.[/]")
-                        return choices[default_choice]
-                except ValueError:
-                    self.console.print("[yellow]Invalid input, using default.[/]")
-                    return choices[default_choice]
-            else:
-                # No choices - just acknowledge
-                return ""
+            choice_str = get_input()
+
+            # Parse choice - convert number to key
+            try:
+                idx = int(choice_str) - 1
+                if 0 <= idx < len(keys):
+                    selected_key = keys[idx]
+                    self.console.print(f"[dim]Selected: {choices[selected_key]}[/]")
+                    return selected_key
+                else:
+                    self.console.print("[yellow]Invalid choice, using default.[/]")
+                    return default_choice if default_choice else keys[0]
+            except ValueError:
+                self.console.print("[yellow]Invalid input, using default.[/]")
+                return default_choice if default_choice else keys[0]
 
         except Exception as e:
             logger.error(f"Error handling CLI interaction: {e}")
             self.console.print(f"[red]Error handling interaction: {e}[/]")
             # Return default choice if available
-            choices = (action.input or {}).get("choices", [])
-            default_choice = (action.input or {}).get("default_choice", 0)
-            if choices and 0 <= default_choice < len(choices):
-                return choices[default_choice]
+            choices = (action.input or {}).get("choices", {})
+            default_choice = (action.input or {}).get("default_choice", "")
+            if choices and default_choice:
+                return default_choice
+            elif choices:
+                return list(choices.keys())[0]
             return ""
 
     def _display_success(self, action: ActionHistory):

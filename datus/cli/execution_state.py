@@ -9,7 +9,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import AsyncGenerator, Awaitable, Callable, Dict, Optional, Tuple
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
@@ -23,7 +23,7 @@ class PendingInteraction:
 
     action_id: str
     future: asyncio.Future
-    choices: List[str]
+    choices: Dict[str, str]  # key=submit value, value=display text
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -47,10 +47,11 @@ class InteractionBroker:
     Usage in hooks:
         choice, callback = await broker.request(
             content="## Generated YAML\\n```yaml\\n...\\n```\\n\\nSync to Knowledge Base?",
-            choices=["Yes - Save to KB", "No - Keep file only"],
+            choices={"y": "Yes - Save to KB", "n": "No - Keep file only"},
+            default_choice="y",
             content_type="markdown",
         )
-        if choice.startswith("Yes"):
+        if choice == "y":
             await sync_to_storage(...)
             await callback("**Successfully synced to Knowledge Base**")
         else:
@@ -80,8 +81,8 @@ class InteractionBroker:
     async def request(
         self,
         content: str,
-        choices: List[str],
-        default_choice: int = 0,
+        choices: Dict[str, str],
+        default_choice: str = "",
         content_type: str = "markdown",
     ) -> Tuple[str, Callable[[str, str], Awaitable[None]]]:
         """
@@ -89,13 +90,13 @@ class InteractionBroker:
 
         Args:
             content: Display content/prompt for user (supports markdown)
-            choices: List of choice strings
-            default_choice: Index of default choice (default: 0)
+            choices: Dict of {key: display_text}. Empty dict means free-text input.
+            default_choice: Key of default choice (required when choices is non-empty)
             content_type: Type of content ("text", "yaml", "sql", "markdown")
 
         Returns:
             Tuple of (choice, callback):
-            - choice: The selected choice string
+            - choice: The selected choice key (or free text if choices is empty)
             - callback: Async function to generate SUCCESS action with result content.
                         Signature: async def callback(content: str, content_type: str = "markdown") -> None
 
@@ -207,16 +208,23 @@ class InteractionBroker:
 
         Args:
             action_id: The action_id from the INTERACTION ActionHistory
-            user_choice: The user's selected choice string
+            user_choice: The user's selected choice key (must be in choices keys if choices is non-empty)
 
         Returns:
-            True if submission was successful, False if action_id not found
+            True if submission was successful, False if action_id not found or invalid choice
         """
         if action_id not in self._pending:
             logger.warning(f"InteractionBroker: submit called with unknown action_id={action_id}")
             return False
 
         pending = self._pending.pop(action_id)
+
+        # Validate choice: if choices is non-empty, user_choice must be a valid key
+        if pending.choices and user_choice not in pending.choices:
+            logger.warning(
+                f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}"
+            )
+            return False
 
         # Resolve the future with the user's choice
         if not pending.future.done():
