@@ -10,7 +10,7 @@ This module provides decorators and utilities for automatically registering
 tool methods and classes as MCP (Model Context Protocol) tools.
 
 Method-level decorator usage:
-    from datus.tools.func_tool.mcp_decorators import mcp_tool
+    from datus.utils.mcp_decorators import mcp_tool
 
     class MyToolClass:
         @mcp_tool()
@@ -24,7 +24,7 @@ Method-level decorator usage:
             ...
 
 Class-level decorator usage:
-    from datus.tools.func_tool.mcp_decorators import mcp_tool_class
+    from datus.utils.mcp_decorators import mcp_tool_class
 
     @mcp_tool_class(
         name="db_tool",

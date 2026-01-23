@@ -864,339 +864,8 @@ def create_server(
     )
 
 
-class DatusMCPServerManager:
-    """
-    Manages multiple DatusMCPServer instances for dynamic namespace/subagent support.
-
-    This manager provides:
-    1. Lazy initialization of MCP servers per namespace/subagent combination
-    2. Instance caching to avoid repeated initialization
-    3. Validation of namespaces and subagents against configuration
-    4. Graceful cleanup of all instances
-
-    Usage:
-        manager = DatusMCPServerManager(config_path="conf/agent.yml")
-        server = await manager.get_or_create_server("demo", subagent="sales")
-    """
-
-    def __init__(self, config_path: Optional[str] = None):
-        """
-        Initialize the manager.
-
-        Args:
-            config_path: Optional path to agent configuration file
-        """
-        self.config_path = config_path
-        self._servers: Dict[str, DatusMCPServer] = {}
-        self._lock = asyncio.Lock()
-
-        # Load configuration to get available namespaces and subagents
-        self._config_manager = configuration_manager(config_path=config_path or "")
-        self._available_namespaces: Set[str] = set(self._config_manager.get("namespace", {}).keys())
-        self._available_subagents: Set[str] = set(self._config_manager.get("agentic_nodes", {}).keys())
-
-        logger.info(f"MCP Server Manager initialized with namespaces: {self._available_namespaces}")
-        if self._available_subagents:
-            logger.info(f"Available subagents: {self._available_subagents}")
-
-    @property
-    def available_namespaces(self) -> List[str]:
-        """Get list of available namespaces from configuration."""
-        return list(self._available_namespaces)
-
-    @property
-    def available_subagents(self) -> List[str]:
-        """Get list of available subagents from configuration."""
-        return list(self._available_subagents)
-
-    def _get_cache_key(self, namespace: str, subagent: Optional[str] = None) -> str:
-        """Generate cache key for namespace/subagent combination."""
-        return f"{namespace}:{subagent or ''}"
-
-    def validate_namespace(self, namespace: str) -> bool:
-        """Check if namespace exists in configuration."""
-        return namespace in self._available_namespaces
-
-    def validate_subagent(self, subagent: str) -> bool:
-        """Check if subagent exists in configuration."""
-        return subagent in self._available_subagents
-
-    async def get_or_create_server(
-        self,
-        namespace: str,
-        subagent: Optional[str] = None,
-    ) -> DatusMCPServer:
-        """
-        Get or create a DatusMCPServer instance for the given namespace/subagent.
-
-        Args:
-            namespace: The database namespace (required, must exist in config)
-            subagent: Optional sub-agent name for scoped context
-
-        Returns:
-            DatusMCPServer instance
-
-        Raises:
-            ValueError: If namespace or subagent is not found in configuration
-        """
-        if not self.validate_namespace(namespace):
-            raise ValueError(f"Namespace '{namespace}' not found. Available: {self.available_namespaces}")
-
-        if subagent and not self.validate_subagent(subagent):
-            raise ValueError(f"Subagent '{subagent}' not found. Available: {self.available_subagents}")
-
-        cache_key = self._get_cache_key(namespace, subagent)
-
-        async with self._lock:
-            if cache_key not in self._servers:
-                logger.info(f"Creating new MCP server for {cache_key}")
-                server = DatusMCPServer(
-                    namespace=namespace,
-                    sub_agent=subagent,
-                    config_path=self.config_path,
-                    stateless_http=True,  # Enable stateless mode for dynamic routing
-                )
-                self._servers[cache_key] = server
-            return self._servers[cache_key]
-
-    def get_server(self, namespace: str, subagent: Optional[str] = None) -> Optional[DatusMCPServer]:
-        """
-        Get existing server instance without creating a new one.
-
-        Args:
-            namespace: The database namespace
-            subagent: Optional sub-agent name
-
-        Returns:
-            DatusMCPServer instance if exists, None otherwise
-        """
-        cache_key = self._get_cache_key(namespace, subagent)
-        return self._servers.get(cache_key)
-
-    def close_server(self, namespace: str, subagent: Optional[str] = None) -> bool:
-        """
-        Close and remove a specific server instance.
-
-        Args:
-            namespace: The database namespace
-            subagent: Optional sub-agent name
-
-        Returns:
-            True if server was found and closed, False otherwise
-        """
-        cache_key = self._get_cache_key(namespace, subagent)
-        if cache_key in self._servers:
-            self._servers[cache_key].close()
-            del self._servers[cache_key]
-            logger.info(f"Closed MCP server for {cache_key}")
-            return True
-        return False
-
-    def close_all(self):
-        """Close all managed server instances."""
-        for cache_key, server in list(self._servers.items()):
-            try:
-                server.close()
-                logger.info(f"Closed MCP server for {cache_key}")
-            except Exception as e:
-                logger.warning(f"Error closing server {cache_key}: {e}")
-        self._servers.clear()
-
-    def __enter__(self):
-        """Context manager entry."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit - ensures all resources are released."""
-        self.close_all()
-        return False
-
-
-class DynamicMCPRouter:
-    """
-    ASGI application that dynamically routes MCP requests to namespace-specific servers.
-
-    This router parses the URL path to extract namespace and query parameters for subagent,
-    then forwards the request to the appropriate MCP server instance.
-
-    URL format: /mcp/{namespace}?subagent={subagent_name}
-
-    Note: Uses stateless_http=True mode for simplicity in dynamic routing, which means
-    each request creates a fresh transport without session persistence.
-    """
-
-    def __init__(self, manager: DatusMCPServerManager):
-        self.manager = manager
-        self._session_managers: Dict[str, Any] = {}
-        self._session_contexts: Dict[str, Any] = {}  # Store context managers
-        self._lock = asyncio.Lock()
-        self._task_group = None
-
-    @asynccontextmanager
-    async def lifespan_context(self):
-        """
-        Context manager for router lifespan.
-        Manages task group for session managers.
-        """
-        import anyio
-
-        async with anyio.create_task_group() as tg:
-            self._task_group = tg
-            logger.info("DynamicMCPRouter started with task group")
-            try:
-                yield
-            finally:
-                logger.info("DynamicMCPRouter shutting down")
-                # Cancel all tasks
-                tg.cancel_scope.cancel()
-                self._task_group = None
-                self._session_managers.clear()
-                self._session_contexts.clear()
-
-    async def _get_session_manager(
-        self,
-        namespace: str,
-        subagent: Optional[str] = None,
-    ):
-        """Get or create the session manager for a namespace/subagent combination."""
-        import anyio
-
-        cache_key = f"{namespace}:{subagent or ''}"
-
-        async with self._lock:
-            if cache_key not in self._session_managers:
-                if self._task_group is None:
-                    raise RuntimeError("Router not started. Use lifespan_context first.")
-
-                server = await self.manager.get_or_create_server(
-                    namespace=namespace,
-                    subagent=subagent,
-                )
-
-                # Get the session manager (creates it if needed)
-                _ = server.mcp.streamable_http_app()
-                session_manager = server.mcp.session_manager
-
-                # Start the session manager in the task group
-                started_event = anyio.Event()
-
-                async def run_session_manager():
-                    async with session_manager.run():
-                        started_event.set()
-                        # Keep running until cancelled
-                        try:
-                            await anyio.sleep_forever()
-                        except anyio.get_cancelled_exc_class():
-                            pass
-
-                self._task_group.start_soon(run_session_manager)
-
-                # Wait for the session manager to start
-                await started_event.wait()
-
-                self._session_managers[cache_key] = session_manager
-                logger.info(f"Started session manager for {cache_key}")
-
-            return self._session_managers[cache_key]
-
-    @staticmethod
-    def _parse_request(scope: Dict) -> tuple:
-        """Parse namespace and query parameters from the request.
-
-        Note: When mounted via Mount("/mcp", app=mcp_router), the path received
-        here is already stripped of the "/mcp" prefix. So for a request to
-        "/mcp/bird_sqlite", this method receives "/bird_sqlite".
-        """
-        path = scope.get("path", "")
-        query_string = scope.get("query_string", b"").decode("utf-8")
-
-        # Extract namespace from path: /{namespace}
-        # Path format: /namespace or /namespace/
-        parts = path.strip("/").split("/")
-        if not parts or not parts[0]:
-            return None, None
-
-        namespace = parts[-1]
-
-        # Parse query parameters
-        subagent = None
-        if query_string:
-            from urllib.parse import parse_qs
-
-            params = parse_qs(query_string)
-            subagent = params.get("subagent", [None])[0]
-
-        return namespace, subagent
-
-    async def __call__(self, scope, receive, send):
-        """ASGI application entry point."""
-        if scope["type"] != "http":
-            return
-
-        namespace, subagent = self._parse_request(scope)
-
-        if not namespace:
-            # Return 400 Bad Request
-            await self._send_error(send, 400, "Bad Request: Missing namespace in path")
-            return
-
-        # Validate namespace
-        if not self.manager.validate_namespace(namespace):
-            await self._send_error(
-                send,
-                404,
-                f"Not Found: Namespace '{namespace}' not available. " f"Available: {self.manager.available_namespaces}",
-            )
-            return
-
-        # Validate subagent if provided
-        if subagent and not self.manager.validate_subagent(subagent):
-            await self._send_error(
-                send,
-                404,
-                f"Not Found: Subagent '{subagent}' not available. " f"Available: {self.manager.available_subagents}",
-            )
-            return
-
-        try:
-            # Get the session manager for this namespace
-            session_manager = await self._get_session_manager(namespace, subagent)
-
-            # Modify scope to have the path that MCP expects
-            new_scope = dict(scope)
-            new_scope["path"] = "/mcp"
-
-            # Use session manager to handle request directly
-            # This bypasses the Starlette app and its lifespan requirement
-            await session_manager.handle_request(new_scope, receive, send)
-
-        except Exception as e:
-            logger.exception(f"Error handling MCP request for namespace={namespace}")
-            await self._send_error(send, 500, f"Internal Server Error: {str(e)}")
-
-    async def _send_error(self, send, status_code: int, message: str):
-        """Send an error response."""
-        import json
-
-        body = json.dumps({"error": message}).encode("utf-8")
-        await send(
-            {
-                "type": "http.response.start",
-                "status": status_code,
-                "headers": [[b"content-type", b"application/json"]],
-            }
-        )
-        await send(
-            {
-                "type": "http.response.body",
-                "body": body,
-            }
-        )
-
-
 def create_dynamic_app(
     config_path: Optional[str] = None,
-    lightweight: bool = True,
     max_cache_size: Optional[int] = None,
 ):
     """
@@ -1210,11 +879,8 @@ def create_dynamic_app(
 
     Args:
         config_path: Optional path to agent configuration file
-        lightweight: If True (default), use LightweightDynamicMCPServer with single
-                    FastMCP instance and cached tool contexts. If False, use legacy
-                    mode with separate DatusMCPServer per namespace.
         max_cache_size: Maximum number of ToolContexts to cache (LRU eviction).
-                       Default is 64. Set to 0 for unlimited. Only applies to lightweight mode.
+                       Default is 64. Set to 0 for unlimited.
 
     Returns:
         Starlette application instance
@@ -1227,87 +893,8 @@ def create_dynamic_app(
         # http://localhost:8000/mcp/demo
         # http://localhost:8000/mcp/demo?subagent=sales
     """
-    if lightweight:
-        # Use new lightweight implementation with single FastMCP instance
-        server = LightweightDynamicMCPServer(config_path=config_path, max_cache_size=max_cache_size)
-        return server.create_asgi_app()
-
-    # Legacy mode: separate DatusMCPServer per namespace
-    from starlette.applications import Starlette
-    from starlette.responses import JSONResponse
-    from starlette.routing import Mount, Route
-
-    # Create manager instance
-    manager = DatusMCPServerManager(config_path=config_path)
-
-    # Create dynamic MCP router
-    mcp_router = DynamicMCPRouter(manager)
-
-    @asynccontextmanager
-    async def lifespan(_app):
-        """Application lifespan handler."""
-        logger.info("Starting Datus MCP Server (Dynamic Mode - Legacy)")
-        logger.info(f"Available namespaces: {manager.available_namespaces}")
-        if manager.available_subagents:
-            logger.info(f"Available subagents: {manager.available_subagents}")
-
-        # Start the router with its task group for session managers
-        async with mcp_router.lifespan_context():
-            yield
-
-        logger.info("Shutting down Datus MCP Server")
-        manager.close_all()
-
-    # Define info endpoints
-    async def root(request):
-        """Root endpoint with server info."""
-        return JSONResponse(
-            {
-                "service": "Datus MCP Server",
-                "mode": "dynamic-legacy",
-                "available_namespaces": manager.available_namespaces,
-                "available_subagents": manager.available_subagents,
-                "endpoints": {
-                    "mcp": "/mcp/{namespace}",
-                    "mcp_with_subagent": "/mcp/{namespace}?subagent={subagent_name}",
-                    "health": "/health",
-                    "namespaces": "/namespaces",
-                },
-            }
-        )
-
-    async def health(request):
-        """Health check endpoint."""
-        return JSONResponse(
-            {
-                "status": "healthy",
-                "active_servers": len(manager._servers),
-            }
-        )
-
-    async def list_namespaces(request):
-        """List available namespaces and subagents."""
-        return JSONResponse(
-            {
-                "namespaces": manager.available_namespaces,
-                "subagents": manager.available_subagents,
-            }
-        )
-
-    # Create Starlette app with routes
-    app = Starlette(
-        debug=False,
-        routes=[
-            Route("/", root, methods=["GET"]),
-            Route("/health", health, methods=["GET"]),
-            Route("/namespaces", list_namespaces, methods=["GET"]),
-            # Mount the dynamic MCP router for all /mcp/* paths
-            Mount("/mcp", app=mcp_router),
-        ],
-        lifespan=lifespan,
-    )
-
-    return app
+    server = LightweightDynamicMCPServer(config_path=config_path, max_cache_size=max_cache_size)
+    return server.create_asgi_app()
 
 
 def run_dynamic_server(
@@ -1315,7 +902,6 @@ def run_dynamic_server(
     host: str = "0.0.0.0",
     port: int = 8000,
     debug: bool = False,
-    lightweight: bool = True,
     max_cache_size: Optional[int] = 64,
 ):
     """
@@ -1326,21 +912,17 @@ def run_dynamic_server(
         host: Host to bind (default: 0.0.0.0)
         port: Port to bind (default: 8000)
         debug: Enable debug mode
-        lightweight: If True (default), use lightweight mode with single FastMCP instance
         max_cache_size: Maximum ToolContext cache size (LRU). Default 64, 0 for unlimited.
     """
     import uvicorn
 
     app = create_dynamic_app(
         config_path=config_path,
-        lightweight=lightweight,
         max_cache_size=max_cache_size,
     )
-    mode_name = "Lightweight" if lightweight else "Legacy"
-    cache_info = f", cache_size={max_cache_size or 64}" if lightweight else ""
 
     print(f"\n{'='*60}")
-    print(f"  Datus MCP Server (Dynamic Mode - {mode_name}{cache_info})")
+    print(f"  Datus MCP Server (Dynamic Mode, cache_size={max_cache_size or 64})")
     print(f"  Endpoint: http://{host}:{port}/mcp/{{namespace}}")
     print(f"  With subagent: http://{host}:{port}/mcp/{{namespace}}?subagent={{name}}")
     print(f"  Info: http://{host}:{port}/")
@@ -1468,11 +1050,6 @@ HTTP Client Usage:
         help="Enable debug logging",
     )
     parser.add_argument(
-        "--legacy",
-        action="store_true",
-        help="Use legacy mode with separate FastMCP per namespace (dynamic mode only)",
-    )
-    parser.add_argument(
         "--max-cache-size",
         type=int,
         default=64,
@@ -1490,7 +1067,6 @@ HTTP Client Usage:
             host=args.host,
             port=args.port,
             debug=args.debug,
-            lightweight=not args.legacy,
             max_cache_size=args.max_cache_size,
         )
     else:
