@@ -678,7 +678,7 @@ class ChatCommands:
                     idx = int(choice_str) - 1
                     if 0 <= idx < len(choices):
                         selected = choices[idx]
-                        self.console.print("[dim]Selected: {selected}[/]")
+                        self.console.print(f"[dim]Selected: {selected}[/]")
                         return selected
                     else:
                         self.console.print("[yellow]Invalid choice, using default.[/]")

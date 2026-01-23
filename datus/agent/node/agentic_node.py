@@ -583,7 +583,10 @@ class AgenticNode(Node):
         Returns:
             InteractionBroker instance for this node
         """
-        if self.interaction_broker is None:
+        if self.interaction_broker is None or self.interaction_broker.is_closed:
+            # Create new broker if none exists or if previous one was closed
+            # (e.g., after cancel). We create a new instance instead of reset()
+            # to avoid event loop binding issues with asyncio.Queue and Lock.
             self.interaction_broker = InteractionBroker()
         return self.interaction_broker
 
