@@ -613,11 +613,6 @@ class AgenticNode(Node):
         async for action in merge_interaction_stream(action_stream, broker):
             yield action
 
-    def reset_broker(self) -> None:
-        """Reset the interaction broker for reuse."""
-        if self.interaction_broker:
-            self.interaction_broker.reset()
-
     def clear_session(self) -> None:
         """Clear the current session and reset token count."""
         if self.model and self.session_id:

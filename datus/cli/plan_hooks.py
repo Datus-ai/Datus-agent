@@ -133,7 +133,7 @@ class PlanModeHooks(AgentHooks):
             request_content = ""
             if plan_content:
                 request_content = f"{plan_content}\n\n"
-            request_content += "### Choose Execution Mode:"
+            request_content += "**Choose Execution Mode:**"
 
             choice, callback = await self.broker.request(
                 content=request_content,
@@ -145,7 +145,6 @@ class PlanModeHooks(AgentHooks):
                 },
                 default_choice="1",
             )
-            logger.info(f"choice: {choice}")
 
             if choice == "1":  # Manual
                 self.execution_mode = "manual"
@@ -259,7 +258,7 @@ class PlanModeHooks(AgentHooks):
             else:
                 # Manual mode - merge progress into request content
                 choice, callback = await self.broker.request(
-                    content=f"{progress_content}\n\n### Options:",
+                    content=f"{progress_content}",
                     choices={
                         "1": "Execute this step",
                         "2": "Execute this step and continue automatically",

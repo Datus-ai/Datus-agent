@@ -620,9 +620,6 @@ class ChatCommands:
             content_type = input_data.get("content_type", "text")
             default_choice = input_data.get("default_choice", "")  # str key
 
-            # Display separator
-            self.console.print("\n" + "=" * 60)
-
             # Display content based on content_type
             if content_type == "yaml":
                 syntax = Syntax(content, "yaml", theme="monokai", line_numbers=True)
@@ -650,7 +647,6 @@ class ChatCommands:
                     None, lambda: self.cli.prompt_input(message="Your input", multiline=True)
                 )
                 if user_text:
-                    self.console.print(f"[dim]Input received ({len(user_text)} chars)[/]")
                     return user_text
                 else:
                     self.console.print("[yellow]No input provided.[/]")
@@ -659,34 +655,30 @@ class ChatCommands:
             # Handle choice selection mode (choices is non-empty dict)
             keys = list(choices.keys())
             self.console.print("\n[bold cyan]Options:[/]")
-            for i, (key, display) in enumerate(choices.items(), 1):
+            for key, display in choices.items():
                 marker = "→" if key == default_choice else " "
-                self.console.print(f"  {marker} {i}. {display}")
+                self.console.print(f"  {marker} [{key}] {display}")
             self.console.print()
 
-            # Calculate default number for display
-            default_num = keys.index(default_choice) + 1 if default_choice in keys else 1
+            # Get default key for display
+            default_key = default_choice if default_choice in keys else keys[0]
 
-            # Get user input using blocking_input_manager
+            # Get user input using blocking_input_manager with retry loop
             def get_input():
-                prompt = f"Your choice (1-{len(choices)}) [{default_num}]: "
-                return blocking_input_manager.get_blocking_input(lambda: input(prompt).strip() or str(default_num))
+                prompt = f"Your choice [{default_key}]: "
+                return blocking_input_manager.get_blocking_input(lambda: input(prompt).strip() or default_key)
 
-            choice_str = get_input()
+            while True:
+                choice_str = get_input()
 
-            # Parse choice - convert number to key
-            try:
-                idx = int(choice_str) - 1
-                if 0 <= idx < len(keys):
-                    selected_key = keys[idx]
-                    self.console.print(f"[dim]Selected: {choices[selected_key]}[/]")
-                    return selected_key
-                else:
-                    self.console.print("[yellow]Invalid choice, using default.[/]")
-                    return default_choice if default_choice else keys[0]
-            except ValueError:
-                self.console.print("[yellow]Invalid input, using default.[/]")
-                return default_choice if default_choice else keys[0]
+                # Check if input matches a key
+                if choice_str in keys:
+                    self.console.print(f"[dim]Selected: {choices[choice_str]}[/]")
+                    return choice_str
+
+                # Invalid input - show error and retry
+                valid_options = ", ".join(keys)
+                self.console.print(f"[yellow]Invalid choice. Valid options: {valid_options}[/]")
 
         except Exception as e:
             logger.error(f"Error handling CLI interaction: {e}")

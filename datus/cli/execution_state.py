@@ -245,20 +245,6 @@ class InteractionBroker:
         self._pending.clear()
         logger.debug("InteractionBroker: closed")
 
-    def reset(self) -> None:
-        """
-        Reset the broker to initial state for reuse.
-        """
-        self.close()
-        self._closed = False
-        # Clear the queue
-        while not self._output_queue.empty():
-            try:
-                self._output_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-        logger.debug("InteractionBroker: reset")
-
     @property
     def has_pending(self) -> bool:
         """Check if there are pending interactions waiting for response."""
