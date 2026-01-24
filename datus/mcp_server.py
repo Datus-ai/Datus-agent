@@ -15,14 +15,18 @@ Supported Transport Modes:
     - stdio: Standard input/output (for Claude Desktop and CLI tools)
 
 Usage:
-    # === Dynamic Mode (Multi-namespace HTTP Server) ===
-    # Run dynamic server that supports all namespaces via URL path
+    # === Dynamic Mode (Multi-namespace Server) ===
+    # Run dynamic server with HTTP streamable (default)
     python -m datus.mcp_server --dynamic
     python -m datus.mcp_server --dynamic --host 0.0.0.0 --port 8000
 
+    # Run dynamic server with SSE transport
+    python -m datus.mcp_server --dynamic --transport sse
+
     # Connect to specific namespace:
-    # http://localhost:8000/mcp/{namespace}
-    # http://localhost:8000/mcp/{namespace}?subagent={subagent_name}
+    # HTTP: http://localhost:8000/mcp/{namespace}
+    # SSE:  http://localhost:8000/sse/{namespace}
+    # With subagent: http://localhost:8000/mcp/{namespace}?subagent={subagent_name}
 
     # === Static Mode (Single-namespace) ===
     # Run with uv (recommended for development)
@@ -64,9 +68,8 @@ Usage:
     }
 
     # For HTTP clients, connect to:
-    # Static mode: http://localhost:8000/mcp
-    # Dynamic mode: http://localhost:8000/mcp/{namespace}
-    # SSE: http://localhost:8000/sse (static mode only)
+    # Static mode:  http://localhost:8000/mcp (HTTP) or http://localhost:8000/sse (SSE)
+    # Dynamic mode: http://localhost:8000/mcp/{namespace} (HTTP) or http://localhost:8000/sse/{namespace} (SSE)
 """
 
 import argparse
@@ -362,10 +365,17 @@ class LightweightDynamicMCPServer:
         # Register tools once (they use _current_tool_context to get the right instance)
         self._register_tools()
 
-        # Session manager lifecycle
+        # Session manager lifecycle (for HTTP streamable)
         self._session_manager = None
         self._task_group = None
         self._started = False
+
+        # SSE app reference (for SSE transport)
+        self._sse_app = None
+
+        # SSE session to context mapping (session_id -> ToolContext)
+        # This is used to route /messages/ requests to the correct context
+        self._sse_sessions: Dict[str, ToolContext] = {}
 
     @property
     def available_namespaces(self) -> List[str]:
@@ -412,43 +422,60 @@ class LightweightDynamicMCPServer:
             )
 
     @asynccontextmanager
-    async def lifespan_context(self):
+    async def lifespan_context(self, transport: Literal["http", "sse"] = "http"):
         """
         Context manager for server lifespan.
-        Starts session manager in background task group.
+        Starts session manager in background task group (for HTTP transport).
+
+        Args:
+            transport: Transport type - "http" for streamable HTTP, "sse" for Server-Sent Events
         """
         import anyio
 
-        # Get session manager from MCP
-        _ = self.mcp.streamable_http_app()
-        self._session_manager = self.mcp.session_manager
-
-        async with anyio.create_task_group() as tg:
-            self._task_group = tg
-
-            # Start session manager
-            started_event = anyio.Event()
-
-            async def run_session_manager():
-                async with self._session_manager.run():
-                    started_event.set()
-                    try:
-                        await anyio.sleep_forever()
-                    except anyio.get_cancelled_exc_class():
-                        pass
-
-            tg.start_soon(run_session_manager)
-            await started_event.wait()
+        if transport == "sse":
+            # SSE transport: use sse_app directly (no session manager needed)
+            self._sse_app = self.mcp.sse_app()
             self._started = True
 
-            logger.info("LightweightDynamicMCPServer started")
+            logger.info(f"LightweightDynamicMCPServer started (transport={transport})")
             try:
                 yield
             finally:
                 logger.info("LightweightDynamicMCPServer shutting down")
-                tg.cancel_scope.cancel()
                 self._started = False
+                self._sse_app = None
                 self._context_manager.close_all()
+        else:
+            # HTTP streamable transport: use session manager
+            _ = self.mcp.streamable_http_app()
+            self._session_manager = self.mcp.session_manager
+
+            async with anyio.create_task_group() as tg:
+                self._task_group = tg
+
+                # Start session manager
+                started_event = anyio.Event()
+
+                async def run_session_manager():
+                    async with self._session_manager.run():
+                        started_event.set()
+                        try:
+                            await anyio.sleep_forever()
+                        except anyio.get_cancelled_exc_class():
+                            pass
+
+                tg.start_soon(run_session_manager)
+                await started_event.wait()
+                self._started = True
+
+                logger.info(f"LightweightDynamicMCPServer started (transport={transport})")
+                try:
+                    yield
+                finally:
+                    logger.info("LightweightDynamicMCPServer shutting down")
+                    tg.cancel_scope.cancel()
+                    self._started = False
+                    self._context_manager.close_all()
 
     async def handle_request(
         self,
@@ -457,6 +484,8 @@ class LightweightDynamicMCPServer:
         send,
         namespace: str,
         subagent: Optional[str] = None,
+        transport: Literal["http", "sse"] = "http",
+        subpath: str = "/",
     ):
         """
         Handle an MCP request with the specified context.
@@ -467,6 +496,8 @@ class LightweightDynamicMCPServer:
             send: ASGI send callable
             namespace: Target namespace
             subagent: Optional subagent name
+            transport: Transport type - "http" or "sse"
+            subpath: Subpath after namespace (for SSE: "/" or "/messages")
         """
         if not self._started:
             raise RuntimeError("Server not started. Use lifespan_context first.")
@@ -480,16 +511,56 @@ class LightweightDynamicMCPServer:
         # Set context for this request
         token = _current_tool_context.set(context)
         try:
-            # Modify scope path for MCP
-            new_scope = dict(scope)
-            new_scope["path"] = "/mcp"
-            await self._session_manager.handle_request(new_scope, receive, send)
+            if transport == "sse":
+                # SSE: delegate to the SSE app with correct path rewriting
+                # /sse/{namespace} -> /sse (for SSE connection)
+                # /sse/{namespace}/messages -> /messages (for posting messages)
+                if self._sse_app is None:
+                    raise RuntimeError("SSE app not initialized. Use lifespan_context with transport='sse' first.")
+
+                new_scope = dict(scope)
+                new_scope["root_path"] = ""
+                if subpath == "/" or subpath == "":
+                    # SSE connection endpoint
+                    new_scope["path"] = "/sse"
+
+                    # Wrap send to capture session_id from SSE events
+                    async def capturing_send(message):
+                        if message.get("type") == "http.response.body":
+                            body = message.get("body", b"")
+                            if body:
+                                # Try to extract session_id from SSE event
+                                # Format: "event: endpoint\ndata: /messages/?session_id=xxx\n\n"
+                                body_str = body.decode("utf-8", errors="ignore")
+                                if "session_id=" in body_str:
+                                    import re
+
+                                    match = re.search(r"session_id=([a-f0-9]+)", body_str)
+                                    if match:
+                                        session_id = match.group(1)
+                                        self._sse_sessions[session_id] = context
+                                        logger.debug(f"Captured SSE session: {session_id} -> {namespace}")
+                        await send(message)
+
+                    await self._sse_app(new_scope, receive, capturing_send)
+                else:
+                    # Other endpoints like /messages
+                    new_scope["path"] = subpath
+                    await self._sse_app(new_scope, receive, send)
+            else:
+                # HTTP streamable: use session manager
+                new_scope = dict(scope)
+                new_scope["path"] = "/mcp"
+                await self._session_manager.handle_request(new_scope, receive, send)
         finally:
             _current_tool_context.reset(token)
 
-    def create_asgi_app(self):
+    def create_asgi_app(self, transport: Literal["http", "sse"] = "http"):
         """
         Create a Starlette ASGI application with dynamic routing.
+
+        Args:
+            transport: Transport type - "http" for streamable HTTP, "sse" for Server-Sent Events
 
         Returns:
             Starlette application instance
@@ -499,20 +570,48 @@ class LightweightDynamicMCPServer:
         from starlette.routing import Mount, Route
 
         server = self
+        current_transport = transport
 
         class DynamicRouter:
             """ASGI router that parses namespace from path and routes to server."""
 
-            @staticmethod
-            def _parse_request(scope: Dict) -> tuple:
+            # Mount prefixes that need to be stripped
+            MOUNT_PREFIXES = ("/sse/", "/mcp/")
+
+            def __init__(self, transport_type: Literal["http", "sse"] = "http"):
+                self.transport_type = transport_type
+
+            @classmethod
+            def _parse_request(cls, scope: Dict) -> tuple:
+                """
+                Parse namespace, subagent, and subpath from request.
+
+                Handles both cases:
+                1. Mount stripped the prefix: /bird_sqlite, /bird_sqlite/messages
+                2. Mount didn't strip the prefix: /sse/bird_sqlite, /mcp/bird_sqlite/messages
+
+                Returns:
+                - /bird_sqlite           -> namespace="bird_sqlite", subpath="/"
+                - /bird_sqlite/messages  -> namespace="bird_sqlite", subpath="/messages"
+                """
                 path = scope.get("path", "")
                 query_string = scope.get("query_string", b"").decode("utf-8")
 
+                # Strip mount prefix if present (Starlette Mount may not strip it in some cases)
+                for prefix in cls.MOUNT_PREFIXES:
+                    if path.startswith(prefix):
+                        path = path[len(prefix) - 1 :]  # Keep the leading /
+                        break
+
                 parts = path.strip("/").split("/")
                 if not parts or not parts[0]:
-                    return None, None
+                    return None, None, "/"
 
-                namespace = parts[-1]
+                # First part is always the namespace
+                namespace = parts[0]
+
+                # Remaining parts form the subpath (for SSE: /messages, etc.)
+                subpath = "/" + "/".join(parts[1:]) if len(parts) > 1 else "/"
 
                 subagent = None
                 if query_string:
@@ -521,13 +620,13 @@ class LightweightDynamicMCPServer:
                     params = parse_qs(query_string)
                     subagent = params.get("subagent", [None])[0]
 
-                return namespace, subagent
+                return namespace, subagent, subpath
 
             async def __call__(self, scope, receive, send):
                 if scope["type"] != "http":
                     return
 
-                namespace, subagent = self._parse_request(scope)
+                namespace, subagent, subpath = self._parse_request(scope)
 
                 if not namespace:
                     await self._send_error(send, 400, "Bad Request: Missing namespace in path")
@@ -551,12 +650,15 @@ class LightweightDynamicMCPServer:
                     return
 
                 try:
-                    await server.handle_request(scope, receive, send, namespace, subagent)
+                    await server.handle_request(
+                        scope, receive, send, namespace, subagent, transport=self.transport_type, subpath=subpath
+                    )
                 except Exception as e:
                     logger.error(f"Error handling request for namespace={namespace}: {e}")
                     await self._send_error(send, 500, f"Internal Server Error: {str(e)}")
 
-            async def _send_error(self, send, status_code: int, message: str):
+            @staticmethod
+            async def _send_error(send, status_code: int, message: str):
                 import json
 
                 body = json.dumps({"error": message}).encode("utf-8")
@@ -571,46 +673,133 @@ class LightweightDynamicMCPServer:
 
         @asynccontextmanager
         async def lifespan(_app):
-            logger.info("Starting Datus MCP Server (Lightweight Dynamic Mode)")
+            logger.info(f"Starting Datus MCP Server (Lightweight Dynamic Mode, transport={current_transport})")
             logger.info(f"Available namespaces: {server.available_namespaces}")
             if server.available_subagents:
                 logger.info(f"Available subagents: {server.available_subagents}")
 
-            async with server.lifespan_context():
+            async with server.lifespan_context(transport=current_transport):
                 yield
 
             logger.info("Datus MCP Server stopped")
 
-        async def root(request):
+        async def root(_request):
+            # Determine endpoint based on transport
+            if current_transport == "sse":
+                endpoints = {
+                    "sse": "/sse/{namespace}",
+                    "sse_with_subagent": "/sse/{namespace}?subagent={subagent_name}",
+                    "health": "/health",
+                }
+            else:
+                endpoints = {
+                    "mcp": "/mcp/{namespace}",
+                    "mcp_with_subagent": "/mcp/{namespace}?subagent={subagent_name}",
+                    "health": "/health",
+                }
+
             return JSONResponse(
                 {
                     "service": "Datus MCP Server",
                     "mode": "lightweight-dynamic",
+                    "transport": current_transport,
                     "available_namespaces": server.available_namespaces,
                     "available_subagents": server.available_subagents,
-                    "endpoints": {
-                        "mcp": "/mcp/{namespace}",
-                        "mcp_with_subagent": "/mcp/{namespace}?subagent={subagent_name}",
-                        "health": "/health",
-                    },
+                    "endpoints": endpoints,
                 }
             )
 
-        async def health(request):
+        async def health(_request):
             return JSONResponse(
                 {
                     "status": "healthy",
+                    "transport": current_transport,
                     "cached_contexts": len(server._context_manager._contexts),
                 }
             )
 
-        return Starlette(
-            debug=False,
-            routes=[
+        async def handle_messages(request):
+            """
+            Handler for /messages/ endpoint in SSE mode.
+            Routes messages to the correct context based on session_id.
+            """
+            from starlette.responses import JSONResponse
+
+            # Extract session_id from query string
+            session_id = request.query_params.get("session_id")
+
+            if not session_id:
+                return JSONResponse({"error": "Bad Request: Missing session_id"}, status_code=400)
+
+            # Look up context from session_id
+            context = server._sse_sessions.get(session_id)
+            if not context:
+                logger.warning(f"Unknown session_id: {session_id}, available: {list(server._sse_sessions.keys())}")
+                return JSONResponse({"error": "Not Found: Unknown session_id"}, status_code=404)
+
+            # Set context and delegate to SSE app
+            token = _current_tool_context.set(context)
+            try:
+                # Build scope for SSE app
+                # Use /messages/ with trailing slash to match SSE app's route and avoid 307 redirect
+                scope = dict(request.scope)
+                scope["root_path"] = ""
+                scope["path"] = "/messages/"
+
+                logger.debug(f"Messages request: session_id={session_id}, namespace={context.namespace}")
+
+                # Create a response by calling the SSE app directly
+                # We need to capture the response from the ASGI app
+                response_status = 200
+                response_headers = []
+                response_body = []
+
+                async def receive():
+                    body = await request.body()
+                    return {"type": "http.request", "body": body, "more_body": False}
+
+                async def send(message):
+                    nonlocal response_status, response_headers, response_body
+                    if message["type"] == "http.response.start":
+                        response_status = message["status"]
+                        response_headers = message.get("headers", [])
+                    elif message["type"] == "http.response.body":
+                        body = message.get("body", b"")
+                        if body:
+                            response_body.append(body)
+
+                await server._sse_app(scope, receive, send)
+
+                # Build response
+                from starlette.responses import Response
+
+                return Response(
+                    content=b"".join(response_body),
+                    status_code=response_status,
+                    headers={k.decode(): v.decode() for k, v in response_headers},
+                )
+            finally:
+                _current_tool_context.reset(token)
+
+        # Define routes based on transport
+        if current_transport == "sse":
+            routes = [
                 Route("/", root, methods=["GET"]),
                 Route("/health", health, methods=["GET"]),
-                Mount("/mcp", app=DynamicRouter()),
-            ],
+                Mount("/sse", app=DynamicRouter(transport_type="sse")),
+                Route("/messages/", handle_messages, methods=["POST"]),  # Handle /messages/ for SSE
+                Route("/messages", handle_messages, methods=["POST"]),  # Handle /messages for SSE (no trailing slash)
+            ]
+        else:
+            routes = [
+                Route("/", root, methods=["GET"]),
+                Route("/health", health, methods=["GET"]),
+                Mount("/mcp", app=DynamicRouter(transport_type="http")),
+            ]
+
+        return Starlette(
+            debug=False,
+            routes=routes,
             lifespan=lifespan,
         )
 
@@ -867,13 +1056,14 @@ def create_server(
 def create_dynamic_app(
     config_path: Optional[str] = None,
     max_cache_size: Optional[int] = None,
+    transport: Literal["http", "sse"] = "http",
 ):
     """
     Create a Starlette application with dynamic namespace/subagent routing.
 
     This function creates an ASGI app that:
     1. Loads all available namespaces from configuration at startup
-    2. Routes requests to /mcp/{namespace} to the appropriate MCP server
+    2. Routes requests to /mcp/{namespace} (HTTP) or /sse/{namespace} (SSE)
     3. Supports optional subagent parameter via query string
     4. Properly handles MCP's streaming protocol
 
@@ -881,20 +1071,22 @@ def create_dynamic_app(
         config_path: Optional path to agent configuration file
         max_cache_size: Maximum number of ToolContexts to cache (LRU eviction).
                        Default is 64. Set to 0 for unlimited.
+        transport: Transport type - "http" for streamable HTTP (default), "sse" for SSE
 
     Returns:
         Starlette application instance
 
     Example:
+        # HTTP streamable (default)
         app = create_dynamic_app()
-        # Run with: uvicorn datus.mcp_server:app --host 0.0.0.0 --port 8000
+        # Client connects to: http://localhost:8000/mcp/demo
 
-        # Client connects to:
-        # http://localhost:8000/mcp/demo
-        # http://localhost:8000/mcp/demo?subagent=sales
+        # SSE transport
+        app = create_dynamic_app(transport="sse")
+        # Client connects to: http://localhost:8000/sse/demo
     """
     server = LightweightDynamicMCPServer(config_path=config_path, max_cache_size=max_cache_size)
-    return server.create_asgi_app()
+    return server.create_asgi_app(transport=transport)
 
 
 def run_dynamic_server(
@@ -903,6 +1095,7 @@ def run_dynamic_server(
     port: int = 8000,
     debug: bool = False,
     max_cache_size: Optional[int] = 64,
+    transport: Literal["http", "sse"] = "http",
 ):
     """
     Run the dynamic MCP server with uvicorn.
@@ -913,18 +1106,24 @@ def run_dynamic_server(
         port: Port to bind (default: 8000)
         debug: Enable debug mode
         max_cache_size: Maximum ToolContext cache size (LRU). Default 64, 0 for unlimited.
+        transport: Transport type - "http" for streamable HTTP (default), "sse" for SSE
     """
     import uvicorn
 
     app = create_dynamic_app(
         config_path=config_path,
         max_cache_size=max_cache_size,
+        transport=transport,
     )
 
+    # Determine endpoint path based on transport
+    endpoint_path = "/sse" if transport == "sse" else "/mcp"
+
     print(f"\n{'='*60}")
-    print(f"  Datus MCP Server (Dynamic Mode, cache_size={max_cache_size or 64})")
-    print(f"  Endpoint: http://{host}:{port}/mcp/{{namespace}}")
-    print(f"  With subagent: http://{host}:{port}/mcp/{{namespace}}?subagent={{name}}")
+    print(f"  Datus MCP Server (Dynamic Mode, transport={transport})")
+    print(f"  Cache size: {max_cache_size or 64}")
+    print(f"  Endpoint: http://{host}:{port}{endpoint_path}/{{namespace}}")
+    print(f"  With subagent: http://{host}:{port}{endpoint_path}/{{namespace}}?subagent={{name}}")
     print(f"  Info: http://{host}:{port}/")
     print(f"{'='*60}\n")
 
@@ -943,14 +1142,18 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # === Dynamic Mode (Multi-namespace HTTP Server) ===
-    # Run dynamic server that supports all namespaces via URL path
+    # === Dynamic Mode (Multi-namespace Server) ===
+    # Run dynamic server with HTTP streamable (default)
     python -m datus.mcp_server --dynamic
     python -m datus.mcp_server --dynamic --host 0.0.0.0 --port 8000
 
+    # Run dynamic server with SSE transport
+    python -m datus.mcp_server --dynamic --transport sse
+
     # Connect to specific namespace:
-    # http://localhost:8000/mcp/{namespace}
-    # http://localhost:8000/mcp/{namespace}?subagent={subagent_name}
+    # HTTP: http://localhost:8000/mcp/{namespace}
+    # SSE:  http://localhost:8000/sse/{namespace}
+    # With subagent: ?subagent={subagent_name}
 
     # === Static Mode (Single-namespace) ===
     # Run with uv (recommended for development)
@@ -1030,7 +1233,7 @@ HTTP Client Usage:
         "-t",
         choices=["http", "sse", "stdio"],
         default="http",
-        help="Transport type (static mode only): http (default), sse, stdio",
+        help="Transport type: http (default), sse, stdio (stdio is static mode only)",
     )
     parser.add_argument(
         "--host",
@@ -1062,12 +1265,17 @@ HTTP Client Usage:
 
     if args.dynamic:
         # Dynamic mode: run multi-namespace server
+        # Note: stdio is not supported in dynamic mode
+        if args.transport == "stdio":
+            parser.error("stdio transport is not supported in dynamic mode. Use http or sse.")
+
         run_dynamic_server(
             config_path=args.config,
             host=args.host,
             port=args.port,
             debug=args.debug,
             max_cache_size=args.max_cache_size,
+            transport=args.transport,
         )
     else:
         # Static mode: run single-namespace server
