@@ -1,51 +1,66 @@
+# BI Dashboard Test Input Configuration
+# NOTE: Use chart 'name' (slice_name in Superset) instead of 'id' for stable identification.
+# Chart IDs may change across environments or redeployments.
+# To find chart names: check Superset UI or use API: GET /api/v1/dashboard/{id}/charts
+
 - input:
     platform: superset
-    dashboard_url: http://127.0.0.1:8088/superset/dashboard/world_health/?native_filters_key=HSiEGUcmXjA
+    dashboard_url: http://127.0.0.1:8088/superset/dashboard/world_health/
     api_base_url: http://127.0.0.1:8088
     dialect: postgresql
     valid_charts:
-      - id: 3
+      - name: "Growth Rate"  # Chart Title
         sql: >
-          SELECT year AS __timestamp, country_name AS country_name, sum("SP_POP_TOTL") AS "sum__SP_POP_TOTL" 
-          FROM public.wb_health_population JOIN (SELECT country_name AS country_name__, sum("SP_POP_TOTL") AS mme_inner__ 
-          FROM public.wb_health_population 
-          WHERE year >= TO_TIMESTAMP('1960-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2014-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY country_name ORDER BY mme_inner__ DESC 
-           LIMIT 25) AS series_limit ON country_name = country_name__ 
-          WHERE year >= TO_TIMESTAMP('1960-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2014-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY country_name, year ORDER BY "sum__SP_POP_TOTL" DESC 
+          SELECT year AS __timestamp, country_name AS country_name, sum("SP_POP_TOTL") AS "sum__SP_POP_TOTL"
+          FROM public.wb_health_population JOIN (SELECT country_name AS country_name__, sum("SP_POP_TOTL") AS mme_inner__
+          FROM public.wb_health_population
+          WHERE year >= TO_TIMESTAMP('1960-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2014-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY country_name ORDER BY mme_inner__ DESC
+           LIMIT 25) AS series_limit ON country_name = country_name__
+          WHERE year >= TO_TIMESTAMP('1960-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2014-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY country_name, year ORDER BY "sum__SP_POP_TOTL" DESC
            LIMIT 50000;
-      - id: 4
+      - name: "% Rural"
         sql: >
-          SELECT country_code AS country_code, sum("SP_RUR_TOTL_ZS") AS "sum__SP_RUR_TOTL_ZS", sum("SP_RUR_TOTL") AS "Rural Population" 
+          SELECT country_code AS country_code, sum("SP_RUR_TOTL_ZS") AS "sum__SP_RUR_TOTL_ZS", sum("SP_RUR_TOTL") AS "Rural Population"
           FROM public.wb_health_population
           WHERE year >= TO_TIMESTAMP('2014-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2014-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY country_code
           LIMIT 50000;
-      - id: 6
+      - name: "Rural Breakdown"
         sql: >
-          SELECT region AS region, country_name AS country_name, sum("SP_POP_TOTL") AS "sum__SP_POP_TOTL", sum("SP_RUR_TOTL") AS "Rural Population" 
-          FROM public.wb_health_population 
-          WHERE year >= TO_TIMESTAMP('2011-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2011-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY region, country_name 
+          SELECT region AS region, country_name AS country_name, sum("SP_POP_TOTL") AS "sum__SP_POP_TOTL", sum("SP_RUR_TOTL") AS "Rural Population"
+          FROM public.wb_health_population
+          WHERE year >= TO_TIMESTAMP('2011-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2011-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY region, country_name
            LIMIT 50000;
 
 - input:
     platform: superset
-    dashboard_url: http://127.0.0.1:8088/superset/dashboard/6/?native_filters_key=AtbI1TeorRQ
+    dashboard_url: http://127.0.0.1:8088/superset/dashboard/births/
     api_base_url: http://127.0.0.1:8088
     dialect: postgresql
     valid_charts:
-      - id: 75
+      - name: "Genders by State"
         sql: >
-          SELECT DATE_TRUNC('day', ts) AS __timestamp, name AS name, count(*) AS count 
-          FROM (SELECT m.ts, c.name, m.text FROM messages m JOIN channels c ON m.channel_id = c.id
-          ) AS virtual_table JOIN (SELECT name AS name__, count(*) AS mme_inner__ 
-          FROM (SELECT m.ts, c.name, m.text FROM messages m JOIN channels c ON m.channel_id = c.id
-          ) AS virtual_table 
-          WHERE name != 'github-notifications' GROUP BY name ORDER BY mme_inner__ DESC 
+          SELECT ds AS __timestamp, state AS state, sum(num_boys) AS "Boys", sum(num_girls) AS "Girls" 
+          FROM public.birth_names JOIN (SELECT state AS state__, sum(num_boys) AS mme_inner__ 
+          FROM public.birth_names 
+          WHERE (state NOT IN ('other')) AND ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:51:52.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY state ORDER BY mme_inner__ DESC 
+           LIMIT 25) AS series_limit ON state = state__ 
+          WHERE ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:51:52.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND (state NOT IN ('other')) GROUP BY state, ds ORDER BY "Boys" DESC 
+           LIMIT 50000;
+      - name: "Top 10 Boy Name Share"
+        sql: >
+          SELECT DATE_TRUNC('day', ds) AS __timestamp, name AS name, sum(num) AS "Births" 
+          FROM public.birth_names JOIN (SELECT name AS name__, sum(num) AS mme_inner__ 
+          FROM public.birth_names 
+          WHERE gender = 'boy' AND ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:50:19.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY name ORDER BY mme_inner__ DESC 
            LIMIT 10) AS series_limit ON name = name__ 
-          WHERE name != 'github-notifications' GROUP BY name, DATE_TRUNC('day', ts) ORDER BY count DESC 
-           LIMIT 1000;
-      - id: 74
+          WHERE ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:50:19.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND gender = 'boy' GROUP BY name, DATE_TRUNC('day', ds) ORDER BY "Births" DESC 
+           LIMIT 50000;
+      - name: "Top 10 Girl Name Share"
         sql: >
-          SELECT channel_1 AS channel_1, channel_2 AS channel_2, sum(cnt) AS "SUM(cnt)" 
-          FROM (SELECT uc1.name as channel_1, uc2.name as channel_2, count(*) AS cnt FROM users_channels uc1 JOIN users_channels uc2 ON uc1.user_id = uc2.user_id GROUP BY uc1.name, uc2.name HAVING uc1.name <> uc2.name
-          ) AS virtual_table GROUP BY channel_1, channel_2 
-           LIMIT 1000;
+          SELECT DATE_TRUNC('day', ds) AS __timestamp, name AS name, sum(num) AS "Births" 
+          FROM public.birth_names JOIN (SELECT name AS name__, sum(num) AS mme_inner__ 
+          FROM public.birth_names 
+          WHERE gender = 'girl' AND ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:50:53.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY name ORDER BY mme_inner__ DESC 
+           LIMIT 10) AS series_limit ON name = name__ 
+          WHERE ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:50:53.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND gender = 'girl' GROUP BY name, DATE_TRUNC('day', ds) ORDER BY "Births" DESC 
+           LIMIT 50000;

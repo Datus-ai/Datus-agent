@@ -32,6 +32,7 @@ def normalize_sql(sql: str) -> str:
     - Removing extra whitespace
     - Removing trailing semicolons
     - Normalizing line breaks
+    - Replacing dynamic timestamps with placeholders
     """
     import re
 
@@ -46,6 +47,15 @@ def normalize_sql(sql: str) -> str:
 
     # Remove trailing semicolon
     normalized = normalized.rstrip(";").strip()
+
+    # Replace dynamic timestamps in TO_TIMESTAMP functions with placeholder
+    # Pattern matches: to_timestamp('YYYY-MM-DD HH:MI:SS.FFFFFF', 'format')
+    # The timestamp value changes on each run, so we normalize it
+    normalized = re.sub(
+        r"to_timestamp\s*\(\s*'[\d\-:\s.]+'",
+        "to_timestamp('<TIMESTAMP>'",
+        normalized,
+    )
 
     return normalized
 
@@ -64,9 +74,9 @@ def validate_chart_sql(chart_id: str, actual_sql: str, expected_sql: str) -> tup
         return True, ""
 
     # Generate detailed error message
-    error_msg = f"\n❌ SQL mismatch for chart {chart_id}:\n"
-    error_msg += f"Expected (normalized):\n{normalized_expected[:500]}\n\n"
-    error_msg += f"Actual (normalized):\n{normalized_actual[:500]}\n"
+    error_msg = f"\n ❌ SQL mismatch for chart {chart_id}:\n"
+    error_msg += f"Expected (normalized):\n{normalized_expected}\n\n"
+    error_msg += f"Actual (normalized):\n{normalized_actual}\n"
 
     return False, error_msg
 
@@ -222,13 +232,15 @@ class TestE2EIntegration:
 
                 print(f"✓ Step 2: Extracted {len(charts_with_sql)} charts with SQL")
 
-                # Verify expected charts if provided
+                # Verify expected charts if provided - match by name (more stable than ID)
                 if "valid_charts" in dashboard_item:
-                    expected_chart_ids = {str(c["id"]) for c in dashboard_item["valid_charts"]}
-                    actual_chart_ids = {str(c.id) for c in charts}
-                    for expected_id in expected_chart_ids:
-                        assert expected_id in actual_chart_ids, f"Expected chart {expected_id} not found in dashboard"
-                    print(f"           Validated {len(expected_chart_ids)} expected charts")
+                    expected_chart_names = {c["name"] for c in dashboard_item["valid_charts"]}
+                    actual_chart_names = {c.name for c in charts}
+                    for expected_name in expected_chart_names:
+                        assert (
+                            expected_name in actual_chart_names
+                        ), f"Expected chart '{expected_name}' not found in dashboard"
+                    print(f"           Validated {len(expected_chart_names)} expected charts")
 
                 # Step 3: Create assembler and assemble (REAL)
                 assembler = DashboardAssembler(
@@ -239,42 +251,41 @@ class TestE2EIntegration:
                 # Select charts based on valid_charts or default to first 2
                 chart_selections = []
                 if "valid_charts" in dashboard_item:
-                    # Use valid_charts from YAML configuration
-                    valid_chart_ids = {str(c["id"]) for c in dashboard_item["valid_charts"]}
-                    # Build map of chart_id -> expected_sql for validation
-                    expected_sqls = {
-                        str(c["id"]): c.get("sql", "") for c in dashboard_item["valid_charts"] if "sql" in c
-                    }
-                    print(f"\n           Using valid_charts from config: {valid_chart_ids}")
+                    # Use valid_charts from YAML configuration - match by name (more stable than ID)
+                    valid_chart_names = {c["name"] for c in dashboard_item["valid_charts"]}
+                    # Build map of chart_name -> expected_sql for validation
+                    expected_sqls = {c["name"]: c.get("sql", "") for c in dashboard_item["valid_charts"] if "sql" in c}
+                    print(f"\n           Using valid_charts from config: {valid_chart_names}")
                     if expected_sqls:
                         print(f"           Will validate SQL for {len(expected_sqls)} charts")
 
-                    # Select charts that match valid_chart_ids
+                    # Select charts that match valid_chart_names
                     for chart in charts_with_sql:
-                        if str(chart.id) in valid_chart_ids:
+                        if chart.name in valid_chart_names:
                             # Validate SQL if expected SQL is provided
-                            if str(chart.id) in expected_sqls:
+                            if chart.name in expected_sqls:
                                 actual_sql = chart.query.sql[0] if chart.query.sql else ""
-                                expected_sql = expected_sqls[str(chart.id)]
+                                expected_sql = expected_sqls[chart.name]
 
-                                is_valid, error_msg = validate_chart_sql(str(chart.id), actual_sql, expected_sql)
+                                is_valid, error_msg = validate_chart_sql(chart.name, actual_sql, expected_sql)
                                 if not is_valid:
                                     print(error_msg)
                                     pytest.fail(
-                                        f"SQL validation failed for chart {chart.id}. " f"See output above for details."
+                                        f"SQL validation failed for chart '{chart.name}'. "
+                                        f"See output above for details."
                                     )
                                 else:
-                                    print(f"           ✓ SQL validated for chart {chart.id}")
+                                    print(f"           ✓ SQL validated for chart '{chart.name}'")
 
                             chart_selections.append(
                                 ChartSelection(chart=chart, sql_indices=list(range(len(chart.query.sql))))
                             )
 
                     # Verify we found all expected charts
-                    selected_chart_ids = {str(cs.chart.id) for cs in chart_selections}
-                    if selected_chart_ids != valid_chart_ids:
-                        missing_ids = valid_chart_ids - selected_chart_ids
-                        print(f"           Warning: Could not find charts with SQL for IDs: {missing_ids}")
+                    selected_chart_names = {cs.chart.name for cs in chart_selections}
+                    if selected_chart_names != valid_chart_names:
+                        missing_names = valid_chart_names - selected_chart_names
+                        print(f"           Warning: Could not find charts with SQL for names: {missing_names}")
                 else:
                     # Fallback: Select first 2 charts for testing (to save time/cost)
                     print("\n           No valid_charts specified, using first 2 charts")

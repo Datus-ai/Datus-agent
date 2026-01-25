@@ -139,42 +139,41 @@ class TestPartialIntegration:
                 # Select charts based on valid_charts or default to first 2
                 chart_selections = []
                 if "valid_charts" in dashboard_item:
-                    # Use valid_charts from YAML configuration
-                    valid_chart_ids = {str(c["id"]) for c in dashboard_item["valid_charts"]}
-                    # Build map of chart_id -> expected_sql for validation
-                    expected_sqls = {
-                        str(c["id"]): c.get("sql", "") for c in dashboard_item["valid_charts"] if "sql" in c
-                    }
-                    print(f"\n           Using valid_charts from config: {valid_chart_ids}")
+                    # Use valid_charts from YAML configuration - match by name (more stable than ID)
+                    valid_chart_names = {c["name"] for c in dashboard_item["valid_charts"]}
+                    # Build map of chart_name -> expected_sql for validation
+                    expected_sqls = {c["name"]: c.get("sql", "") for c in dashboard_item["valid_charts"] if "sql" in c}
+                    print(f"\n           Using valid_charts from config: {valid_chart_names}")
                     if expected_sqls:
                         print(f"           Will validate SQL for {len(expected_sqls)} charts")
 
-                    # Select charts that match valid_chart_ids
+                    # Select charts that match valid_chart_names
                     for chart in charts_with_sql:
-                        if str(chart.id) in valid_chart_ids:
+                        if chart.name in valid_chart_names:
                             # Validate SQL if expected SQL is provided
-                            if str(chart.id) in expected_sqls:
+                            if chart.name in expected_sqls:
                                 actual_sql = chart.query.sql[0] if chart.query.sql else ""
-                                expected_sql = expected_sqls[str(chart.id)]
+                                expected_sql = expected_sqls[chart.name]
 
-                                is_valid, error_msg = validate_chart_sql(str(chart.id), actual_sql, expected_sql)
+                                is_valid, error_msg = validate_chart_sql(chart.name, actual_sql, expected_sql)
                                 if not is_valid:
                                     print(error_msg)
                                     pytest.fail(
-                                        f"SQL validation failed for chart {chart.id}. " f"See output above for details."
+                                        f"SQL validation failed for chart '{chart.name}'. "
+                                        f"See output above for details."
                                     )
                                 else:
-                                    print(f"           ✓ SQL validated for chart {chart.id}")
+                                    print(f"           ✓ SQL validated for chart '{chart.name}'")
 
                             chart_selections.append(
                                 ChartSelection(chart=chart, sql_indices=list(range(len(chart.query.sql))))
                             )
 
                     # Verify we found all expected charts
-                    selected_chart_ids = {str(cs.chart.id) for cs in chart_selections}
-                    if selected_chart_ids != valid_chart_ids:
-                        missing_ids = valid_chart_ids - selected_chart_ids
-                        print(f"           Warning: Could not find charts with SQL for IDs: {missing_ids}")
+                    selected_chart_names = {cs.chart.name for cs in chart_selections}
+                    if selected_chart_names != valid_chart_names:
+                        missing_names = valid_chart_names - selected_chart_names
+                        print(f"           Warning: Could not find charts with SQL for names: {missing_names}")
                 else:
                     # Fallback: Select first 2 charts for testing (to save time/cost)
                     print("\n           No valid_charts specified, using first 2 charts")
