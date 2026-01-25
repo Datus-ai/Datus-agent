@@ -192,11 +192,14 @@ class TestPartialIntegration:
                 assert len(result.metric_sqls) > 0
                 assert len(result.tables) > 0
 
-                # Mock ONLY the LLM calls
+                # Mock ONLY the LLM calls and slow initialization
                 with (
                     patch("datus.cli.bi_dashboard.init_reference_sql") as mock_ref_sql,
                     patch("datus.cli.bi_dashboard.init_semantic_model") as mock_semantic,
                     patch("datus.cli.bi_dashboard.init_metrics") as mock_metrics,
+                    patch.object(
+                        bi_commands, "_validate_semantic_model", return_value=True
+                    ) as _,  # Skip MetricFlowAdapter init
                     patch("builtins.open") as mock_open,
                     patch("yaml.safe_load_all") as mock_yaml_load,
                 ):
