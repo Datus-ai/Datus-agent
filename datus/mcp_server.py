@@ -759,7 +759,7 @@ class LightweightDynamicMCPServer:
                     return {"type": "http.request", "body": body, "more_body": False}
 
                 async def send(message):
-                    nonlocal response_status, response_headers, response_body
+                    nonlocal response_status, response_headers
                     if message["type"] == "http.response.start":
                         response_status = message["status"]
                         response_headers = message.get("headers", [])
