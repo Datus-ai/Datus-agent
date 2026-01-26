@@ -340,7 +340,15 @@ class SemanticTools:
             FuncToolResult with list of dimension names
         """
         try:
-            # Try to get from storage first
+            # Get dimensions from adapter (MetricFlow) to ensure consistency with query execution
+            if self.adapter:
+                dimensions = _run_async(self.adapter.get_dimensions(metric_name=metric_name, path=path))
+                return FuncToolResult(
+                    success=1,
+                    result=dimensions,
+                )
+
+            # Fallback to storage if no adapter configured
             metric_details = None
             if path:
                 metric_details_list = self.metric_rag.storage.search_all_metrics(subject_path=path)
@@ -361,18 +369,9 @@ class SemanticTools:
                     result=dimensions,
                 )
 
-            # Fallback to adapter
-            if self.adapter:
-                logger.info(f"Metric '{metric_name}' not in storage, querying adapter")
-                dimensions = _run_async(self.adapter.get_dimensions(metric_name=metric_name, path=path))
-                return FuncToolResult(
-                    success=1,
-                    result=dimensions,
-                )
-
             return FuncToolResult(
                 success=0,
-                error=f"Metric '{metric_name}' not found",
+                error=f"Metric '{metric_name}' not found and no adapter configured",
                 result=[],
             )
 
