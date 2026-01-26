@@ -49,6 +49,7 @@ Please strictly follow the instructions below:
      - Start with DDL comments (preserve original language)
      - Append usage patterns and **filter examples** from `analyze_column_usage_patterns`
      - Append Enum-like patterns (e.g., "status: 1=Active, 2=Inactive")
+   - **YAML String Quoting Rule**: ALWAYS wrap `description` values in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`.
    - **Example dimension with usage pattern**:
      ```yaml
      - name: tags
@@ -299,7 +300,8 @@ data_source:
 2. **Data Source Definition**: Choose only ONE of `sql_table` and `sql_query`
 3. **Primary Time Dimension**: Each data_source should have one `is_primary: true` time dimension
 4. **Expressions**: Support SQL expressions including complex logic like `CASE WHEN`
-5. **Aggregation Types**:
+5. **YAML String Quoting**: ALWAYS wrap `description` values in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`
+6. **Aggregation Types**:
    - SUM: Sum aggregation
    - COUNT_DISTINCT: Distinct count
    - AVERAGE: Average value

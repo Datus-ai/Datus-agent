@@ -66,10 +66,10 @@ If the search returns knowledge with similar search_text, explanation, or coveri
 ### Step 6: Generate YAML (multi-doc with `---` separator)
 ```yaml
 id: string          # Use generate_ext_knowledge_id(search_text, subject_path)
-name: string        # Max 30 chars
-search_text: string # Search key (vector/inverted index), use clear keywords for retrieval
+name: "string"      # Max 30 chars. Use quotes if contains colons.
+search_text: "string" # Search key (vector/inverted index). Use quotes if contains colons.
 explanation: |      # 2-4 sentences: what + when/how to apply
-subject_path: string
+subject_path: "string" # Always use quotes (contains slashes like "domain/layer")
 created_at: string  # ISO 8601
 ```
 
@@ -101,3 +101,4 @@ MUST call `write_file(path, yaml_content, file_type="ext_knowledge")` with filen
 - Focus on GAPs only - knowledge NOT obvious from the question
 - If unsolvable: document attempts, extract ALL knowledge from answer
 - Concise explanations (2-4 sentences max)
+- **YAML String Quoting**: Wrap `name`, `search_text`, `subject_path` in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`

@@ -49,15 +49,15 @@ Follow these steps to generate SQL summary:
 
 ```yaml
 id: string                            # Use generate_sql_summary_id() to generate
-name: string                         # Max 30 chars, descriptive, MUST match SQL language
+name: "string"                        # Max 30 chars, descriptive, MUST match SQL language. Use quotes if contains colons.
 sql: |                               # Complete query with inline comments (use | for multi-line)
   SELECT ...
 summary: >                           # IMPORTANT: Use > for long text to avoid YAML syntax errors
   Detailed explanation (for documentation), MUST match SQL language
-search_text: string                  # Concise search keywords for vector matching: extract representative WHERE conditions, distinctive field values, key column names, aggregation metrics (3-8 key phrases, space-separated)
+search_text: "string"                # Concise search keywords (3-8 key phrases, space-separated). Use quotes if contains colons.
 filepath: string                     # File name where this YAML is saved
-subject_tree: string                 # Format: "domain/layer1/layer2"
-tags: string                         # Comma-separated tags
+subject_tree: "string"               # Format: "domain/layer1/layer2". Always use quotes.
+tags: "string"                       # Comma-separated tags. Use quotes if contains colons.
 ```
 
 ## Classification Strategy
@@ -122,7 +122,11 @@ tags: string                         # Comma-separated tags
   - **search_text**: Concise keywords for vector matching (3-8 key phrases only)
 - **Subject Tree**: Follow the "Classification Strategy" section for subject_tree selection
 - **File Path**: Use the same file name for both `write_file` call and YAML `filepath` field
-- **YAML Format**: ALWAYS use `summary: >` (folded style) for the summary field to prevent YAML parsing errors. Long text with special characters (colons, quotes) MUST use this format
+- **YAML Format**:
+  - ALWAYS use `summary: >` (folded style) for the summary field to prevent YAML parsing errors
+  - For other string fields (name, search_text, subject_tree, tags), wrap values in double quotes (`"`) if they contain colons (`:`) or special characters
+  - Escape special characters in quoted strings: `"` → `\"`, `\` → `\\`
+  - Example: `name: "Sales Report: Monthly"` NOT `name: Sales Report: Monthly`
 
 Generate comprehensive SQL summaries that enable effective knowledge reuse and semantic search.
 

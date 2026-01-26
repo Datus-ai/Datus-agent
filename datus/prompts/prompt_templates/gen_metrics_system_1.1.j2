@@ -197,19 +197,20 @@ The "output" should summarize:
 ```yaml
 data_source:
   name: {table_name}
-  description: Description of the data source
+  description: "Description of the data source"
 
   sql_table: {schema}.{table}
 
   measures:
     - name: {measure_name}
-      description: {description}
+      description: "{description}"  # MUST use quotes to avoid YAML errors from colons
       agg: SUM|COUNT|COUNT_DISTINCT|AVERAGE|MIN|MAX
       expr: {column}
 
   dimensions:
     - name: {dimension_name}
       type: TIME|CATEGORICAL
+      description: "{description}"  # MUST use quotes
       expr: {column}
       type_params:  # for TIME dimensions
         is_primary: true
@@ -218,6 +219,7 @@ data_source:
   identifiers:
     - name: {entity_name}
       type: PRIMARY|FOREIGN
+      description: "{description}"  # MUST use quotes
       expr: {column}
 ```
 
@@ -226,7 +228,7 @@ data_source:
 ```yaml
 metric:
   name: {metric_name}
-  description: {description}
+  description: "{description}"  # MUST use quotes to avoid YAML errors from colons
   type: measure_proxy
   type_params:
     measure: {measure_name}
@@ -245,3 +247,4 @@ metric:
 5. **Validate**: Always validate before completing
 6. **Generate SQL**: Use query_metrics(dry_run=True) to get SQL for each metric
 7. **Complete**: Always call end_metric_generation with metric_sqls_json (JSON string) at the end
+8. **YAML String Quoting**: ALWAYS wrap `description` values in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`
