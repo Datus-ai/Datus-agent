@@ -464,12 +464,14 @@ class Agent:
                     if os.path.exists(semantic_model_path):
                         shutil.rmtree(semantic_model_path)
                         logger.info(f"Deleted existing directory {semantic_model_path}")
-                    # Also clear semantic_models/{namespace} directory (YAML files)
-                    path_manager = get_path_manager(datus_home=self.global_config.home)
-                    semantic_yaml_dir = path_manager.semantic_model_path(self.global_config.current_namespace)
-                    if semantic_yaml_dir.exists():
-                        shutil.rmtree(semantic_yaml_dir)
-                        logger.info(f"Deleted existing semantic YAML directory {semantic_yaml_dir}")
+                    # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
+                    # because MetricFlow adapter needs to read YAML files from this directory
+                    if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
+                        path_manager = get_path_manager(datus_home=self.global_config.home)
+                        semantic_yaml_dir = path_manager.semantic_model_path(self.global_config.current_namespace)
+                        if semantic_yaml_dir.exists():
+                            shutil.rmtree(semantic_yaml_dir)
+                            logger.info(f"Deleted existing semantic YAML directory {semantic_yaml_dir}")
                     self.global_config.save_storage_config("semantic_model")
                 else:
                     self.global_config.check_init_storage_config("semantic_model")
@@ -508,12 +510,14 @@ class Agent:
                     if os.path.exists(metrics_path):
                         shutil.rmtree(metrics_path)
                         logger.info(f"Deleted existing directory {metrics_path}")
-                    # Also clear semantic_models/{namespace} directory (YAML files)
-                    path_manager = get_path_manager(datus_home=self.global_config.home)
-                    semantic_yaml_dir = path_manager.semantic_model_path(self.global_config.current_namespace)
-                    if semantic_yaml_dir.exists():
-                        shutil.rmtree(semantic_yaml_dir)
-                        logger.info(f"Deleted existing semantic YAML directory {semantic_yaml_dir}")
+                    # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
+                    # because MetricFlow adapter needs to read YAML files from this directory
+                    if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
+                        path_manager = get_path_manager(datus_home=self.global_config.home)
+                        semantic_yaml_dir = path_manager.semantic_model_path(self.global_config.current_namespace)
+                        if semantic_yaml_dir.exists():
+                            shutil.rmtree(semantic_yaml_dir)
+                            logger.info(f"Deleted existing semantic YAML directory {semantic_yaml_dir}")
                     self.global_config.save_storage_config("metric")  # Keep compatibility
                 else:
                     self.global_config.check_init_storage_config("metric")
