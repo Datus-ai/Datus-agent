@@ -1,0 +1,5494 @@
+manifest:
+  version: "0.1.2"
+  schema: https://a2as.org/cert/schema
+  subject:
+    name: datus-ai/datus-agent
+    source: https://github.com/datus-ai/datus-agent
+    branch: main
+    commit: "51188730"
+    scope: [datus/agent/node/gen_sql_agentic_node.py, datus/cli/agent_commands.py, datus/cli/bi_dashboard.py, datus/cli/chat_commands.py,
+      datus/cli/generation_hooks.py, datus/cli/interactive_init.py, datus/cli/mcp_commands.py, datus/cli/plan_hooks.py, datus/cli/repl.py,
+      datus/cli/screen/workflow_screen.py, datus/cli/tutorial.py, datus/configuration/agent_config.py, datus/main.py, datus/models/base.py,
+      datus/models/claude_model.py, datus/models/mcp_result_extractors.py, datus/models/mcp_utils.py, datus/models/openai_compatible.py,
+      datus/schemas/action_history.py, datus/schemas/node_models.py, datus/storage/embedding_models.py, datus/storage/reference_sql/store.py,
+      datus/storage/schema_metadata/store.py, datus/tools/db_tools/__init__.py, datus/tools/func_tool/base.py, datus/tools/mcp_tools/mcp_config.py,
+      datus/tools/mcp_tools/mcp_manager.py, datus/tools/mcp_tools/mcp_server.py, datus/utils/constants.py, datus/utils/exceptions.py,
+      datus/utils/json_utils.py, datus/utils/loggings.py, datus/utils/path_manager.py, datus/utils/resource_utils.py, datus/utils/sql_utils.py,
+      datus/utils/traceable_utils.py]
+  issued:
+    by: A2AS.org
+    at: '2026-01-26T16:12:20Z'
+  signatures:
+    digest: sha256:radKjFzeT25nEO_OTBmRLYon6sZtrZeSM0HEkGWPOe4
+    key: ed25519:zpKQ6dv-NvVVyBmchW3qOGlt88gZzF8qvbLS6XD_Ia4
+    sig: ed25519:955rakR4MALr_02GwoZ46EAqXQUg5DigzQUxydb2ReExS83-YoPLKwVzMV-Kt4Ip2VEVL9DaHvcVSByqLv3BAw
+
+agents:
+  agent.0:
+    type: instance
+    models: [gpt-4.1]
+    params:
+      function: _run_tools_operation_async
+      name: tools-agent-{server_name}
+      instance: agent
+  agent.1:
+    type: instance
+    models: [gpt-4.1]
+    params:
+      function: generate_with_mcp
+      name: mcp-tools-agent
+      instance: agent
+  agent.2:
+    type: instance
+    models: [gpt-4.1]
+    params:
+      function: generate_with_mcp
+      name: mcp-claude-agent
+      instance: agent
+  agent.3:
+    type: instance
+    models: [async_model]
+    params:
+      instructions: instruction
+      output_type: output_type
+      function: _generate_with_tools_internal
+      instance: agent
+  agent.4:
+    type: instance
+    models: [async_model]
+    params:
+      instructions: instruction
+      output_type: output_type
+      function: _generate_with_tools_stream_internal
+      instance: agent
+  agent.5:
+    type: instance
+    models: [async_model]
+    params:
+      function: _setup_async_agent
+      name: kwargs.pop(agent_name, MCP_Agent)
+      output_type: str
+      instance: agent
+      instructions: [instruction]
+  agent.6:
+    type: instance
+    models: [async_model]
+    params:
+      instructions: instruction
+      output_type: output_type
+      function: _tools_operation
+      instance: agent
+  agent.7:
+    type: instance
+    models: [async_model]
+    params:
+      instructions: instruction
+      output_type: output_type
+      model_settings: model_settings
+      function: _stream_operation
+      instance: agent
+  agent.8:
+    type: instance
+    models: [gpt-4.1]
+    params:
+      function: main
+      instance: agent
+  agent._create_agent_with_config:
+    type: factory
+    models: [gpt-4.1]
+    params:
+      function: _create_agent_with_config
+  agent.create_agent:
+    type: factory
+    models: [gpt-4.1]
+    params:
+      function: create_agent
+  agent.DatusCLI.agent:
+    type: class
+    models: [gpt-4.1]
+    params:
+      class: DatusCLI
+
+models:
+  async_model:
+    type: variable
+    agents: [agent.3, agent.4, agent.5, agent.6, agent.7]
+  gpt-4.1:
+    type: default
+    agents: [agent.DatusCLI.agent, agent.0, agent.1, agent.2, agent.8, agent._create_agent_with_config, agent.create_agent]
+
+tools:
+  final_tool:
+    type: wrapper
+  tool_template:
+    type: wrapper
+    params:
+      wraps: bound_method
+
+mcp:
+  server_instance.0:
+    type: network
+    params:
+      class: MCPServerSse
+      config: server_params
+      client_session_timeout_seconds: "60"
+      instance: server_instance
+  server_instance.1:
+    type: network
+    params:
+      class: MCPServerStreamableHttp
+      config: server_params
+      client_session_timeout_seconds: "60"
+      instance: server_instance
+      function: _create_http_server
+
+imports:
+  __version__: datus.__version__
+  ABC: abc.ABC
+  abstractmethod: abc.abstractmethod
+  ActionHistory: datus.schemas.action_history.ActionHistory
+  ActionHistoryDisplay: datus.cli.action_history_display.ActionHistoryDisplay
+  ActionHistoryManager: datus.schemas.action_history.ActionHistoryManager
+  ActionRole: datus.schemas.action_history.ActionRole
+  ActionStatus: datus.schemas.action_history.ActionStatus
+  AdapterMetadata: registry.AdapterMetadata
+  adaptor_registry: datus.tools.bi_tools.registry.adaptor_registry
+  Agent: datus.agent.agent.Agent
+  AgentCommands: datus.cli.agent_commands.AgentCommands
+  AgentConfig: datus.configuration.agent_config.AgentConfig
+  AgentHooks: agents.lifecycle.AgentHooks
+  AgenticNode: datus.agent.node.agentic_node.AgenticNode
+  AliasChoices: pydantic.AliasChoices
+  And: datus.storage.lancedb_conditions.And
+  and_: datus.storage.lancedb_conditions.and_
+  annotations: __future__.annotations
+  AnomalyContext: datus.tools.semantic_tools.models.AnomalyContext
+  anthropic: anthropic
+  Any: typing.Any
+  AnyMCPServerConfig: mcp_config.AnyMCPServerConfig
+  AnyUrl: pydantic.AnyUrl
+  APIConnectionError: openai.APIConnectionError
+  APIError: openai.APIError
+  APITimeoutError: openai.APITimeoutError
+  Application: prompt_toolkit.application.Application
+  argparse: argparse
+  asdict: dataclasses.asdict
+  ast: ast
+  asynccontextmanager: contextlib.asynccontextmanager
+  AsyncExitStack: contextlib.AsyncExitStack
+  AsyncGenerator: typing.AsyncGenerator
+  asyncio: asyncio
+  AsyncOpenAI: openai.AsyncOpenAI
+  AtReferenceCompleter: datus.cli.autocomplete.AtReferenceCompleter
+  AuthParam: datus.tools.bi_tools.base_adaptor.AuthParam
+  AuthType: datus.tools.bi_tools.base_adaptor.AuthType
+  AutoSuggestFromHistory: prompt_toolkit.auto_suggest.AutoSuggestFromHistory
+  AzureOpenAI: openai.AzureOpenAI
+  BadRequestError: openai.BadRequestError
+  base_schema_columns: datus.storage.subject_tree.store.base_schema_columns
+  BaseApp: datus.cli.screen.base_app.BaseApp
+  BaseEmbeddingStore: base.BaseEmbeddingStore
+  BaseInput: datus.schemas.base.BaseInput
+  BaseModel: pydantic.BaseModel
+  BaseModelData: base.BaseModelData
+  BaseResult: datus.schemas.base.BaseResult
+  BaseSemanticAdapter: datus.tools.semantic_tools.base.BaseSemanticAdapter
+  BaseSqlConnector: datus.tools.db_tools.BaseSqlConnector
+  BaseSubjectEmbeddingStore: datus.storage.subject_tree.store.BaseSubjectEmbeddingStore
+  BaseTool: base.BaseTool
+  BaseToolExecResult: datus.tools.base.BaseToolExecResult
+  BatchEvent: datus.schemas.batch_events.BatchEvent
+  BatchStage: datus.schemas.batch_events.BatchStage
+  BeginNode: begin_node.BeginNode
+  BenchmarkTutorial: datus.cli.tutorial.BenchmarkTutorial
+  BIAdaptorBase: datus.tools.bi_tools.base_adaptor.BIAdaptorBase
+  BiDashboardCommands: datus.cli.bi_dashboard.BiDashboardCommands
+  Binding: textual.binding.Binding
+  blocking_input_manager: datus.cli.blocking_input_manager.blocking_input_manager
+  Box: prompt_toolkit.widgets.Box
+  Buffer: prompt_toolkit.buffer.Buffer
+  BufferControl: prompt_toolkit.layout.controls.BufferControl
+  build_enhanced_message: datus.agent.node.gen_sql_agentic_node.build_enhanced_message
+  build_historical_sql_tags: datus.cli.subject_rich_utils.build_historical_sql_tags
+  build_where: datus.storage.lancedb_conditions.build_where
+  Button: prompt_toolkit.widgets.Button
+  cached_property: functools.cached_property
+  Callable: typing.Callable
+  ChartInfo: datus.tools.bi_tools.base_adaptor.ChartInfo
+  ChartSelection: datus.tools.bi_tools.dashboard_assembler.ChartSelection
+  ChatAgenticNode: datus.agent.node.chat_agentic_node.ChatAgenticNode
+  ChatApp: datus.cli.screen.action_display_app.ChatApp
+  ChatCommands: datus.cli.chat_commands.ChatCommands
+  ChatNodeInput: datus.schemas.chat_agentic_node_models.ChatNodeInput
+  ChatNodeResult: datus.schemas.chat_agentic_node_models.ChatNodeResult
+  check_storage_config: datus.storage.storage_cfg.check_storage_config
+  CheckboxList: prompt_toolkit.widgets.CheckboxList
+  ClassVar: typing.ClassVar
+  clear_cache: datus.storage.cache.clear_cache
+  CliContext: datus.cli.cli_context.CliContext
+  CompareAgenticNode: compare_agentic_node.CompareAgenticNode
+  CompareInput: datus.schemas.compare_node_models.CompareInput
+  CompareNode: compare_node.CompareNode
+  Completer: prompt_toolkit.completion.Completer
+  Condition: prompt_toolkit.filters.Condition
+  ConfigParser: configparser.ConfigParser
+  CONFIGURATION_MANAGER: datus.configuration.agent_config_loader.CONFIGURATION_MANAGER
+  configuration_manager: datus.configuration.agent_config_loader.configuration_manager
+  configure_logging: datus.utils.loggings.configure_logging
+  Confirm: rich.prompt.Confirm
+  connector_registry: datus.tools.db_tools.connector_registry
+  ConnectorRegistry: registry.ConnectorRegistry
+  Console: rich.console.Console
+  Container: textual.containers.Container
+  ContextApp: context_app.ContextApp
+  ContextCommands: datus.cli.context_commands.ContextCommands
+  contextmanager: contextlib.contextmanager
+  ContextSearchTools: datus.tools.func_tool.ContextSearchTools
+  copy: copy
+  copy_data_file: datus.utils.resource_utils.copy_data_file
+  create_model: pydantic.create_model
+  create_openai_client: datus.utils.traceable_utils.create_openai_client
+  create_static_tool_filter: datus.tools.mcp_tools.mcp_manager.create_static_tool_filter
+  csv: csv
+  CTE: sqlglot.expressions.CTE
+  CustomPygmentsStyle: datus.cli.autocomplete.CustomPygmentsStyle
+  CustomSqlLexer: datus.cli.autocomplete.CustomSqlLexer
+  DashboardAssembler: datus.tools.bi_tools.dashboard_assembler.DashboardAssembler
+  DashboardAssemblyResult: datus.tools.bi_tools.dashboard_assembler.DashboardAssemblyResult
+  DashboardConfig: datus.configuration.agent_config.DashboardConfig
+  DashboardInfo: datus.tools.bi_tools.base_adaptor.DashboardInfo
+  dataclass: dataclasses.dataclass
+  DataCompressor: datus.utils.compress_utils.DataCompressor
+  DatasetInfo: datus.tools.bi_tools.base_adaptor.DatasetInfo
+  DataTable: textual.widgets.DataTable
+  date: datetime.date
+  DateParserInput: datus.schemas.date_parser_node_models.DateParserInput
+  DateParserNode: date_parser_node.DateParserNode
+  DateParserTool: datus.tools.date_tools.DateParserTool
+  DateParsingTools: datus.tools.func_tool.date_parsing_tools.DateParsingTools
+  datetime: datetime.datetime
+  DatusCLI: datus.cli.repl.DatusCLI
+  DatusException: datus.utils.exceptions.DatusException
+  db_function_tool_instance: datus.tools.func_tool.database.db_function_tool_instance
+  db_function_tools: datus.tools.func_tool.database.db_function_tools
+  db_manager_instance: datus.tools.db_tools.db_manager.db_manager_instance
+  DBFuncTool: datus.tools.func_tool.DBFuncTool
+  DBType: datus.utils.constants.DBType
+  Decimal: decimal.Decimal
+  DEFAULT_MODEL_CONFIG: datus.storage.embedding_models.DEFAULT_MODEL_CONFIG
+  detect_db_connectivity: datus.cli.init_util.detect_db_connectivity
+  Dialog: prompt_toolkit.widgets.Dialog
+  Dict: typing.Dict
+  dict_to_tree: datus.utils.rich_util.dict_to_tree
+  Dimension: prompt_toolkit.layout.dimension.Dimension
+  DimensionAttributionUtil: datus.tools.func_tool.attribution_utils.DimensionAttributionUtil
+  disable_progress_bars: huggingface_hub.utils.disable_progress_bars
+  DocSearchInput: datus.schemas.doc_search_node_models.DocSearchInput
+  DocSearchNode: doc_search_node.DocSearchNode
+  DocSearchResult: datus.schemas.doc_search_node_models.DocSearchResult
+  Document: prompt_toolkit.document.Document
+  DocumentStore: datus.storage.document.DocumentStore
+  DuckDBConfig: builtin_configs.DuckDBConfig
+  DuckdbConnector: duckdb_connector.DuckdbConnector
+  EmbeddingFunctionConfig: lancedb.embeddings.EmbeddingFunctionConfig
+  EmbeddingModel: datus.storage.base.EmbeddingModel
+  EmbeddingProvider: datus.utils.constants.EmbeddingProvider
+  Enum: enum.Enum
+  eq: datus.storage.lancedb_conditions.eq
+  ErrorCode: datus.utils.exceptions.ErrorCode
+  escape: rich.markup.escape
+  ExecuteSQLInput: datus.schemas.node_models.ExecuteSQLInput
+  ExecuteSQLNode: execute_sql_node.ExecuteSQLNode
+  ExecuteSQLResult: datus.schemas.node_models.ExecuteSQLResult
+  execution_controller: datus.cli.execution_state.execution_controller
+  exists_ext_knowledge: datus.storage.ext_knowledge.init_utils.exists_ext_knowledge
+  exists_reference_sql: datus.storage.reference_sql.init_utils.exists_reference_sql
+  exists_table_value: datus.storage.schema_metadata.init_utils.exists_table_value
+  expand_config_env_vars: datus.tools.mcp_tools.mcp_config.expand_config_env_vars
+  expressions: sqlglot.expressions
+  ExtKnowledgeNodeInput: datus.schemas.ext_knowledge_agentic_node_models.ExtKnowledgeNodeInput
+  ExtKnowledgeNodeResult: datus.schemas.ext_knowledge_agentic_node_models.ExtKnowledgeNodeResult
+  ExtKnowledgeRAG: datus.storage.ext_knowledge.store.ExtKnowledgeRAG
+  ExtKnowledgeStore: datus.storage.ext_knowledge.ExtKnowledgeStore
+  extract_json_str: datus.utils.json_utils.extract_json_str
+  extract_sql_contexts: datus.models.mcp_result_extractors.extract_sql_contexts
+  FastEmbedEmbeddings: datus.storage.fastembed_embeddings.FastEmbedEmbeddings
+  Field: pydantic.Field
+  field: dataclasses.field
+  field_validator: pydantic.field_validator
+  fields: dataclasses.fields
+  FileHistory: prompt_toolkit.history.FileHistory
+  filesystem_function_tools: datus.tools.func_tool.filesystem_tools.filesystem_function_tools
+  FilesystemFuncTool: datus.tools.func_tool.FilesystemFuncTool
+  find_mcp_directory: mcp_server.find_mcp_directory
+  FixInput: datus.schemas.fix_node_models.FixInput
+  FixNode: fix_node.FixNode
+  Float: prompt_toolkit.layout.containers.Float
+  FloatContainer: prompt_toolkit.layout.containers.FloatContainer
+  fnmatch: fnmatch
+  fnmatchcase: fnmatch.fnmatchcase
+  Footer: textual.widgets.Footer
+  FormattedTextControl: prompt_toolkit.layout.controls.FormattedTextControl
+  Frame: prompt_toolkit.widgets.Frame
+  function_tool: agents.function_tool
+  FunctionTool: agents.FunctionTool
+  FuncToolResult: datus.tools.func_tool.base.FuncToolResult
+  gen_ext_knowledge_id: datus.storage.ext_knowledge.init_utils.gen_ext_knowledge_id
+  gen_reference_sql_id: datus.storage.reference_sql.init_utils.gen_reference_sql_id
+  genai: google.generativeai
+  GenerateSQLInput: datus.schemas.node_models.GenerateSQLInput
+  GenerateSQLNode: generate_sql_node.GenerateSQLNode
+  GenerationHooks: datus.cli.generation_hooks.GenerationHooks
+  GenerationTools: datus.tools.func_tool.generation_tools.GenerationTools
+  GenExtKnowledgeAgenticNode: datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode
+  GenMetricsAgenticNode: datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode
+  GenReportAgenticNode: datus.agent.node.gen_report_agentic_node.GenReportAgenticNode
+  GenReportNodeInput: datus.schemas.gen_report_agentic_node_models.GenReportNodeInput
+  GenReportNodeResult: datus.schemas.gen_report_agentic_node_models.GenReportNodeResult
+  GenSemanticModelAgenticNode: datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode
+  GenSemanticModelTools: datus.tools.func_tool.gen_semantic_model_tools.GenSemanticModelTools
+  GenSQLAgenticNode: datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode
+  GenSQLNodeInput: datus.schemas.gen_sql_agentic_node_models.GenSQLNodeInput
+  GenSQLNodeResult: datus.schemas.gen_sql_agentic_node_models.GenSQLNodeResult
+  get_default_current_date: datus.utils.time_utils.get_default_current_date
+  get_device: datus.utils.device_utils.get_device
+  get_document_embedding_model: datus.storage.embedding_models.get_document_embedding_model
+  get_embedding_device: datus.storage.embedding_models.get_embedding_device
+  get_embedding_model: datus.storage.embedding_models.get_embedding_model
+  get_files_from_glob_pattern: datus.utils.path_utils.get_files_from_glob_pattern
+  get_log_manager: datus.utils.loggings.get_log_manager
+  get_logger: datus.utils.loggings.get_logger
+  get_path_manager: datus.utils.path_manager.get_path_manager
+  get_public_instance_methods: datus.utils.class_utils.get_public_instance_methods
+  get_storage_cache_instance: datus.storage.cache.get_storage_cache_instance
+  get_type_hints: typing.get_type_hints
+  getpass: getpass.getpass
+  glob: glob
+  Header: textual.widgets.Header
+  HitlNode: hitl_node.HitlNode
+  Horizontal: textual.containers.Horizontal
+  HSplit: prompt_toolkit.layout.containers.HSplit
+  HTML: prompt_toolkit.formatted_text.HTML
+  HtmlLexer: pygments.lexers.html.HtmlLexer
+  HTTPServerConfig: mcp_config.HTTPServerConfig
+  httpx: httpx
+  importlib: importlib
+  in_: datus.storage.lancedb_conditions.in_
+  init_embedding_models: datus.storage.embedding_models.init_embedding_models
+  init_local_schema: datus.storage.schema_metadata.local_init.init_local_schema
+  init_metadata_and_log_result: datus.cli.interactive_init.init_metadata_and_log_result
+  init_metrics: datus.cli.init_util.init_metrics
+  init_reference_sql: datus.storage.reference_sql.reference_sql_init.init_reference_sql
+  init_semantic_model: datus.cli.init_util.init_semantic_model
+  init_snowflake_schema: benchmark_init.init_snowflake_schema
+  init_sql_and_log_result: datus.cli.interactive_init.init_sql_and_log_result
+  InMemoryHistory: prompt_toolkit.history.InMemoryHistory
+  inspect: inspect
+  InteractiveInit: datus.cli.interactive_init.InteractiveInit
+  io: io
+  is_dataclass: dataclasses.is_dataclass
+  Iterable: collections.abc.Iterable
+  json: json
+  json2csv: datus.utils.json_utils.json2csv
+  json_repair: json_repair
+  KeyBindings: prompt_toolkit.key_binding.KeyBindings
+  Label: prompt_toolkit.widgets.Label
+  lancedb: lancedb
+  LanceModel: lancedb.pydantic.LanceModel
+  LanceQueryBuilder: lancedb.query.LanceQueryBuilder
+  Layout: prompt_toolkit.layout.layout.Layout
+  like: datus.storage.lancedb_conditions.like
+  List: typing.List
+  Literal: typing.Literal
+  llm_result2json: datus.utils.json_utils.llm_result2json
+  LLMBaseModel: datus.models.base.LLMBaseModel
+  LLMProvider: datus.utils.constants.LLMProvider
+  load_agent_config: datus.configuration.agent_config_loader.load_agent_config
+  LocalEntryNotFoundError: huggingface_hub.errors.LocalEntryNotFoundError
+  Lock: threading.Lock
+  logging: logging
+  lru_cache: functools.lru_cache
+  Mapping: collections.abc.Mapping
+  Markdown: rich.markdown.Markdown
+  MaxTurnsExceeded: agents.exceptions.MaxTurnsExceeded
+  MCPCommands: datus.cli.mcp_commands.MCPCommands
+  MCPConfig: datus.tools.mcp_tools.mcp_config.MCPConfig
+  MCPManager: datus.tools.mcp_tools.mcp_manager.MCPManager
+  MCPServer: datus.tools.mcp_tools.MCPServer
+  MCPServerApp: datus.cli.screen.mcp_screen.MCPServerApp
+  MCPServerConfig: mcp_config.MCPServerConfig
+  MCPServerSse: agents.mcp.server.MCPServerSse
+  MCPServerSseParams: agents.mcp.server.MCPServerSseParams
+  MCPServerStdio: agents.mcp.MCPServerStdio
+  MCPServerStdioParams: mcp_server.MCPServerStdioParams
+  MCPServerStreamableHttp: agents.mcp.server.MCPServerStreamableHttp
+  MCPServerStreamableHttpParams: agents.mcp.server.MCPServerStreamableHttpParams
+  MCPServerType: mcp_config.MCPServerType
+  MCPTool: datus.tools.mcp_tools.MCPTool
+  merge_completers: prompt_toolkit.completion.merge_completers
+  merge_styles: prompt_toolkit.styles.merge_styles
+  metadata_identifier: datus.utils.sql_utils.metadata_identifier
+  MetadataCommands: datus.cli.metadata_commands.MetadataCommands
+  Metric: datus.schemas.node_models.Metric
+  MetricRAG: datus.storage.metric.store.MetricRAG
+  MetricStorage: datus.storage.metric.store.MetricStorage
+  ModelConfig: datus.configuration.agent_config.ModelConfig
+  ModelSettings: agents.ModelSettings
+  multiple_mcp_servers: datus.models.mcp_utils.multiple_mcp_servers
+  multiprocessing: multiprocessing
+  Namespace: argparse.Namespace
+  NamespaceManager: datus.cli.namespace_manager.NamespaceManager
+  Node: datus.storage.lancedb_conditions.Node
+  NodeType: datus.configuration.node_type.NodeType
+  normalize_reference_path: datus.utils.reference_paths.normalize_reference_path
+  np: numpy
+  OpenAI: openai.OpenAI
+  OpenAIChatCompletionsModel: agents.OpenAIChatCompletionsModel
+  OpenAICompatibleModel: datus.models.openai_compatible.OpenAICompatibleModel
+  OpenAIEmbeddings: datus.storage.embedding_openai.OpenAIEmbeddings
+  Optional: typing.Optional
+  optional_traceable: datus.utils.traceable_utils.optional_traceable
+  or_: datus.storage.lancedb_conditions.or_
+  os: os
+  OutputInput: datus.schemas.node_models.OutputInput
+  OutputNode: output_node.OutputNode
+  OutputTool: datus.tools.output_tools.OutputTool
+  override: typing.override
+  pa: pyarrow
+  Panel: rich.panel.Panel
+  ParallelInput: datus.schemas.parallel_node_models.ParallelInput
+  ParallelNode: parallel_node.ParallelNode
+  parse_command_string: datus.tools.mcp_tools.parse_command_string
+  parse_sql_type: datus.utils.sql_utils.parse_sql_type
+  parse_subject_tree: datus.cli.interactive_init.parse_subject_tree
+  patch_agents_typing_issue: datus.utils.typing_fix.patch_agents_typing_issue
+  Path: pathlib.Path
+  path: os.path
+  pd: pandas
+  PlanModeHooks: datus.cli.plan_hooks.PlanModeHooks
+  PlanTool: datus.tools.func_tool.plan_tools.PlanTool
+  platform: platform
+  prepare_template_context: datus.agent.node.gen_sql_agentic_node.prepare_template_context
+  print_rich_exception: datus.utils.loggings.print_rich_exception
+  prompt: prompt_toolkit.prompt
+  Prompt: rich.prompt.Prompt
+  prompt_input: datus.cli._cli_utils.prompt_input
+  prompt_manager: datus.prompts.prompt_manager.prompt_manager
+  PromptSession: prompt_toolkit.PromptSession
+  PygmentsLexer: prompt_toolkit.lexers.PygmentsLexer
+  pyperclip: pyperclip
+  RadioList: prompt_toolkit.widgets.RadioList
+  RateLimitError: openai.RateLimitError
+  re: re
+  reactive: textual.reactive.reactive
+  read_data_file_text: datus.utils.resource_utils.read_data_file_text
+  ReasoningInput: datus.schemas.reason_sql_node_models.ReasoningInput
+  ReasonSQLNode: reason_sql_node.ReasonSQLNode
+  ReferenceSql: datus.schemas.node_models.ReferenceSql
+  ReferenceSqlRAG: store.ReferenceSqlRAG
+  ReferenceSqlStorage: store.ReferenceSqlStorage
+  ReferenceSqlStreamHandler: datus.cli.interactive_init.ReferenceSqlStreamHandler
+  ReflectionInput: datus.schemas.node_models.ReflectionInput
+  ReflectNode: reflect_node.ReflectNode
+  register: lancedb.embeddings.registry.register
+  Reranker: lancedb.rerankers.Reranker
+  resources: importlib.resources
+  ResponseTextDeltaEvent: agents.models.chatcmpl_stream_handler.ResponseTextDeltaEvent
+  run_async: datus.utils.async_utils.run_async
+  RUN_TYPE_T: langsmith.client.RUN_TYPE_T
+  RunContextWrapper: agents.RunContextWrapper
+  Runner: agents.Runner
+  RunResultBase: agents.result.RunResultBase
+  save_storage_config: datus.storage.storage_cfg.save_storage_config
+  SchemaLinkingInput: datus.schemas.schema_linking_node_models.SchemaLinkingInput
+  SchemaLinkingNode: schema_linking_node.SchemaLinkingNode
+  SchemaStorage: datus.storage.schema_metadata.SchemaStorage
+  SchemaValueStorage: datus.storage.schema_metadata.store.SchemaValueStorage
+  SchemaWithValueRAG: datus.storage.schema_metadata.store.SchemaWithValueRAG
+  ScopedContext: datus.schemas.agent_models.ScopedContext
+  Screen: textual.screen.Screen
+  SearchMetricsInput: datus.schemas.search_metrics_node_models.SearchMetricsInput
+  SearchMetricsNode: search_metrics_node.SearchMetricsNode
+  SelectedSqlCandidate: datus.tools.bi_tools.dashboard_assembler.SelectedSqlCandidate
+  SelectionInput: datus.schemas.parallel_node_models.SelectionInput
+  SelectionNode: selection_node.SelectionNode
+  semantic_adapter_registry: datus.tools.semantic_tools.registry.semantic_adapter_registry
+  SemanticAdapterConfig: datus.tools.semantic_tools.config.SemanticAdapterConfig
+  SemanticModelRAG: datus.storage.semantic_model.store.SemanticModelRAG
+  SemanticModelStorage: datus.storage.semantic_model.store.SemanticModelStorage
+  SemanticNodeInput: datus.schemas.semantic_agentic_node_models.SemanticNodeInput
+  SemanticNodeResult: datus.schemas.semantic_agentic_node_models.SemanticNodeResult
+  SemanticTools: datus.tools.func_tool.semantic_tools.SemanticTools
+  Sequence: typing.Sequence
+  SessionManager: datus.models.session_manager.SessionManager
+  SessionTodoStorage: datus.tools.func_tool.plan_tools.SessionTodoStorage
+  Set: typing.Set
+  set_tracing_disabled: agents.set_tracing_disabled
+  setup_exception_handler: datus.utils.exceptions.setup_exception_handler
+  setup_node_input: datus.agent.evaluate.setup_node_input
+  setup_windows_policy: datus.utils.async_utils.setup_windows_policy
+  shlex: shlex
+  show_catalog_screen: context_app.show_catalog_screen
+  show_subject_screen: context_app.show_subject_screen
+  show_workflow_context_screen: context_app.show_workflow_context_screen
+  show_workflow_screen: workflow_screen.show_workflow_screen
+  shutil: shutil
+  SilentMCPServerStdio: mcp_server.SilentMCPServerStdio
+  snapshot_download: huggingface_hub.snapshot_download
+  SQLCompleter: datus.cli.autocomplete.SQLCompleter
+  SQLContext: datus.schemas.node_models.SQLContext
+  sqlglot: sqlglot
+  sqlite3: sqlite3
+  SQLiteConfig: builtin_configs.SQLiteConfig
+  SQLiteConnector: sqlite_connector.SQLiteConnector
+  SQLiteSession: agents.SQLiteSession
+  SqlSummaryAgenticNode: datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode
+  SqlSummaryNodeInput: datus.schemas.sql_summary_agentic_node_models.SqlSummaryNodeInput
+  SqlSummaryNodeResult: datus.schemas.sql_summary_agentic_node_models.SqlSummaryNodeResult
+  SqlTask: datus.schemas.node_models.SqlTask
+  SQLType: datus.utils.constants.SQLType
+  SSEServerConfig: mcp_config.SSEServerConfig
+  Static: textual.widgets.Static
+  STDIOServerConfig: mcp_config.STDIOServerConfig
+  StorageBase: base.StorageBase
+  StrategyType: datus.schemas.node_models.StrategyType
+  StreamOutputManager: datus.utils.stream_output.StreamOutputManager
+  StringIO: io.StringIO
+  strip_json_str: datus.utils.json_utils.strip_json_str
+  structlog: structlog
+  Style: prompt_toolkit.styles.Style
+  style_from_pygments_cls: prompt_toolkit.styles.style_from_pygments_cls
+  SubAgentCommands: datus.cli.sub_agent_commands.SubAgentCommands
+  SubagentCompleter: datus.cli.autocomplete.SubagentCompleter
+  SubAgentConfig: datus.schemas.agent_models.SubAgentConfig
+  SubAgentManager: datus.utils.sub_agent_manager.SubAgentManager
+  subprocess: subprocess
+  SubworkflowInput: datus.schemas.subworkflow_node_models.SubworkflowInput
+  SubworkflowNode: subworkflow_node.SubworkflowNode
+  SUPPORT_DATABASE_DIALECTS: datus.utils.constants.SUPPORT_DATABASE_DIALECTS
+  SUPPORT_SCHEMA_DIALECTS: datus.utils.constants.SUPPORT_SCHEMA_DIALECTS
+  Syntax: rich.syntax.Syntax
+  sys: sys
+  SYS_SUB_AGENTS: datus.utils.constants.SYS_SUB_AGENTS
+  Table: rich.table.Table
+  TABLE_TYPE: datus.schemas.base.TABLE_TYPE
+  TableCompleter: datus.cli.autocomplete.TableCompleter
+  TableSchema: datus.schemas.node_models.TableSchema
+  TableValue: datus.schemas.node_models.TableValue
+  Text: rich.text.Text
+  TextArea: prompt_toolkit.widgets.TextArea
+  TextEmbedding: fastembed.TextEmbedding
+  TextEmbeddingBase: fastembed.text.text_embedding_base.TextEmbeddingBase
+  TextEmbeddingFunction: lancedb.embeddings.base.TextEmbeddingFunction
+  threading: threading
+  ThreadPoolExecutor: concurrent.futures.ThreadPoolExecutor
+  tiktoken: tiktoken
+  time: datetime.time
+  TimedRotatingFileHandler: logging.handlers.TimedRotatingFileHandler
+  to_str: datus.utils.json_utils.to_str
+  Tool: agents.Tool
+  ToolAction: datus.tools.base.ToolAction
+  ToolFilterConfig: datus.tools.mcp_tools.mcp_config.ToolFilterConfig
+  traceable: langsmith.traceable
+  traceback: traceback
+  trans_to_function_tool: datus.tools.func_tool.trans_to_function_tool
+  Tree: rich.tree.Tree
+  Tuple: typing.Tuple
+  Type: typing.Type
+  TYPE_CHECKING: typing.TYPE_CHECKING
+  Union: typing.Union
+  update_context_from_node: datus.agent.evaluate.update_context_from_node
+  urlparse: urllib.parse.urlparse
+  Usage: agents.Usage
+  UUID: uuid.UUID
+  uuid: uuid
+  uuid4: uuid.uuid4
+  Vertical: textual.containers.Vertical
+  VerticalScroll: textual.containers.VerticalScroll
+  VSplit: prompt_toolkit.layout.containers.VSplit
+  weak_lru: lancedb.embeddings.utils.weak_lru
+  WhereExpr: datus.storage.lancedb_conditions.WhereExpr
+  Window: prompt_toolkit.layout.containers.Window
+  WindowAlign: prompt_toolkit.layout.WindowAlign
+  Workflow: datus.agent.workflow.Workflow
+  WorkflowRunner: datus.agent.workflow_runner.WorkflowRunner
+  wrap_anthropic: langsmith.wrappers.wrap_anthropic
+  wrap_openai: langsmith.wrappers.wrap_openai
+  yaml: yaml
+  YamlLexer: pygments.lexers.data.YamlLexer
+
+functions:
+  _:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [event]
+  __call__:
+    type: sync
+    module: datus.utils.loggings
+    args: [self, logger, name, event_dict]
+  __del__:
+    type: sync
+    module: datus.models.claude_model
+    args: [self]
+  __enter__:
+    type: sync
+    module: datus.models.claude_model
+    args: [self]
+  __exit__:
+    type: sync
+    module: datus.models.claude_model
+    args: [self, exc_type, exc_val, exc_tb]
+  __getitem__:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, key]
+    params:
+      returns: Any
+  __init__:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, datus_home]
+  __setattr__:
+    type: sync
+    module: datus.storage.embedding_openai
+    args: [self, name, value]
+  __str__:
+    type: sync
+    module: datus.utils.exceptions
+    args: [self]
+  _add_dict_to_tree:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self, parent_node, data, max_depth, current_depth]
+  _add_usage_to_action:
+    type: sync
+    module: datus.models.openai_compatible
+    args: [self, action, usage_info]
+    params:
+      returns: None
+  _add_with_retry:
+    type: sync
+    module: datus.storage.base
+    args: [self, frame, max_attempts, initial_delay]
+    params:
+      returns: None
+  _after_toggle:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  _analyze_join_patterns_from_history:
+    type: sync
+    module: datus.tools.func_tool.gen_semantic_model_tools
+    args: [self, tables, sample_size]
+    params:
+      returns: List[Dict]
+  _apply_initial_form_state:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _apply_initial_mcp_selection:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, mcp_value]
+  _apply_initial_native_selection:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, tools_value]
+  _async_init_agent:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _background_init_agent:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _build_enhanced_message:
+    type: sync
+    module: datus.agent.node.gen_report_agentic_node
+    args: [self, user_input]
+    params:
+      returns: str
+  _build_path_tree_recursive:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, node]
+    params:
+      returns: Dict
+  _build_plan_prompt:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, original_prompt]
+    params:
+      returns: str
+  _build_sql_comment_lines:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, sql_item, dashboard]
+    params:
+      returns: List[str]
+  _build_sql_file_name:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, platform, dashboard]
+    params:
+      returns: str
+  _build_sub_agent_name:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, platform, dashboard_name]
+    params:
+      returns: str
+  _build_table_coordinate:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, raw_name, catalog, database, schema]
+    params:
+      returns: TableCoordinate
+  _build_where_clause:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [catalog_name, database_name, schema_name, table_name, table_type]
+    params:
+      returns: Optional[Node]
+  _cached_storage:
+    type: sync
+    module: datus.storage.cache
+    args: [factory, path, model_name]
+    params:
+      returns: T
+  _cancel_editing:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _check_embedding_model_ready:
+    type: sync
+    module: datus.storage.base
+    args: [self]
+  _clean_comment_text:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, text]
+    params:
+      returns: str
+  _cleanup_server_instance:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_instance]
+  _clear_output_and_show_sync_prompt:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self]
+  _close_error_dialog:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _close_picker:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _cmd_bash:
+    type: sync
+    module: datus.cli.repl
+    args: [self, args]
+  _cmd_exit:
+    type: sync
+    module: datus.cli.repl
+    args: [self, args]
+  _cmd_help:
+    type: sync
+    module: datus.cli.repl
+    args: [self, args]
+  _cmd_list_namespaces:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _cmd_mcp:
+    type: sync
+    module: datus.cli.repl
+    args: [self, args]
+  _cmd_switch_namespace:
+    type: sync
+    module: datus.cli.repl
+    args: [self, args]
+  _collect_data:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _collect_knowledge_entries:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self]
+    params:
+      returns: List[Dict]
+  _collect_metrics_entries:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self]
+    params:
+      returns: List[Dict]
+  _collect_sql_entries:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self]
+    params:
+      returns: List[Dict]
+  _compile_condition:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [c]
+    params:
+      returns: str
+  _compile_node:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [node]
+    params:
+      returns: str
+  _configure_llm:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self]
+    params:
+      returns: bool
+  _configure_namespace:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self]
+    params:
+      returns: bool
+  _configure_workspace:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self]
+    params:
+      returns: bool
+  _confirm_dashboard:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, adaptor, dashboard_url]
+    params:
+      returns: tuple
+  _copy_files:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self]
+  _create_adaptor:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, options]
+    params:
+      returns: BIAdaptorBase
+  _create_agent_with_config:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self, args]
+  _create_custom_key_bindings:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _create_http_server:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, expanded_config]
+  _create_new_node:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, subagent_name]
+  _create_server_instance:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, config]
+    params:
+      returns: Tuple
+  _create_sse_server:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, expanded_config]
+  _create_stdio_server:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, config, expanded_config]
+  _current_db_config:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self]
+    params:
+      returns: Dict
+  _database_matches_scope:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, catalog, database]
+    params:
+      returns: bool
+  _dedupe_values:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, values]
+    params:
+      returns: List[str]
+  _deduplicate_relationships:
+    type: sync
+    module: datus.tools.func_tool.gen_semantic_model_tools
+    args: [self, relationships]
+    params:
+      returns: List[Dict]
+  _default_field_value:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, field, explicit]
+    params:
+      returns: str
+  _derive_api_base:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, dashboard_url]
+    params:
+      returns: str
+  _detect_selection_changes:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+    params:
+      returns: bool
+  _determine_field_order:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self]
+    params:
+      returns: Sequence[str]
+  _discover_adaptors:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self]
+    params:
+      returns: dict
+  _dispatch_operation:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_instance, server_name, operation, agent, run_context]
+    params:
+      returns: Tuple
+  _display_completion:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self]
+  _display_ext_knowledge_file:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, ext_knowledge_file]
+  _display_markdown_response:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, response]
+  _display_semantic_model:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, semantic_models]
+  _display_servers_table:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, servers]
+  _display_sql_summary_file:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, sql_summary_file]
+  _display_sql_with_copy:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, sql]
+  _display_summary:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self]
+  _distribute_token_usage_to_actions:
+    type: sync
+    module: datus.models.openai_compatible
+    args: [self, action_history_manager, usage_info]
+    params:
+      returns: None
+  _do_save_sub_agent:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, sub_agent_manager, sub_agent, prefix]
+  _dump_json:
+    type: sync
+    module: datus.utils.json_utils
+    args: [data]
+    params:
+      returns: str
+  _enrich_fields_with_descriptions:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, field_list_json, ddl_columns, field_type]
+    params:
+      returns: List[Dict]
+  _enrich_with_subject_path:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, results]
+    params:
+      returns: List[Dict]
+  _ensure_config:
+    type: sync
+    module: datus.cli.tutorial
+    args: [self]
+    params:
+      returns: bool
+  _ensure_file_name:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, platform, dashboard, suffix]
+    params:
+      returns: Path
+  _ensure_files:
+    type: sync
+    module: datus.cli.tutorial
+    args: [self]
+  _ensure_success_story_table:
+    type: sync
+    module: datus.storage.base
+    args: [self]
+  _ensure_table:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self]
+  _ensure_table_ready:
+    type: sync
+    module: datus.storage.base
+    args: [self]
+  _ensure_tables:
+    type: sync
+    module: datus.storage.base
+    args: [self]
+  _escape_identifier:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [name]
+    params:
+      returns: str
+  _escape_value:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [v]
+    params:
+      returns: str
+  _execute_chat_command:
+    type: sync
+    module: datus.cli.repl
+    args: [self, message, subagent_name]
+  _execute_context_command:
+    type: sync
+    module: datus.cli.repl
+    args: [self, cmd, args]
+  _execute_internal_command:
+    type: sync
+    module: datus.cli.repl
+    args: [self, cmd, args]
+  _execute_sql:
+    type: sync
+    module: datus.cli.repl
+    args: [self, sql, system]
+  _execute_tool_command:
+    type: sync
+    module: datus.cli.repl
+    args: [self, cmd, args]
+  _execute_with_recursive_replan:
+    type: async
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, prompt, execution_mode, original_input, action_history_manager, session]
+  _export_result:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+    params:
+      returns: Dict
+  _extract_and_distribute_token_usage:
+    type: async
+    module: datus.models.openai_compatible
+    args: [self, result, action_history_manager]
+    params:
+      returns: None
+  _extract_ext_knowledge_and_output_from_response:
+    type: sync
+    module: datus.agent.node.gen_ext_knowledge_agentic_node
+    args: [self, output]
+    params:
+      returns: tuple
+  _extract_filepaths_from_result:
+    type: sync
+    module: datus.cli.generation_hooks
+    args: [self, result]
+    params:
+      returns: list
+  _extract_foreign_keys_from_ddl:
+    type: sync
+    module: datus.tools.func_tool.gen_semantic_model_tools
+    args: [self, tables, catalog, database, schema_name]
+    params:
+      returns: List[Dict]
+  _extract_metric_and_output_from_response:
+    type: sync
+    module: datus.agent.node.gen_metrics_agentic_node
+    args: [self, output]
+    params:
+      returns: tuple
+  _extract_metric_generation_result:
+    type: sync
+    module: datus.cli.generation_hooks
+    args: [self, result]
+    params:
+      returns: tuple
+  _extract_metric_sqls_from_actions:
+    type: sync
+    module: datus.agent.node.gen_metrics_agentic_node
+    args: [self, action_history_manager]
+    params:
+      returns: dict
+  _extract_report_from_json:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, response]
+    params:
+      returns: Optional[str]
+  _extract_report_from_response:
+    type: sync
+    module: datus.agent.node.gen_report_agentic_node
+    args: [self, output]
+    params:
+      returns: tuple
+  _extract_report_result:
+    type: sync
+    module: datus.agent.node.gen_report_agentic_node
+    args: [self, actions]
+    params:
+      returns: Optional[Dict]
+  _extract_semantic_model_and_output_from_response:
+    type: sync
+    module: datus.agent.node.gen_semantic_model_agentic_node
+    args: [self, output]
+    params:
+      returns: tuple
+  _extract_sql_and_output_from_content:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, content]
+    params:
+      returns: Tuple
+  _extract_sql_and_output_from_response:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, output]
+    params:
+      returns: tuple
+  _extract_sql_from_streaming_actions:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, actions, workflow, node]
+  _extract_sql_summary_and_output_from_response:
+    type: sync
+    module: datus.agent.node.sql_summary_agentic_node
+    args: [self, output]
+    params:
+      returns: tuple
+  _extract_table_name:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, schema_text]
+    params:
+      returns: str
+  _fallback_sql_type:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [statement]
+  _fill_query:
+    type: sync
+    module: datus.storage.base
+    args: [cls, query_builder, select_fields, where]
+    params:
+      returns: LanceQueryBuilder
+  _fill_scoped_text:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, area_component, new_text]
+  _fill_subject_tree:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [enriched_tree, entries, entry_type]
+  _filter_table_entries:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, entries, catalog, database, schema]
+    params:
+      returns: List[Dict]
+  _find_child_by_name:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, parent_id, name]
+    params:
+      returns: Optional[Dict]
+  _find_config_differences:
+    type: sync
+    module: datus.storage.storage_cfg
+    args: [storage_type, existing_config, new_config]
+    params:
+      returns: List[str]
+  _finish_editing:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _first_statement:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [sql]
+    params:
+      returns: str
+  _flatten_picker_items:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, kind]
+  _focus_rules_list:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _format_reference_sql_line:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [sql_text, max_length]
+    params:
+      returns: str
+  _format_tool_result:
+    type: sync
+    module: datus.models.openai_compatible
+    args: [self, content, tool_name]
+    params:
+      returns: str
+  _format_tool_result_from_dict:
+    type: sync
+    module: datus.models.openai_compatible
+    args: [self, data, tool_name]
+    params:
+      returns: str
+  _gen_metadata:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, table_names]
+    params:
+      returns: bool
+  _gen_metrics:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, sqls, platform, dashboard]
+  _gen_reference_sqls:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, reference_sqls, platform, dashboard]
+    params:
+      returns: List[str]
+  _gen_semantic_model:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, sqls, platform, dashboard]
+    params:
+      returns: bool
+  _gen_sql_task:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args, use_existing]
+  _generate_operation:
+    type: sync
+    module: datus.models.openai_compatible
+  _generate_with_tools_internal:
+    type: async
+    module: datus.models.openai_compatible
+    args: [self, prompt, mcp_servers, tools, instruction, output_type, max_turns, session, hooks]
+    params:
+      returns: Dict
+  _generate_with_tools_stream_internal:
+    type: async
+    module: datus.models.openai_compatible
+    args: [self, prompt, mcp_servers, tools, instruction, output_type, max_turns, session, action_history_manager, hooks]
+    params:
+      returns: AsyncGenerator
+  _get_api_key:
+    type: sync
+    module: datus.models.openai_model
+    args: [self]
+    params:
+      returns: str
+  _get_async_client:
+    type: sync
+    module: datus.models.claude_model
+    args: [self]
+    params:
+      returns: AsyncOpenAI
+  _get_base_url:
+    type: sync
+    module: datus.models.deepseek_model
+    args: [self]
+    params:
+      returns: str
+  _get_connection:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self]
+    params:
+      returns: sqlite3.Connection
+  _get_current_log_file:
+    type: sync
+    module: datus.utils.loggings
+  _get_current_timestamp:
+    type: sync
+    module: datus.storage.base
+    args: [self]
+    params:
+      returns: str
+  _get_execution_config:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, execution_mode, original_input]
+    params:
+      returns: dict
+  _get_existing_subject_trees:
+    type: sync
+    module: datus.agent.node.gen_metrics_agentic_node
+    args: [self]
+    params:
+      returns: list
+  _get_language_setting:
+    type: sync
+    module: datus.tools.func_tool.date_parsing_tools
+    args: [self]
+    params:
+      returns: str
+  _get_prompt_text:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _get_semantic_model:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, catalog, database, schema, table_name]
+    params:
+      returns: Dict
+  _get_similar_sqls:
+    type: sync
+    module: datus.agent.node.sql_summary_agentic_node
+    args: [self, query_text, top_n]
+    params:
+      returns: list
+  _get_step_layout:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _get_sync_confirmation:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, yaml_content, file_path, yaml_type, metric_sqls]
+  _get_sync_confirmation_for_pair:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, semantic_model_file, metric_file, metric_sqls]
+  _get_system_instruction:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, original_input]
+    params:
+      returns: str
+  _get_system_prompt:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, conversation_summary, prompt_version]
+    params:
+      returns: str
+  _get_user_confirmation:
+    type: async
+    module: datus.cli.plan_hooks
+    args: [self]
+  _handle_call_tool:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_instance, server_name]
+  _handle_connectivity_test:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_instance, server_name, run_context, agent]
+  _handle_end_metric_generation:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, result]
+  _handle_end_semantic_model_generation:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, result]
+  _handle_execution_step:
+    type: async
+    module: datus.cli.plan_hooks
+    args: [self, _tool_name]
+  _handle_ext_knowledge_result:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, result]
+  _handle_list_tools:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_instance, server_name, run_context, agent]
+  _handle_replan:
+    type: async
+    module: datus.cli.plan_hooks
+    args: [self]
+  _handle_sql_summary_result:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, result]
+  _has_content:
+    type: sync
+    module: datus.utils.json_utils
+    args: [v]
+  _hydrate_charts:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, adaptor, dashboard_id, chart_metas]
+    params:
+      returns: List[ChartInfo]
+  _hydrate_datasets:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, assembler, datasets, dashboard_id]
+    params:
+      returns: List[DatasetInfo]
+  _identifier_name:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [value]
+    params:
+      returns: str
+  _infer_from_column_names:
+    type: sync
+    module: datus.tools.func_tool.gen_semantic_model_tools
+    args: [self, tables, catalog, database, schema_name]
+    params:
+      returns: List[Dict]
+  _init_benchmark_configs:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self]
+  _init_components:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _init_connection:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _init_db_for_connection:
+    type: sync
+    module: datus.models.session_manager
+    args: [self, conn]
+    params:
+      returns: None
+  _init_dirs:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self]
+  _init_key_bindings:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _init_layout:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _init_metrics:
+    type: sync
+    module: datus.cli.tutorial
+    args: [self, success_path]
+  _init_namespace_config:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, namespace_config]
+  _init_previews_and_picker_state:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _init_prompt_session:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _init_semantic_model:
+    type: sync
+    module: datus.cli.tutorial
+    args: [self, success_path]
+  _init_step1_basic:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _init_step2_tools_mcp:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _init_step3_scoped_context:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _init_step4_rules:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _is_escaped:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [text, index]
+    params:
+      returns: bool
+  _is_ext_knowledge_tool_call:
+    type: sync
+    module: datus.cli.generation_hooks
+    args: [self, context]
+    params:
+      returns: bool
+  _is_pending_update:
+    type: sync
+    module: datus.cli.plan_hooks
+    args: [self, context]
+    params:
+      returns: bool
+  _is_source_environment:
+    type: sync
+    module: datus.utils.loggings
+    params:
+      returns: bool
+  _is_sql_summary_tool_call:
+    type: sync
+    module: datus.cli.generation_hooks
+    args: [self, context]
+    params:
+      returns: bool
+  _load_chart_selections:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, charts, indices, purpose]
+    params:
+      returns: List[ChartSelection]
+  _load_reserved_template_names:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+    params:
+      returns: Set[str]
+  _load_scoped_patterns:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, explicit_tokens]
+    params:
+      returns: List[ScopedTablePattern]
+  _load_sub_agent_config:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, sub_agent_name]
+    params:
+      returns: Optional[SubAgentConfig]
+  _lookup_dashboard_config:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, configs, platform]
+    params:
+      returns: Optional[DashboardConfig]
+  _match_dollar_tag:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [text, index]
+    params:
+      returns: Optional[str]
+  _matches_catalog_database:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, pattern, catalog, database]
+    params:
+      returns: bool
+  _metadata_pattern:
+    type: sync
+    module: datus.utils.sql_utils
+    params:
+      returns: re.Pattern
+  _modify_input:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, input]
+  _ndims:
+    type: sync
+    module: datus.storage.embedding_openai
+    args: [self]
+  _normalize_entries:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [entries]
+    params:
+      returns: List[str]
+  _normalize_expression:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [expr]
+    params:
+      returns: Optional[expressions.Expression]
+  _normalize_for_json:
+    type: sync
+    module: datus.utils.json_utils
+    args: [data]
+    params:
+      returns: Any
+  _normalize_identifier:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, text, max_words, fallback]
+    params:
+      returns: str
+  _normalize_identifier_part:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [value]
+    params:
+      returns: str
+  _normalize_model_name:
+    type: sync
+    module: datus.storage.fastembed_embeddings
+    args: [model_name]
+    params:
+      returns: str
+  _normalize_scoped_text:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, value]
+    params:
+      returns: str
+  _normalize_subject_tree:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [enriched_tree]
+    params:
+      returns: Dict
+  _on_plan_generated:
+    type: async
+    module: datus.cli.plan_hooks
+    args: [self]
+  _open_scoped_picker:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, kind]
+  _openai_client:
+    type: sync
+    module: datus.storage.embedding_openai
+    args: [self]
+    params:
+      returns: OpenAI
+  _optional_setup:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self, config_path]
+  _parse_command:
+    type: sync
+    module: datus.cli.repl
+    args: [self, text]
+    params:
+      returns: Tuple
+  _parse_glob_pattern:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, namespace, path_pattern, db_type]
+  _parse_header_from_parts:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_tool
+    args: [parts]
+    params:
+      returns: Dict
+  _parse_identifier_sequence:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [value, dialect]
+    params:
+      returns: Dict
+  _parse_scope_token:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, token]
+    params:
+      returns: Optional[ScopedTablePattern]
+  _parse_selection:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, raw, max_index]
+    params:
+      returns: List[int]
+  _parse_single_file_db:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [db_config, dialect]
+    params:
+      returns: DbConfig
+  _parse_subject_path:
+    type: sync
+    module: datus.storage.ext_knowledge.store
+    args: [self, subject_path]
+    params:
+      returns: List[str]
+  _parse_subject_path_for_metrics:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [tags]
+    params:
+      returns: Optional[str]
+  _parse_subject_tree_from_tags:
+    type: sync
+    module: datus.cli.generation_hooks
+    args: [tags_list]
+    params:
+      returns: Optional[list]
+  _parse_table_schema:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, processed_schemas]
+    params:
+      returns: Dict
+  _pattern_matches:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [pattern, value]
+    params:
+      returns: bool
+  _pre_load_storage:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _prepare_template_context:
+    type: sync
+    module: datus.agent.node.gen_metrics_agentic_node
+    args: [self, user_input]
+    params:
+      returns: dict
+  _print_metadata_table:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, data_list, data_column, data_column_dsc, lexer]
+  _print_welcome:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _process_message_output:
+    type: sync
+    module: datus.models.claude_model
+    args: [self, event, action_history_manager]
+    params:
+      returns: ActionHistory
+  _process_metric_with_semantic_model:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, semantic_model_file, metric_file, metric_sqls]
+  _process_next_step_or_field:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  _process_single_file:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, file_path, metric_sqls]
+  _process_text_columns:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, values_str, max_text_mark_length, table_schema]
+    params:
+      returns: str
+  _process_tool_call_complete:
+    type: sync
+    module: datus.models.claude_model
+    args: [self, event, action_history_manager]
+    params:
+      returns: ActionHistory
+  _process_tool_call_complete_v2:
+    type: sync
+    module: datus.models.claude_model
+    args: [self, event, action_history_manager, temp_tool_calls]
+    params:
+      returns: ActionHistory
+  _process_tool_call_start:
+    type: sync
+    module: datus.models.claude_model
+    args: [self, event, action_history_manager]
+    params:
+      returns: ActionHistory
+  _prompt_auth_params:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, platform, auth_type]
+    params:
+      returns: AuthParam
+  _prompt_db_layers:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self]
+    params:
+      returns: Tuple
+  _prompt_input:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, message, default, choices, multiline]
+    params:
+      returns: str
+  _prompt_options:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self]
+    params:
+      returns: DashboardCliOptions
+  _prompt_password:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, label]
+    params:
+      returns: str
+  _prompt_subject_path:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self]
+    params:
+      returns: Optional[List[str]]
+  _rebuild_tools:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self]
+  _refocus_step_element:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _refresh_agent_config:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, manager]
+    params:
+      returns: None
+  _register_builtin_connectors:
+    type: sync
+    module: datus.tools.db_tools
+  _reload_adapter:
+    type: sync
+    module: datus.tools.func_tool.semantic_tools
+    args: [self]
+    params:
+      returns: bool
+  _render_chart_table:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, charts, title]
+    params:
+      returns: None
+  _render_summary:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, result]
+    params:
+      returns: None
+  _replace_wildcard:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [value]
+    params:
+      returns: str
+  _reset_database_for_rag:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, database_name]
+    params:
+      returns: str
+  _resolve_auth_params:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, platform, auth_type]
+    params:
+      returns: Optional[AuthParam]
+  _resolve_cache_dir:
+    type: sync
+    module: datus.storage.fastembed_embeddings
+    params:
+      returns: str
+  _resolve_default_table_context:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self]
+    params:
+      returns: tuple
+  _resolve_scoped_context_tables:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self]
+    params:
+      returns: Sequence[str]
+  _review_tables:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, tables]
+    params:
+      returns: List
+  _run_async:
+    type: sync
+    module: datus.tools.func_tool.semantic_tools
+    args: [coro]
+  _run_tools_operation_async:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_instance, server_name, operation, timeout]
+    params:
+      returns: Tuple
+  _safe_connect_server:
+    type: async
+    module: datus.models.mcp_utils
+    args: [server_name, server, max_retries]
+  _save_configuration:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self]
+    params:
+      returns: bool
+  _save_llm_trace:
+    type: sync
+    module: datus.models.openai_compatible
+    args: [self, prompt, response_content, reasoning_content]
+  _save_sub_agent:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, platform, dashboard, result]
+    params:
+      returns: None
+  _save_to_db:
+    type: sync
+    module: datus.agent.node.gen_metrics_agentic_node
+    args: [self, semantic_model_file, metric_file, catalog, database, db_schema, metric_sqls]
+  _schedule_tools_loading:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  _schema_matches_scope:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, catalog, database, schema]
+    params:
+      returns: bool
+  _search_all:
+    type: sync
+    module: datus.storage.base
+    args: [self, where, select_fields, limit]
+    params:
+      returns: pa.Table
+  _search_hybrid:
+    type: sync
+    module: datus.storage.base
+    args: [self, query_txt, reranker, select_fields, top_n, where]
+    params:
+      returns: pa.Table
+  _search_metrics_internal:
+    type: sync
+    module: datus.storage.metric.store
+    args: [self, query_text, semantic_model_names, subject_path, select_fields, top_n]
+    params:
+      returns: List[Dict]
+  _search_vector:
+    type: sync
+    module: datus.storage.base
+    args: [self, query_txt, select_fields, top_n, where]
+    params:
+      returns: pa.Table
+  _select_datasets:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, datasets]
+    params:
+      returns: List[DatasetInfo]
+  _selection_watch_tick:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _setup_async_agent:
+    type: sync
+    module: datus.models.claude_model
+    args: [self, instruction, mcp_servers, output_type]
+  _setup_context_search_tools:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self]
+  _setup_custom_json_encoder:
+    type: sync
+    module: datus.models.openai_compatible
+  _setup_date_parsing_tools:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self]
+  _setup_db_tools:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self]
+  _setup_filesystem_tools:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self]
+  _setup_gen_semantic_model_tools:
+    type: sync
+    module: datus.agent.node.gen_semantic_model_agentic_node
+    args: [self]
+  _setup_generation_tools:
+    type: sync
+    module: datus.agent.node.gen_metrics_agentic_node
+    args: [self]
+  _setup_handlers:
+    type: sync
+    module: datus.utils.loggings
+    args: [self]
+  _setup_hooks:
+    type: sync
+    module: datus.agent.node.gen_metrics_agentic_node
+    args: [self]
+  _setup_mcp_server_from_config:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, server_name]
+    params:
+      returns: Optional[Any]
+  _setup_mcp_servers:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self]
+    params:
+      returns: Dict
+  _setup_metricflow_mcp:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self]
+    params:
+      returns: Optional[Any]
+  _setup_semantic_tools:
+    type: sync
+    module: datus.agent.node.gen_metrics_agentic_node
+    args: [self]
+  _setup_specific_filesystem_tool:
+    type: sync
+    module: datus.agent.node.gen_ext_knowledge_agentic_node
+    args: [self]
+  _setup_specific_generation_tools:
+    type: sync
+    module: datus.agent.node.gen_ext_knowledge_agentic_node
+    args: [self]
+  _setup_specific_tool_method:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, tool_type, method_name]
+  _setup_tool_pattern:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, pattern]
+  _should_create_new_node:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, subagent_name]
+    params:
+      returns: bool
+  _show_error_dialog:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, text]
+  _show_knowledge:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self]
+  _show_metrics:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self]
+  _show_semantic_objects:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self]
+  _show_sql:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self]
+  _smart_display_table:
+    type: sync
+    module: datus.cli.repl
+    args: [self, data, columns]
+    params:
+      returns: None
+  _snapshot_checkbox_state:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _split:
+    type: sync
+    module: datus.schemas.agent_models
+    args: [value]
+    params:
+      returns: List[str]
+  _split_comma_tokens:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, value]
+    params:
+      returns: List[str]
+  _split_subject_tree:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, subject_tree]
+    params:
+      returns: tuple
+  _sql_format:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [sqls]
+  _start_editing:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, is_new]
+  _start_selection_watchers:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _store_tool_call_info:
+    type: sync
+    module: datus.models.claude_model
+    args: [self, event, temp_tool_calls]
+    params:
+      returns: None
+  _stream_operation:
+    type: async
+    module: datus.models.openai_compatible
+  _sync_ext_knowledge_to_db:
+    type: sync
+    module: datus.cli.generation_hooks
+    args: [file_path, agent_config, build_mode]
+    params:
+      returns: dict
+  _sync_mcp_after_toggle:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _sync_reference_sql_to_db:
+    type: sync
+    module: datus.cli.generation_hooks
+    args: [file_path, agent_config, build_mode]
+    params:
+      returns: dict
+  _sync_semantic_and_metric:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, semantic_model_file, metric_file, metric_sqls]
+  _sync_semantic_to_db:
+    type: sync
+    module: datus.cli.generation_hooks
+    args: [file_path, agent_config, catalog, database, schema, include_semantic_objects, include_metrics, metric_sqls, original_yaml_path]
+    params:
+      returns: dict
+  _sync_to_storage:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, file_path, yaml_type, metric_sqls]
+  _table_matches_scope:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, coordinate]
+    params:
+      returns: bool
+  _table_parts:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [table_expr]
+    params:
+      returns: Dict
+  _test_llm_connectivity:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self]
+    params:
+      returns: tuple
+  _tools_operation:
+    type: async
+    module: datus.models.openai_compatible
+  _transition_state:
+    type: sync
+    module: datus.cli.plan_hooks
+    args: [self, new_state, context]
+  _trigger_compact_for_current_node:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self]
+  _update_database_connection:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self, database_name]
+  _update_layout:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _update_previews:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _update_prompt:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  _update_rules_display:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+  _update_single_mcp_header:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, entry]
+  _update_todo_status:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self, todo_id, status, execution_output, error_message]
+    params:
+      returns: FuncToolResult
+  _upsert_with_retry:
+    type: sync
+    module: datus.storage.base
+    args: [self, frame, on_column, max_attempts, initial_delay]
+    params:
+      returns: None
+  _uses_completion_tokens_parameter:
+    type: sync
+    module: datus.models.openai_model
+    args: [self]
+    params:
+      returns: bool
+  _validate_semantic_model:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self]
+    params:
+      returns: bool
+  _validate_server_exists:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [manager, server_name]
+    params:
+      returns: Tuple
+  _validate_step:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+    params:
+      returns: bool
+  _wait_for_agent_available:
+    type: sync
+    module: datus.cli.repl
+    args: [self, max_attempts, delay]
+  _with_retry:
+    type: sync
+    module: datus.models.openai_compatible
+    args: [self, operation_func, operation_name, max_retries, base_delay]
+  _with_retry_async:
+    type: async
+    module: datus.models.openai_compatible
+    args: [self, operation_func, operation_name, max_retries, base_delay]
+  _write_chart_sql_files:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, reference_sqls, platform, dashboard]
+    params:
+      returns: Optional[Path]
+  aclose:
+    type: async
+    module: datus.models.claude_model
+    args: [self]
+  action_cursor_down:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  action_cursor_up:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  action_edit:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  action_exit:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  action_pause:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  action_resume:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  action_select_node:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  action_toggle_context:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  active_model:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self]
+    params:
+      returns: ModelConfig
+  adapter:
+    type: sync
+    module: datus.tools.func_tool.semantic_tools
+    args: [self]
+    params:
+      returns: Optional[BaseSemanticAdapter]
+  add_action:
+    type: sync
+    module: datus.schemas.action_history
+    args: [self, action]
+    params:
+      returns: None
+  add_code_location:
+    type: sync
+    module: datus.utils.loggings
+    args: [logger, method_name, event_dict]
+  add_exc_info:
+    type: sync
+    module: datus.utils.loggings
+    args: [logger, method_name, event_dict]
+  add_in_sql_context:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, sql, explanation, incremental_actions]
+  add_item:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self, content]
+    params:
+      returns: TodoItem
+  add_server:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [self, config]
+    params:
+      returns: None
+  add_sub_agents:
+    type: sync
+    module: datus.cli.tutorial
+    args: [self]
+  add_workflows:
+    type: sync
+    module: datus.cli.tutorial
+    args: [self]
+  after_init:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self]
+  agent_config_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  all_tools_name:
+    type: sync
+    module: datus.tools.func_tool.database
+    params:
+      returns: List[str]
+  analyze_column_usage_patterns:
+    type: sync
+    module: datus.tools.func_tool.gen_semantic_model_tools
+    args: [self, table_name, columns, catalog, database, schema_name, sample_sql_queries]
+    params:
+      returns: FuncToolResult
+  analyze_table_relationships:
+    type: sync
+    module: datus.tools.func_tool.gen_semantic_model_tools
+    args: [self, tables, catalog, database, schema_name, sample_sql_queries]
+    params:
+      returns: FuncToolResult
+  and_:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    params:
+      returns: And
+  any:
+    type: sync
+    module: datus.schemas.agent_models
+    args: [self]
+    params:
+      returns: bool
+  apply_filter:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  apply_update:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  as_lists:
+    type: sync
+    module: datus.schemas.agent_models
+    args: [self]
+    params:
+      returns: ScopedContextLists
+  as_payload:
+    type: sync
+    module: datus.schemas.agent_models
+    args: [self, namespace]
+    params:
+      returns: Dict
+  attribution_analyze:
+    type: sync
+    module: datus.tools.func_tool.semantic_tools
+    args: [self, metric_name, candidate_dimensions, baseline_start, baseline_end, current_start, current_end, anomaly_context,
+      max_selected_dimensions, top_n_values]
+    params:
+      returns: FuncToolResult
+  attribution_tool:
+    type: sync
+    module: datus.tools.func_tool.semantic_tools
+    args: [self]
+    params:
+      returns: Optional[DimensionAttributionUtil]
+  auth_config_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  available_tools:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self]
+    params:
+      returns: List[Tool]
+  base_schema_columns:
+    type: sync
+    module: datus.storage.subject_tree.store
+    params:
+      returns: List
+  batch_store:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, items]
+    params:
+      returns: None
+  batch_store_knowledge:
+    type: sync
+    module: datus.storage.ext_knowledge.store
+    args: [self, knowledge_entries]
+    params:
+      returns: None
+  batch_store_metrics:
+    type: sync
+    module: datus.storage.metric.store
+    args: [self, metrics]
+    params:
+      returns: None
+  batch_store_sql:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self, sql_items, subject_path_field]
+    params:
+      returns: None
+  batch_upsert:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, items, on_column]
+    params:
+      returns: None
+  batch_upsert_metrics:
+    type: sync
+    module: datus.storage.metric.store
+    args: [self, metrics]
+    params:
+      returns: None
+  batch_upsert_sql:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self, sql_items]
+    params:
+      returns: None
+  benchmark_config:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, benchmark_platform]
+    params:
+      returns: BenchmarkConfig
+  benchmark_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  benchmark_path:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, name]
+    params:
+      returns: str
+  build_enhanced_message:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [user_message, db_type, catalog, database, db_schema, external_knowledge, schemas, metrics, reference_sql]
+    params:
+      returns: str
+  build_msg:
+    type: sync
+    module: datus.utils.exceptions
+    args: [self, message, message_args]
+    params:
+      returns: str
+  build_where:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [where]
+    params:
+      returns: Optional[str]
+  call_tool:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_name, tool_name, arguments]
+    params:
+      returns: Tuple
+  catalogs_callback:
+    type: sync
+    module: datus.cli.repl
+    args: [self, selected_path, selected_data]
+  check_agent_available:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  check_connectivity:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, name]
+    params:
+      returns: Tuple
+  check_init_storage_config:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, storage_type, save_config]
+  check_semantic_model_exists:
+    type: sync
+    module: datus.tools.func_tool.generation_tools
+    args: [self, table_name, catalog_name, database_name, schema_name]
+    params:
+      returns: FuncToolResult
+  check_semantic_object_exists:
+    type: sync
+    module: datus.tools.func_tool.generation_tools
+    args: [self, object_name, kind, table_context]
+    params:
+      returns: FuncToolResult
+  check_snapshot:
+    type: sync
+    module: datus.storage.fastembed_embeddings
+    args: [model_name, cache_dir]
+    params:
+      returns: None
+  check_storage_config:
+    type: sync
+    module: datus.storage.storage_cfg
+    args: [storage_type, storage_config, rag_path, save_config]
+  classify_api_error:
+    type: sync
+    module: datus.models.claude_model
+    args: [error]
+    params:
+      returns: tuple
+  classify_openai_compatible_error:
+    type: sync
+    module: datus.models.openai_compatible
+    args: [error]
+    params:
+      returns: tuple
+  cleanup:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self]
+    params:
+      returns: None
+  clear:
+    type: sync
+    module: datus.schemas.action_history
+    args: [self]
+    params:
+      returns: None
+  clear_all:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self]
+    params:
+      returns: None
+  clear_cache:
+    type: sync
+    module: datus.storage.cache
+  clear_session:
+    type: sync
+    module: datus.models.base
+    args: [self, session_id]
+    params:
+      returns: None
+  close:
+    type: sync
+    module: datus.models.claude_model
+    args: [self]
+  close_all_sessions:
+    type: sync
+    module: datus.models.session_manager
+    args: [self]
+    params:
+      returns: None
+  cmd:
+    type: sync
+    module: datus.cli.bi_dashboard
+    args: [self, args]
+    params:
+      returns: None
+  cmd_call_tool:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, args]
+  cmd_chat_info:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, args]
+  cmd_clear_chat:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, args]
+  cmd_compact:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, args]
+  cmd_compare:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_compare_stream:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_daend:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_darun_screen:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args, task]
+  cmd_dastart:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_fix:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_gen:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_list_sessions:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, args]
+  cmd_mcp:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, args]
+  cmd_mcp_add:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, args]
+  cmd_mcp_check:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, args]
+  cmd_mcp_filter:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, args]
+  cmd_mcp_filter_get:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, args]
+  cmd_mcp_filter_remove:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, args]
+  cmd_mcp_filter_set:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, args]
+  cmd_mcp_list:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self]
+  cmd_mcp_remove:
+    type: sync
+    module: datus.cli.mcp_commands
+    args: [self, args]
+  cmd_reason:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_reason_stream:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_save:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_schema_linking:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_search_metrics:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  cmd_search_reference_sql:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, args]
+  collect_all:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [node]
+  compact_result:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self]
+    params:
+      returns: str
+  compose:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  conf_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  configure_logging:
+    type: sync
+    module: datus.utils.loggings
+    args: [debug, log_dir, console_output]
+    params:
+      returns: DynamicLogManager
+  console_log:
+    type: sync
+    module: datus.utils.exceptions
+    args: [console_logger, log_prefix, error_msg, prefix_wrap_func]
+  context_length:
+    type: sync
+    module: datus.models.base
+    args: [self]
+    params:
+      returns: Optional[int]
+  context_search_tools:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self]
+  convert_tools_for_anthropic:
+    type: sync
+    module: datus.models.claude_model
+    args: [mcp_tools]
+  copy_data_file:
+    type: sync
+    module: datus.utils.resource_utils
+    args: [resource_path, target_dir, package, replace]
+  create_action:
+    type: sync
+    module: datus.schemas.action_history
+    args: [cls, role, action_type, messages, input_data, output_data, status]
+    params:
+      returns: ActionHistory
+  create_agent:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [namespace_name, components, config_path]
+  create_async_invoker:
+    type: sync
+    module: datus.tools.func_tool.base
+    args: [method_to_call]
+    params:
+      returns: Callable
+  create_combined_completer:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  create_fts_index:
+    type: sync
+    module: datus.storage.base
+    args: [self, field_names]
+  create_indices:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self]
+  create_model:
+    type: sync
+    module: datus.models.base
+    args: [cls, agent_config, model_name]
+    params:
+      returns: LLMBaseModel
+  create_node:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, parent_id, name, description]
+    params:
+      returns: Dict
+  create_node_input:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, user_message, current_node, at_tables, at_metrics, at_sqls, plan_mode]
+  create_openai_client:
+    type: sync
+    module: datus.utils.traceable_utils
+    args: [cls, api_key, base_url, default_headers]
+    params:
+      returns: Union
+  create_parser:
+    type: sync
+    module: datus.main
+    params:
+      returns: argparse.ArgumentParser
+  create_session:
+    type: sync
+    module: datus.models.base
+    args: [self, session_id]
+    params:
+      returns: SQLiteSession
+  create_static_tool_filter:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [allowed_tool_names, blocked_tool_names, enabled]
+    params:
+      returns: ToolFilterConfig
+  create_subject_index:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self]
+    params:
+      returns: None
+  create_vector_index:
+    type: sync
+    module: datus.storage.base
+    args: [self, metric]
+  current_database:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, value]
+  current_db_config:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, db_name]
+    params:
+      returns: DbConfig
+  current_db_configs:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self]
+    params:
+      returns: Dict
+  current_db_name_type:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, db_name]
+    params:
+      returns: tuple
+  current_namespace:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, value]
+  dashboard_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  data_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  datus_home:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  db_function_tool_instance:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [agent_config, database_name, sub_agent_name]
+    params:
+      returns: DBFuncTool
+  db_function_tools:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [agent_config, database_name, sub_agent_name]
+    params:
+      returns: List[Tool]
+  decorator:
+    type: sync
+    module: datus.utils.traceable_utils
+    args: [func]
+  default:
+    type: sync
+    module: datus.models.openai_compatible
+    args: [self, obj]
+  delete_entry:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, subject_path, name]
+    params:
+      returns: bool
+  delete_knowledge:
+    type: sync
+    module: datus.storage.ext_knowledge.store
+    args: [self, subject_path, name]
+    params:
+      returns: bool
+  delete_metric:
+    type: sync
+    module: datus.storage.metric.store
+    args: [self, subject_path, name]
+    params:
+      returns: Dict
+  delete_node:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, node_id, cascade]
+    params:
+      returns: bool
+  delete_reference_sql:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self, subject_path, name]
+    params:
+      returns: bool
+  delete_session:
+    type: sync
+    module: datus.models.base
+    args: [self, session_id]
+    params:
+      returns: None
+  describe_table:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, table_name, catalog, database, schema_name]
+    params:
+      returns: FuncToolResult
+  dfs:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [nodes]
+    params:
+      returns: Dict
+  dict_to_yaml_str:
+    type: sync
+    module: datus.cli.tutorial
+    args: [data]
+    params:
+      returns: str
+  dim_size:
+    type: sync
+    module: datus.storage.embedding_models
+    args: [self]
+  do_copy_data_file:
+    type: sync
+    module: datus.utils.resource_utils
+    args: [src_path, target_dir, replace]
+  do_init_sql_and_log_result:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [agent_config, sql_dir, subject_tree, console, kb_update_strategy]
+  do_process_by_database:
+    type: sync
+    module: datus.storage.schema_metadata.benchmark_init
+    args: [storage, db_id, benchmark_path, all_schema_tables, all_value_tables]
+  do_search_similar:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, query_text, top_n, where, reranker]
+    params:
+      returns: pa.Table
+  document_storage:
+    type: sync
+    module: datus.storage.cache
+    args: [self, sub_agent_name]
+    params:
+      returns: DocumentStore
+  document_store:
+    type: sync
+    module: datus.storage.document.store
+    args: [storage_path]
+    params:
+      returns: DocumentStore
+  embedding_model:
+    type: sync
+    module: datus.storage.fastembed_embeddings
+    args: [self]
+    params:
+      returns: TextEmbeddingBase
+  end_metric_generation:
+    type: sync
+    module: datus.tools.func_tool.generation_tools
+    args: [self, metric_file, semantic_model_file, metric_sqls_json]
+    params:
+      returns: FuncToolResult
+  end_semantic_model_generation:
+    type: sync
+    module: datus.tools.func_tool.generation_tools
+    args: [self, semantic_model_files]
+    params:
+      returns: FuncToolResult
+  ensure_dirs:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: None
+  ensure_templates:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+  eq:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [field, value]
+    params:
+      returns: Condition
+  execute_chat_command:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self, message, plan_mode, subagent_name, compact_when_new_subagent]
+  execute_stream:
+    type: async
+    module: datus.agent.node.chat_agentic_node
+    args: [self, action_history_manager]
+    params:
+      returns: AsyncGenerator
+  exists_table_value:
+    type: sync
+    module: datus.storage.schema_metadata.init_utils
+    args: [storage, database_name, catalog_name, schema_name, table_type, build_mode]
+    params:
+      returns: tuple
+  expand_config_env_vars:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [config_dict]
+    params:
+      returns: dict
+  expand_env_vars:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [value]
+    params:
+      returns: str
+  ext_knowledge_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  ext_knowledge_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, namespace]
+    params:
+      returns: Path
+  ext_knowledge_storage:
+    type: sync
+    module: datus.storage.cache
+    args: [self, sub_agent_name]
+    params:
+      returns: ExtKnowledgeStore
+  extract_code_block_content:
+    type: sync
+    module: datus.utils.json_utils
+    args: [text]
+    params:
+      returns: str
+  extract_json_array:
+    type: sync
+    module: datus.utils.json_utils
+    args: [text]
+    params:
+      returns: str
+  extract_json_object:
+    type: sync
+    module: datus.utils.json_utils
+    args: [text]
+    params:
+      returns: str
+  extract_json_str:
+    type: sync
+    module: datus.utils.json_utils
+    args: [llm_str]
+    params:
+      returns: str
+  extract_sql_contexts:
+    type: sync
+    module: datus.models.mcp_result_extractors
+    args: [result, db_type]
+    params:
+      returns: List[SQLContext]
+  extract_table_names:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [sql, dialect, ignore_empty]
+    params:
+      returns: List[str]
+  file_stem_from_uri:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [uri]
+    params:
+      returns: str
+  filter_kwargs:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [cls, kwargs]
+    params:
+      returns: BenchmarkConfig
+  final_invoker:
+    type: async
+    module: datus.tools.func_tool.base
+    args: [tool_ctx, args_str]
+    params:
+      returns: dict
+  find_action_by_id:
+    type: sync
+    module: datus.schemas.action_history
+    args: [self, action_id]
+    params:
+      returns: Optional[ActionHistory]
+  find_matching_bracket:
+    type: sync
+    module: datus.utils.json_utils
+    args: [text, start_idx, open_char, close_char]
+    params:
+      returns: int
+  find_mcp_directory:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_server
+    args: [mcp_name]
+    params:
+      returns: str
+  find_or_create_path:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, path_components]
+    params:
+      returns: int
+  fix_sql_in_json_string:
+    type: sync
+    module: datus.models.claude_model
+    args: [self, raw_json_str]
+  flatten_tree:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [tree, prefix]
+    params:
+      returns: List[str]
+  format:
+    type: sync
+    module: datus.utils.loggings
+    args: [self, record]
+  format_sql_to_pretty:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [sql, dialect]
+    params:
+      returns: str
+  from_arrow:
+    type: sync
+    module: datus.schemas.node_models
+    args: [cls, table]
+    params:
+      returns: List[TableValue]
+  from_config_format:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [cls, config]
+    params:
+      returns: MCPConfig
+  from_dict:
+    type: sync
+    module: datus.schemas.node_models
+    args: [cls, data]
+    params:
+      returns: Context
+  from_sql_task:
+    type: sync
+    module: datus.schemas.schema_linking_node_models
+    args: [cls, sql_task, matching_rate]
+    params:
+      returns: SchemaLinkingInput
+  from_str:
+    type: sync
+    module: datus.schemas.node_models
+    args: [cls, json_str]
+    params:
+      returns: SqlTask
+  function_name:
+    type: sync
+    module: datus.schemas.action_history
+    args: [self]
+    params:
+      returns: str
+  ge:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [field, value]
+    params:
+      returns: Condition
+  generate:
+    type: sync
+    module: datus.models.openai_model
+    args: [self, prompt, enable_thinking]
+    params:
+      returns: str
+  generate_embeddings:
+    type: sync
+    module: datus.storage.embedding_openai
+    args: [self, texts]
+    params:
+      returns: List[np.array]
+  generate_ext_knowledge_id:
+    type: sync
+    module: datus.tools.func_tool.generation_tools
+    args: [self, search_text, subject_path]
+    params:
+      returns: FuncToolResult
+  generate_semantic_models:
+    type: async
+    module: datus.storage.semantic_model.semantic_model_init
+    params:
+      returns: tuple
+  generate_sql_summary_id:
+    type: sync
+    module: datus.tools.func_tool.generation_tools
+    args: [self, sql_query, comment]
+    params:
+      returns: FuncToolResult
+  generate_with_json_output:
+    type: sync
+    module: datus.models.base
+    args: [self, prompt]
+    params:
+      returns: Dict
+  generate_with_mcp:
+    type: async
+    module: datus.models.claude_model
+    args: [self, prompt, mcp_servers, instruction, output_type, max_turns]
+    params:
+      returns: Dict
+  generate_with_mcp_stream:
+    type: async
+    module: datus.models.claude_model
+    args: [self, prompt, mcp_servers, instruction, output_type, max_turns, action_history_manager]
+    params:
+      returns: AsyncGenerator
+  generate_with_tools:
+    type: async
+    module: datus.models.base
+    args: [self, prompt, tools, mcp_servers, instruction, output_type, max_turns, session]
+    params:
+      returns: Dict
+  generate_with_tools_stream:
+    type: async
+    module: datus.models.base
+    args: [self, prompt, tools, mcp_servers, instruction, output_type, max_turns, session, action_history_manager, hooks]
+    params:
+      returns: AsyncGenerator
+  get:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, key, default]
+    params:
+      returns: Any
+  get_actions:
+    type: sync
+    module: datus.schemas.action_history
+    args: [self]
+    params:
+      returns: List[ActionHistory]
+  get_ancestors:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, node_id]
+    params:
+      returns: List[Dict]
+  get_children:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, parent_id]
+    params:
+      returns: List[Dict]
+  get_completed_items:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self]
+    params:
+      returns: List[TodoItem]
+  get_completions:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self, document, complete_event]
+  get_connection_info:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [self]
+    params:
+      returns: Dict
+  get_current_date:
+    type: sync
+    module: datus.tools.func_tool.date_parsing_tools
+    args: [self]
+    params:
+      returns: FuncToolResult
+  get_db_embedding_model:
+    type: sync
+    module: datus.storage.embedding_models
+    params:
+      returns: EmbeddingModel
+  get_descendants:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, node_id]
+    params:
+      returns: List[Dict]
+  get_description:
+    type: sync
+    module: datus.configuration.node_type
+    args: [cls, node_type]
+    params:
+      returns: str
+  get_device:
+    type: sync
+    module: datus.utils.device_utils
+  get_dimensions:
+    type: sync
+    module: datus.tools.func_tool.semantic_tools
+    args: [self, metric_name, path]
+    params:
+      returns: FuncToolResult
+  get_document_embedding_model:
+    type: sync
+    module: datus.storage.embedding_models
+    params:
+      returns: EmbeddingModel
+  get_embedding_device:
+    type: sync
+    module: datus.storage.embedding_models
+    params:
+      returns: str
+  get_embedding_model:
+    type: sync
+    module: datus.storage.fastembed_embeddings
+    args: [self]
+    params:
+      returns: TextEmbeddingBase
+  get_file_fuzzy_matches:
+    type: sync
+    module: datus.utils.path_utils
+    args: [text, path, max_matches]
+    params:
+      returns: List[str]
+  get_file_name:
+    type: sync
+    module: datus.utils.path_utils
+    args: [path]
+    params:
+      returns: str
+  get_files_from_glob_pattern:
+    type: sync
+    module: datus.utils.path_utils
+    args: [path_pattern, dialect]
+    params:
+      returns: List[Dict]
+  get_full_path:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, node_id]
+    params:
+      returns: List[str]
+  get_function_call_names:
+    type: sync
+    module: datus.models.mcp_result_extractors
+    args: [db_type]
+    params:
+      returns: Set[str]
+  get_item:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self, item_id]
+    params:
+      returns: Optional[TodoItem]
+  get_knowledge:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self, subject_path, name]
+    params:
+      returns: FuncToolResult
+  get_knowledge_detail:
+    type: sync
+    module: datus.storage.ext_knowledge.store
+    args: [self, subject_path, name]
+    params:
+      returns: List[Dict]
+  get_knowledge_size:
+    type: sync
+    module: datus.storage.ext_knowledge.store
+    args: [self]
+  get_log_manager:
+    type: sync
+    module: datus.utils.loggings
+    params:
+      returns: DynamicLogManager
+  get_logger:
+    type: sync
+    module: datus.utils.loggings
+    args: [name]
+    params:
+      returns: structlog.BoundLogger
+  get_matched_children_id:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, subject_path, descendant]
+    params:
+      returns: Optional[List[int]]
+  get_metric_embedding_model:
+    type: sync
+    module: datus.storage.embedding_models
+    params:
+      returns: EmbeddingModel
+  get_metricflow_mcp_server:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_server
+    args: [cls, namespace]
+  get_metrics:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self, subject_path, name]
+    params:
+      returns: FuncToolResult
+  get_metrics_detail:
+    type: sync
+    module: datus.storage.metric.store
+    args: [self, subject_path, name]
+    params:
+      returns: List[Dict]
+  get_metrics_size:
+    type: sync
+    module: datus.storage.metric.store
+    args: [self]
+  get_multiple_tables_ddl:
+    type: sync
+    module: datus.tools.func_tool.gen_semantic_model_tools
+    args: [self, tables, catalog, database, schema_name]
+    params:
+      returns: FuncToolResult
+  get_node:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, node_id]
+    params:
+      returns: Optional[Dict]
+  get_node_by_path:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, path]
+    params:
+      returns: Optional[Dict]
+  get_node_name:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [self]
+    params:
+      returns: str
+  get_path_manager:
+    type: sync
+    module: datus.utils.path_manager
+    args: [datus_home]
+    params:
+      returns: DatusPathManager
+  get_plan_tools:
+    type: sync
+    module: datus.cli.plan_hooks
+    args: [self]
+  get_reference_sql:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self, subject_path, name]
+    params:
+      returns: FuncToolResult
+  get_reference_sql_detail:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self, subject_path, name, selected_fields]
+    params:
+      returns: List[Dict]
+  get_reference_sql_size:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self]
+  get_save_run_dir:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, run_id]
+    params:
+      returns: str
+  get_schema:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, table_name, catalog_name, database_name, schema_name]
+    params:
+      returns: pa.Table
+  get_schema_size:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self]
+  get_semantic_model:
+    type: sync
+    module: datus.storage.semantic_model.store
+    args: [self, catalog_name, database_name, schema_name, table_name, select_fields]
+    params:
+      returns: Optional[Dict]
+  get_server:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [self, name]
+    params:
+      returns: Optional[AnyMCPServerConfig]
+  get_server_config:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, name]
+    params:
+      returns: Optional[AnyMCPServerConfig]
+  get_session:
+    type: sync
+    module: datus.models.session_manager
+    args: [self, session_id]
+    params:
+      returns: ExtendedSQLiteSession
+  get_session_info:
+    type: sync
+    module: datus.models.session_manager
+    args: [self, session_id]
+    params:
+      returns: Dict
+  get_simple_tree_structure:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, root_id]
+    params:
+      returns: Dict
+  get_size:
+    type: sync
+    module: datus.storage.semantic_model.store
+    args: [self]
+    params:
+      returns: int
+  get_storage_cache_instance:
+    type: sync
+    module: datus.storage.cache
+    args: [agent_config]
+    params:
+      returns: StorageCache
+  get_subject_tree_flat:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self]
+    params:
+      returns: List[str]
+  get_subject_tree_str:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self]
+    params:
+      returns: str
+  get_table_ddl:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, table_name, catalog, database, schema_name]
+    params:
+      returns: FuncToolResult
+  get_todo_list:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self]
+    params:
+      returns: Optional[TodoList]
+  get_tool:
+    type: sync
+    module: datus.tools
+    args: [tool_type]
+    params:
+      returns: Optional[BaseTool]
+  get_tool_filter:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_name]
+    params:
+      returns: Tuple
+  get_tool_types:
+    type: sync
+    module: datus.tools
+    params:
+      returns: List[str]
+  get_trajectory_run_dir:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, run_id]
+    params:
+      returns: str
+  get_tree_structure:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, root_id]
+    params:
+      returns: Dict
+  get_user_input:
+    type: sync
+    module: datus.cli.plan_hooks
+  get_value_size:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self]
+  global_exception_handler:
+    type: sync
+    module: datus.utils.exceptions
+    args: [type, value, tb]
+  gte:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [field, value]
+    params:
+      returns: Condition
+  handle_event:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [self, event]
+    params:
+      returns: None
+  handler:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  has_glob_pattern:
+    type: sync
+    module: datus.utils.path_utils
+    args: [path]
+    params:
+      returns: bool
+  has_scoped_context:
+    type: sync
+    module: datus.schemas.agent_models
+    args: [self]
+    params:
+      returns: bool
+  has_scoped_context_by:
+    type: sync
+    module: datus.schemas.agent_models
+    args: [self, attr_name]
+    params:
+      returns: bool
+  has_todo_list:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self]
+    params:
+      returns: bool
+  history_file_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  in_:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [field, values]
+    params:
+      returns: Condition
+  init_dashboard:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, param]
+  init_embedding_models:
+    type: sync
+    module: datus.storage.embedding_models
+    args: [storage_config, openai_configs, default_openai_config]
+    params:
+      returns: dict
+  init_metadata_and_log_result:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [namespace_name, config_path, console]
+  init_model:
+    type: sync
+    module: datus.storage.embedding_models
+    args: [self]
+  init_model_async:
+    type: async
+    module: datus.storage.embedding_models
+    args: [self]
+  init_semantic_yaml_semantic_model:
+    type: sync
+    module: datus.storage.semantic_model.semantic_model_init
+    args: [yaml_file_path, agent_config]
+    params:
+      returns: tuple
+  init_snowflake_schema:
+    type: sync
+    module: datus.storage.schema_metadata.benchmark_init
+    args: [storage, benchmark_path, build_mode, pool_size, instance_ids]
+  init_sql_and_log_result:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [namespace_name, sql_dir, config_path, subject_tree, console]
+  init_success_story_semantic_model:
+    type: sync
+    module: datus.storage.semantic_model.semantic_model_init
+    args: [args, agent_config, emit]
+    params:
+      returns: tuple
+  is_checkbox_focused:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  is_completion_open:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  is_done:
+    type: sync
+    module: datus.schemas.action_history
+    args: [self]
+    params:
+      returns: bool
+  is_empty:
+    type: sync
+    module: datus.schemas.agent_models
+    args: [self]
+    params:
+      returns: bool
+  is_in_namespace:
+    type: sync
+    module: datus.schemas.agent_models
+    args: [self, namespace]
+    params:
+      returns: bool
+  is_mcp_focus:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  is_mcp_header_focused:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  is_model_available:
+    type: sync
+    module: datus.storage.embedding_models
+    args: [self]
+    params:
+      returns: bool
+  is_name_input_focused:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  is_native_focus:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  is_native_header_focused:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  is_rules_step:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  is_scoped_context_input_focused:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  is_tool_allowed:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [self, tool_name]
+    params:
+      returns: bool
+  json2csv:
+    type: sync
+    module: datus.utils.json_utils
+    args: [result, columns]
+    params:
+      returns: str
+  json_list2markdown_table:
+    type: sync
+    module: datus.utils.json_utils
+    args: [json_list]
+  like:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [field, pattern]
+    params:
+      returns: Condition
+  list_databases:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, catalog, include_sys]
+    params:
+      returns: FuncToolResult
+  list_entries:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, node_id, name, limit]
+    params:
+      returns: List[Dict]
+  list_filtered_tools:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_name]
+    params:
+      returns: Tuple
+  list_metrics:
+    type: sync
+    module: datus.tools.func_tool.semantic_tools
+    args: [self, path, limit, offset]
+    params:
+      returns: FuncToolResult
+  list_schemas:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, catalog, database, include_sys]
+    params:
+      returns: FuncToolResult
+  list_servers:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [self, server_type]
+    params:
+      returns: List[AnyMCPServerConfig]
+  list_sessions:
+    type: sync
+    module: datus.models.base
+    args: [self]
+    params:
+      returns: List[str]
+  list_subject_tree:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self]
+    params:
+      returns: FuncToolResult
+  list_tables:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, catalog, database, schema_name, include_views]
+    params:
+      returns: FuncToolResult
+  list_to_prompt:
+    type: sync
+    module: datus.schemas.node_models
+    args: [cls, schemas, dialect]
+    params:
+      returns: str
+  list_tools:
+    type: async
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_name, apply_filter]
+    params:
+      returns: Tuple
+  llm_result2json:
+    type: sync
+    module: datus.utils.json_utils
+    args: [llm_str, expected_type]
+    params:
+      returns: Union
+  llm_result2sql:
+    type: sync
+    module: datus.utils.json_utils
+    args: [llm_str]
+    params:
+      returns: Optional[str]
+  load_config:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self]
+    params:
+      returns: bool
+  load_jsonl:
+    type: sync
+    module: datus.utils.json_utils
+    args: [file_path]
+    params:
+      returns: List[Dict]
+  load_jsonl_dict:
+    type: sync
+    module: datus.utils.json_utils
+    args: [file_path, key_field]
+    params:
+      returns: Dict
+  load_jsonl_iterator:
+    type: sync
+    module: datus.utils.json_utils
+    args: [file_path]
+  load_model_config:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [data]
+    params:
+      returns: ModelConfig
+  load_storage_config:
+    type: sync
+    module: datus.storage.storage_cfg
+    args: [rag_path]
+    params:
+      returns: Dict
+  log_context:
+    type: sync
+    module: datus.utils.loggings
+    args: [target]
+  logs_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  lt:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [field, value]
+    params:
+      returns: Condition
+  lte:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [field, value]
+    params:
+      returns: Condition
+  main:
+    type: sync
+    module: datus.cli.interactive_init
+  make_handler:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [current_cbl]
+  make_header_handler:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [server_name]
+  make_optional_model:
+    type: sync
+    module: datus.configuration.node_type
+    args: [base_model, name_suffix]
+  matches:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, coordinate]
+    params:
+      returns: bool
+  max_export_lines:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self]
+    params:
+      returns: int
+  max_tokens:
+    type: sync
+    module: datus.models.deepseek_model
+    args: [self]
+    params:
+      returns: int
+  mcp_config_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  metadata_identifier:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [catalog_name, database_name, schema_name, table_name, dialect]
+    params:
+      returns: str
+  metric_storage:
+    type: sync
+    module: datus.storage.cache
+    args: [self, sub_agent_name]
+    params:
+      returns: MetricStorage
+  model:
+    type: sync
+    module: datus.storage.embedding_models
+    args: [self]
+  model_config:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, name]
+    params:
+      returns: ModelConfig
+  model_names:
+    type: sync
+    module: datus.storage.embedding_openai
+  model_specs:
+    type: sync
+    module: datus.models.openai_compatible
+    args: [self]
+    params:
+      returns: Dict
+  multiple_mcp_servers:
+    type: async
+    module: datus.models.mcp_utils
+    args: [mcp_servers]
+  native_tools_choices:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+    params:
+      returns: Dict
+  ndims:
+    type: sync
+    module: datus.storage.embedding_openai
+    args: [self]
+  ne:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [field, value]
+    params:
+      returns: Condition
+  normalize_sql:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [sql]
+    params:
+      returns: str
+  not_:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    args: [node]
+    params:
+      returns: Not
+  on_cancel:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  on_data_table_row_selected:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self, event]
+  on_end:
+    type: async
+    module: datus.cli.plan_hooks
+    args: [self, context, agent, output]
+    params:
+      returns: None
+  on_handoff:
+    type: async
+    module: datus.cli.generation_hooks
+    args: [self, context, agent, source]
+    params:
+      returns: None
+  on_llm_end:
+    type: async
+    module: datus.cli.plan_hooks
+    args: [self, context, agent, response]
+    params:
+      returns: None
+  on_mount:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  on_ok:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+  on_start:
+    type: async
+    module: datus.cli.plan_hooks
+    args: [self, context, agent]
+    params:
+      returns: None
+  on_tool_end:
+    type: async
+    module: datus.cli.plan_hooks
+    args: [self, context, agent, tool, result]
+    params:
+      returns: None
+  on_tool_start:
+    type: async
+    module: datus.cli.plan_hooks
+    args: [self, context, agent, tool]
+    params:
+      returns: None
+  optional_traceable:
+    type: sync
+    module: datus.utils.traceable_utils
+    args: [name, run_type]
+  or_:
+    type: sync
+    module: datus.storage.lancedb_conditions
+    params:
+      returns: Or
+  output_dir:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self]
+    params:
+      returns: str
+  override_by_args:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self]
+  package_data_path:
+    type: sync
+    module: datus.utils.resource_utils
+    args: [resource_path, package]
+    params:
+      returns: Optional[Path]
+  parse_command_string:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_tool
+    args: [s]
+    params:
+      returns: Tuple
+  parse_context_switch:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [sql, dialect]
+    params:
+      returns: Optional[Dict]
+  parse_dialect:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [dialect]
+    params:
+      returns: str
+  parse_metadata_from_ddl:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [sql, dialect]
+    params:
+      returns: Dict
+  parse_read_dialect:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [dialect]
+    params:
+      returns: str
+  parse_sql_type:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [sql, dialect]
+    params:
+      returns: SQLType
+  parse_subject_tree:
+    type: sync
+    module: datus.cli.interactive_init
+    args: [subject_tree]
+    params:
+      returns: Optional[list]
+  parse_table_name_parts:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [full_table_name, dialect]
+    params:
+      returns: Dict
+  parse_table_names_parts:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [full_table_names, dialect]
+    params:
+      returns: List[Dict]
+  parse_table_type_by_db:
+    type: sync
+    module: datus.schemas.base
+    args: [db_table_type]
+    params:
+      returns: TABLE_TYPE
+  parse_temporal_expressions:
+    type: sync
+    module: datus.tools.func_tool.date_parsing_tools
+    args: [self, task_text, current_date]
+    params:
+      returns: FuncToolResult
+  pid_file_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, service_name]
+    params:
+      returns: Path
+  prepare_template_context:
+    type: sync
+    module: datus.agent.node.gen_sql_agentic_node
+    args: [node_config, has_db_tools, has_filesystem_tools, has_mf_tools, has_context_search_tools, has_parsing_tools, agent_config,
+      workspace_root]
+    params:
+      returns: dict
+  print_rich_exception:
+    type: sync
+    module: datus.utils.loggings
+    args: [console, ex, error_description, file_logger]
+    params:
+      returns: None
+  process_column:
+    type: sync
+    module: datus.cli.generation_hooks
+    args: [col_def, is_dim, is_meas, is_ent]
+  process_line:
+    type: sync
+    module: datus.storage.schema_metadata.benchmark_init
+    args: [storage, item, benchmark_path, all_schema_tables, all_value_tables]
+  process_semantic_yaml_file:
+    type: sync
+    module: datus.storage.semantic_model.semantic_model_init
+    args: [yaml_file_path, agent_config, include_semantic_objects, include_metrics]
+    params:
+      returns: tuple
+  prompt_input:
+    type: sync
+    module: datus.cli.repl
+    args: [self, message, default, choices, multiline]
+  query_knowledge:
+    type: sync
+    module: datus.storage.ext_knowledge.store
+    args: [self, query_text, subject_path, top_n]
+    params:
+      returns: List[Dict]
+  query_metrics:
+    type: sync
+    module: datus.tools.func_tool.semantic_tools
+    args: [self, metrics, dimensions, path, time_start, time_end, time_granularity, where, limit, order_by, dry_run]
+    params:
+      returns: FuncToolResult
+  rag_storage_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, namespace]
+    params:
+      returns: Path
+  read_data_file:
+    type: sync
+    module: datus.utils.resource_utils
+    args: [resource_path, package]
+    params:
+      returns: bytes
+  read_data_file_text:
+    type: sync
+    module: datus.utils.resource_utils
+    args: [resource_path, package, encoding]
+    params:
+      returns: str
+  read_query:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, sql]
+    params:
+      returns: FuncToolResult
+  reference_sql_storage:
+    type: sync
+    module: datus.storage.cache
+    args: [self, sub_agent_name]
+    params:
+      returns: ReferenceSqlStorage
+  reflection_nodes:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, strategy]
+    params:
+      returns: List[str]
+  remove_data:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, catalog_name, database_name, schema_name, table_name, table_type]
+  remove_server:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [self, name]
+    params:
+      returns: bool
+  remove_tool_filter:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_tool
+    args: [self, server_name]
+    params:
+      returns: BaseToolExecResult
+  rename:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, old_path, new_path]
+    params:
+      returns: bool
+  replace_env:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [match]
+  replace_var:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [match]
+  reset_path_manager:
+    type: sync
+    module: datus.utils.path_manager
+    params:
+      returns: None
+  reset_session:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+  resolve_config_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, filename, local_path]
+    params:
+      returns: Path
+  resolve_env:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [value]
+    params:
+      returns: str
+  restore_default:
+    type: sync
+    module: datus.utils.loggings
+    args: [self]
+  restore_original:
+    type: sync
+    module: datus.utils.loggings
+    args: [self]
+  run:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [self]
+    params:
+      returns: Optional[SubAgentConfig]
+  run_agent:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [sql_task]
+  run_chat_stream:
+    type: async
+    module: datus.cli.chat_commands
+  run_compact:
+    type: async
+    module: datus.cli.chat_commands
+  run_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  run_node:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, node_type, node_args, need_confirm]
+  run_standalone_node:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self, node_type, input_data, need_confirm]
+    params:
+      returns: any
+  run_wizard:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [cli_instance, data]
+    params:
+      returns: Optional[SubAgentConfig]
+  sample_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  sanitize_example:
+    type: sync
+    module: datus.tools.func_tool.gen_semantic_model_tools
+    args: [example]
+    params:
+      returns: str
+  save_config:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self]
+    params:
+      returns: bool
+  save_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  save_list:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self, todo_list]
+    params:
+      returns: bool
+  save_run_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, namespace, run_id]
+    params:
+      returns: Path
+  save_storage_config:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, storage_type]
+  save_storage_configs:
+    type: sync
+    module: datus.storage.storage_cfg
+    args: [configs, rag_path]
+  schema_storage:
+    type: sync
+    module: datus.storage.cache
+    args: [self, sub_agent_name]
+    params:
+      returns: SchemaStorage
+  schema_value_storage:
+    type: sync
+    module: datus.storage.cache
+    args: [self, sub_agent_name]
+    params:
+      returns: SchemaValueStorage
+  search:
+    type: sync
+    module: datus.storage.base
+    args: [self, query_txt, select_fields, top_n, where, reranker]
+    params:
+      returns: pa.Table
+  search_all:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, catalog_name, database_name, schema_name, table_type, select_fields]
+    params:
+      returns: pa.Table
+  search_all_knowledge:
+    type: sync
+    module: datus.storage.ext_knowledge.store
+    args: [self, subject_path]
+    params:
+      returns: List[Dict]
+  search_all_metrics:
+    type: sync
+    module: datus.storage.metric.store
+    args: [self, subject_path, select_fields]
+    params:
+      returns: List[Dict]
+  search_all_reference_sql:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self, subject_path, select_fields]
+    params:
+      returns: List[Dict]
+  search_all_schemas:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, catalog_name, database_name, schema_name, table_type, select_fields]
+    params:
+      returns: pa.Table
+  search_all_value:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, catalog_name, database_name, schema_name, table_type]
+    params:
+      returns: pa.Table
+  search_knowledge:
+    type: sync
+    module: datus.storage.ext_knowledge.store
+    args: [self, query_text, subject_path, select_fields, top_n]
+    params:
+      returns: List[Dict]
+  search_metrics:
+    type: sync
+    module: datus.storage.metric.store
+    args: [self, query_text, subject_path, top_n]
+    params:
+      returns: List[Dict]
+  search_objects:
+    type: sync
+    module: datus.storage.semantic_model.store
+    args: [self, query_text, kinds, table_name, top_n]
+    params:
+      returns: List[Dict]
+  search_reference_sql:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self, query_text, subject_path, top_n, selected_fields]
+    params:
+      returns: List[Dict]
+  search_semantic_objects:
+    type: sync
+    module: datus.tools.func_tool.context_search
+    args: [self, query_text, kinds, top_n]
+    params:
+      returns: FuncToolResult
+  search_similar:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, query_text, catalog_name, database_name, schema_name, use_rerank, table_type, top_n]
+    params:
+      returns: Tuple
+  search_similar_documents:
+    type: sync
+    module: datus.storage.document.store
+    args: [self, query_text, select_fields, top_n]
+    params:
+      returns: pa.Table
+  search_table:
+    type: sync
+    module: datus.tools.func_tool.database
+    args: [self, query_text, catalog_name, database_name, schema_name, top_n, simple_sample_data]
+    params:
+      returns: FuncToolResult
+  search_tables:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, tables, catalog_name, database_name, schema_name, dialect]
+    params:
+      returns: Tuple
+  search_top_tables_by_every_schema:
+    type: sync
+    module: datus.storage.schema_metadata.store
+    args: [self, query_text, database_name, catalog_name, all_schemas, top_n]
+    params:
+      returns: pa.Table
+  search_with_subject_filter:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, query_text, subject_path, top_n, selected_fields, name_field, additional_conditions]
+    params:
+      returns: List[Dict]
+  semantic_model_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, namespace]
+    params:
+      returns: Path
+  semantic_models_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  semantic_storage:
+    type: sync
+    module: datus.storage.cache
+    args: [self, sub_agent_name]
+    params:
+      returns: SemanticModelStorage
+  sensitive_keys:
+    type: sync
+    module: datus.storage.embedding_openai
+  session_db_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, session_id]
+    params:
+      returns: Path
+  session_exists:
+    type: sync
+    module: datus.models.session_manager
+    args: [self, session_id]
+    params:
+      returns: bool
+  session_manager:
+    type: sync
+    module: datus.models.base
+    args: [self]
+  sessions_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  set_context:
+    type: sync
+    module: datus.models.base
+    args: [self, workflow, current_node]
+  set_output_target:
+    type: sync
+    module: datus.utils.loggings
+    args: [self, target]
+  set_tool_filter:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_manager
+    args: [self, server_name, tool_filter]
+    params:
+      returns: Tuple
+  setup_exception_handler:
+    type: sync
+    module: datus.utils.exceptions
+    args: [console_logger, prefix_wrap_func]
+  setup_input:
+    type: sync
+    module: datus.agent.node.chat_agentic_node
+    args: [self, workflow]
+    params:
+      returns: dict
+  setup_tools:
+    type: sync
+    module: datus.agent.node.chat_agentic_node
+    args: [self]
+  setup_web_chatbot_logging:
+    type: sync
+    module: datus.utils.loggings
+    args: [debug, log_dir]
+  show_workflow_screen:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [workflow, run_new_loop, exit_callback]
+  sql_summaries_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  sql_summary_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, namespace]
+    params:
+      returns: Path
+  storage_instance:
+    type: sync
+    module: datus.storage.cache
+    args: [self, sub_agent_name]
+    params:
+      returns: T
+  store:
+    type: sync
+    module: datus.storage.base
+    args: [self, data]
+  store_batch:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self, reference_sql_items]
+  store_document:
+    type: sync
+    module: datus.storage.document.store
+    args: [self, title, hierarchy, keywords, language, chunk_text]
+  store_knowledge:
+    type: sync
+    module: datus.storage.ext_knowledge.store
+    args: [self, subject_path, name, search_text, explanation]
+  strip_json_str:
+    type: sync
+    module: datus.utils.json_utils
+    args: [llm_str]
+    params:
+      returns: str
+  strip_sql_comments:
+    type: sync
+    module: datus.utils.sql_utils
+    args: [sql]
+    params:
+      returns: str
+  sub_agent_config:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, sub_agent_name]
+    params:
+      returns: Dict
+  sub_agent_path:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, agent_name]
+    params:
+      returns: Path
+  sub_agent_storage_path:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self, sub_agent_name]
+  support_catalog:
+    type: sync
+    module: datus.utils.constants
+    args: [cls, db_type]
+    params:
+      returns: bool
+  support_database:
+    type: sync
+    module: datus.utils.constants
+    args: [cls, db_type]
+    params:
+      returns: bool
+  support_schema:
+    type: sync
+    module: datus.utils.constants
+    args: [cls, db_type]
+    params:
+      returns: bool
+  table_names_to_prompt:
+    type: sync
+    module: datus.schemas.node_models
+    args: [cls, schemas]
+    params:
+      returns: str
+  table_size:
+    type: sync
+    module: datus.storage.base
+    args: [self]
+    params:
+      returns: int
+  template_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  temporary_output:
+    type: sync
+    module: datus.utils.loggings
+    args: [self, target]
+  to_config_format:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [self]
+    params:
+      returns: Dict
+  to_dict:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self]
+    params:
+      returns: Dict
+  to_pretty_str:
+    type: sync
+    module: datus.utils.json_utils
+    args: [json_data]
+    params:
+      returns: Optional[str]
+  to_prompt:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, dialect]
+    params:
+      returns: str
+  to_sample_str:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self]
+  to_str:
+    type: sync
+    module: datus.utils.json_utils
+    args: [json_data]
+    params:
+      returns: Optional[str]
+  todo_read:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self]
+    params:
+      returns: FuncToolResult
+  todo_update:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self, todo_id, status]
+    params:
+      returns: FuncToolResult
+  todo_write:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self, todos_json]
+    params:
+      returns: FuncToolResult
+  token_count:
+    type: sync
+    module: datus.models.openai_model
+    args: [self, prompt]
+    params:
+      returns: int
+  tool_list:
+    type: sync
+    module: datus.schemas.agent_models
+    args: [self]
+    params:
+      returns: List[str]
+  top_n_by_rate:
+    type: sync
+    module: datus.schemas.search_metrics_node_models
+    args: [self]
+    params:
+      returns: int
+  trajectory_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  trajectory_run_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, namespace, run_id]
+    params:
+      returns: Path
+  trans_to_function_tool:
+    type: sync
+    module: datus.tools.func_tool.base
+    args: [bound_method]
+    params:
+      returns: FunctionTool
+  tree_to_str:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [tree, indent]
+    params:
+      returns: str
+  try_init_model_silent:
+    type: sync
+    module: datus.storage.embedding_models
+    args: [self]
+    params:
+      returns: bool
+  type_input:
+    type: sync
+    module: datus.configuration.node_type
+    args: [cls, node_type, input_data, ignore_require_check]
+  update:
+    type: sync
+    module: datus.storage.base
+    args: [self, where, update_values, unique_filter]
+  update_action_by_id:
+    type: sync
+    module: datus.schemas.action_history
+    args: [self, action_id]
+    params:
+      returns: bool
+  update_agent_reference:
+    type: sync
+    module: datus.cli.agent_commands
+    args: [self]
+  update_chat_node_tools:
+    type: sync
+    module: datus.cli.chat_commands
+    args: [self]
+  update_context:
+    type: sync
+    module: datus.agent.node.chat_agentic_node
+    args: [self, workflow]
+    params:
+      returns: dict
+  update_context_panel:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  update_current_action:
+    type: sync
+    module: datus.schemas.action_history
+    args: [self]
+    params:
+      returns: None
+  update_doc_search_keywords:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, doc_search_keywords]
+  update_document_result:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, document_result]
+  update_entry:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, subject_path, name, update_values]
+    params:
+      returns: bool
+  update_home:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self, new_home]
+    params:
+      returns: None
+  update_item_status:
+    type: sync
+    module: datus.tools.func_tool.plan_tools
+    args: [self, item_id, status]
+    params:
+      returns: bool
+  update_last_sql_context:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, sql_context]
+  update_metrics:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, metrics]
+  update_node:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, node_id, name, description, parent_id]
+    params:
+      returns: bool
+  update_node_details:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  update_node_list:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  update_parallel_results:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, parallel_results]
+  update_periodically:
+    type: async
+    module: datus.cli.screen.workflow_screen
+    args: [self]
+  update_schema_and_values:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, table_schemas, table_values]
+  update_selection_result:
+    type: sync
+    module: datus.schemas.node_models
+    args: [self, selected_result, metadata]
+  update_session_tokens:
+    type: sync
+    module: datus.models.session_manager
+    args: [self, session_id, total_tokens]
+    params:
+      returns: None
+  upsert_batch:
+    type: sync
+    module: datus.storage.reference_sql.store
+    args: [self, reference_sql_items]
+  validate:
+    type: sync
+    module: datus.configuration.agent_config
+    args: [self]
+  validate_doc_count:
+    type: sync
+    module: datus.schemas.doc_search_node_models
+    args: [cls, v, values]
+  validate_matching_rate:
+    type: sync
+    module: datus.schemas.search_metrics_node_models
+    args: [cls, v]
+  validate_no_cycle:
+    type: sync
+    module: datus.storage.subject_tree.store
+    args: [self, node_id, new_parent_id]
+    params:
+      returns: bool
+  validate_schema_count:
+    type: sync
+    module: datus.schemas.schema_linking_node_models
+    args: [cls, v, values]
+  validate_semantic:
+    type: sync
+    module: datus.tools.func_tool.semantic_tools
+    args: [self]
+    params:
+      returns: FuncToolResult
+  validate_task:
+    type: sync
+    module: datus.schemas.node_models
+    args: [cls, v]
+  validate_timeout:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [cls, v]
+  validate_top_n:
+    type: sync
+    module: datus.schemas.schema_linking_node_models
+    args: [cls, v]
+  validate_type:
+    type: sync
+    module: datus.tools.mcp_tools.mcp_config
+    args: [cls, v]
+  validate_value_count:
+    type: sync
+    module: datus.schemas.schema_linking_node_models
+    args: [cls, v, values]
+  watch_show_context:
+    type: sync
+    module: datus.cli.screen.workflow_screen
+    args: [self, show_context]
+    params:
+      returns: None
+  worker:
+    type: sync
+    module: datus.cli.sub_agent_wizard
+    args: [server_name, entry_ref]
+  workflow_runner:
+    type: sync
+    module: datus.cli.repl
+    args: [self]
+    params:
+      returns: WorkflowRunner
+  workspace_dir:
+    type: sync
+    module: datus.utils.path_manager
+    args: [self]
+    params:
+      returns: Path
+  wrap_prompt_cache:
+    type: sync
+    module: datus.models.claude_model
+    args: [messages]
+
+variables:
+  ANTHROPIC_API_KEY:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.models.claude_model]
+  DATUS_WORKFLOW_DEBUG:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.cli.screen.workflow_screen]
+  DEEPSEEK_API_BASE:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.models.deepseek_model]
+  DEEPSEEK_API_KEY:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.models.deepseek_model]
+  env_var:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [datus.configuration.agent_config]
+  FASTEMBED_CACHE_PATH:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [datus.storage.fastembed_embeddings]
+  GEMINI_API_KEY:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.models.gemini_model]
+  HF_HOME:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.storage.fastembed_embeddings]
+  HTTP_PROXY:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.models.claude_model]
+  HTTPS_PROXY:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.models.claude_model]
+  MAX_SQL_RESULT_LENGTH:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [datus.schemas.node_models]
+  METRICFLOW_MCP_DIR:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [datus.tools.mcp_tools.mcp_server]
+  MKL_NUM_THREADS:
+    type: env
+    params:
+      caller: [os.environ]
+  NUMEXPR_NUM_THREADS:
+    type: env
+    params:
+      caller: [os.environ]
+  OMP_NUM_THREADS:
+    type: env
+    params:
+      caller: [os.environ]
+  OPENAI_API_KEY:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.models.openai_model]
+  QWEN_API_KEY:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [datus.models.qwen_model]
+  TOKENIZERS_PARALLELISM:
+    type: env
+    params:
+      caller: [os.environ]
+  var_expr:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [datus.tools.mcp_tools.mcp_config]
+  var_name:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [datus.tools.mcp_tools.mcp_config]
+
+files:
+  ./:
+    type: pattern
+    actions: [read]
+    params:
+      patterns: [agent.*.log, '\${([^}]+)}', '*.sql']
+      caller: [_get_current_log_file, get_file_fuzzy_matches, do_init_sql_and_log_result]
+      links: [pattern]
+  ./logs:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, os.makedirs]
+  .cache:
+    type: literal
+    actions: [read]
+    params:
+      caller: [_resolve_cache_dir]
+      path: [Path.home]
+  .datus:
+    type: literal
+    actions: [read]
+    params:
+      caller: [_configure_workspace, __init__]
+      path: [self.user_home]
+  .db:
+    type: literal
+    actions: [read]
+    params:
+      caller: [session_db_path]
+      path: [self.sessions_dir]
+  .mcp.json:
+    type: literal
+    actions: [read]
+    params:
+      caller: [mcp_config_path]
+      path: [self.conf_dir]
+  .pid:
+    type: literal
+    actions: [read]
+    params:
+      caller: [pid_file_path]
+      path: [self.run_dir]
+  .yml:
+    type: literal
+    actions: [read]
+    params:
+      caller: [_save_llm_trace]
+      path: [trace_dir]
+  _path_manager:
+    type: literal
+    actions: [read]
+    params:
+      caller: [DatusPathManager(datus_home)]
+  agent.yml:
+    type: literal
+    actions: [read]
+    params:
+      caller: [run, _save_configuration, agent_config_path]
+      path: [self.conf_dir]
+  args.history_file:
+    type: variable
+    actions: [read]
+    params:
+      caller: [Path]
+  auth_clients.yml:
+    type: literal
+    actions: [read]
+    params:
+      caller: [auth_config_path]
+      path: [self.conf_dir]
+  cache_path:
+    type: literal
+    actions: [read]
+    params:
+      caller: [Path(cache_path), Path]
+  config_path:
+    type: variable
+    actions: [write, read]
+    params:
+      caller: [open, parser.write, os.path.exists, parser.read, json.load, shutil.copy]
+      alias: [f]
+  current_dir:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.dirname]
+  datasource_dir:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, os.listdir]
+  datus_db.cfg:
+    type: literal
+    actions: [read]
+    params:
+      caller: [os.path.join]
+      path: [rag_path]
+  db_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, os.remove, os.makedirs]
+  dir_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.isdir, os.listdir]
+  explicit_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [Path.expanduser()]
+  file_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [open, yaml.safe_load]
+      alias: [f]
+  fs_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [Path.expanduser.resolve(), fs_path.read_text]
+  full_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists]
+  history_file:
+    type: variable
+    actions: [write]
+    params:
+      caller: [history_file.parent.mkdir]
+  local_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [Path]
+  log_dir:
+    type: variable
+    actions: [read]
+    params:
+      caller: [log_dir.glob]
+  metric_file:
+    type: variable
+    actions: [read]
+    params:
+      caller: [open]
+      alias: [f]
+  metric_full_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, open]
+  output_file:
+    type: variable
+    actions: [read]
+    params:
+      caller: [runner.workflow.save]
+  path:
+    type: variable
+    actions: [read, write]
+    params:
+      caller: [os.path.basename, path.read_bytes, Path, path.mkdir]
+  path_pattern/:
+    type: variable
+    actions: [read]
+    params:
+      links: [path_pattern]
+      caller: [get_files_from_glob_pattern]
+  pyproject.toml:
+    type: literal
+    actions: [read]
+    params:
+      caller: [os.path.join]
+      path: [directory]
+  pyproject_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists]
+  rag_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.makedirs]
+  reference_sql_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, shutil.rmtree]
+  relative_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [Path]
+  resource/databases:
+    type: literal
+    actions: [read]
+    params:
+      caller: [os.path.join]
+      path: [benchmark_path]
+  resource_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [Path]
+  root_path:
+    type: literal
+    actions: [read]
+    params:
+      caller: [Path(path), root_path.glob]
+  schema_metadata_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, shutil.rmtree]
+  schema_value_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, shutil.rmtree]
+  semantic_full_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, open]
+  semantic_model_file:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists, open, os.path.basename]
+  spider2-snow.jsonl:
+    type: literal
+    actions: [read]
+    params:
+      caller: [os.path.join]
+      path: [benchmark_path]
+  sql_dir:
+    type: variable
+    actions: [read]
+    params:
+      caller: [Path]
+  sql_dir_path:
+    type: literal
+    actions: [read]
+    params:
+      caller: [Path(sql_dir), sql_dir_path.rglob]
+  sql_summary_dir:
+    type: variable
+    actions: [read]
+    params:
+      caller: [shutil.rmtree]
+  src_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [Path.resolve(), src_path.iterdir, shutil.copy]
+  sub_benchmark_path:
+    type: variable
+    actions: [write]
+    params:
+      caller: [sub_benchmark_path.mkdir]
+  subject_tree.db:
+    type: literal
+    actions: [read]
+    params:
+      caller: [os.path.join]
+      path: [db_path]
+  success_story.csv:
+    type: literal
+    actions: [read]
+    params:
+      caller: [run]
+      path: [self.benchmark_path]
+  target_dir:
+    type: variable
+    actions: [read, write]
+    params:
+      caller: [Path, target_dir.mkdir]
+  target_file:
+    type: variable
+    actions: [write]
+    params:
+      caller: [open]
+      alias: [target_f]
+  temp_file:
+    type: variable
+    actions: [write, read]
+    params:
+      caller: [open, os.path.exists, os.remove]
+      alias: [f]
+  tools_dir:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.listdir]
+  trace_dir:
+    type: variable
+    actions: [write]
+    params:
+      caller: [trace_dir.mkdir]
+  trace_file:
+    type: variable
+    actions: [write]
+    params:
+      caller: [open]
+      alias: [f]
+  trajectory_dir:
+    type: literal
+    actions: [read]
+    params:
+      caller: [Path(self.workflow.global_config.trajectory_dir)]
+  yaml_file_path:
+    type: variable
+    actions: [read]
+    params:
+      caller: [os.path.exists]
+  yaml_path:
+    type: variable
+    actions: [read, write]
+    params:
+      caller: [open]
+      alias: [f]
+
+processes:
+  clip:
+    type: shell
+    actions: [exec]
+    params:
+      caller: [subprocess.run]
+      shell: ["True"]
+  nvidia-smi:
+    type: shell
+    actions: [exec]
+    args: [[--query-gpu=name, '--format=csv,noheader']]
+    params:
+      caller: [subprocess.run]
+      shell: ["False", "False"]
+  pbcopy:
+    type: shell
+    actions: [exec]
+    params:
+      caller: [subprocess.run]
+      shell: ["False"]
+  rocm-smi:
+    type: shell
+    actions: [exec]
+    params:
+      caller: [subprocess.run]
+      shell: ["False"]
+  uv:
+    type: mcp
+    actions: [exec]
+    args: [[--directory, run, mcp-metricflow-server, --namespace]]
+    params:
+      caller: [MCPServerStdioParams]
+      shell: ["False"]
+  wmic:
+    type: shell
+    actions: [exec]
+    args: [[path, win32_VideoController, get, name]]
+    params:
+      caller: [subprocess.run]
+      shell: ["False"]
+  xclip:
+    type: shell
+    actions: [exec]
+    params:
+      caller: [subprocess.run]
+      shell: ["False"]
