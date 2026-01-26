@@ -400,14 +400,16 @@ class SemanticTools:
 
         Args:
             metrics: List of metric names to query
-            dimensions: Optional list of dimensions to group by
-            path: Optional subject tree path
+            dimensions: Optional list of dimensions to group by (from get_dimensions)
+            path: Optional subject tree path (from list_subject_tree)
             time_start: Optional start time (ISO format like '2024-01-01' or relative like '-7d')
             time_end: Optional end time (ISO format like '2024-01-31' or relative like 'now')
             time_granularity: Optional time granularity for aggregation ('day', 'week', 'month', 'quarter', 'year')
             where: Optional SQL WHERE clause (without WHERE keyword)
             limit: Optional maximum number of rows
-            order_by: Optional list of fields to sort by
+            order_by: Optional list of columns to sort by. Use column name for ascending,
+                      prefix with '-' for descending. Examples: ['metric_time__day'] for ascending,
+                      ['-message_count'] for descending. Do NOT use 'asc'/'desc' keywords.
             dry_run: If True, only validate and return query plan
 
         Returns:
@@ -521,8 +523,8 @@ class SemanticTools:
         root cause analysis of metric anomalies.
 
         Args:
-            metric_name: Metric to analyze (e.g., "payment_amount", "revenue")
-            candidate_dimensions: List of dimensions to evaluate (e.g., ["region", "product", "channel"])
+            metric_name: Metric to analyze 
+            candidate_dimensions: List of dimensions to evaluate (from get_dimensions e.g., ["region", "product", "channel"])
             baseline_start: Baseline period start date (e.g., "2026-01-01")
             baseline_end: Baseline period end date (e.g., "2026-01-01")
             current_start: Current period start date (e.g., "2026-01-08")
