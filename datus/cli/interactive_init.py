@@ -26,6 +26,7 @@ from datus.cli.init_util import detect_db_connectivity
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import configure_logging, get_logger, print_rich_exception
 from datus.utils.path_manager import get_path_manager
+from datus.utils.path_utils import safe_rmtree
 from datus.utils.resource_utils import copy_data_file, read_data_file_text
 
 logger = get_logger(__name__)
@@ -737,9 +738,9 @@ def do_init_sql_and_log_result(
 
             path_manager = get_path_manager(datus_home=agent_config.home)
             sql_summary_dir = path_manager.sql_summary_path(agent_config.current_namespace)
-            if sql_summary_dir.exists():
-                shutil.rmtree(sql_summary_dir)
-                logger.info(f"Deleted existing SQL summary directory {sql_summary_dir}")
+            if sql_summary_dir.exists() and not safe_rmtree(sql_summary_dir, "SQL summary directory"):
+                console.print("[yellow]Cancelled by user[/yellow]")
+                return False, None
             agent_config.save_storage_config("reference_sql")
         else:
             agent_config.check_init_storage_config("reference_sql")
