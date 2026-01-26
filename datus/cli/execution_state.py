@@ -217,12 +217,14 @@ class InteractionBroker:
             logger.warning(f"InteractionBroker: submit called with unknown action_id={action_id}")
             return False
 
-        pending = self._pending.pop(action_id)
+        pending = self._pending.get(action_id)
 
         # Validate choice: if choices is non-empty, user_choice must be a valid key
         if pending.choices and user_choice not in pending.choices:
             logger.warning(f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}")
             return False
+
+        self._pending.pop(action_id, None)
 
         # Resolve the future with the user's choice
         if not pending.future.done():
