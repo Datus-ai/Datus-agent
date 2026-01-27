@@ -129,7 +129,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         return self.model_config.base_url
 
     def _build_tool_extra_body(self) -> Dict[str, Any]:
-        """Build extra_body for tool calls. Override in subclasses for model-specific settings.
+        """Build extra_body for streaming tool calls. Override in subclasses for model-specific settings.
 
         Returns:
             Dict with extra_body parameters for ModelSettings
@@ -489,16 +489,11 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
-                # Use hook method to allow subclasses to customize extra_body
-                extra_body = self._build_tool_extra_body()
-                model_settings = ModelSettings(extra_body=extra_body)
-
                 agent_kwargs = {
                     "name": kwargs.pop("agent_name", "default_agent"),
                     "instructions": instruction,
                     "output_type": output_type,
                     "model": async_model,
-                    "model_settings": model_settings,
                 }
 
                 # Only add mcp_servers if we have connected servers
