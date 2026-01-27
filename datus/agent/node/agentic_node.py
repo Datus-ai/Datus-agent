@@ -87,6 +87,8 @@ class AgenticNode(Node):
             self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config)
             self.context_length = self.model.context_length() if self.model else None
 
+        self.interaction_broker = InteractionBroker()
+
     def get_node_name(self) -> str:
         """
         Get the template name for this agentic node. Overwrite this method if you need a special name
@@ -583,11 +585,6 @@ class AgenticNode(Node):
         Returns:
             InteractionBroker instance for this node
         """
-        if self.interaction_broker is None or self.interaction_broker.is_closed:
-            # Create new broker if none exists or if previous one was closed
-            # (e.g., after cancel). We create a new instance instead of reset()
-            # to avoid event loop binding issues with asyncio.Queue and Lock.
-            self.interaction_broker = InteractionBroker()
         return self.interaction_broker
 
     async def execute_stream_with_interactions(

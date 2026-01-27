@@ -42,7 +42,6 @@ class InteractionBroker:
                  returns (choice, callback) where callback generates SUCCESS action
     - fetch(): AsyncGenerator for node to consume interaction ActionHistory objects
     - submit(): For UI to submit responses
-    - close()/reset(): Lifecycle management
 
     Usage in hooks:
         choice, callback = await broker.request(
@@ -75,7 +74,6 @@ class InteractionBroker:
     def __init__(self):
         self._pending: Dict[str, PendingInteraction] = {}
         self._output_queue: asyncio.Queue[ActionHistory] = asyncio.Queue()
-        self._closed: bool = False
         self._lock: asyncio.Lock = asyncio.Lock()
 
     async def request(
@@ -103,9 +101,6 @@ class InteractionBroker:
         Raises:
             InteractionCancelled: If broker is closed while waiting
         """
-        if self._closed:
-            raise InteractionCancelled("Broker is closed")
-
         action_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         future = loop.create_future()
@@ -150,8 +145,6 @@ class InteractionBroker:
                 callback_content_type: str = "markdown",
             ) -> None:
                 """Generate a SUCCESS interaction action with the given content."""
-                if self._closed:
-                    return
 
                 # Use same action_id and action_type, but status=SUCCESS to indicate completion
                 success_action = ActionHistory(
@@ -192,7 +185,7 @@ class InteractionBroker:
         Yields:
             ActionHistory objects with INTERACTION role (request_choice and success types)
         """
-        while not self._closed:
+        while True:
             try:
                 # Use wait_for with timeout to allow checking closed state
                 action = await asyncio.wait_for(self._output_queue.get(), timeout=0.1)
@@ -202,7 +195,7 @@ class InteractionBroker:
             except asyncio.CancelledError:
                 break
 
-    def submit(self, action_id: str, user_choice: str) -> bool:
+    async def submit(self, action_id: str, user_choice: str) -> bool:
         """
         Submit user response for a pending interaction.
 
@@ -224,7 +217,8 @@ class InteractionBroker:
             logger.warning(f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}")
             return False
 
-        self._pending.pop(action_id, None)
+        async with self._lock:
+            self._pending.pop(action_id, None)
 
         # Resolve the future with the user's choice
         if not pending.future.done():
@@ -233,29 +227,10 @@ class InteractionBroker:
 
         return True
 
-    def close(self) -> None:
-        """
-        Close the broker, cancelling any pending interactions.
-        """
-        self._closed = True
-
-        # Cancel all pending futures
-        for pending in self._pending.values():
-            if not pending.future.done():
-                pending.future.cancel()
-
-        self._pending.clear()
-        logger.debug("InteractionBroker: closed")
-
     @property
     def has_pending(self) -> bool:
         """Check if there are pending interactions waiting for response."""
         return len(self._pending) > 0
-
-    @property
-    def is_closed(self) -> bool:
-        """Check if the broker is closed."""
-        return self._closed
 
 
 async def merge_interaction_stream(
@@ -296,16 +271,39 @@ async def merge_interaction_stream(
         while not execute_exhausted or broker.has_pending or not broker._output_queue.empty():
             tasks_to_wait = []
 
-            # Create execute task if not exhausted and no pending task
+            # Handle execute task - process if done during yield, otherwise add to wait list
+            if execute_task is not None:
+                if execute_task.done():
+                    # Task completed during yield, process it now
+                    result = execute_task.result()
+                    execute_task = None
+                    if result is _EXHAUSTED:
+                        execute_exhausted = True
+                        logger.debug("merge_interaction_stream: execute_stream exhausted (during yield)")
+                    else:
+                        yield result
+                else:
+                    tasks_to_wait.append(execute_task)
+
+            # Create new execute task if needed
             if not execute_exhausted and execute_task is None:
                 execute_task = asyncio.create_task(safe_anext(execute_iter, _EXHAUSTED), name="execute")
-            if execute_task and not execute_task.done():
                 tasks_to_wait.append(execute_task)
 
-            # Create fetch task if no pending task
+            # Handle fetch task - process if done during yield, otherwise add to wait list
+            if fetch_task is not None:
+                if fetch_task.done():
+                    # Task completed during yield, process it now
+                    result = fetch_task.result()
+                    fetch_task = None
+                    if result is not _EXHAUSTED:
+                        yield result
+                else:
+                    tasks_to_wait.append(fetch_task)
+
+            # Create new fetch task if needed
             if fetch_task is None:
                 fetch_task = asyncio.create_task(safe_anext(fetch_iter, _EXHAUSTED), name="fetch")
-            if fetch_task and not fetch_task.done():
                 tasks_to_wait.append(fetch_task)
 
             if not tasks_to_wait:
@@ -341,5 +339,3 @@ async def merge_interaction_stream(
                 except asyncio.CancelledError:
                     pass
 
-        # Close the broker when done
-        broker.close()

@@ -356,7 +356,7 @@ class ChatCommands:
                             action_display.stop_live()
                             user_response = await self._handle_cli_interaction(action)
                             if current_node.interaction_broker:
-                                current_node.interaction_broker.submit(action.action_id, user_response)
+                                await current_node.interaction_broker.submit(action.action_id, user_response)
                             # Don't restart_live here - wait for SUCCESS
                         elif action.status == ActionStatus.SUCCESS:
                             # Success callback: display content and resume rendering
