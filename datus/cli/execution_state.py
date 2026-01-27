@@ -338,4 +338,3 @@ async def merge_interaction_stream(
                     await task
                 except asyncio.CancelledError:
                     pass
-
