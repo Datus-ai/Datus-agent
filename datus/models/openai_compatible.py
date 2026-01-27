@@ -128,6 +128,14 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Get base URL from config. Override in subclasses if needed."""
         return self.model_config.base_url
 
+    def _build_tool_extra_body(self) -> Dict[str, Any]:
+        """Build extra_body for tool calls. Override in subclasses for model-specific settings.
+
+        Returns:
+            Dict with extra_body parameters for ModelSettings
+        """
+        return {"stream_options": {"include_usage": True}}
+
     @staticmethod
     def _setup_custom_json_encoder():
         """Setup custom JSON encoder for special types (AnyUrl, date, datetime).
@@ -608,7 +616,9 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             try:
                 # Configure stream_options to include usage information for token tracking
-                model_settings = ModelSettings(extra_body={"stream_options": {"include_usage": True}})
+                # Use hook method to allow subclasses to customize extra_body
+                extra_body = self._build_tool_extra_body()
+                model_settings = ModelSettings(extra_body=extra_body)
 
                 model_params = {"model": self.model_name}
                 async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)

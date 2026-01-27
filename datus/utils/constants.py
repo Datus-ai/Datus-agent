@@ -71,6 +71,7 @@ class LLMProvider(str, Enum):
     CLAUDE = "claude"
     DEEPSEEK = "deepseek"
     QWEN = "qwen"
+    KIMI = "kimi"  # Moonshot Kimi models
     ANTHROPIC = "anthropic"  # Alternative name for Claude
     GEMINI = "gemini"
     LLAMA = "llama"
