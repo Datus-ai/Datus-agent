@@ -6,6 +6,8 @@
 """Interaction broker for async user interaction flow control."""
 
 import asyncio
+import queue
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -73,8 +75,26 @@ class InteractionBroker:
 
     def __init__(self):
         self._pending: Dict[str, PendingInteraction] = {}
-        self._output_queue: asyncio.Queue[ActionHistory] = asyncio.Queue()
-        self._lock: asyncio.Lock = asyncio.Lock()
+        # Use thread-safe queue.Queue to share across different event loops
+        self._output_queue: queue.Queue[ActionHistory] = queue.Queue()
+        # Use threading.Lock for thread-safe access to _pending
+        self._lock: threading.Lock = threading.Lock()
+
+    async def _queue_put(self, item: ActionHistory) -> None:
+        """Put item into queue (non-blocking, thread-safe)."""
+        self._output_queue.put_nowait(item)
+
+    async def _queue_get(self, timeout: float = 0.1) -> Optional[ActionHistory]:
+        """Get item from queue with timeout, returns None if empty."""
+        loop = asyncio.get_running_loop()
+        try:
+            # Run blocking get in executor to avoid blocking the event loop
+            return await asyncio.wait_for(
+                loop.run_in_executor(None, self._output_queue.get, True, timeout),
+                timeout=timeout + 0.1,
+            )
+        except (queue.Empty, asyncio.TimeoutError):
+            return None
 
     async def request(
         self,
@@ -112,7 +132,7 @@ class InteractionBroker:
             choices=choices,
         )
 
-        async with self._lock:
+        with self._lock:
             self._pending[action_id] = pending
 
         # Create ActionHistory with INTERACTION role
@@ -131,7 +151,7 @@ class InteractionBroker:
             output=None,
         )
 
-        await self._output_queue.put(action)
+        await self._queue_put(action)
         logger.debug(f"InteractionBroker: request queued with action_id={action_id}")
 
         # Wait for user response
@@ -166,12 +186,12 @@ class InteractionBroker:
                     },
                 )
 
-                await self._output_queue.put(success_action)
+                await self._queue_put(success_action)
                 logger.debug(f"InteractionBroker: success callback queued for action_id={action_id}")
 
             return result, success_callback
         except asyncio.CancelledError:
-            async with self._lock:
+            with self._lock:
                 self._pending.pop(action_id, None)
             raise InteractionCancelled("Request cancelled")
 
@@ -187,11 +207,9 @@ class InteractionBroker:
         """
         while True:
             try:
-                # Use wait_for with timeout to allow checking closed state
-                action = await asyncio.wait_for(self._output_queue.get(), timeout=0.1)
-                yield action
-            except asyncio.TimeoutError:
-                continue
+                action = await self._queue_get(timeout=0.1)
+                if action is not None:
+                    yield action
             except asyncio.CancelledError:
                 break
 
@@ -217,7 +235,7 @@ class InteractionBroker:
             logger.warning(f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}")
             return False
 
-        async with self._lock:
+        with self._lock:
             self._pending.pop(action_id, None)
 
         # Resolve the future with the user's choice
@@ -231,6 +249,10 @@ class InteractionBroker:
     def has_pending(self) -> bool:
         """Check if there are pending interactions waiting for response."""
         return len(self._pending) > 0
+
+    def is_queue_empty(self) -> bool:
+        """Check if the output queue is empty."""
+        return self._output_queue.empty()
 
 
 async def merge_interaction_stream(
@@ -268,7 +290,7 @@ async def merge_interaction_stream(
             return sentinel
 
     try:
-        while not execute_exhausted or broker.has_pending or not broker._output_queue.empty():
+        while not execute_exhausted or broker.has_pending or not broker.is_queue_empty():
             tasks_to_wait = []
 
             # Handle execute task - process if done during yield, otherwise add to wait list
