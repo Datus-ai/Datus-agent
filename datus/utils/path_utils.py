@@ -31,8 +31,11 @@ def safe_rmtree(
         force: If True, skip confirmation and delete directly
 
     Returns:
-        bool: True if directory was deleted, False if user cancelled or directory doesn't exist
+        bool: True if directory was deleted, False if user cancelled, directory doesn't exist,
+              or deletion failed
     """
+    import sys
+
     path = Path(path) if isinstance(path, str) else path
 
     if not path.exists():
@@ -42,13 +45,25 @@ def safe_rmtree(
         logger.warning(f"Path is not a directory: {path}")
         return False
 
+    def _do_delete() -> bool:
+        try:
+            shutil.rmtree(path)
+            logger.info(f"Deleted {description}: {path}")
+            return True
+        except OSError as e:
+            logger.error(f"Failed to delete {description} at {path}: {e}")
+            return False
+
     if force:
-        shutil.rmtree(path)
-        logger.info(f"Deleted {description}: {path}")
-        return True
+        return _do_delete()
+
+    # Check for non-interactive mode
+    if not sys.stdin.isatty():
+        logger.warning(f"Non-interactive mode, skipping deletion of {description}: {path}")
+        return False
 
     # Show confirmation prompt
-    print(f"\n⚠️  Warning: About to delete {description}")
+    print(f"\n[WARNING] About to delete {description}")
     print(f"   Path: {path}")
 
     # List contents summary
@@ -62,9 +77,7 @@ def safe_rmtree(
 
     response = input("   Continue? [y/N]: ").strip().lower()
     if response in ("y", "yes"):
-        shutil.rmtree(path)
-        logger.info(f"Deleted {description}: {path}")
-        return True
+        return _do_delete()
     else:
         logger.info(f"Cancelled deletion of {description}: {path}")
         return False

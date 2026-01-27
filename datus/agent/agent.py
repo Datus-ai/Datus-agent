@@ -86,6 +86,11 @@ class Agent:
         self._print_lock = threading.Lock()
         self._check_storage_modules()
 
+    @property
+    def _force_delete(self) -> bool:
+        """Check if force/yes flag is set to skip deletion confirmations."""
+        return getattr(self.args, "force", False) or getattr(self.args, "yes", False)
+
     def _initialize_model(self) -> LLMBaseModel:
         llm_model = LLMBaseModel.create_model(model_name="default", agent_config=self.global_config)
         logger.info(f"Using model type: {llm_model.model_config.type}, model name: {llm_model.model_config.model}")
@@ -470,11 +475,14 @@ class Agent:
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
                         path_manager = get_path_manager(datus_home=self.global_config.home)
                         semantic_yaml_dir = path_manager.semantic_model_path(self.global_config.current_namespace)
-                        force = getattr(self.args, "force", False) or getattr(self.args, "yes", False)
+                        force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
                             semantic_yaml_dir, "semantic YAML directory", force=force
                         ):
-                            return {"status": "cancelled", "message": "User cancelled deletion of semantic YAML directory"}
+                            return {
+                                "status": "cancelled",
+                                "message": "User cancelled deletion of semantic YAML directory",
+                            }
                     self.global_config.save_storage_config("semantic_model")
                 else:
                     self.global_config.check_init_storage_config("semantic_model")
@@ -518,11 +526,14 @@ class Agent:
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
                         path_manager = get_path_manager(datus_home=self.global_config.home)
                         semantic_yaml_dir = path_manager.semantic_model_path(self.global_config.current_namespace)
-                        force = getattr(self.args, "force", False) or getattr(self.args, "yes", False)
+                        force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
                             semantic_yaml_dir, "semantic YAML directory", force=force
                         ):
-                            return {"status": "cancelled", "message": "User cancelled deletion of semantic YAML directory"}
+                            return {
+                                "status": "cancelled",
+                                "message": "User cancelled deletion of semantic YAML directory",
+                            }
                     self.global_config.save_storage_config("metric")  # Keep compatibility
                 else:
                     self.global_config.check_init_storage_config("metric")
@@ -572,11 +583,14 @@ class Agent:
                     # Also clear ext_knowledge/{namespace} directory
                     path_manager = get_path_manager(datus_home=self.global_config.home)
                     ext_knowledge_dir = path_manager.ext_knowledge_path(self.global_config.current_namespace)
-                    force = getattr(self.args, "force", False) or getattr(self.args, "yes", False)
+                    force = self._force_delete
                     if ext_knowledge_dir.exists() and not safe_rmtree(
                         ext_knowledge_dir, "external knowledge directory", force=force
                     ):
-                        return {"status": "cancelled", "message": "User cancelled deletion of external knowledge directory"}
+                        return {
+                            "status": "cancelled",
+                            "message": "User cancelled deletion of external knowledge directory",
+                        }
                     self.global_config.save_storage_config("ext_knowledge")
                 else:
                     self.global_config.check_init_storage_config("ext_knowledge")
@@ -611,7 +625,7 @@ class Agent:
                     # Also clear sql_summaries/{namespace} directory (YAML files)
                     path_manager = get_path_manager(datus_home=self.global_config.home)
                     sql_summary_dir = path_manager.sql_summary_path(self.global_config.current_namespace)
-                    force = getattr(self.args, "force", False) or getattr(self.args, "yes", False)
+                    force = self._force_delete
                     if sql_summary_dir.exists() and not safe_rmtree(
                         sql_summary_dir, "SQL summary directory", force=force
                     ):
@@ -845,8 +859,9 @@ class Agent:
         gold_path = os.path.join(benchmark_path, "gold")
         if os.path.exists(gold_path):
             logger.info(f"Cleaning up gold directory: {gold_path}")
-            force = getattr(self.args, "force", False) or getattr(self.args, "yes", False)
-            safe_rmtree(gold_path, "benchmark gold directory", force=force)
+            force = self._force_delete
+            if not safe_rmtree(gold_path, "benchmark gold directory", force=force):
+                logger.warning("Gold directory not deleted, benchmark will proceed with existing gold data")
 
     def benchmark_bird_critic(self):
         pass

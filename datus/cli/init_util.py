@@ -164,6 +164,7 @@ def init_semantic_model(
     agent_config: AgentConfig,
     build_mode: Literal["incremental", "overwrite"] = "incremental",
     console: Optional[Console] = None,
+    force: bool = False,
 ) -> tuple[bool, Optional[dict[str, Any]]]:
     """Initialize semantic model using success stories.
 
@@ -172,6 +173,7 @@ def init_semantic_model(
         agent_config: Agent configuration
         build_mode: Build mode (incremental or overwrite)
         console: Optional Rich console for output
+        force: If True, skip confirmation prompts for deletion
 
     Returns:
         Tuple of (success: bool, result: Optional[dict])
@@ -197,7 +199,9 @@ def init_semantic_model(
             # Also clear semantic_models/{namespace} directory (YAML files)
             path_manager = get_path_manager(datus_home=agent_config.home)
             semantic_yaml_dir = path_manager.semantic_model_path(agent_config.current_namespace)
-            if semantic_yaml_dir.exists() and not safe_rmtree(semantic_yaml_dir, "semantic YAML directory"):
+            if semantic_yaml_dir.exists() and not safe_rmtree(
+                semantic_yaml_dir, "semantic YAML directory", force=force
+            ):
                 console.print("[yellow]Cancelled by user[/yellow]")
                 return False, None
             agent_config.save_storage_config("semantic_model")
