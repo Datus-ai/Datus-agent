@@ -523,8 +523,8 @@ class SemanticTools:
         root cause analysis of metric anomalies.
 
         Args:
-            metric_name: Metric to analyze
-            candidate_dimensions: List of dimensions to evaluate (from get_dimensions e.g., ["region", "product", "channel"])
+            metric_name: Metric to analyze(from list_metrics/search_metrics)
+            candidate_dimensions: List of dimensions to evaluate (from get_dimensions)
             baseline_start: Baseline period start date (e.g., "2026-01-01")
             baseline_end: Baseline period end date (e.g., "2026-01-01")
             current_start: Current period start date (e.g., "2026-01-08")
