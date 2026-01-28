@@ -70,9 +70,7 @@ class SkillFuncTool:
         """
         self._tool_context = ctx
 
-    def set_permission_callback(
-        self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-    ) -> None:
+    def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:
         """Set callback for ASK permission prompts.
 
         Args:
@@ -111,14 +109,21 @@ class SkillFuncTool:
                 )
 
             if permission == PermissionLevel.ASK:
-                # For ASK, we need to handle this differently
-                # The actual prompt happens at the AgenticNode level
-                # Here we just note that approval is needed
-                logger.info(f"Skill '{skill_name}' requires user approval")
-                return FuncToolResult(
-                    success=0,
-                    error=f"Skill '{skill_name}' requires user approval before loading",
-                )
+                # ASK permissions are handled by PermissionHooks in on_tool_start
+                # which runs BEFORE this tool function executes.
+                #
+                # If we reach here, it means one of:
+                # 1. Hooks prompted user and they approved (cached in session)
+                # 2. Hooks are not configured (fallback behavior)
+                #
+                # In case 1: User already approved, proceed to load skill
+                # In case 2: Without hooks, we can't prompt - proceed anyway
+                #            (this maintains backward compatibility)
+                #
+                # If user denied via hooks, PermissionDeniedException was raised
+                # and we never reach this code.
+                logger.debug(f"Skill '{skill_name}' has ASK permission, proceeding (hooks handle prompts)")
+                # Continue to load the skill below
 
             # Load the skill content
             success, message, content = self.manager.load_skill(

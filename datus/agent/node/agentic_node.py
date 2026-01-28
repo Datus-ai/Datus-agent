@@ -435,6 +435,9 @@ class AgenticNode(Node):
                 global_config=permissions_config,
                 node_overrides={self.get_node_name(): node_permissions} if node_permissions else {},
             )
+            # Forward existing callback to permission manager
+            if self._permission_callback:
+                self.permission_manager.set_permission_callback(self._permission_callback)
             logger.debug(f"Permission manager initialized for node '{self.get_node_name()}'")
 
         except Exception as e:
@@ -469,9 +472,7 @@ class AgenticNode(Node):
         except Exception as e:
             logger.error(f"Failed to setup skill manager: {e}")
 
-    def set_permission_callback(
-        self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-    ) -> None:
+    def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:
         """
         Set callback for ASK permission prompts.
 
@@ -483,6 +484,9 @@ class AgenticNode(Node):
                       Returns True if user approves, False otherwise
         """
         self._permission_callback = callback
+        # Forward to permission manager if it exists
+        if self.permission_manager:
+            self.permission_manager.set_permission_callback(callback)
         logger.debug(f"Permission callback set for node '{self.get_node_name()}'")
 
     def _get_available_skills_context(self) -> str:
@@ -525,7 +529,10 @@ class AgenticNode(Node):
 
         # Check for database tools
         if tool_name.startswith("db_") or tool_name in [
-            "list_tables", "describe_table", "execute_sql", "get_sample_data"
+            "list_tables",
+            "describe_table",
+            "execute_sql",
+            "get_sample_data",
         ]:
             return "db_tools"
 

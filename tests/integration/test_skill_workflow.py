@@ -8,7 +8,6 @@ Integration tests for skills that define db_tools workflows.
 Tests skills that guide usage of database tools without their own scripts.
 """
 
-from pathlib import Path
 
 import pytest
 
@@ -27,7 +26,8 @@ def workflow_skill_dir(tmp_path):
     skill_dir = tmp_path / "workflow-skill"
     skill_dir.mkdir()
 
-    (skill_dir / "SKILL.md").write_text("""---
+    (skill_dir / "SKILL.md").write_text(
+        """---
 name: sql-analysis-workflow
 description: Guided workflow for SQL data analysis using db_tools
 tags:
@@ -75,9 +75,11 @@ User: "What are the top 10 customers by revenue?"
 Workflow execution:
 1. list_tables() -> find customers, orders tables
 2. describe_table("customers"), describe_table("orders")
-3. execute_sql("SELECT c.name, SUM(o.amount) as revenue FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.id ORDER BY revenue DESC LIMIT 10")
+3. execute_sql("SELECT c.name, SUM(o.amount) as revenue FROM customers c
+   JOIN orders o ON c.id = o.customer_id GROUP BY c.id ORDER BY revenue DESC LIMIT 10")
 4. Interpret and present results
-""")
+"""
+    )
     return skill_dir
 
 
@@ -168,7 +170,8 @@ class TestWorkflowSkillVariations:
         # Create first workflow skill
         skill1_dir = tmp_path / "workflow1"
         skill1_dir.mkdir()
-        (skill1_dir / "SKILL.md").write_text("""---
+        (skill1_dir / "SKILL.md").write_text(
+            """---
 name: data-exploration
 description: Workflow for exploring data
 tags:
@@ -177,12 +180,14 @@ tags:
 # Data Exploration Workflow
 1. Use list_tables()
 2. Use describe_table()
-""")
+"""
+        )
 
         # Create second workflow skill
         skill2_dir = tmp_path / "workflow2"
         skill2_dir.mkdir()
-        (skill2_dir / "SKILL.md").write_text("""---
+        (skill2_dir / "SKILL.md").write_text(
+            """---
 name: query-optimization
 description: Workflow for query optimization
 tags:
@@ -191,7 +196,8 @@ tags:
 # Query Optimization Workflow
 1. Analyze query plan
 2. Add indexes if needed
-""")
+"""
+        )
 
         config = SkillConfig(directories=[str(tmp_path)])
         manager = SkillManager(config=config)
@@ -211,7 +217,8 @@ tags:
         """Test workflow skill with SQL examples."""
         skill_dir = tmp_path / "example-workflow"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text("""---
+        (skill_dir / "SKILL.md").write_text(
+            """---
 name: example-workflow
 description: Workflow with SQL examples
 ---
@@ -231,7 +238,8 @@ FROM users
 ORDER BY score DESC
 LIMIT 10;
 ```
-""")
+"""
+        )
 
         config = SkillConfig(directories=[str(tmp_path)])
         manager = SkillManager(config=config)
@@ -247,7 +255,8 @@ LIMIT 10;
         """Test workflow skill with domain-specific context."""
         skill_dir = tmp_path / "ecommerce-workflow"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text("""---
+        (skill_dir / "SKILL.md").write_text(
+            """---
 name: ecommerce-analysis
 description: E-commerce data analysis workflow
 tags:
@@ -271,7 +280,8 @@ tags:
 1. Identify relevant tables
 2. Apply metric definitions
 3. Generate SQL query
-""")
+"""
+        )
 
         config = SkillConfig(directories=[str(tmp_path)])
         manager = SkillManager(config=config)

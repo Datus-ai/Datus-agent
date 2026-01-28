@@ -666,6 +666,10 @@ class StreamingActionContext:
 
         This is used in plan mode to create a fresh display after showing
         static content (menus, plans), avoiding overlap with previous content.
+
+        Note: We do NOT reset the checkpoint here. Actions that were added
+        while the display was stopped should still be shown after recreation.
+        The checkpoint was already set when the display was first created.
         """
         # Stop and discard the old Live display
         if self.live:
@@ -675,9 +679,8 @@ class StreamingActionContext:
                 # Ignore any errors when stopping the old display
                 pass
 
-        # Set checkpoint to current number of actions
-        # This ensures only new actions (after recreation) will be displayed
-        self._display_checkpoint = len(self.actions)
+        # Do NOT reset checkpoint - keep showing all actions from original start
+        # This ensures actions added between stop/recreate are not hidden
 
         # Create a new Live display from current cursor position
         # Reuse the same content renderer (it will respect the checkpoint)
