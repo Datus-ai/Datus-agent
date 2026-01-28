@@ -234,7 +234,9 @@ class InteractionBroker:
 
             # Validate choice: if choices is non-empty, user_choice must be a valid key
             if pending.choices and user_choice not in pending.choices:
-                logger.warning(f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}")
+                logger.warning(
+                    f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}"
+                )
                 return False
 
             self._pending.pop(action_id, None)
