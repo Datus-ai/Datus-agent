@@ -11,6 +11,7 @@ from datetime import datetime
 
 from datus.cli.namespace_manager import NamespaceManager
 from datus.cli.tutorial import BenchmarkTutorial
+from datus.multi_round_benchmark import multi_benchmark, setup_base_parser_args
 from datus.utils.async_utils import setup_windows_policy
 
 # Add path fixing to ensure proper imports
@@ -323,6 +324,11 @@ def create_parser() -> argparse.ArgumentParser:
     )
     bi_subparser.add_argument("--namespace", type=str, required=True, help="Database namespace")
 
+    multi_benchmark_parser = subparsers.add_parser(
+        "multi-round-benchmark", parents=[global_parser], help="Multi-round benchmarking"
+    )
+    setup_base_parser_args(multi_benchmark_parser)
+
     # tutorial command
     subparsers.add_parser(
         "tutorial",
@@ -398,6 +404,10 @@ def main():
 
     configure_logging(args.debug)
     setup_exception_handler()
+
+    if args.action == "multi-round-benchmark":
+        multi_benchmark(args)
+        return 0
 
     # Load agent configuration
     agent_config = load_agent_config(**vars(args))
