@@ -22,7 +22,20 @@ class DateParsingTools:
     def __init__(self, agent_config: AgentConfig, model: LLMBaseModel):
         self.agent_config = agent_config
         self.model = model
+        self.reference_date: Optional[str] = None
         self.date_parser_tool = DateParserTool(language=self._get_language_setting())
+
+    def set_reference_date(self, reference_date: Optional[str]):
+        """
+        Set reference date for test datasets.
+
+        When running against test datasets, set this to the dataset's reference date
+        so that relative time expressions are evaluated against the correct time point.
+
+        Args:
+            reference_date: Reference date in YYYY-MM-DD format.
+        """
+        self.reference_date = reference_date
 
     def _get_language_setting(self) -> str:
         """Get the language setting from agent config."""
@@ -85,20 +98,29 @@ class DateParsingTools:
 
     def get_current_date(self) -> FuncToolResult:
         """
-        Get the current date.
+        Get the current date or configured reference date.
+
+        When running against test datasets, returns the configured reference date
+        instead of the real current date. This ensures date-relative queries
+        (like "last month", "yesterday") are evaluated against the dataset's time point.
 
         Returns:
-            dict with 'success', 'error', and 'result' containing current date in YYYY-MM-DD format
+            dict with 'success', 'error', and 'result' containing:
+            - current_date: The date in YYYY-MM-DD format
+            - is_reference_date: True if using configured reference date, False if using real date
         """
         try:
             from datus.utils.time_utils import get_default_current_date
 
-            current_date = get_default_current_date(None)
+            current_date = get_default_current_date(self.reference_date)
 
             return FuncToolResult(
                 success=1,
                 error=None,
-                result={"current_date": current_date},
+                result={
+                    "current_date": current_date,
+                    "is_reference_date": self.reference_date is not None,
+                },
             )
 
         except Exception as e:

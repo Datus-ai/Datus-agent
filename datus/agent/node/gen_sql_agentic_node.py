@@ -169,6 +169,10 @@ class GenSQLAgenticNode(AgenticNode):
             self.input.plan_mode = plan_mode
             self.input.auto_execute_plan = auto_execute_plan
 
+        # Set reference date for date parsing tools if configured
+        if self.date_parsing_tools and workflow.task.current_date:
+            self.date_parsing_tools.set_reference_date(workflow.task.current_date)
+
         return {"success": True, "message": "GenSQL input prepared from workflow"}
 
     def _update_database_connection(self, database_name: str):

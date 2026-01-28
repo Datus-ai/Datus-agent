@@ -235,6 +235,16 @@ def init_reference_sql(
     else:
         items_to_process = valid_items
 
+    # Force serial processing when subject_tree is not predefined
+    # to avoid race conditions in subject tree creation
+    effective_pool_size = pool_size
+    if subject_tree is None and pool_size > 1:
+        logger.info(
+            f"No predefined subject_tree provided, forcing serial processing "
+            f"(pool_size: {pool_size} -> 1) to avoid race conditions"
+        )
+        effective_pool_size = 1
+
     processed_count = 0
     process_errors = []
     if items_to_process:
@@ -243,8 +253,8 @@ def init_reference_sql(
 
         # Use SqlSummaryAgenticNode with parallel processing (unified approach)
         async def process_all():
-            semaphore = asyncio.Semaphore(pool_size)
-            logger.info(f"Processing {len(items_to_process)} SQL items with concurrency={pool_size}")
+            semaphore = asyncio.Semaphore(effective_pool_size)
+            logger.info(f"Processing {len(items_to_process)} SQL items with concurrency={effective_pool_size}")
             file_counts: Dict[str, int] = {}
             for item in items_to_process:
                 file_key = str(item.get("filepath") or "unknown_file")
