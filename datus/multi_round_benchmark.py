@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -111,8 +112,9 @@ def build_agent_args(
     task_ids: Sequence[str],
     round_dir: Path,
     round_idx: int,
+    run_id: str,
 ) -> argparse.Namespace:
-    evaluation_file = round_dir / f"evaluation_round_{round_idx}.json"
+    evaluation_file = round_dir / f"evaluation_round_{run_id}_{round_idx}.json"
     target_task_ids = None if not task_ids else list(task_ids)
     common_kwargs = {
         # "components": ["metrics", "metadata", "table_lineage", "document"],
@@ -150,6 +152,7 @@ def run_single_round(
     base_home: str,
     group_slug: str,
     target_task_ids: Sequence[str],
+    run_id: str,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[float]]:
     integration_root = Path(base_home) / "integration"
     integration_root.mkdir(parents=True, exist_ok=True)
@@ -160,12 +163,12 @@ def run_single_round(
 
     override_round_paths(agent_config, round_dir)
 
-    agent_args = build_agent_args(cli_args, target_task_ids, round_dir, round_idx)
+    agent_args = build_agent_args(cli_args, target_task_ids, round_dir, round_idx, run_id)
     db_manager = db_manager_instance(agent_config.namespaces)
     agent = Agent(args=agent_args, agent_config=agent_config, db_manager=db_manager)
 
     print(f"[Round {round_idx}] Starting benchmark -> {round_dir}")
-    benchmark_result = agent.benchmark() or {}
+    benchmark_result = agent.benchmark(run_id=run_id) or {}
     benchmark_duration = _parse_duration_seconds(benchmark_result.get("time_spends_seconds"))
     print(f"[Round {round_idx}] Finished benchmark: {benchmark_result}")
     print(f"[Round {round_idx}] Benchmark finished, running evaluation...")
@@ -253,6 +256,7 @@ def export_summary_excel(
     integration_root: Path,
     workflow_slug: str,
     round_durations: Sequence[Optional[float]],
+    run_id: str,
 ) -> Path:
     def normalize_statuses(statuses: List[str]) -> List[str]:
         normalized: List[str] = []
@@ -299,7 +303,7 @@ def export_summary_excel(
         duration_row[TASK_SUCCESS_RATE_HEADER] = ""
         rows.append(duration_row)
     df = pd.DataFrame(rows)
-    excel_path = integration_root / f"{workflow_slug}_summary.xlsx"
+    excel_path = integration_root / f"{workflow_slug}_summary_{run_id}.xlsx"
     df.to_excel(excel_path, index=False)
     return excel_path
 
@@ -324,6 +328,7 @@ def main():
 
     reports: List[Optional[Dict[str, object]]] = []
     round_durations: List[Optional[float]] = []
+    run_id = datetime.now().strftime("%Y%m%d_%H%M")
     for round_idx in range(args.max_round):
         try:
             report, duration = run_single_round(
@@ -333,6 +338,7 @@ def main():
                 base_home=base_home,
                 group_slug=group_slug,
                 target_task_ids=target_task_ids,
+                run_id=run_id,
             )
         except Exception as exc:  # pragma: no cover - surfaced for manual runs
             print(f"[Round {round_idx}] Failed with error: {exc}")
@@ -343,7 +349,9 @@ def main():
         round_durations.append(duration)
 
     status_matrix = build_status_matrix(reports, target_task_ids)
-    summary_path = export_summary_excel(status_matrix, len(reports), integration_root, group_slug, round_durations)
+    summary_path = export_summary_excel(
+        status_matrix, len(reports), integration_root, group_slug, round_durations, run_id
+    )
     print(f"Multi-round summary exported to {summary_path}")
 
 

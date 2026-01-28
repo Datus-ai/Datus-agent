@@ -111,43 +111,23 @@ class DatusPathManager:
         """Trajectory directory: ~/.datus/trajectory"""
         return self._datus_home / "trajectory"
 
-    def trajectory_run_dir(self, namespace: str, run_id: Optional[str] = None) -> Path:
-        """
-        Get trajectory directory for a specific namespace and run.
+    @staticmethod
+    def resolve_run_dir(base: Path, namespace: str, run_id: Optional[str] = None) -> Path:
+        """Resolve a namespaced run directory, creating it if needed.
 
         Args:
+            base: Base directory (e.g. save_dir or trajectory_dir, may be overridden)
             namespace: Namespace name
             run_id: Optional run identifier (timestamp). If None, returns namespace dir only.
 
         Returns:
-            Path: ~/.datus/trajectory/{namespace}/{run_id} or ~/.datus/trajectory/{namespace}
+            Path: {base}/{namespace}/{run_id} or {base}/{namespace}
         """
-        base = self.trajectory_dir / namespace
+        path = base / namespace
         if run_id:
-            path = base / run_id
-            path.mkdir(parents=True, exist_ok=True)
-            return path
-        base.mkdir(parents=True, exist_ok=True)
-        return base
-
-    def save_run_dir(self, namespace: str, run_id: Optional[str] = None) -> Path:
-        """
-        Get save directory for a specific namespace and run.
-
-        Args:
-            namespace: Namespace name
-            run_id: Optional run identifier (timestamp). If None, returns namespace dir only.
-
-        Returns:
-            Path: ~/.datus/save/{namespace}/{run_id} or ~/.datus/save/{namespace}
-        """
-        base = self.save_dir / namespace
-        if run_id:
-            path = base / run_id
-            path.mkdir(parents=True, exist_ok=True)
-            return path
-        base.mkdir(parents=True, exist_ok=True)
-        return base
+            path = path / run_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     @property
     def semantic_models_dir(self) -> Path:

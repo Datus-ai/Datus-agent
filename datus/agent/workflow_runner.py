@@ -1,7 +1,6 @@
 import argparse
 import os
 import time
-from datetime import datetime
 from typing import AsyncGenerator, Callable, Dict, Optional
 
 from datus.agent.evaluate import evaluate_result, setup_node_input
@@ -35,7 +34,7 @@ class WorkflowRunner:
         self.workflow_ready = False
         self._pre_run = pre_run_callable
         # Generate run_id if not provided (format: YYYYMMDD_HHMMSS)
-        self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.run_id = run_id
 
     def initialize_workflow(self, sql_task: SqlTask):
         """Generate a new workflow plan."""

@@ -179,7 +179,8 @@ class DatusCLI:
         if not self.check_agent_available():
             raise RuntimeError("Agent not initialized. Cannot create workflow runner.")
         if not self._workflow_runner:
-            self._workflow_runner = self.agent.create_workflow_runner()
+            # use day as run_id in cli
+            self._workflow_runner = self._create_workflow_runner()
         return self._workflow_runner
 
     def _create_custom_key_bindings(self):
@@ -405,7 +406,7 @@ class DatusCLI:
 
             self.agent_commands.update_agent_reference()
             self._pre_load_storage()
-            self._workflow_runner = self.agent.create_workflow_runner()
+            self._workflow_runner = self._create_workflow_runner()
             # self.console.print("[dim]Agent initialized successfully in background[/]")
         except Exception as e:
             self.console.print(f"[bold red]Error:[/]Failed to initialize agent in background: {str(e)}")
@@ -1045,3 +1046,6 @@ Type '.help' for a list of commands or '.exit' to quit.
         # Test the connection, ff there is an exception, it will be handled by unified exception handling.
         connection_result = self.db_connector.test_connection()
         logger.debug(f"Connection test result: {connection_result}")
+
+    def _create_workflow_runner(self) -> WorkflowRunner:
+        return self.agent.create_workflow_runner(run_id=datetime.now().strftime("%Y%m%d"))

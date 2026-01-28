@@ -4,6 +4,7 @@
 
 import os
 from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from datus.configuration.node_type import NodeType
@@ -380,10 +381,12 @@ class AgentConfig:
         Returns:
             Path string for save storage
         """
-        from datus.utils.path_manager import get_path_manager
+        return str(self.save_run_dir(self._current_namespace, run_id))
 
-        path_manager = get_path_manager()
-        return str(path_manager.save_run_dir(self._current_namespace, run_id))
+    def save_run_dir(self, namespace: str, run_id: Optional[str] = None) -> Path:
+        from datus.utils.path_manager import DatusPathManager
+
+        return DatusPathManager.resolve_run_dir(Path(self._save_dir), namespace, run_id)
 
     @property
     def trajectory_dir(self) -> str:
@@ -399,10 +402,13 @@ class AgentConfig:
         Returns:
             Path string for trajectory storage
         """
-        from datus.utils.path_manager import get_path_manager
 
-        path_manager = get_path_manager()
-        return str(path_manager.trajectory_run_dir(self._current_namespace, run_id))
+        return str(self.trajectory_run_dir(self._current_namespace, run_id))
+
+    def trajectory_run_dir(self, namespace: str, run_id: Optional[str] = None) -> Path:
+        from datus.utils.path_manager import DatusPathManager
+
+        return DatusPathManager.resolve_run_dir(Path(self._trajectory_dir), namespace, run_id)
 
     def reflection_nodes(self, strategy: str) -> List[str]:
         if strategy not in self._reflection_nodes:

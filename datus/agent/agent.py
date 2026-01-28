@@ -149,9 +149,10 @@ class Agent:
         sql_task: Optional[SqlTask] = None,
         check_storage: bool = False,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        run_id: Optional[str] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Execute a workflow with streaming progress updates."""
-        runner = self.create_workflow_runner()
+        runner = self.create_workflow_runner(run_id=run_id)
         async for action in runner.run_stream(
             sql_task=sql_task,
             check_storage=check_storage,
@@ -640,7 +641,7 @@ class Agent:
             "components": results,
         }
 
-    def benchmark(self):
+    def benchmark(self, run_id: Optional[str] = None):
         logger.info("Benchmarking begins")
         benchmark_platform = self.args.benchmark
         benchmark_path = self.global_config.benchmark_path(benchmark_platform)
@@ -650,27 +651,30 @@ class Agent:
 
         target_task_ids = getattr(self.args, "benchmark_task_ids", [])
         target_task_ids = set(target_task_ids) if target_task_ids else None
-        import time
-        from datetime import datetime
 
-        # Generate a shared run_id for this benchmark run
-        benchmark_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        logger.info(f"Benchmark run_id: {benchmark_run_id}")
+        if not run_id:
+            from datetime import datetime
+
+            # Generate a shared run_id for this benchmark run
+            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        logger.info(f"Benchmark run_id: {run_id}")
+        import time
 
         start = time.perf_counter()
         if benchmark_platform == "semantic_layer":
             self.global_config.check_init_storage_config("metric")
-            result = self.benchmark_semantic_layer(benchmark_path, target_task_ids, run_id=benchmark_run_id)
+            result = self.benchmark_semantic_layer(benchmark_path, target_task_ids, run_id=run_id)
         else:
             self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metric")
-            result = self.do_benchmark(benchmark_platform, target_task_ids, run_id=benchmark_run_id)
+            result = self.do_benchmark(benchmark_platform, target_task_ids, run_id=run_id)
         end = time.perf_counter()
 
         time_spends = end - start
         result["time_spends"] = format_duration_human(time_spends)
         result["time_spends_seconds"] = str(time_spends)
-        result["run_id"] = benchmark_run_id
+        result["run_id"] = run_id
         return result
 
     def do_benchmark(
