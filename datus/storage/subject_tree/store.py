@@ -156,7 +156,13 @@ class SubjectTreeStore:
         except sqlite3.IntegrityError as e:
             conn.rollback()
             if "UNIQUE constraint failed" in str(e):
-                raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}")
+                # Race condition in parallel writes: node was created by another thread/process
+                # Return the existing node instead of raising an error
+                existing_node = self._find_child_by_name(parent_id, name)
+                if existing_node:
+                    logger.debug(f"Node '{name}' already exists under parent {parent_id}, returning existing node")
+                    return existing_node
+                raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}") from e
             raise
         except Exception as e:
             conn.rollback()
