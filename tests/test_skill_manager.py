@@ -8,7 +8,6 @@ Unit tests for SkillManager.
 Tests skill coordination, permission integration, and XML generation.
 """
 
-from pathlib import Path
 
 import pytest
 
@@ -18,9 +17,8 @@ from datus.tools.permission.permission_config import (
     PermissionRule,
 )
 from datus.tools.permission.permission_manager import PermissionManager
-from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
+from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_manager import SkillManager
-from datus.tools.skill_tools.skill_registry import SkillRegistry
 
 
 @pytest.fixture
@@ -38,7 +36,8 @@ def temp_skills_dir(tmp_path):
     ]:
         skill_dir = skills_dir / skill_name
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(f"""---
+        (skill_dir / "SKILL.md").write_text(
+            f"""---
 name: {skill_name}
 description: {desc}
 tags: {tags}
@@ -47,7 +46,8 @@ tags: {tags}
 # {skill_name.replace('-', ' ').title()}
 
 {desc}
-""")
+"""
+        )
 
     return skills_dir
 
@@ -200,9 +200,7 @@ class TestSkillManagerLoadSkill:
     def test_load_skill_skip_permission_check(self, skill_config, permission_manager):
         """Test loading a skill with permission check disabled."""
         manager = SkillManager(config=skill_config, permission_manager=permission_manager)
-        success, message, content = manager.load_skill(
-            "internal-admin", "chatbot", check_permission=False
-        )
+        success, message, content = manager.load_skill("internal-admin", "chatbot", check_permission=False)
 
         # Should succeed when permission check is skipped
         assert success is True
@@ -344,12 +342,14 @@ class TestSkillManagerRefresh:
         # Add a new skill
         new_skill_dir = temp_skills_dir / "new-skill"
         new_skill_dir.mkdir()
-        (new_skill_dir / "SKILL.md").write_text("""---
+        (new_skill_dir / "SKILL.md").write_text(
+            """---
 name: new-skill
 description: A new skill
 ---
 # New Skill
-""")
+"""
+        )
 
         manager.refresh()
         assert manager.get_skill_count() == initial_count + 1

@@ -11,7 +11,7 @@ following Claude Code and OpenCode patterns.
 
 import fnmatch
 import logging
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 
@@ -66,9 +66,7 @@ class PermissionManager:
 
         logger.debug(f"PermissionManager initialized with {len(self.global_config.rules)} global rules")
 
-    def set_permission_callback(
-        self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]
-    ) -> None:
+    def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:
         """Set callback for ASK permission user prompts.
 
         Args:
@@ -323,8 +321,7 @@ class PermissionManager:
             "default_permission": effective_config.default_permission.value,
             "rule_count": len(effective_config.rules),
             "rules": [
-                {"tool": r.tool, "pattern": r.pattern, "permission": r.permission.value}
-                for r in effective_config.rules
+                {"tool": r.tool, "pattern": r.pattern, "permission": r.permission.value} for r in effective_config.rules
             ],
             "session_approvals": list(self._session_approvals.keys()),
         }

@@ -8,7 +8,6 @@ Integration tests for skills with Python script execution.
 Tests the complete flow of loading skills with scripts and executing them.
 """
 
-from pathlib import Path
 
 import pytest
 
@@ -28,7 +27,8 @@ def python_script_skill_dir(tmp_path):
     skill_dir.mkdir()
 
     # Create SKILL.md
-    (skill_dir / "SKILL.md").write_text("""---
+    (skill_dir / "SKILL.md").write_text(
+        """---
 name: data-analyzer
 description: Analyze data using Python scripts
 tags:
@@ -57,14 +57,16 @@ python scripts/analyze_data.py --input <data.json> --output <report.json>
 1. Execute SQL query using db_tools.execute_sql
 2. Save results to temporary file
 3. Run analyze_data.py on the results
-""")
+"""
+    )
 
     # Create scripts directory
     scripts_dir = skill_dir / "scripts"
     scripts_dir.mkdir()
 
     # Create analyze_data.py
-    (scripts_dir / "analyze_data.py").write_text("""
+    (scripts_dir / "analyze_data.py").write_text(
+        """
 import json
 import sys
 import argparse
@@ -85,7 +87,8 @@ def main():
 
 if __name__ == "__main__":
     main()
-""")
+"""
+    )
 
     return skill_dir
 
@@ -164,9 +167,7 @@ class TestSkillPythonScriptExecution:
         assert bash_tool is not None
 
         # Execute script via skill bash tool
-        bash_result = bash_tool.execute_command(
-            "python scripts/analyze_data.py --input test.json"
-        )
+        bash_result = bash_tool.execute_command("python scripts/analyze_data.py --input test.json")
         assert bash_result.success == 1
         assert "rows_analyzed" in bash_result.result
 
@@ -198,9 +199,11 @@ class TestSkillPythonScriptExecution:
 
         # Create a script that raises an error
         scripts_dir = python_script_skill_dir / "scripts"
-        (scripts_dir / "error_script.py").write_text("""
+        (scripts_dir / "error_script.py").write_text(
+            """
 raise ValueError("Intentional error")
-""")
+"""
+        )
 
         bash_tool = SkillBashTool(skill_metadata=skill, workspace_root=str(skill.location))
 
@@ -218,7 +221,8 @@ class TestSkillScriptPatternVariations:
         skill_dir = tmp_path / "multi-pattern-skill"
         skill_dir.mkdir()
 
-        (skill_dir / "SKILL.md").write_text("""---
+        (skill_dir / "SKILL.md").write_text(
+            """---
 name: multi-pattern
 description: Skill with multiple patterns
 allowed_commands:
@@ -227,7 +231,8 @@ allowed_commands:
   - "sh:*.sh"
 ---
 # Multi-Pattern Skill
-""")
+"""
+        )
 
         scripts_dir = skill_dir / "scripts"
         scripts_dir.mkdir()
@@ -256,14 +261,16 @@ allowed_commands:
         skill_dir = tmp_path / "inline-skill"
         skill_dir.mkdir()
 
-        (skill_dir / "SKILL.md").write_text("""---
+        (skill_dir / "SKILL.md").write_text(
+            """---
 name: inline-skill
 description: Skill allowing inline Python
 allowed_commands:
   - "python:-c:*"
 ---
 # Inline Skill
-""")
+"""
+        )
 
         config = SkillConfig(directories=[str(tmp_path)])
         registry = SkillRegistry(config=config)

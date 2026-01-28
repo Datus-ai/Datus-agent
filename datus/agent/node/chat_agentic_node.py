@@ -17,6 +17,10 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool
+from datus.tools.permission.permission_hooks import CompositeHooks, PermissionHooks
+from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
+from datus.tools.skill_tools.skill_manager import SkillManager
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -53,6 +57,15 @@ class ChatAgenticNode(GenSQLAgenticNode):
             agent_config: Agent configuration
             tools: List of tools (will be populated in setup_tools)
         """
+        # Initialize skill tools attributes BEFORE calling parent constructor
+        # This is required because parent's __init__ calls setup_tools()
+        self.permission_manager: Optional[PermissionManager] = None
+        self.skill_manager: Optional[SkillManager] = None
+        self.skill_func_tool: Optional[SkillFuncTool] = None
+
+        # Initialize permission hooks attribute (will be set up in setup_tools)
+        self.permission_hooks: Optional[PermissionHooks] = None
+
         # Call parent constructor with node_name="chat"
         # This will initialize max_turns, tool attributes, plan mode attributes, and MCP servers
         super().__init__(
@@ -170,7 +183,198 @@ class ChatAgenticNode(GenSQLAgenticNode):
         self.context_search_tools = ContextSearchTools(self.agent_config)
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
+        self._setup_skill_tools()
         self._rebuild_tools()
+
+        # Setup permission hooks after all tools are initialized
+        self._setup_permission_hooks()
+
+    def _setup_skill_tools(self):
+        """Setup skill discovery and loading tools with permission control."""
+        try:
+            # Create PermissionManager from agent config
+            self.permission_manager = PermissionManager(
+                global_config=self.agent_config.permissions_config,
+                node_overrides=self._get_node_permission_overrides(),
+            )
+
+            # Set permission callback for ASK permissions (legacy callback, for backward compatibility)
+            self.permission_manager.set_permission_callback(self._handle_permission_ask)
+
+            # Create SkillManager with permission support
+            self.skill_manager = SkillManager(
+                permission_manager=self.permission_manager,
+            )
+            self.skill_func_tool = SkillFuncTool(
+                manager=self.skill_manager,
+                node_name="chat",
+            )
+            logger.debug(f"Setup skill tools: {self.skill_manager.get_skill_count()} skills discovered")
+        except Exception as e:
+            logger.error(f"Failed to setup skill tools: {e}")
+
+    def _setup_permission_hooks(self):
+        """Setup permission hooks and register all tool categories.
+
+        Creates PermissionHooks instance and registers all available tools
+        with their respective categories for unified permission checking.
+        """
+        if not self.permission_manager:
+            logger.debug("No permission manager available, skipping permission hooks setup")
+            return
+
+        try:
+            from rich.console import Console
+
+            self.permission_hooks = PermissionHooks(
+                permission_manager=self.permission_manager,
+                node_name=self.get_node_name(),
+                console=Console(),
+            )
+
+            # Register tools by category (follows existing FuncTool structure)
+            if self.db_func_tool:
+                self.permission_hooks.register_tools("db_tools", self.db_func_tool.available_tools())
+            if self.context_search_tools:
+                self.permission_hooks.register_tools(
+                    "context_search_tools", self.context_search_tools.available_tools()
+                )
+            if self.date_parsing_tools:
+                self.permission_hooks.register_tools("date_parsing_tools", self.date_parsing_tools.available_tools())
+            if self.filesystem_func_tool:
+                self.permission_hooks.register_tools("filesystem_tools", self.filesystem_func_tool.available_tools())
+            if self.skill_func_tool:
+                self.permission_hooks.register_tools("skills", self.skill_func_tool.available_tools())
+
+            logger.debug(f"Permission hooks setup with {len(self.permission_hooks.tool_registry)} registered tools")
+        except Exception as e:
+            logger.error(f"Failed to setup permission hooks: {e}")
+            self.permission_hooks = None
+
+    async def _handle_permission_ask(
+        self,
+        tool_category: str,
+        tool_name: str,
+        context: dict,
+    ) -> bool:
+        """Handle ASK permission by prompting user for confirmation.
+
+        Args:
+            tool_category: Category of the tool (e.g., "skills")
+            tool_name: Name of the tool/skill
+            context: Additional context about the request
+
+        Returns:
+            True if user approved, False otherwise
+        """
+        try:
+            from rich.console import Console
+            from rich.prompt import Confirm
+
+            console = Console()
+            console.print(f"\n[yellow]Permission required:[/yellow] {tool_category}.{tool_name}")
+            if context:
+                console.print(f"[dim]Context: {context}[/dim]")
+
+            approved = Confirm.ask(f"Allow {tool_name}?", default=False)
+
+            if approved:
+                # Ask if user wants to approve for the entire session
+                always = Confirm.ask("Always allow this session?", default=False)
+                if always and self.permission_manager:
+                    self.permission_manager.approve_for_session(tool_category, tool_name)
+
+            return approved
+        except Exception as e:
+            logger.error(f"Permission prompt failed: {e}")
+            return False
+
+    def _get_node_permission_overrides(self) -> dict:
+        """Get node-specific permission overrides from agent config.
+
+        Returns:
+            Dictionary of node_name -> PermissionConfig
+        """
+        # Check if agent config has node-specific permission overrides
+        if not self.agent_config:
+            return {}
+
+        # Look for permission overrides in agentic_nodes config
+        chat_config = self.agent_config.agentic_nodes.get("chat", {})
+        if isinstance(chat_config, dict) and "permissions" in chat_config:
+            return {"chat": chat_config["permissions"]}
+
+        return {}
+
+    @override
+    def _get_execution_config(self, execution_mode: str, original_input) -> dict:
+        """Get execution configuration with permission hooks for all tools.
+
+        Overrides parent to add unified permission hooks that check permissions
+        before executing any tool (db_tools, skills, MCP, filesystem, etc.).
+
+        Args:
+            execution_mode: "normal" or "plan"
+            original_input: Original chat input for context
+
+        Returns:
+            Configuration dict with tools, instruction, and hooks
+        """
+        # Get base config from parent
+        config = super()._get_execution_config(execution_mode, original_input)
+
+        # Add permission hooks if available
+        if self.permission_hooks:
+            existing_hooks = config.get("hooks")
+            if existing_hooks:
+                # Combine with existing hooks (e.g., PlanModeHooks)
+                config["hooks"] = CompositeHooks([existing_hooks, self.permission_hooks])
+            else:
+                config["hooks"] = self.permission_hooks
+
+        return config
+
+    @override
+    def _rebuild_tools(self):
+        """Rebuild the tools list with current tool instances including skills."""
+        self.tools = []
+        if self.db_func_tool:
+            self.tools.extend(self.db_func_tool.available_tools())
+        if self.context_search_tools:
+            self.tools.extend(self.context_search_tools.available_tools())
+        if self.date_parsing_tools:
+            self.tools.extend(self.date_parsing_tools.available_tools())
+        if self.filesystem_func_tool:
+            self.tools.extend(self.filesystem_func_tool.available_tools())
+        # Add skill tools
+        if self.skill_func_tool:
+            self.tools.extend(self.skill_func_tool.available_tools())
+
+    @override
+    def _get_system_prompt(
+        self,
+        conversation_summary: Optional[str] = None,
+        prompt_version: Optional[str] = None,
+    ) -> str:
+        """Get system prompt with available skills injected.
+
+        Args:
+            conversation_summary: Optional summary from previous conversation compact
+            prompt_version: Optional prompt version to use
+
+        Returns:
+            System prompt string with available skills XML appended
+        """
+        # Call parent to get base prompt
+        base_prompt = super()._get_system_prompt(conversation_summary, prompt_version)
+
+        # Generate available skills XML and append to prompt
+        if self.skill_manager and self.skill_manager.get_skill_count() > 0:
+            skills_xml = self.skill_manager.generate_available_skills_xml(node_name="chat")
+            if skills_xml:
+                base_prompt = base_prompt + "\n\n" + skills_xml
+
+        return base_prompt
 
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None

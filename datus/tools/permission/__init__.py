@@ -14,6 +14,11 @@ from datus.tools.permission.permission_config import (
     PermissionLevel,
     PermissionRule,
 )
+from datus.tools.permission.permission_hooks import (
+    CompositeHooks,
+    PermissionDeniedException,
+    PermissionHooks,
+)
 from datus.tools.permission.permission_manager import PermissionManager
 
 __all__ = [
@@ -21,4 +26,7 @@ __all__ = [
     "PermissionRule",
     "PermissionConfig",
     "PermissionManager",
+    "PermissionHooks",
+    "PermissionDeniedException",
+    "CompositeHooks",
 ]

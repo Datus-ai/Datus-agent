@@ -183,11 +183,13 @@ class TestPermissionConfig:
 
     def test_permission_config_from_dict_only_rules(self):
         """Test creating PermissionConfig with only rules."""
-        config = PermissionConfig.from_dict({
-            "rules": [
-                {"tool": "mcp", "pattern": "*", "permission": "deny"},
-            ],
-        })
+        config = PermissionConfig.from_dict(
+            {
+                "rules": [
+                    {"tool": "mcp", "pattern": "*", "permission": "deny"},
+                ],
+            }
+        )
         assert config.default_permission == PermissionLevel.ALLOW
         assert len(config.rules) == 1
 

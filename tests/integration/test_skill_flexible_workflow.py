@@ -8,7 +8,6 @@ Integration tests for flexible workflow configuration.
 Tests multiple skills, pattern filtering, permission overrides, and chained workflows.
 """
 
-from pathlib import Path
 
 import pytest
 
@@ -19,7 +18,6 @@ from datus.tools.permission.permission_config import (
 )
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import (
-    SkillBashTool,
     SkillConfig,
     SkillFuncTool,
     SkillManager,
@@ -36,7 +34,8 @@ def multi_skill_setup(tmp_path):
     # Skill 1: Quick analysis (no scripts)
     quick_dir = skills_dir / "quick-analysis"
     quick_dir.mkdir()
-    (quick_dir / "SKILL.md").write_text("""---
+    (quick_dir / "SKILL.md").write_text(
+        """---
 name: quick-analysis
 description: Fast data exploration workflow
 tags:
@@ -49,12 +48,14 @@ tags:
 1. list_tables()
 2. execute_sql("SELECT * FROM {table} LIMIT 5")
 3. Summarize findings
-""")
+"""
+    )
 
     # Skill 2: Deep analysis (with scripts)
     deep_dir = skills_dir / "deep-analysis"
     deep_dir.mkdir()
-    (deep_dir / "SKILL.md").write_text("""---
+    (deep_dir / "SKILL.md").write_text(
+        """---
 name: deep-analysis
 description: Comprehensive analysis with visualization
 tags:
@@ -69,7 +70,8 @@ allowed_commands:
 1. Full schema analysis
 2. Statistical profiling via scripts
 3. Visualization generation
-""")
+"""
+    )
     scripts_dir = deep_dir / "scripts"
     scripts_dir.mkdir()
     (scripts_dir / "profile.py").write_text('print("profiling...")')
@@ -77,7 +79,8 @@ allowed_commands:
     # Skill 3: Report generation
     report_dir = skills_dir / "report-generator"
     report_dir.mkdir()
-    (report_dir / "SKILL.md").write_text("""---
+    (report_dir / "SKILL.md").write_text(
+        """---
 name: report-generator
 description: Generate formatted reports
 tags:
@@ -89,7 +92,8 @@ allowed_commands:
 # Report Generator
 
 Generate reports in various formats (markdown, PDF, HTML)
-""")
+"""
+    )
     report_scripts = report_dir / "scripts"
     report_scripts.mkdir()
     (report_scripts / "generate_report.py").write_text('print("report generated")')
@@ -97,7 +101,8 @@ Generate reports in various formats (markdown, PDF, HTML)
     # Skill 4: Admin skill (for permission testing)
     admin_dir = skills_dir / "admin-tools"
     admin_dir.mkdir()
-    (admin_dir / "SKILL.md").write_text("""---
+    (admin_dir / "SKILL.md").write_text(
+        """---
 name: admin-tools
 description: Administrative tools
 tags:
@@ -107,7 +112,8 @@ tags:
 # Admin Tools
 
 Internal admin functionality.
-""")
+"""
+    )
 
     return skills_dir
 
@@ -355,13 +361,15 @@ class TestSkillMetadataVariations:
         """Test that skill version is properly loaded."""
         skill_dir = tmp_path / "versioned-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text("""---
+        (skill_dir / "SKILL.md").write_text(
+            """---
 name: versioned-skill
 description: A versioned skill
 version: 2.0.0
 ---
 # Versioned Skill
-""")
+"""
+        )
 
         config = SkillConfig(directories=[str(tmp_path)])
         registry = SkillRegistry(config=config)
@@ -374,13 +382,15 @@ version: 2.0.0
         """Test user_invocable flag."""
         skill_dir = tmp_path / "hidden-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text("""---
+        (skill_dir / "SKILL.md").write_text(
+            """---
 name: hidden-skill
 description: A skill hidden from user menu
 user_invocable: false
 ---
 # Hidden Skill
-""")
+"""
+        )
 
         config = SkillConfig(directories=[str(tmp_path)])
         registry = SkillRegistry(config=config)
@@ -393,13 +403,15 @@ user_invocable: false
         """Test disable_model_invocation flag."""
         skill_dir = tmp_path / "user-only-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text("""---
+        (skill_dir / "SKILL.md").write_text(
+            """---
 name: user-only-skill
 description: A skill that only users can invoke
 disable_model_invocation: true
 ---
 # User-Only Skill
-""")
+"""
+        )
 
         config = SkillConfig(directories=[str(tmp_path)])
         manager = SkillManager(config=config)

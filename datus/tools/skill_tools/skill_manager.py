@@ -11,7 +11,7 @@ to provide a unified interface for skill operations.
 
 import fnmatch
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata

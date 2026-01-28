@@ -14,7 +14,7 @@ import logging
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List
 
 from agents import Tool
 
@@ -79,10 +79,7 @@ class SkillBashTool:
         self.timeout = timeout
         self._tool_context: Any = None
 
-        logger.debug(
-            f"SkillBashTool created for '{skill_metadata.name}' "
-            f"with patterns: {self.allowed_patterns}"
-        )
+        logger.debug(f"SkillBashTool created for '{skill_metadata.name}' " f"with patterns: {self.allowed_patterns}")
 
     def set_tool_context(self, ctx: Any) -> None:
         """Set tool context (called by framework before tool invocation).
@@ -119,13 +116,11 @@ class SkillBashTool:
 
         # Check if command is allowed
         if not self._is_command_allowed(command):
-            logger.warning(
-                f"Command not allowed for skill '{self.skill.name}': {command}"
-            )
+            logger.warning(f"Command not allowed for skill '{self.skill.name}': {command}")
             return FuncToolResult(
                 success=0,
                 error=f"Command not allowed by skill permissions. "
-                      f"Allowed patterns: {', '.join(self.allowed_patterns)}",
+                f"Allowed patterns: {', '.join(self.allowed_patterns)}",
             )
 
         try:
