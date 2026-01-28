@@ -124,6 +124,11 @@ class ChatExecutor:
                                     elif not choices:
                                         # Free-text input: submit empty string
                                         await broker.submit(action.action_id, "")
+                                    elif choices:
+                                        # Choices exist but no default - submit first key
+                                        first_key = next(iter(choices.keys()))
+                                        await broker.submit(action.action_id, first_key)
+                                        logger.info(f"Web auto-submitted first choice (no default): {first_key}")
                                 continue  # Don't yield PROCESSING to UI
 
                             # SUCCESS interactions are yielded for UI rendering

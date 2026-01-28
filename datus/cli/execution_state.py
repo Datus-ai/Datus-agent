@@ -224,23 +224,24 @@ class InteractionBroker:
         Returns:
             True if submission was successful, False if action_id not found or invalid choice
         """
-        if action_id not in self._pending:
-            logger.warning(f"InteractionBroker: submit called with unknown action_id={action_id}")
-            return False
-
-        pending = self._pending.get(action_id)
-
-        # Validate choice: if choices is non-empty, user_choice must be a valid key
-        if pending.choices and user_choice not in pending.choices:
-            logger.warning(f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}")
-            return False
 
         with self._lock:
+            if action_id not in self._pending:
+                logger.warning(f"InteractionBroker: submit called with unknown action_id={action_id}")
+                return False
+
+            pending = self._pending.get(action_id)
+
+            # Validate choice: if choices is non-empty, user_choice must be a valid key
+            if pending.choices and user_choice not in pending.choices:
+                logger.warning(f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}")
+                return False
+
             self._pending.pop(action_id, None)
 
         # Resolve the future with the user's choice
         if not pending.future.done():
-            pending.future.set_result(user_choice)
+            pending.future.get_loop().call_soon_threadsafe(pending.future.set_result, user_choice)
             logger.debug(f"InteractionBroker: submitted response for action_id={action_id}")
 
         return True
