@@ -652,7 +652,7 @@ class TestSubjectTreeStore:
         store.create_node(None, "Finance")
         store.create_node(None, "HR")
         finance = store.get_node_by_path(["Finance"])
-        revenue = store.create_node(finance["node_id"], "HR")
+        store.create_node(finance["node_id"], "HR")
 
         # Try to move Finance/HR to root level — conflicts with existing root "HR"
         with pytest.raises(ValueError, match="already exists"):
