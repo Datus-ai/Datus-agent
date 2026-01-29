@@ -26,6 +26,13 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+def _normalize_null(value):
+    """Convert string 'null' to None for LLM compatibility."""
+    if value == "null" or value == "None":
+        return None
+    return value
+
+
 def _run_async(coro):
     """
     Run async coroutine safely, handling both sync and async contexts.
@@ -201,6 +208,8 @@ class SemanticTools:
         Returns:
             FuncToolResult with matching metrics
         """
+        # Normalize null values from LLM
+        subject_path = _normalize_null(subject_path)
         try:
             results = self.metric_rag.search_metrics(
                 query_text=query_text,
@@ -258,6 +267,8 @@ class SemanticTools:
         Returns:
             FuncToolResult with list of metrics
         """
+        # Normalize null values from LLM
+        path = _normalize_null(path)
         try:
             # Try storage first
             all_metrics = self.metric_rag.search_all_metrics()
@@ -339,6 +350,8 @@ class SemanticTools:
         Returns:
             FuncToolResult with list of dimension names
         """
+        # Normalize null values from LLM
+        path = _normalize_null(path)
         try:
             # Get dimensions from adapter (MetricFlow) to ensure consistency with query execution
             if self.adapter:
