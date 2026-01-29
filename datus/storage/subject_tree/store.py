@@ -139,6 +139,11 @@ class SubjectTreeStore:
             if not parent:
                 raise ValueError(f"Parent node {parent_id} not found")
 
+        # Check if node with same name already exists under this parent
+        existing_node = self._find_child_by_name(parent_id, name)
+        if existing_node:
+            raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}")
+
         # Create node
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -169,12 +174,6 @@ class SubjectTreeStore:
         except sqlite3.IntegrityError as e:
             conn.rollback()
             if "UNIQUE constraint failed" in str(e):
-                # Race condition in parallel writes: node was created by another thread/process
-                # Return the existing node instead of raising an error
-                existing_node = self._find_child_by_name(parent_id, name)
-                if existing_node:
-                    logger.debug(f"Node '{name}' already exists under parent {parent_id}, returning existing node")
-                    return existing_node
                 raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}") from e
             raise
         except Exception as e:
@@ -285,22 +284,21 @@ class SubjectTreeStore:
 
         # Handle parent_id change
         if parent_id is not None:
-            # -1 means set to None (root level)
-            new_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
+            # -1 means set to root level (ROOT_PARENT_ID)
 
             # Validate no cycle
-            if new_parent_id != ROOT_PARENT_ID and not self.validate_no_cycle(node_id, new_parent_id):
-                raise ValueError(f"Moving node {node_id} to parent {new_parent_id} would create a cycle")
+            if parent_id != ROOT_PARENT_ID and not self.validate_no_cycle(node_id, parent_id):
+                raise ValueError(f"Moving node {node_id} to parent {parent_id} would create a cycle")
 
             # Validate parent exists (if provided)
-            if new_parent_id != ROOT_PARENT_ID:
-                parent = self.get_node(new_parent_id)
+            if parent_id != ROOT_PARENT_ID:
+                parent = self.get_node(parent_id)
                 if not parent:
-                    raise ValueError(f"Parent node {new_parent_id} not found")
+                    raise ValueError(f"Parent node {parent_id} not found")
 
             # Update parent - use ROOT_PARENT_ID for root level
             update_fields.append("parent_id = ?")
-            update_values.append(new_parent_id)
+            update_values.append(parent_id)
 
         if not update_fields:
             logger.debug(f"No fields to update for node {node_id}")
@@ -615,6 +613,9 @@ class SubjectTreeStore:
     def find_or_create_path(self, path_components: List[str]) -> int:
         """Find or create nodes along a path.
 
+        Handles race conditions in parallel writes: if create_node raises
+        ValueError due to a duplicate, falls back to finding the existing node.
+
         Args:
             path_components: List of node names from root to leaf
                            Example: ['Finance', 'Revenue', 'Q1']
@@ -643,9 +644,18 @@ class SubjectTreeStore:
                 # Node exists, continue
                 parent_id = node["node_id"]
             else:
-                # Create new node
-                created = self.create_node(parent_id=parent_id, name=component, description="")
-                parent_id = created["node_id"]
+                # Create new node, handle race condition with parallel writes
+                try:
+                    created = self.create_node(parent_id=parent_id, name=component, description="")
+                    parent_id = created["node_id"]
+                except ValueError:
+                    # Race condition: another thread/process created the node between
+                    # our _find_child_by_name check and create_node call
+                    existing_node = self._find_child_by_name(parent_id, component)
+                    if existing_node:
+                        parent_id = existing_node["node_id"]
+                    else:
+                        raise
 
         return parent_id
 

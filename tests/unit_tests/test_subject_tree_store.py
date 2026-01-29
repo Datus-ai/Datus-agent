@@ -67,6 +67,13 @@ class TestSubjectTreeStore:
         with pytest.raises(ValueError, match="already exists"):
             store.create_node(root["node_id"], "Revenue")
 
+    def test_duplicate_root_name_fails(self, store):
+        """Test that duplicate root node names fail (UNIQUE constraint on parent_id=-1)."""
+        store.create_node(None, "Finance")
+
+        with pytest.raises(ValueError, match="already exists"):
+            store.create_node(None, "Finance")
+
     def test_duplicate_name_different_parent_succeeds(self, store):
         """Test that duplicate names under different parents succeed."""
         finance = store.create_node(None, "Finance")
@@ -616,6 +623,40 @@ class TestSubjectTreeStore:
         assert new_location["name"] == "Q1"
         assert new_location["parent_id"] is None
         assert store.get_full_path(new_location["node_id"]) == ["Q1"]
+
+    def test_rename_and_move_to_root_level(self, store):
+        """Test renaming a node and moving it to root level simultaneously."""
+        # Create: Finance -> Revenue -> Q1
+        finance = store.create_node(None, "Finance")
+        revenue = store.create_node(finance["node_id"], "Revenue")
+        store.create_node(revenue["node_id"], "Q1")
+
+        # Move Q1 to root level and rename to Quarter1
+        success = store.rename(["Finance", "Revenue", "Q1"], ["Quarter1"])
+
+        assert success is True
+
+        # Verify old location is gone
+        old_location = store.get_node_by_path(["Finance", "Revenue", "Q1"])
+        assert old_location is None
+
+        # Verify new root location
+        new_location = store.get_node_by_path(["Quarter1"])
+        assert new_location is not None
+        assert new_location["name"] == "Quarter1"
+        assert new_location["parent_id"] is None
+        assert store.get_full_path(new_location["node_id"]) == ["Quarter1"]
+
+    def test_rename_to_root_duplicate_name_fails(self, store):
+        """Test that moving a node to root level fails if name already exists at root."""
+        store.create_node(None, "Finance")
+        store.create_node(None, "HR")
+        finance = store.get_node_by_path(["Finance"])
+        revenue = store.create_node(finance["node_id"], "HR")
+
+        # Try to move Finance/HR to root level — conflicts with existing root "HR"
+        with pytest.raises(ValueError, match="already exists"):
+            store.rename(["Finance", "HR"], ["HR"])
 
     def test_rename_empty_old_path_fails(self, store):
         """Test that rename fails with empty old path."""
