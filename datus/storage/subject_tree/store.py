@@ -23,6 +23,7 @@ SUBJECT_ID_COLUMN_NAME = "subject_node_id"
 SUBJECT_PATH_COLUMN_NAME = "subject_path"
 NAME_COLUMN_NAME = "name"
 CREATED_AT_COLUMN_NAME = "created_at"
+ROOT_PARENT_ID = -1  # Used instead of NULL to ensure UNIQUE constraint works for root nodes
 
 
 class SubjectTreeStore:
@@ -90,6 +91,15 @@ class SubjectTreeStore:
             """
             )
 
+            # Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1)
+            # This ensures UNIQUE constraint works for root nodes
+            cursor.execute(
+                """
+                UPDATE subject_nodes SET parent_id = ? WHERE parent_id IS NULL
+            """,
+                (ROOT_PARENT_ID,),
+            )
+
             conn.commit()
             logger.debug("Subject nodes table and indices created/verified")
 
@@ -132,6 +142,9 @@ class SubjectTreeStore:
         # Create node
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # Use ROOT_PARENT_ID (-1) for root nodes to ensure UNIQUE constraint works
+        db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
+
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
@@ -141,7 +154,7 @@ class SubjectTreeStore:
                 (parent_id, name, description, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?)
             """,
-                (parent_id, name, description, now, now),
+                (db_parent_id, name, description, now, now),
             )
 
             node_id = cursor.lastrowid
@@ -192,7 +205,11 @@ class SubjectTreeStore:
 
             row = cursor.fetchone()
             if row:
-                return dict(row)
+                node = dict(row)
+                # Convert ROOT_PARENT_ID (-1) back to None for API compatibility
+                if node.get("parent_id") == ROOT_PARENT_ID:
+                    node["parent_id"] = None
+                return node
             return None
 
         finally:
@@ -269,22 +286,21 @@ class SubjectTreeStore:
         # Handle parent_id change
         if parent_id is not None:
             # -1 means set to None (root level)
-            if parent_id == -1:
-                parent_id = None
+            new_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
 
             # Validate no cycle
-            if parent_id is not None and not self.validate_no_cycle(node_id, parent_id):
-                raise ValueError(f"Moving node {node_id} to parent {parent_id} would create a cycle")
+            if new_parent_id != ROOT_PARENT_ID and not self.validate_no_cycle(node_id, new_parent_id):
+                raise ValueError(f"Moving node {node_id} to parent {new_parent_id} would create a cycle")
 
             # Validate parent exists (if provided)
-            if parent_id is not None:
-                parent = self.get_node(parent_id)
+            if new_parent_id != ROOT_PARENT_ID:
+                parent = self.get_node(new_parent_id)
                 if not parent:
-                    raise ValueError(f"Parent node {parent_id} not found")
+                    raise ValueError(f"Parent node {new_parent_id} not found")
 
-            # Update parent
+            # Update parent - use ROOT_PARENT_ID for root level
             update_fields.append("parent_id = ?")
-            update_values.append(parent_id)
+            update_values.append(new_parent_id)
 
         if not update_fields:
             logger.debug(f"No fields to update for node {node_id}")
@@ -395,26 +411,26 @@ class SubjectTreeStore:
         try:
             cursor = conn.cursor()
 
-            if parent_id is None:
-                cursor.execute(
-                    """
-                    SELECT * FROM subject_nodes
-                    WHERE parent_id IS NULL
-                    ORDER BY name
+            # Use ROOT_PARENT_ID (-1) for querying root nodes
+            db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
+            cursor.execute(
                 """
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT * FROM subject_nodes
-                    WHERE parent_id = ?
-                    ORDER BY name
-                """,
-                    (parent_id,),
-                )
+                SELECT * FROM subject_nodes
+                WHERE parent_id = ?
+                ORDER BY name
+            """,
+                (db_parent_id,),
+            )
 
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            # Convert ROOT_PARENT_ID (-1) back to None for API compatibility
+            result = []
+            for row in rows:
+                node = dict(row)
+                if node.get("parent_id") == ROOT_PARENT_ID:
+                    node["parent_id"] = None
+                result.append(node)
+            return result
 
         finally:
             conn.close()
@@ -639,26 +655,23 @@ class SubjectTreeStore:
         try:
             cursor = conn.cursor()
 
-            if parent_id is None:
-                cursor.execute(
-                    """
-                    SELECT * FROM subject_nodes
-                    WHERE parent_id IS NULL AND name = ?
-                """,
-                    (name,),
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT * FROM subject_nodes
-                    WHERE parent_id = ? AND name = ?
-                """,
-                    (parent_id, name),
-                )
+            # Use ROOT_PARENT_ID (-1) for querying root nodes
+            db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
+            cursor.execute(
+                """
+                SELECT * FROM subject_nodes
+                WHERE parent_id = ? AND name = ?
+            """,
+                (db_parent_id, name),
+            )
 
             row = cursor.fetchone()
             if row:
-                return dict(row)
+                node = dict(row)
+                # Convert ROOT_PARENT_ID (-1) back to None for API compatibility
+                if node.get("parent_id") == ROOT_PARENT_ID:
+                    node["parent_id"] = None
+                return node
             return None
 
         finally:
