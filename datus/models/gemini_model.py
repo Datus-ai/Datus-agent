@@ -2,10 +2,14 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import os
-from typing import Dict, List, Union
+"""
+Gemini Model - Google Gemini model implementation.
 
-import google.generativeai as genai
+Inherits from OpenAICompatibleModel and uses LiteLLM for unified API access.
+"""
+
+import os
+from typing import Dict, Optional
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_compatible import OpenAICompatibleModel
@@ -15,13 +19,11 @@ logger = get_logger(__name__)
 
 
 class GeminiModel(OpenAICompatibleModel):
-    """Google Gemini model implementation"""
+    """Google Gemini model implementation using LiteLLM."""
 
     def __init__(self, model_config: ModelConfig, **kwargs):
         super().__init__(model_config, **kwargs)
-        # Initialize Gemini-specific client
-        genai.configure(api_key=self.api_key)
-        self.gemini_model = genai.GenerativeModel(self.model_name)
+        logger.debug(f"Initialized Gemini model: {self.model_name}")
 
     def _get_api_key(self) -> str:
         """Get Gemini API key from config or environment."""
@@ -30,40 +32,23 @@ class GeminiModel(OpenAICompatibleModel):
             raise ValueError("Gemini API key must be provided or set as GEMINI_API_KEY environment variable")
         return api_key
 
-    def generate(self, prompt: Union[str, List[Dict[str, str]]], **kwargs) -> str:
-        try:
-            generation_config = genai.types.GenerationConfig(
-                temperature=kwargs.get("temperature", 0.7),
-                max_output_tokens=kwargs.get("max_tokens", 10000),
-                top_p=kwargs.get("top_p", 1.0),
-                top_k=kwargs.get("top_k", 40),
-            )
+    def _get_base_url(self) -> Optional[str]:
+        """Get Gemini base URL. Returns None to use LiteLLM's native Gemini support."""
+        return self.model_config.base_url  # Don't provide a default, let LiteLLM handle it
 
-            response = self.gemini_model.generate_content(
-                prompt,
-                generation_config=generation_config,
-                safety_settings=kwargs.get("safety_settings", None),
-            )
-
-            if response.candidates:
-                return response.candidates[0].content.parts[0].text
-            else:
-                logger.warning("No candidates returned from Gemini model")
-                return ""
-
-        except Exception as e:
-            logger.error(f"Error generating content with Gemini: {str(e)}")
-            raise
-
-    def _get_base_url(self) -> str:
-        """Get Gemini base URL for OpenAI compatibility."""
-        return "https://generativelanguage.googleapis.com/v1beta/openai"
-
-    def token_count(self, prompt: str) -> int:
-        try:
-            model = genai.GenerativeModel(self.model_name)
-            token_count = model.count_tokens(prompt)
-            return token_count.total_tokens
-        except Exception as e:
-            logger.warning(f"Error counting tokens with Gemini: {str(e)}")
-            return len(prompt) // 4
+    @property
+    def model_specs(self) -> Dict[str, Dict[str, int]]:
+        """Model specifications for Gemini models."""
+        return {
+            # Gemini 2.x series
+            "gemini-2.5-pro": {"context_length": 1048576, "max_tokens": 65535},
+            "gemini-2.5-flash": {"context_length": 1048576, "max_tokens": 8192},
+            "gemini-2.5-flash-lite": {"context_length": 1048576, "max_tokens": 8192},
+            "gemini-2.0-flash": {"context_length": 1048576, "max_tokens": 8192},
+            # Gemini 3.x series (preview)
+            "gemini-3-pro-preview": {"context_length": 2097152, "max_tokens": 65535},
+            "gemini-3-flash-preview": {"context_length": 2097152, "max_tokens": 65535},
+            # Gemini 1.x series
+            "gemini-1.5-pro": {"context_length": 2097152, "max_tokens": 8192},
+            "gemini-1.5-flash": {"context_length": 1048576, "max_tokens": 8192},
+        }

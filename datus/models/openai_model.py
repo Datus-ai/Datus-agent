@@ -34,33 +34,6 @@ class OpenAIModel(OpenAICompatibleModel):
             raise ValueError("OpenAI API key must be provided or set as OPENAI_API_KEY environment variable")
         return api_key
 
-    def token_count(self, prompt: str) -> int:
-        """
-        Count the number of tokens in the given prompt using tiktoken.
-
-        Args:
-            prompt: The input text to count tokens for
-
-        Returns:
-            The number of tokens in the prompt
-        """
-        try:
-            # Use OpenAI's tiktoken library for token counting
-            import tiktoken
-
-            # Get the encoding for the model
-            encoding = tiktoken.encoding_for_model(self.model_name)
-
-            # Count tokens
-            tokens = encoding.encode(str(prompt))
-            return len(tokens)
-        except ImportError:
-            # Fallback: rough estimation (1 token ≈ 4 characters for English text)
-            return len(prompt) // 4
-        except Exception:
-            # Fallback: rough estimation if model encoding is not found
-            return len(prompt) // 4
-
     def _uses_completion_tokens_parameter(self) -> bool:
         """Check if this model uses max_completion_tokens instead of max_tokens.
 

@@ -13,16 +13,15 @@ logger = get_logger(__name__)
 
 
 class QwenModel(OpenAICompatibleModel):
-    def __init__(self, model_config: ModelConfig):
+    def __init__(self, model_config: ModelConfig, **kwargs):
         """
         Initialize the Qwen model.
 
         Args:
             model_config: Model configuration object
+            **kwargs: Additional parameters
         """
-        super().__init__(model_config)
-        # Initialize Qwen-specific tokenizer
-        self._async_client = None
+        super().__init__(model_config, **kwargs)
 
     def _get_api_key(self) -> str:
         """Get Qwen API key from config or environment."""

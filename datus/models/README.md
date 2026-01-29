@@ -21,7 +21,8 @@ The module uses a factory pattern for dynamic model instantiation, supports both
 - Unified error handling and retry logic with exponential backoff
 - MCP server integration with connection management
 - Streaming support with action history tracking
-- Token counting and model info retrieval
+- LiteLLM integration for unified token counting (supports 100+ models)
+- Model info retrieval and context length management
 
 ### Provider Implementations
 
@@ -29,7 +30,7 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 
 **`openai_model.py`** - OpenAI GPT models
 - Inherits from `OpenAICompatibleModel`
-- Uses tiktoken for accurate token counting
+- Uses LiteLLM for unified token counting across all providers
 - Supports structured output and reasoning content
 
 **`claude_model.py`** - Anthropic Claude models  
@@ -39,17 +40,17 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 - Using prompt cache mannually
 
 **`deepseek_model.py`** - DeepSeek models
-- OpenAI-compatible implementation with custom token counting
+- OpenAI-compatible implementation via LiteLLM
 - LLM trace saving functionality for debugging
 - Support for reasoning models (DeepSeek R1)
 
 **`qwen_model.py`** - Qwen models
-- Transformers tokenizer integration for accurate token counting
+- LiteLLM integration for unified token counting
 - Dashscope API integration
 
 **`gemini_model.py`** - Google Gemini models
 - Google Generative AI client integration
-- Native token counting using Gemini API
+- LiteLLM integration for unified token counting
 
 ### Utility Modules
 
@@ -138,6 +139,52 @@ async def use_mcp_tools():
 asyncio.run(use_mcp_tools())
 ```
 
+### Structured Output with Pydantic Models
+
+The SDK 0.7.0 supports structured output using Pydantic models. This provides automatic validation and eliminates the need for JSON format instructions in prompts.
+
+```python
+import asyncio
+from datus.models.base import LLMBaseModel
+from datus.schemas import SQLGenerationResult
+
+async def generate_sql_with_structure():
+    model = LLMBaseModel.create_model(config, "gpt-4")
+
+    # Use Pydantic model for structured output
+    result = await model.generate_with_tools(
+        prompt="Generate a query for top 10 customers by revenue",
+        output_type=SQLGenerationResult,  # Pydantic model
+        strict_json_schema=True,  # Enable strict JSON mode (default)
+        instruction="You are a SQL expert. Generate SQL queries.",
+        max_turns=10
+    )
+
+    # result["content"] is now a SQLGenerationResult object
+    sql_result = result["content"]
+    print(f"SQL: {sql_result.sql}")
+    print(f"Explanation: {sql_result.explanation}")
+    print(f"Tables: {sql_result.tables_used}")
+    print(f"Confidence: {sql_result.confidence}")
+
+asyncio.run(generate_sql_with_structure())
+```
+
+**Benefits of Structured Output**:
+- No need for JSON format instructions in prompts
+- Automatic response validation against Pydantic schema
+- Type-safe output handling
+- Better error messages when output doesn't match schema
+
+**Available Output Types** (from `datus.schemas`):
+- `SQLGenerationResult` - SQL generation with explanation
+- `SchemaLinkingResult` - Schema linking analysis
+- `ReflectionResult` - SQL validation and reflection
+- `SQLFixResult` - SQL fix operations
+- `MetricSearchResult` - Metric search results
+- `ChartRecommendation` - Chart visualization recommendations
+- `QueryClassification` - Query intent classification
+
 ### Required Environment Variables
 
 ```bash
@@ -200,9 +247,9 @@ class NewModelModel(OpenAICompatibleModel):
     def _get_base_url(self) -> str:
         return self.model_config.base_url or "https://api.newmodel.com/v1"
     
-    def token_count(self, prompt: str) -> int:
-        # Implement model-specific tokenization
-        return len(prompt) // 4  # Simple approximation
+    # No need to override token_count - it's inherited from OpenAICompatibleModel
+    # which uses LiteLLM's unified token counter for accurate counting
+    # across all model providers
 ```
 
 2. **Update the base model registry**:

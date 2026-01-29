@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import math
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Union
 
@@ -18,7 +19,6 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import metadata_identifier
-from datus.utils.token_utils import cal_task_size
 
 logger = get_logger(__name__)
 
@@ -193,7 +193,7 @@ class MatchSchemaTool(BaseTool):
         tokens_count = model.token_count(prompt)
         max_tokens = model.max_tokens()
         if tokens_count > max_tokens:
-            task_size = cal_task_size(tokens_count, max_tokens)
+            task_size = math.ceil(tokens_count / max_tokens)
             logger.info(
                 f"""query ```{user_question}``` ; tokens count: {tokens_count}, will split into {task_size} tasks"""
             )

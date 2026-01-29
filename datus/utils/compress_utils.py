@@ -6,9 +6,9 @@ import re
 from io import StringIO
 from typing import Dict, List, Literal, Optional, Tuple, Union
 
+import litellm
 import pandas as pd
 import pyarrow as pa
-import tiktoken
 
 
 # Static utility functions outside of class
@@ -241,30 +241,28 @@ class DataCompressor:
         Initialize data compressor
 
         Args:
-            model_name: Model name for token calculation. Supported models include:
-                Latest (o200k_base): "o1", "o3", "o4-mini", "gpt-4o", "gpt-5-*", etc.
-                Production (cl100k_base): "gpt-4", "gpt-3.5-turbo", "gpt-35-turbo", etc.
-                Legacy: "text-davinci-003", "code-davinci-002", "davinci", etc.
-                Fine-tuned models are automatically supported (e.g., "ft:gpt-4o*")
+            model_name: Model name for token calculation. Supports all models via LiteLLM:
+                - OpenAI: "gpt-4", "gpt-3.5-turbo", "gpt-4o", "o1", "o3", etc.
+                - Anthropic: "anthropic/claude-3-sonnet", "anthropic/claude-sonnet-4", etc.
+                - DeepSeek: "deepseek/deepseek-chat", "deepseek/deepseek-r1", etc.
+                - Moonshot: "moonshot/kimi-k2.5", etc.
+                - Gemini: "gemini/gemini-2.5-flash", "gemini/gemini-3-pro", etc.
             token_threshold: Token threshold
             tolerance_ratio: Tolerance ratio, no compression if exceeding within this ratio
             output_format: Output format, "csv" or "table"
         """
-        try:
-            self.tokenizer = tiktoken.encoding_for_model(model_name)
-        except Exception:
-            # Fallback: use None to indicate rough estimation should be used
-            self.tokenizer = None
+        self.model_name = model_name
         self.token_threshold = token_threshold
         self.tolerance_ratio = tolerance_ratio
         self.max_tolerable_tokens = int(token_threshold * (1 + tolerance_ratio))
         self.output_format = output_format
 
     def count_tokens(self, text: str) -> int:
-        """Calculate the number of tokens in text"""
-        if self.tokenizer is not None:
-            return len(self.tokenizer.encode(text))
-        else:
+        """Calculate the number of tokens in text using LiteLLM"""
+        try:
+            # Use LiteLLM's unified token counter (supports 100+ models)
+            return litellm.token_counter(model=self.model_name, text=text)
+        except Exception:
             # Fallback: rough estimation (1 token ≈ 4 characters for English text)
             return len(text) // 4
 

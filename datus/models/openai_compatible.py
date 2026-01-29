@@ -12,15 +12,18 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
+import litellm
 import yaml
-from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, SQLiteSession, Tool, set_tracing_disabled
+from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool, set_tracing_disabled
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
-from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
+from openai import APIConnectionError, APIError, APITimeoutError, OpenAI, RateLimitError
+from openai.types.shared.reasoning import Reasoning
 from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
+from datus.models.litellm_adapter import LiteLLMAdapter
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
@@ -31,24 +34,15 @@ from datus.utils.traceable_utils import create_openai_client, optional_traceable
 
 logger = get_logger(__name__)
 
+# LiteLLM configuration
+# Enable dropping unsupported parameters for providers that don't support them
+# This allows us to set reasoning=Reasoning(effort=...) for preserve_thinking_blocks
+# while LiteLLM automatically drops reasoning_effort for providers like Moonshot
+litellm.drop_params = True
+litellm.set_verbose = False
+
 # Disable OpenAI Agents SDK tracing to prevent sending traces to OpenAI
 set_tracing_disabled(True)
-
-# Monkey patch to fix ResponseTextDeltaEvent logprobs validation issue in openai-agents 0.3.2
-try:
-    from agents.models.chatcmpl_stream_handler import ResponseTextDeltaEvent
-
-    # Modify the model field annotation to accept both list and None
-    if hasattr(ResponseTextDeltaEvent, "__annotations__") and "logprobs" in ResponseTextDeltaEvent.__annotations__:
-        # Make logprobs accept list or None
-        ResponseTextDeltaEvent.__annotations__["logprobs"] = Union[list, None]
-        # Rebuild the pydantic model with new annotations
-        ResponseTextDeltaEvent.model_rebuild(force=True)
-        logger.debug("Successfully patched ResponseTextDeltaEvent to accept logprobs as list or None")
-except ImportError:
-    logger.warning("Could not import ResponseTextDeltaEvent - patch not applied")
-except Exception as e:
-    logger.warning(f"Could not patch ResponseTextDeltaEvent: {e}")
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
@@ -113,6 +107,15 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         # Initialize clients
         self.client = create_openai_client(OpenAI, self.api_key, self.base_url, default_headers=self.default_headers)
+
+        # Initialize LiteLLM adapter for Agent SDK integration
+        self.litellm_adapter = LiteLLMAdapter(
+            provider=model_config.type,
+            model=model_config.model,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            enable_thinking=model_config.enable_thinking,
+        )
 
         # Context for tracing ToDo: replace it with Context object
         self.current_node = None
@@ -252,15 +255,22 @@ class OpenAICompatibleModel(LLMBaseModel):
                 "model": self.model_name,
             }
 
-            # Add temperature and top_p only if explicitly provided
+            # Add temperature: priority is kwargs > model_config > default (0.7)
             if "temperature" in kwargs:
                 params["temperature"] = kwargs["temperature"]
+            elif self.model_config.temperature is not None:
+                # Use temperature from model config (e.g., kimi-k2.5 requires temperature=1)
+                params["temperature"] = self.model_config.temperature
             elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
                 # Add default temperature only for non-reasoning models
                 params["temperature"] = 0.7
 
+            # Add top_p: priority is kwargs > model_config > default (1.0)
             if "top_p" in kwargs:
                 params["top_p"] = kwargs["top_p"]
+            elif self.model_config.top_p is not None:
+                # Use top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
+                params["top_p"] = self.model_config.top_p
             elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
                 # Add default top_p only for non-reasoning models
                 params["top_p"] = 1.0
@@ -373,6 +383,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         instruction: str = "",
         output_type: type = str,
+        strict_json_schema: bool = True,
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
@@ -387,7 +398,8 @@ class OpenAICompatibleModel(LLMBaseModel):
             mcp_servers: Optional MCP servers to use
             tools: Optional regular tools to use
             instruction: System instruction
-            output_type: Expected output type
+            output_type: Expected output type (use Pydantic models for structured output)
+            strict_json_schema: Enable strict JSON schema mode for structured output (default: True)
             max_turns: Maximum conversation turns
             session: Optional session for context
             action_history_manager: Action history manager for tracking
@@ -398,7 +410,16 @@ class OpenAICompatibleModel(LLMBaseModel):
         """
         # Use the internal method that returns a Dict
         result = await self._generate_with_tools_internal(
-            prompt, mcp_servers, tools, instruction, output_type, max_turns, session, hooks, **kwargs
+            prompt,
+            mcp_servers,
+            tools,
+            instruction,
+            output_type,
+            strict_json_schema,
+            max_turns,
+            session,
+            hooks,
+            **kwargs,
         )
 
         # Enhance result with tracing metadata
@@ -422,6 +443,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         tools: Optional[List[Any]] = None,
         instruction: str = "",
         output_type: type = str,
+        strict_json_schema: bool = True,
         max_turns: int = 10,
         session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
@@ -436,7 +458,8 @@ class OpenAICompatibleModel(LLMBaseModel):
             mcp_servers: Optional MCP servers
             tools: Optional regular tools
             instruction: System instruction
-            output_type: Expected output type
+            output_type: Expected output type (use Pydantic models for structured output)
+            strict_json_schema: Enable strict JSON schema mode for structured output (default: True)
             max_turns: Maximum turns
             session: Optional session
             action_history_manager: Action history manager
@@ -454,6 +477,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             tools,
             instruction,
             output_type,
+            strict_json_schema,
             max_turns,
             session,
             action_history_manager,
@@ -469,6 +493,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         tools: Optional[List[Tool]],
         instruction: str,
         output_type: type,
+        strict_json_schema: bool,
         max_turns: int,
         session: Optional[SQLiteSession] = None,
         hooks=None,
@@ -481,20 +506,57 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._setup_custom_json_encoder()
 
         async def _tools_operation():
-            async_client = create_openai_client(
-                AsyncOpenAI, self.api_key, self.base_url, default_headers=self.default_headers
-            )
-            model_params = {"model": self.model_name}
-            async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+            # Wrap output_type with AgentOutputSchema for strict JSON mode control
+            # This ensures the model outputs valid JSON that matches the Pydantic schema
+            actual_output_type = output_type
+            enable_structured_output = False
+            if output_type != str:
+                from agents import AgentOutputSchema
+
+                actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
+                enable_structured_output = True
+                logger.debug(
+                    f"Wrapped output_type with AgentOutputSchema: "
+                    f"type={output_type.__name__}, strict={strict_json_schema}"
+                )
+
+            # Use LiteLLM model for unified provider support
+            # Pass enable_structured_output to add provider-specific headers (e.g., Claude beta header)
+            litellm_model = self.litellm_adapter.get_agents_sdk_model(enable_structured_output=enable_structured_output)
+
+            # DeepSeek requires "json" keyword in prompt for JSON mode
+            # Add it to instructions if using structured output
+            final_instruction = instruction
+            if enable_structured_output and self.litellm_adapter.provider == "deepseek":
+                if "json" not in instruction.lower():
+                    final_instruction = f"{instruction}\n\nIMPORTANT: Return output in valid JSON format."
+                    logger.debug("Added JSON keyword to instructions for DeepSeek")
 
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
                 agent_kwargs = {
                     "name": kwargs.pop("agent_name", "default_agent"),
-                    "instructions": instruction,
-                    "output_type": output_type,
-                    "model": async_model,
+                    "instructions": final_instruction,
+                    "output_type": actual_output_type,
+                    "model": litellm_model,
                 }
+
+                # Build ModelSettings with provider-specific configurations
+                model_settings_kwargs = {}
+
+                # Configure extra_body for token tracking (subclasses can override)
+                extra_body = self._build_tool_extra_body()
+                model_settings_kwargs["extra_body"] = extra_body
+
+                # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
+                # This enables preserve_thinking_blocks in LitellmModel to correctly handle
+                # reasoning_content in multi-turn conversations with tool calls
+                if self.litellm_adapter.is_thinking_model:
+                    model_settings_kwargs["reasoning"] = Reasoning(effort="medium")
+                    logger.debug(f"Enabled thinking mode for model: {self.model_name}")
+
+                model_settings = ModelSettings(**model_settings_kwargs)
+                agent_kwargs["model_settings"] = model_settings
 
                 # Only add mcp_servers if we have connected servers
                 if connected_servers:
@@ -593,6 +655,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         tools: Optional[List[Tool]],
         instruction: str,
         output_type: type,
+        strict_json_schema: bool,
         max_turns: int,
         session: Optional[SQLiteSession],
         action_history_manager: ActionHistoryManager,
@@ -610,262 +673,281 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._setup_custom_json_encoder()
 
         async def _stream_operation():
-            async_client = create_openai_client(
-                AsyncOpenAI, self.api_key, self.base_url, default_headers=self.default_headers
-            )
+            # Wrap output_type with AgentOutputSchema for strict JSON mode control
+            # This ensures the model outputs valid JSON that matches the Pydantic schema
+            actual_output_type = output_type
+            enable_structured_output = False
+            if output_type != str:
+                from agents import AgentOutputSchema
 
-            try:
+                actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
+                enable_structured_output = True
+                logger.debug(
+                    f"Wrapped output_type with AgentOutputSchema (streaming): "
+                    f"type={output_type.__name__}, strict={strict_json_schema}"
+                )
+
+            # Use LiteLLM model for unified provider support
+            # Pass enable_structured_output to add provider-specific headers (e.g., Claude beta header)
+            litellm_model = self.litellm_adapter.get_agents_sdk_model(enable_structured_output=enable_structured_output)
+
+            # DeepSeek requires "json" keyword in prompt for JSON mode
+            # Add it to instructions if using structured output
+            final_instruction = instruction
+            if enable_structured_output and self.litellm_adapter.provider == "deepseek":
+                if "json" not in instruction.lower():
+                    final_instruction = f"{instruction}\n\nIMPORTANT: Return output in valid JSON format."
+                    logger.debug("Added JSON keyword to instructions for DeepSeek (streaming)")
+
+            # Use multiple_mcp_servers context manager with empty dict if no MCP servers
+            async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+                agent_kwargs = {
+                    "name": kwargs.pop("agent_name", "Tools_Agent"),
+                    "instructions": final_instruction,
+                    "output_type": actual_output_type,
+                    "model": litellm_model,
+                }
+
+                # Build ModelSettings with provider-specific configurations
+                model_settings_kwargs = {}
+
                 # Configure stream_options to include usage information for token tracking
-                # Use hook method to allow subclasses to customize extra_body
                 extra_body = self._build_tool_extra_body()
-                model_settings = ModelSettings(extra_body=extra_body)
+                model_settings_kwargs["extra_body"] = extra_body
 
-                model_params = {"model": self.model_name}
-                async_model = OpenAIChatCompletionsModel(**model_params, openai_client=async_client)
+                # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
+                # This enables preserve_thinking_blocks in LitellmModel to correctly handle
+                # reasoning_content in multi-turn conversations with tool calls
+                if self.litellm_adapter.is_thinking_model:
+                    model_settings_kwargs["reasoning"] = Reasoning(effort="medium")
+                    logger.debug(f"Enabled thinking mode for streaming: {self.model_name}")
 
-                # Use multiple_mcp_servers context manager with empty dict if no MCP servers
-                async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
-                    agent_kwargs = {
-                        "name": kwargs.pop("agent_name", "Tools_Agent"),
-                        "instructions": instruction,
-                        "output_type": output_type,
-                        "model": async_model,
-                        "model_settings": model_settings,
-                    }
+                model_settings = ModelSettings(**model_settings_kwargs)
+                agent_kwargs["model_settings"] = model_settings
 
-                    # Only add mcp_servers if we have connected servers
-                    if connected_servers:
-                        agent_kwargs["mcp_servers"] = list(connected_servers.values())
+                # Only add mcp_servers if we have connected servers
+                if connected_servers:
+                    agent_kwargs["mcp_servers"] = list(connected_servers.values())
 
-                    # Only add tools if we have them
-                    if tools:
-                        agent_kwargs["tools"] = tools
+                # Only add tools if we have them
+                if tools:
+                    agent_kwargs["tools"] = tools
 
-                    # Add hooks to agent if provided (AgentHooks)
-                    if hooks:
-                        agent_kwargs["hooks"] = hooks
+                # Add hooks to agent if provided (AgentHooks)
+                if hooks:
+                    agent_kwargs["hooks"] = hooks
 
-                    agent = Agent(**agent_kwargs)
+                agent = Agent(**agent_kwargs)
 
-                    try:
-                        result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
-                    except MaxTurnsExceeded as e:
-                        logger.error(f"Max turns exceeded in streaming: {str(e)}")
-                        raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+                try:
+                    result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+                except MaxTurnsExceeded as e:
+                    logger.error(f"Max turns exceeded in streaming: {str(e)}")
+                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
 
-                    # Streaming phase: yield progress actions in real-time
-                    # After streaming completes, generate final summary report
-                    import uuid
+                # Streaming phase: yield progress actions in real-time
+                # After streaming completes, generate final summary report
+                import uuid
 
-                    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+                from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
-                    # Phase 1: Stream events with detailed progress
-                    # Track tool calls and results for immediate feedback
-                    temp_tool_calls = {}  # {call_id: ActionHistory}
+                # Phase 1: Stream events with detailed progress
+                # Track tool calls and results for immediate feedback
+                temp_tool_calls = {}  # {call_id: ActionHistory}
 
-                    while not result.is_complete:
-                        async for event in result.stream_events():
-                            if not hasattr(event, "type") or event.type != "run_item_stream_event":
-                                continue
+                while not result.is_complete:
+                    async for event in result.stream_events():
+                        if not hasattr(event, "type") or event.type != "run_item_stream_event":
+                            continue
 
-                            if not (hasattr(event, "item") and hasattr(event.item, "type")):
-                                continue
+                        if not (hasattr(event, "item") and hasattr(event.item, "type")):
+                            continue
 
-                            item_type = event.item.type
+                        item_type = event.item.type
 
-                            # Handle tool call start
-                            if item_type == "tool_call_item":
-                                raw_item = getattr(event.item, "raw_item", None)
-                                if raw_item:
-                                    tool_name = getattr(raw_item, "name", None)
-                                    if not tool_name:
-                                        logger.warning(
-                                            f"Tool call has no name field: {type(raw_item)}, {dir(raw_item)}"
-                                        )
-                                        tool_name = "unknown"
+                        # Handle tool call start
+                        if item_type == "tool_call_item":
+                            raw_item = getattr(event.item, "raw_item", None)
+                            if raw_item:
+                                tool_name = getattr(raw_item, "name", None)
+                                if not tool_name:
+                                    logger.warning(f"Tool call has no name field: {type(raw_item)}, {dir(raw_item)}")
+                                    tool_name = "unknown"
 
-                                    arguments = getattr(raw_item, "arguments", "{}")
+                                arguments = getattr(raw_item, "arguments", "{}")
+                                call_id = getattr(raw_item, "call_id", None)
+
+                                # Generate call_id if missing
+                                if not call_id:
+                                    call_id = f"tool_{uuid.uuid4().hex[:8]}"
+                                    logger.warning(f"Tool call missing call_id, generated: {call_id}")
+
+                                # Try to format arguments
+                                try:
+                                    args_dict = json.loads(arguments) if arguments else {}
+                                    args_str = to_str(args_dict)[:80]
+                                except Exception:
+                                    args_str = str(arguments)[:80]
+
+                                # Store tool call info for matching with result
+                                temp_tool_calls[call_id] = {
+                                    "tool_name": tool_name,
+                                    "arguments": arguments,
+                                    "args_display": args_str,
+                                }
+                                start_action = ActionHistory(
+                                    action_id=call_id,
+                                    role=ActionRole.TOOL,
+                                    messages=f"Tool call: {tool_name}('{args_str}...')",
+                                    action_type=tool_name,
+                                    input={"function_name": tool_name, "arguments": arguments},
+                                    output={},
+                                    status=ActionStatus.PROCESSING,
+                                )
+                                action_history_manager.add_action(start_action)
+                                logger.debug(
+                                    f"Stored tool call: {tool_name} "
+                                    f"(call_id={call_id[:20] if call_id else 'None'}...)"
+                                )
+                                yield start_action
+
+                        # Handle tool call completion
+                        elif item_type == "tool_call_output_item":
+                            raw_item = getattr(event.item, "raw_item", None)
+                            output_content = getattr(event.item, "output", "")
+
+                            # Extract call_id from raw_item
+                            # raw_item can be either a dict or an object
+                            call_id = None
+                            if raw_item:
+                                if isinstance(raw_item, dict):
+                                    call_id = raw_item.get("call_id")
+                                else:
                                     call_id = getattr(raw_item, "call_id", None)
 
-                                    # Generate call_id if missing
-                                    if not call_id:
-                                        call_id = f"tool_{uuid.uuid4().hex[:8]}"
-                                        logger.warning(f"Tool call missing call_id, generated: {call_id}")
+                            logger.debug(
+                                f"🔍 Tool output call_id={call_id}, type={type(output_content)}, "
+                                f"stored={list(temp_tool_calls.keys())}"
+                            )
 
-                                    # Try to format arguments
-                                    try:
-                                        args_dict = json.loads(arguments) if arguments else {}
-                                        args_str = to_str(args_dict)[:80]
-                                    except Exception:
-                                        args_str = str(arguments)[:80]
+                            # Try to match with stored tool call
+                            if call_id and call_id in temp_tool_calls:
+                                # Found matching tool call
+                                tool_info = temp_tool_calls[call_id]
+                                tool_name = tool_info["tool_name"]
+                                args_display = tool_info["args_display"]
 
-                                    # Store tool call info for matching with result
-                                    temp_tool_calls[call_id] = {
-                                        "tool_name": tool_name,
-                                        "arguments": arguments,
-                                        "args_display": args_str,
-                                    }
-                                    start_action = ActionHistory(
-                                        action_id=call_id,
-                                        role=ActionRole.TOOL,
-                                        messages=f"Tool call: {tool_name}('{args_str}...')",
-                                        action_type=tool_name,
-                                        input={"function_name": tool_name, "arguments": arguments},
-                                        output={},
-                                        status=ActionStatus.PROCESSING,
-                                    )
-                                    action_history_manager.add_action(start_action)
-                                    logger.debug(
-                                        f"Stored tool call: {tool_name} "
-                                        f"(call_id={call_id[:20] if call_id else 'None'}...)"
-                                    )
-                                    yield start_action
+                                # Format result summary (only count info)
+                                # output_content might already be a dict or string
+                                if isinstance(output_content, dict):
+                                    result_summary = self._format_tool_result_from_dict(output_content, tool_name)
+                                elif isinstance(output_content, str):
+                                    result_summary = self._format_tool_result(output_content, tool_name)
+                                else:
+                                    # Log unexpected type and try to convert
+                                    logger.warning(f"Unexpected output_content type: {type(output_content)}")
+                                    result_summary = self._format_tool_result(str(output_content), tool_name)
 
-                            # Handle tool call completion
-                            elif item_type == "tool_call_output_item":
-                                raw_item = getattr(event.item, "raw_item", None)
-                                output_content = getattr(event.item, "output", "")
+                                # Create complete action with both input and output
+                                # Put result_summary as the status message to replace default "Success"
+                                complete_action = ActionHistory(
+                                    action_id="complete_" + call_id,
+                                    role=ActionRole.TOOL,
+                                    messages=f"Tool call: {tool_name}('{args_display}...')",
+                                    action_type=tool_name,
+                                    input={"function_name": tool_name, "arguments": tool_info["arguments"]},
+                                    output={
+                                        "success": True,
+                                        "raw_output": output_content,  # Add raw output for action_display_app
+                                        "summary": result_summary,
+                                        "status_message": result_summary,
+                                    },
+                                    status=ActionStatus.SUCCESS,
+                                )
+                                complete_action.end_time = datetime.now()
 
-                                # Extract call_id from raw_item
-                                # raw_item can be either a dict or an object
-                                call_id = None
-                                if raw_item:
-                                    if isinstance(raw_item, dict):
-                                        call_id = raw_item.get("call_id")
-                                    else:
-                                        call_id = getattr(raw_item, "call_id", None)
+                                logger.debug(f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}")
 
-                                logger.debug(
-                                    f"🔍 Tool output call_id={call_id}, type={type(output_content)}, "
-                                    f"stored={list(temp_tool_calls.keys())}"
+                                # Add to action_history_manager before yielding (consistent with thinking messages)
+                                action_history_manager.add_action(complete_action)
+                                yield complete_action
+
+                                # Remove from temp storage to avoid duplicates
+                                del temp_tool_calls[call_id]
+
+                            else:
+                                # No matching tool call found
+                                logger.warning(
+                                    f"Orphan tool result: call_id={call_id}, "
+                                    f"stored={list(temp_tool_calls.keys())[:3]}"
                                 )
 
-                                # Try to match with stored tool call
-                                if call_id and call_id in temp_tool_calls:
-                                    # Found matching tool call
-                                    tool_info = temp_tool_calls[call_id]
-                                    tool_name = tool_info["tool_name"]
-                                    args_display = tool_info["args_display"]
+                                # Yield result anyway
+                                orphan_action = ActionHistory(
+                                    action_id=call_id or f"orphan_{uuid.uuid4().hex[:8]}",
+                                    role=ActionRole.TOOL,
+                                    messages="Tool call (orphan)",
+                                    action_type="tool_result",
+                                    input={"function_name": "unknown"},
+                                    output={"success": True, "raw_output": output_content},
+                                    status=ActionStatus.SUCCESS,
+                                )
+                                orphan_action.end_time = datetime.now()
 
-                                    # Format result summary (only count info)
-                                    # output_content might already be a dict or string
-                                    if isinstance(output_content, dict):
-                                        result_summary = self._format_tool_result_from_dict(output_content, tool_name)
-                                    elif isinstance(output_content, str):
-                                        result_summary = self._format_tool_result(output_content, tool_name)
-                                    else:
-                                        # Log unexpected type and try to convert
-                                        logger.warning(f"Unexpected output_content type: {type(output_content)}")
-                                        result_summary = self._format_tool_result(str(output_content), tool_name)
+                                # Add to action_history_manager before yielding (consistent with other actions)
+                                action_history_manager.add_action(orphan_action)
+                                yield orphan_action
 
-                                    # Create complete action with both input and output
-                                    # Put result_summary as the status message to replace default "Success"
-                                    complete_action = ActionHistory(
-                                        action_id="complete_" + call_id,
-                                        role=ActionRole.TOOL,
-                                        messages=f"Tool call: {tool_name}('{args_display}...')",
-                                        action_type=tool_name,
-                                        input={"function_name": tool_name, "arguments": tool_info["arguments"]},
-                                        output={
-                                            "success": True,
-                                            "raw_output": output_content,  # Add raw output for action_display_app
-                                            "summary": result_summary,
-                                            "status_message": result_summary,
-                                        },
-                                        status=ActionStatus.SUCCESS,
-                                    )
-                                    complete_action.end_time = datetime.now()
-
-                                    logger.debug(
-                                        f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}"
-                                    )
-
-                                    # Add to action_history_manager before yielding (consistent with thinking messages)
-                                    action_history_manager.add_action(complete_action)
-                                    yield complete_action
-
-                                    # Remove from temp storage to avoid duplicates
-                                    del temp_tool_calls[call_id]
-
+                        # Handle thinking messages
+                        elif item_type == "message_output_item":
+                            raw_item = getattr(event.item, "raw_item", None)
+                            if raw_item and hasattr(raw_item, "content"):
+                                content = raw_item.content
+                                if isinstance(content, list) and content:
+                                    text_content = content[0].text if hasattr(content[0], "text") else str(content[0])
                                 else:
-                                    # No matching tool call found
-                                    logger.warning(
-                                        f"Orphan tool result: call_id={call_id}, "
-                                        f"stored={list(temp_tool_calls.keys())[:3]}"
-                                    )
+                                    text_content = str(content)
 
-                                    # Yield result anyway
-                                    orphan_action = ActionHistory(
-                                        action_id=call_id or f"orphan_{uuid.uuid4().hex[:8]}",
-                                        role=ActionRole.TOOL,
-                                        messages="Tool call (orphan)",
-                                        action_type="tool_result",
-                                        input={"function_name": "unknown"},
-                                        output={"success": True, "raw_output": output_content},
+                                if text_content and len(text_content.strip()) > 0:
+                                    # Create thinking/final output action and yield it
+                                    # External AgenticNode will parse raw_output for SQL extraction
+                                    text_content = text_content.strip()
+                                    text_content_split = (
+                                        text_content if len(text_content) <= 200 else f"{text_content[:200]}..."
+                                    )
+                                    thinking_action = ActionHistory(
+                                        action_id=f"assistant_{uuid.uuid4().hex[:8]}",
+                                        role=ActionRole.ASSISTANT,
+                                        messages=f"Thinking: {text_content_split}",
+                                        action_type="response",
+                                        input={},
+                                        output={"raw_output": text_content},
                                         status=ActionStatus.SUCCESS,
                                     )
-                                    orphan_action.end_time = datetime.now()
+                                    action_history_manager.add_action(thinking_action)
+                                    yield thinking_action
 
-                                    # Add to action_history_manager before yielding (consistent with other actions)
-                                    action_history_manager.add_action(orphan_action)
-                                    yield orphan_action
+                # Save LLM trace if method exists
+                if hasattr(self, "_save_llm_trace"):
+                    # For tools calls, we need to extract messages from the result
+                    messages = [{"role": "user", "content": prompt}]
+                    if instruction:
+                        messages.insert(0, {"role": "system", "content": instruction})
 
-                            # Handle thinking messages
-                            elif item_type == "message_output_item":
-                                raw_item = getattr(event.item, "raw_item", None)
-                                if raw_item and hasattr(raw_item, "content"):
-                                    content = raw_item.content
-                                    if isinstance(content, list) and content:
-                                        text_content = (
-                                            content[0].text if hasattr(content[0], "text") else str(content[0])
-                                        )
-                                    else:
-                                        text_content = str(content)
+                    # Get complete conversation history including tool calls
+                    conversation_history = None
+                    if hasattr(result, "to_input_list"):
+                        try:
+                            conversation_history = result.to_input_list()
+                        except Exception as e:
+                            logger.debug(f"Failed to get conversation history: {e}")
 
-                                    if text_content and len(text_content.strip()) > 0:
-                                        # Create thinking/final output action and yield it
-                                        # External AgenticNode will parse raw_output for SQL extraction
-                                        text_content = text_content.strip()
-                                        text_content_split = (
-                                            text_content if len(text_content) <= 200 else f"{text_content[:200]}..."
-                                        )
-                                        thinking_action = ActionHistory(
-                                            action_id=f"assistant_{uuid.uuid4().hex[:8]}",
-                                            role=ActionRole.ASSISTANT,
-                                            messages=f"Thinking: {text_content_split}",
-                                            action_type="response",
-                                            input={},
-                                            output={"raw_output": text_content},
-                                            status=ActionStatus.SUCCESS,
-                                        )
-                                        action_history_manager.add_action(thinking_action)
-                                        yield thinking_action
+                    final_output = result.final_output if hasattr(result, "final_output") else ""
+                    self._save_llm_trace(messages, final_output, conversation_history)
 
-                    # Save LLM trace if method exists
-                    if hasattr(self, "_save_llm_trace"):
-                        # For tools calls, we need to extract messages from the result
-                        messages = [{"role": "user", "content": prompt}]
-                        if instruction:
-                            messages.insert(0, {"role": "system", "content": instruction})
-
-                        # Get complete conversation history including tool calls
-                        conversation_history = None
-                        if hasattr(result, "to_input_list"):
-                            try:
-                                conversation_history = result.to_input_list()
-                            except Exception as e:
-                                logger.debug(f"Failed to get conversation history: {e}")
-
-                        final_output = result.final_output if hasattr(result, "final_output") else ""
-                        self._save_llm_trace(messages, final_output, conversation_history)
-
-                    # After streaming completes, extract usage information from the final result
-                    # and add it to the final assistant action
-                    await self._extract_and_distribute_token_usage(result, action_history_manager)
-            finally:
-                # Close the async client to prevent event loop errors
-                await async_client.close()
-                logger.debug("Closed AsyncOpenAI client")
+                # After streaming completes, extract usage information from the final result
+                # and add it to the final assistant action
+                await self._extract_and_distribute_token_usage(result, action_history_manager)
 
         # Execute the streaming operation with retry logic for connection errors
         max_retries = getattr(self.model_config, "max_retry", 3)
@@ -1096,8 +1178,10 @@ class OpenAICompatibleModel(LLMBaseModel):
             "deepseek-v3": {"context_length": 65535, "max_tokens": 8192},
             "deepseek-reasoner": {"context_length": 65535, "max_tokens": 65535},
             "deepseek-r1": {"context_length": 65535, "max_tokens": 65535},
-            # Moonshot (Kimi) Models
+            # Moonshot (Kimi) Models - https://platform.moonshot.cn/docs/price/pricing
             "kimi-k2": {"context_length": 256000, "max_tokens": 8192},
+            "kimi-k2.5": {"context_length": 256000, "max_tokens": 16384},
+            "kimi-k2-turbo": {"context_length": 128000, "max_tokens": 8192},
             # Qwen Models
             "qwen3-coder": {"context_length": 128000, "max_tokens": 8192},
             # Gemini Models
@@ -1144,10 +1228,16 @@ class OpenAICompatibleModel(LLMBaseModel):
 
     def token_count(self, prompt: str) -> int:
         """
-        Count tokens in prompt. Default implementation uses character approximation.
-        Override in subclasses for model-specific tokenization.
+        Count tokens in prompt using LiteLLM's token counter.
+        Supports automatic tokenizer selection for different model providers.
         """
-        return len(str(prompt)) // 4
+        try:
+            # Use LiteLLM's unified token counter
+            return litellm.token_counter(model=self.litellm_adapter.litellm_model_name, text=str(prompt))
+        except Exception as e:
+            # Fallback to character approximation if token counting fails
+            logger.debug(f"Token counting failed for {self.model_name}, using approximation: {e}")
+            return len(str(prompt)) // 4
 
     def _save_llm_trace(self, prompt: Any, response_content: str, reasoning_content: Any = None):
         """Save LLM input/output trace to YAML file if tracing is enabled.

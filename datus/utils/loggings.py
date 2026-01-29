@@ -165,6 +165,7 @@ def configure_logging(debug=False, log_dir=None, console_output=True) -> Dynamic
                  - "~/.datus/logs" for packaged installation
         console_output: If False, disable logging to console
     """
+    # Suppress noisy third-party loggers
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     global fileno
@@ -182,6 +183,14 @@ def configure_logging(debug=False, log_dir=None, console_output=True) -> Dynamic
     # Create or get log manager with specified parameters
     global _log_manager
     _log_manager = DynamicLogManager(debug=debug, log_dir=log_dir)
+
+    # Configure LiteLLM logger to output to file only (not console)
+    # This prevents noisy "LiteLLM completion() model=..." messages from appearing in console
+    litellm_logger = logging.getLogger("LiteLLM")
+    litellm_logger.handlers.clear()  # Remove default handlers
+    litellm_logger.addHandler(_log_manager.file_handler)  # Only output to file
+    litellm_logger.propagate = False  # Don't propagate to root logger
+    litellm_logger.setLevel(logging.INFO)  # Keep INFO level for file logging
 
     # Set output target based on console_output parameter
     if console_output:

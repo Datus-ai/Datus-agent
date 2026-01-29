@@ -4,24 +4,11 @@
 
 import os
 
-from agents import set_tracing_disabled
-
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_compatible import OpenAICompatibleModel
 from datus.utils.loggings import get_logger
 
-# Import typing fix for Python 3.12+ compatibility
-try:
-    from datus.utils.typing_fix import patch_agents_typing_issue
-
-    patch_agents_typing_issue()
-except ImportError:
-    pass
-
 logger = get_logger(__name__)
-MAX_INPUT_DEEPSEEK = 52000  # 57344 - buffer of ~5000 tokens
-
-set_tracing_disabled(True)
 
 
 class DeepSeekModel(OpenAICompatibleModel):
@@ -47,12 +34,3 @@ class DeepSeekModel(OpenAICompatibleModel):
     def _get_base_url(self) -> str:
         """Get DeepSeek base URL from config or environment."""
         return self.model_config.base_url or os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-
-    def token_count(self, prompt: str) -> int:
-        """
-        Estimate the number of tokens in a text using the deepseek tokenizer.
-        """
-        return int(len(prompt) * 0.3 + 0.5)
-
-    def max_tokens(self) -> int:
-        return MAX_INPUT_DEEPSEEK

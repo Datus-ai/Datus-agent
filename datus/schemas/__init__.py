@@ -6,3 +6,23 @@
 Schemas package for Datus agent.
 This package contains data models and schemas used throughout the application.
 """
+
+from datus.schemas.output_types import (
+    ChartRecommendation,
+    MetricSearchResult,
+    QueryClassification,
+    ReflectionResult,
+    SchemaLinkingResult,
+    SQLFixResult,
+    SQLGenerationResult,
+)
+
+__all__ = [
+    "SQLGenerationResult",
+    "SchemaLinkingResult",
+    "ReflectionResult",
+    "SQLFixResult",
+    "MetricSearchResult",
+    "ChartRecommendation",
+    "QueryClassification",
+]

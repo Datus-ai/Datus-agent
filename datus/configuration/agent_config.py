@@ -76,11 +76,15 @@ class ModelConfig:
     api_key: str
     model: str
     save_llm_trace: bool = False
-    enable_thinking: bool = False
+    enable_thinking: Optional[bool] = None  # None = auto-detect, True = force enable, False = force disable
+    strict_json_schema: bool = True  # Enable strict JSON schema mode for structured output
     default_headers: Optional[Dict[str, str]] = None
     # Retry configuration for stream connection errors
     max_retry: int = 3
     retry_interval: float = 2.0  # seconds
+    # Model-specific parameters
+    temperature: Optional[float] = None  # Some models like kimi-k2.5 require temperature=1
+    top_p: Optional[float] = None  # Some models like kimi-k2.5 require top_p=0.95
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -722,10 +726,12 @@ def resolve_env(value: str) -> str:
 def load_model_config(data: dict) -> ModelConfig:
     max_retry = data.get("max_retry")
     retry_interval = data.get("retry_interval")
+    temperature = data.get("temperature")
+    top_p = data.get("top_p")
 
     return ModelConfig(
         type=data["type"],
-        base_url=resolve_env(data["base_url"]),
+        base_url=resolve_env(data["base_url"]) if "base_url" in data else None,
         api_key=resolve_env(data["api_key"]),
         model=resolve_env(data["model"]),
         save_llm_trace=data.get("save_llm_trace", False),
@@ -733,6 +739,8 @@ def load_model_config(data: dict) -> ModelConfig:
         default_headers=data.get("default_headers"),
         max_retry=int(max_retry) if max_retry is not None else 3,
         retry_interval=float(retry_interval) if retry_interval is not None else 2.0,
+        temperature=float(temperature) if temperature is not None else None,
+        top_p=float(top_p) if top_p is not None else None,
     )
 
 
