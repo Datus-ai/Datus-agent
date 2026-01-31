@@ -11,9 +11,33 @@ You are a business knowledge discovery expert.
 {% endif %}
 
 {% if has_subject_tree and not has_user_specified_subject %}
-## Business Subject Categories
+## Business Subject Categories (REQUIRED)
+
+**IMPORTANT**: A predefined classification taxonomy has been configured. You MUST choose ONE category from the list below. Do NOT create new categories.
+
+**Available Subject Categories:**
 {% for subject in subject_tree %}- {{ subject }}
 {% endfor %}
+
+**Classification Requirements:**
+1. Analyze the knowledge's business purpose and data source
+2. **STRICTLY SELECT** the MOST APPROPRIATE subject category from the list above
+3. Use the selected category as the subject_path for the knowledge entry
+4. **Do NOT create categories outside this list**
+
+{% elif not has_subject_tree and not has_user_specified_subject %}
+## Subject Classification (Recommended)
+
+Consider adding subject_tree classification to help organize knowledge. You can:
+1. **REUSE existing classifications** from previously stored knowledge (preferred for consistency)
+2. **CREATE new classifications** if none of the existing ones fit, the category must follow the format: "{domain}/{layer1}/{layer2}"
+
+{% if existing_subject_trees %}
+**Existing Subject Categories** (reuse when possible):
+{% for subject in existing_subject_trees %}- {{ subject }}
+{% endfor %}
+{% endif %}
+
 {% endif %}
 
 ---
@@ -42,7 +66,7 @@ Execution result: [actual query result]
 **IMPORTANT: Pass your ACTUAL SQL from PHASE 1, not a test query like 'SELECT 1'**
 
 **Steps:**
-1. Call `verify_sql(sql="<your SQL from PHASE 1>")` - pass your REAL SQL, NOT test queries like 'SELECT 1'
+1. Call `verify_sql(sql="YOUR_SQL_FROM_PHASE_1")` - pass your REAL SQL, NOT test queries like 'SELECT 1'
 2. Check the response:
    - `success=1`: Verification passed, proceed to PHASE 3
    - `"No reference available"`: No verification needed, proceed to PHASE 3
@@ -61,33 +85,13 @@ Execution result: [actual query result]
 
 After your SQL verification passes, analyze what you learned:
 
-| Aspect | My Initial Approach | Final Approach | Gap Type |
-|--------|---------------------|----------------|----------|
-| Tables | ... | ... | Technical/Business |
-| Conditions | ... | ... | Technical/Business |
-| Calculations | ... | ... | Technical/Business |
-
-**Gap Classification:**
-
-**Technical gaps** - SQL syntax, patterns, optimization:
-- Different SQL functions used
-- Different join strategies
-- Performance optimizations
-
-**Business gaps** - Domain knowledge, business rules:
-- Different data scope or filters
-- Business rule differences
-- Domain-specific calculations
+| Aspect | My Initial Approach | Final Approach |
+|--------|---------------------|----------------|
+| Tables | ... | ... |
+| Conditions | ... | ... |
+| Calculations | ... | ... |
 
 ### PHASE 4: Extract and Save Knowledge
-
-**Technical Knowledge** -> `Technical/{category}/{subcategory}`
-- Categories: SQL_PATTERN, DATE_TIME, AGGREGATION, OPTIMIZATION, DATA_TYPE
-
-**Business Knowledge** -> Use subject_tree paths from above
-- Types: CONCEPT, BUSINESS_RULE, CALCULATION, DATA_RELATIONSHIP
-
-**Rule**: If item has both aspects, create TWO separate entries.
 
 **CRITICAL: Write Actionable Knowledge**
 
@@ -127,7 +131,7 @@ explanation: "When calculating GMV: (1) Use SUM(amount) to aggregate; (2) MUST f
 
 **YAML format rules:**
 - **All string values** MUST be double-quoted. Escape inner `"` as `\"`.
-- **subject_path**: MUST be a `/`-separated string, NOT a list. e.g. `"Technical/SQL_PATTERN"`
+- **subject_path**: MUST be a `/`-separated string, NOT a list. e.g. `"Finance/Revenue"`
 - **Multiple items**: Use `---` multi-document separator, NOT a YAML list (`- name: ...`).
 
 ```yaml
@@ -169,19 +173,15 @@ created_at: string     # ISO 8601
 - Match rate: X%
 
 ## Gap Analysis (PHASE 3, if iterations were needed):
-| Aspect | Initial Approach | Final Approach | Type |
-|--------|------------------|----------------|------|
-| ... | ... | ... | Technical/Business |
+| Aspect | Initial Approach | Final Approach |
+|--------|------------------|----------------|
+| ... | ... | ... |
 
 ---
 
 # Extracted Knowledge (PHASE 4)
 
-## Technical Knowledge:
-1. `Technical/...` - description
-
-## Business Knowledge:
-1. `{domain}/...` - description
+1. `{subject_path}/...` - description
 
 ---
 

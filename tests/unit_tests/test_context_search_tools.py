@@ -293,7 +293,7 @@ def test_get_knowledge_success(build_context_tools):
         }
     )
 
-    result = tools.get_knowledge(subject_path=["Business", "Terms"], name="GMV")
+    result = tools.get_knowledge(paths=[["Business", "Terms", "GMV"]])
     assert result.success == 1
     assert result.result == knowledge_detail
     ext_knowledge_rag.get_knowledge_detail.assert_called_once_with(
@@ -310,7 +310,7 @@ def test_get_knowledge_not_found(build_context_tools):
         }
     )
 
-    result = tools.get_knowledge(subject_path=["Business", "Terms"], name="Unknown")
+    result = tools.get_knowledge(paths=[["Business", "Terms", "Unknown"]])
     assert result.success == 0
     assert result.error == "No matched result"
 
@@ -323,7 +323,7 @@ def test_get_knowledge_handles_failure(build_context_tools):
         }
     )
 
-    result = tools.get_knowledge(subject_path=["Business", "Terms"], name="GMV")
+    result = tools.get_knowledge(paths=[["Business", "Terms", "GMV"]])
     assert result.success == 0
     assert "knowledge retrieval failed" in (result.error or "")
     ext_knowledge_rag.get_knowledge_detail.assert_called_once()
