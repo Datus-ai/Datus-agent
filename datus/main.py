@@ -179,6 +179,12 @@ def create_parser() -> argparse.ArgumentParser:
         "If provided, only these predefined categories can be used. "
         "If not provided, existing categories from LanceDB will be reused or new ones created.",
     )
+    bootstrap_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompts and automatically confirm deletions (useful for CI/CD)",
+    )
 
     # benchmark command
     benchmark_parser = subparsers.add_parser(
@@ -224,6 +230,12 @@ def create_parser() -> argparse.ArgumentParser:
         "--plan-mode",
         action="store_true",
         help="Enable plan mode for benchmark execution (generates plan then auto-executes without confirmation)",
+    )
+    benchmark_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompts and automatically confirm deletions (useful for CI/CD)",
     )
 
     # generate-dataset command
