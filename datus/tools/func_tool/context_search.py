@@ -469,8 +469,6 @@ class ContextSearchTools:
                     - 'search_text': Business search_text/concept
                     - 'explanation': Detailed explanation of the search_text
         """
-        # Normalize null values from LLM
-        name = _normalize_null(name) or ""
         try:
             if not paths:
                 return FuncToolResult(success=0, error="No paths provided", result=None)
