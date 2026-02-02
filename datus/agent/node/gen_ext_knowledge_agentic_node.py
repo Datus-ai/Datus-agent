@@ -216,7 +216,7 @@ IMPORTANT: You MUST create or correct the external knowledge to fix the SQL.
 Actions required:
 1. Review the suggestions and column differences from the last verify_sql call
 2. Identify what knowledge is missing or incorrect
-3. Use write_file to CREATE NEW knowledge entries or CORRECT existing ones in the external knowledge file
+3. Use edit_file to MODIFY existing knowledge entries in the external knowledge file, or use write_file to CREATE NEW ones if no file exists yet
 4. Based on the new/corrected knowledge, modify your SQL to match expected results
 5. Call verify_sql again with your corrected SQL
 
@@ -446,6 +446,8 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
             from datus.tools.func_tool import trans_to_function_tool
 
             self.filesystem_func_tool = FilesystemFuncTool(root_path=self.ext_knowledge_dir)
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
+            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
         except Exception as e:
             logger.error(f"Failed to setup specific filesystem tool: {e}")
