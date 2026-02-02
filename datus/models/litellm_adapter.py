@@ -229,11 +229,11 @@ class LiteLLMAdapter:
 
         try:
             from agents.extensions.models.litellm_model import LitellmModel
-        except ImportError:
+        except ImportError as err:
             raise ImportError(
                 "LitellmModel not found. Please install openai-agents with litellm support: "
                 "pip install 'openai-agents[litellm]'"
-            )
+            ) from err
 
         # Build model kwargs
         model_kwargs = {

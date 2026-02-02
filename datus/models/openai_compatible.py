@@ -365,7 +365,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         # If output_type is a Pydantic model, use structured output
         if output_type is not None and isinstance(output_type, type) and issubclass(output_type, BaseModel):
-            return self._generate_with_structured_output(prompt, output_type, enable_thinking_param, **json_kwargs)
+            return self._generate_with_structured_output(prompt, output_type, **json_kwargs)
 
         # Otherwise use simple JSON mode
         json_kwargs["response_format"] = {"type": "json_object"}
@@ -388,18 +388,16 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             return {"error": "Failed to parse JSON response", "raw_response": response_text}
 
-    def _generate_with_structured_output(
-        self, prompt: Any, output_type: type, enable_thinking: bool = False, **kwargs
-    ) -> Any:
+    def _generate_with_structured_output(self, prompt: Any, output_type: type, **kwargs) -> Any:
         """
         Generate response with structured output using Pydantic model.
 
         Uses LiteLLM's response_format parameter with JSON schema for structured output.
+        Thinking mode is automatically detected via self.litellm_adapter.is_thinking_model.
 
         Args:
             prompt: Input prompt
             output_type: Pydantic model class for structured output
-            enable_thinking: Whether to enable thinking mode
             **kwargs: Additional parameters
 
         Returns:
@@ -470,8 +468,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                     try:
                         parsed_json = json.loads(json_match.group(0))
                         return output_type.model_validate(parsed_json)
-                    except Exception:
-                        pass
+                    except Exception as parse_err:
+                        logger.debug(f"Failed to parse extracted JSON: {parse_err}")
                 raise
 
         return self._with_retry(_structured_output_operation, "structured output generation")

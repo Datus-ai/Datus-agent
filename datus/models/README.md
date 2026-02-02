@@ -146,7 +146,7 @@ The SDK 0.7.0 supports structured output using Pydantic models. This provides au
 ```python
 import asyncio
 from datus.models.base import LLMBaseModel
-from datus.schemas import SQLGenerationResult
+from datus.schemas import GenSqlOutput
 
 async def generate_sql_with_structure():
     model = LLMBaseModel.create_model(config, "gpt-4")
@@ -154,18 +154,17 @@ async def generate_sql_with_structure():
     # Use Pydantic model for structured output
     result = await model.generate_with_tools(
         prompt="Generate a query for top 10 customers by revenue",
-        output_type=SQLGenerationResult,  # Pydantic model
+        output_type=GenSqlOutput,  # Pydantic model
         strict_json_schema=True,  # Enable strict JSON mode (default)
         instruction="You are a SQL expert. Generate SQL queries.",
         max_turns=10
     )
 
-    # result["content"] is now a SQLGenerationResult object
+    # result["content"] is now a GenSqlOutput object
     sql_result = result["content"]
     print(f"SQL: {sql_result.sql}")
     print(f"Explanation: {sql_result.explanation}")
-    print(f"Tables: {sql_result.tables_used}")
-    print(f"Confidence: {sql_result.confidence}")
+    print(f"Tables: {sql_result.tables}")
 
 asyncio.run(generate_sql_with_structure())
 ```
@@ -177,13 +176,13 @@ asyncio.run(generate_sql_with_structure())
 - Better error messages when output doesn't match schema
 
 **Available Output Types** (from `datus.schemas`):
-- `SQLGenerationResult` - SQL generation with explanation
-- `SchemaLinkingResult` - Schema linking analysis
-- `ReflectionResult` - SQL validation and reflection
-- `SQLFixResult` - SQL fix operations
-- `MetricSearchResult` - Metric search results
-- `ChartRecommendation` - Chart visualization recommendations
-- `QueryClassification` - Query intent classification
+- `GenSqlOutput` - SQL generation with explanation and tables
+- `SemanticModelGenerationOutput` - Semantic model generation
+- `MetricGenerationOutput` - Metric generation
+- `SqlSummaryGenerationOutput` - SQL summary generation
+- `ReportGenerationOutput` - Report generation
+- `ExtKnowledgeGenerationOutput` - External knowledge generation
+- `CompareOutput` - SQL comparison analysis
 
 ### Required Environment Variables
 
