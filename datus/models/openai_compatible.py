@@ -574,7 +574,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         # Check if model supports structured output, fall back to str if not
         effective_output_type = output_type
-        if output_type != str and not self.supports_structured_output:
+        if output_type is not str and not self.supports_structured_output:
             logger.debug(
                 f"Model {self.model_name} doesn't support structured output, "
                 f"ignoring output_type={output_type.__name__ if hasattr(output_type, '__name__') else output_type}"
@@ -620,7 +620,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # This ensures the model outputs valid JSON that matches the Pydantic schema
             actual_output_type = output_type
             enable_structured_output = False
-            if output_type != str:
+            if output_type is not str:
                 from agents import AgentOutputSchema
 
                 actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
@@ -686,8 +686,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 try:
                     result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
                 except MaxTurnsExceeded as e:
-                    logger.error(f"Max turns exceeded: {str(e)}")
-                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+                    logger.exception("Max turns exceeded")
+                    raise DatusException(
+                        ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
+                    ) from e
 
                 # Save LLM trace if method exists (for models that support it like DeepSeekModel)
                 if hasattr(self, "_save_llm_trace"):
@@ -789,7 +791,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # This ensures the model outputs valid JSON that matches the Pydantic schema
             actual_output_type = output_type
             enable_structured_output = False
-            if output_type != str:
+            if output_type is not str:
                 from agents import AgentOutputSchema
 
                 actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
@@ -856,8 +858,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 try:
                     result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
                 except MaxTurnsExceeded as e:
-                    logger.error(f"Max turns exceeded in streaming: {str(e)}")
-                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+                    logger.exception("Max turns exceeded in streaming")
+                    raise DatusException(
+                        ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
+                    ) from e
 
                 # Streaming phase: yield progress actions in real-time
                 # After streaming completes, generate final summary report
@@ -1308,9 +1312,10 @@ class OpenAICompatibleModel(LLMBaseModel):
             "deepseek-reasoner": {"context_length": 65535, "max_tokens": 65535},
             "deepseek-r1": {"context_length": 65535, "max_tokens": 65535},
             # Moonshot (Kimi) Models - https://platform.moonshot.cn/docs/price/pricing
+            # kimi-k2-0905 and kimi-k2-turbo upgraded to 256K context (Aug-Sep 2025)
             "kimi-k2": {"context_length": 256000, "max_tokens": 8192},
             "kimi-k2.5": {"context_length": 256000, "max_tokens": 16384},
-            "kimi-k2-turbo": {"context_length": 128000, "max_tokens": 8192},
+            "kimi-k2-turbo": {"context_length": 256000, "max_tokens": 8192},
             # Qwen Models
             "qwen3-coder": {"context_length": 128000, "max_tokens": 8192},
             # Gemini Models

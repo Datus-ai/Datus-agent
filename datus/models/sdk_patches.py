@@ -16,6 +16,7 @@ The SDK already supports DeepSeek reasoning_content. This patch extends
 the same support to Kimi/Moonshot models.
 """
 
+import asyncio
 import copy
 from collections.abc import Iterable
 from typing import Any
@@ -26,6 +27,9 @@ logger = get_logger(__name__)
 
 # NOTE: Do NOT import agents SDK at module level!
 # Import it inside functions to avoid circular dependencies and ensure patches are applied first.
+
+# Lock to prevent concurrent patching conflicts when temporarily replacing litellm.acompletion
+_acompletion_patch_lock = asyncio.Lock()
 
 # Providers that need reasoning_content support (like DeepSeek)
 REASONING_CONTENT_PROVIDERS = {"deepseek", "kimi", "moonshot"}
@@ -303,14 +307,16 @@ async def _patched_litellm_fetch_response(self, *args, **kwargs):
             # Call original
             return await original_acompletion(*ac_args, **ac_kwargs)
 
-        # Temporarily replace acompletion
-        litellm.acompletion = patched_acompletion
-        try:
-            result = await _original_litellm_fetch_response(self, *args, **kwargs)
-            return result
-        finally:
-            # Restore original
-            litellm.acompletion = original_acompletion
+        # Use lock to prevent concurrent patching conflicts
+        async with _acompletion_patch_lock:
+            # Temporarily replace acompletion
+            litellm.acompletion = patched_acompletion
+            try:
+                result = await _original_litellm_fetch_response(self, *args, **kwargs)
+                return result
+            finally:
+                # Restore original
+                litellm.acompletion = original_acompletion
     else:
         # Not a Kimi model, just call original
         return await _original_litellm_fetch_response(self, *args, **kwargs)

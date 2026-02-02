@@ -735,7 +735,8 @@ def load_model_config(data: dict) -> ModelConfig:
         api_key=resolve_env(data["api_key"]),
         model=resolve_env(data["model"]),
         save_llm_trace=data.get("save_llm_trace", False),
-        enable_thinking=data.get("enable_thinking", False),
+        enable_thinking=data.get("enable_thinking"),  # None = auto-detect
+        strict_json_schema=data.get("strict_json_schema", True),
         default_headers=data.get("default_headers"),
         max_retry=int(max_retry) if max_retry is not None else 3,
         retry_interval=float(retry_interval) if retry_interval is not None else 2.0,

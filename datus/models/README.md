@@ -37,7 +37,7 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 - Custom implementation for Claude's native API
 - Anthropic tool format conversion for MCP integration
 - Prompt caching support for improved performance
-- Using prompt cache mannually
+- Using prompt cache manually
 
 **`deepseek_model.py`** - DeepSeek models
 - OpenAI-compatible implementation via LiteLLM

@@ -75,9 +75,9 @@ def convert_tools_for_anthropic(mcp_tools):
 
         anthropic_tools.append(anthropic_tool)
 
-    # Add tool cache to last tool
-    tool_size = len(anthropic_tools)
-    anthropic_tools[tool_size - 1]["cache_control"] = {"type": "ephemeral"}
+    # Add tool cache to last tool (if any tools exist)
+    if anthropic_tools:
+        anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
     return anthropic_tools
 
 
