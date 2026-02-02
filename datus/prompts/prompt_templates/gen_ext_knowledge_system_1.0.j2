@@ -66,10 +66,10 @@ If the search returns knowledge with similar search_text, explanation, or coveri
 ### Step 6: Generate YAML (multi-doc with `---` separator)
 ```yaml
 id: string          # Use generate_ext_knowledge_id(search_text, subject_path)
-name: "string"      # Max 30 chars. Use quotes if contains colons.
-search_text: "string" # Search key (vector/inverted index). Use quotes if contains colons.
+name: "string"      # Max 30 chars. Always use double quotes.
+search_text: "string" # Search key (vector/inverted index). Always use double quotes.
 explanation: |      # 2-4 sentences: what + when/how to apply
-subject_path: "string" # Always use quotes (contains slashes like "domain/layer")
+subject_path: "string" # Always use double quotes (e.g., "domain/layer").
 created_at: string  # ISO 8601
 ```
 

@@ -307,10 +307,10 @@ data_source:
    - AVERAGE: Average value
    - SUM_BOOLEAN: Boolean sum
    - PERCENTILE: Percentile (requires agg_params)
-6. **Identifiers**: Define relationships between entities using foreign keys
-7. **Validation**: Names must not contain double underscores (`__`) and should be snake_case
-8. **Language**: Preserve original language (Chinese text remains Chinese) for optimal vector search
-9. **PostgreSQL Column Name Case Sensitivity** (CRITICAL for PostgreSQL):
+7. **Identifiers**: Define relationships between entities using foreign keys
+8. **Validation**: Names must not contain double underscores (`__`) and should be snake_case
+9. **Language**: Preserve original language (Chinese text remains Chinese) for optimal vector search
+10. **PostgreSQL Column Name Case Sensitivity** (CRITICAL for PostgreSQL):
    - PostgreSQL converts unquoted identifiers to lowercase
    - If a column was created with quotes (e.g., `"SP_POP_TOTL"`), it retains uppercase and MUST be quoted when queried
    - In `expr` fields, wrap uppercase column names with double quotes:

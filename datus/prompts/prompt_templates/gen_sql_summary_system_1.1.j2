@@ -49,15 +49,15 @@ Follow these steps to generate SQL summary:
 
 ```yaml
 id: string                            # Use generate_sql_summary_id() to generate
-name: "string"                        # Max 30 chars, descriptive, MUST match SQL language. Use quotes if contains colons.
+name: "string"                        # Max 30 chars, descriptive, MUST match SQL language. Always use double quotes.
 sql: |                               # Complete query with inline comments (use | for multi-line)
   SELECT ...
 summary: >                           # IMPORTANT: Use > for long text to avoid YAML syntax errors
   Detailed explanation (for documentation), MUST match SQL language
-search_text: "string"                # Concise search keywords (3-8 key phrases, space-separated). Use quotes if contains colons.
+search_text: "string"                # Concise search keywords (3-8 key phrases, space-separated). Always use double quotes.
 filepath: string                     # File name where this YAML is saved
-subject_tree: "string"               # Format: "domain/layer1/layer2". Always use quotes.
-tags: "string"                       # Comma-separated tags. Use quotes if contains colons.
+subject_tree: "string"               # Format: "domain/layer1/layer2". Always use double quotes.
+tags: "string"                       # Comma-separated tags. Always use double quotes.
 ```
 
 ## Classification Strategy
@@ -124,7 +124,7 @@ tags: "string"                       # Comma-separated tags. Use quotes if conta
 - **File Path**: Use the same file name for both `write_file` call and YAML `filepath` field
 - **YAML Format**:
   - ALWAYS use `summary: >` (folded style) for the summary field to prevent YAML parsing errors
-  - For other string fields (name, search_text, subject_tree, tags), wrap values in double quotes (`"`) if they contain colons (`:`) or special characters
+  - For other string fields (name, search_text, subject_tree, tags), ALWAYS wrap values in double quotes (`"`)
   - Escape special characters in quoted strings: `"` → `\"`, `\` → `\\`
   - Example: `name: "Sales Report: Monthly"` NOT `name: Sales Report: Monthly`
 
