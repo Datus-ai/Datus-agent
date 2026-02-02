@@ -19,7 +19,7 @@ from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from openai import APIConnectionError, APIError, APITimeoutError, OpenAI, RateLimitError
 from openai.types.shared.reasoning import Reasoning
-from pydantic import AnyUrl
+from pydantic import AnyUrl, BaseModel
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
@@ -130,14 +130,6 @@ class OpenAICompatibleModel(LLMBaseModel):
     def _get_base_url(self) -> Optional[str]:
         """Get base URL from config. Override in subclasses if needed."""
         return self.model_config.base_url
-
-    def _build_tool_extra_body(self) -> Dict[str, Any]:
-        """Build extra_body for streaming tool calls. Override in subclasses for model-specific settings.
-
-        Returns:
-            Dict with extra_body parameters for ModelSettings
-        """
-        return {"stream_options": {"include_usage": True}}
 
     @staticmethod
     def _setup_custom_json_encoder():
@@ -338,28 +330,36 @@ class OpenAICompatibleModel(LLMBaseModel):
             return result.get("content", "")
         return result
 
-    def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
+    def generate_with_json_output(self, prompt: Any, output_type: Optional[type] = None, **kwargs) -> Union[Dict, Any]:
         """
         Generate a JSON response with error handling.
 
         Args:
             prompt: Input prompt
+            output_type: Optional Pydantic model class for structured output.
+                        When provided, the response will be validated against
+                        this schema and returned as the Pydantic model instance.
             **kwargs: Additional parameters
 
         Returns:
-            Parsed JSON dictionary
+            If output_type is provided: Pydantic model instance
+            Otherwise: Parsed JSON dictionary
         """
-        # Set JSON mode
         json_kwargs = kwargs.copy()
-        json_kwargs["response_format"] = {"type": "json_object"}
 
         # Pass through enable_thinking if provided
         enable_thinking_param = json_kwargs.pop("enable_thinking", False)
+
+        # If output_type is a Pydantic model, use structured output
+        if output_type is not None and isinstance(output_type, type) and issubclass(output_type, BaseModel):
+            return self._generate_with_structured_output(prompt, output_type, enable_thinking_param, **json_kwargs)
+
+        # Otherwise use simple JSON mode
+        json_kwargs["response_format"] = {"type": "json_object"}
         response_text = self.generate(prompt, enable_thinking=enable_thinking_param, **json_kwargs)
 
         try:
             parsed_json = json.loads(response_text)
-            # For LangSmith tracing, we want to capture metadata but return the actual JSON for backward compatibility
             return parsed_json
         except json.JSONDecodeError:
             # Try to extract JSON from response
@@ -374,6 +374,94 @@ class OpenAICompatibleModel(LLMBaseModel):
                     pass
 
             return {"error": "Failed to parse JSON response", "raw_response": response_text}
+
+    def _generate_with_structured_output(
+        self, prompt: Any, output_type: type, enable_thinking: bool = False, **kwargs
+    ) -> Any:
+        """
+        Generate response with structured output using Pydantic model.
+
+        Uses LiteLLM's response_format parameter with JSON schema for structured output.
+
+        Args:
+            prompt: Input prompt
+            output_type: Pydantic model class for structured output
+            enable_thinking: Whether to enable thinking mode
+            **kwargs: Additional parameters
+
+        Returns:
+            Pydantic model instance
+        """
+        # Build JSON schema from Pydantic model
+        json_schema = output_type.model_json_schema()
+
+        # Use json_schema response format for structured output
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": output_type.__name__,
+                "schema": json_schema,
+                "strict": True,
+            },
+        }
+
+        params = {
+            "model": self.litellm_adapter.litellm_model_name,
+            "response_format": response_format,
+        }
+
+        # Add temperature and top_p settings
+        if self.model_config.temperature is not None:
+            params["temperature"] = self.model_config.temperature
+        elif not self.litellm_adapter.is_thinking_model:
+            params["temperature"] = 0.7
+
+        if self.model_config.top_p is not None:
+            params["top_p"] = self.model_config.top_p
+        elif not self.litellm_adapter.is_thinking_model:
+            params["top_p"] = 1.0
+
+        # Add provider-specific headers for structured output (e.g., Claude beta header)
+        extra_headers = self.litellm_adapter._get_structured_output_headers()
+        if extra_headers:
+            params["extra_headers"] = extra_headers
+
+        # Filter kwargs
+        excluded_params = ["temperature", "top_p", "max_tokens", "max_completion_tokens", "response_format"]
+        params.update({k: v for k, v in kwargs.items() if k not in excluded_params})
+
+        # Convert prompt to messages format
+        if isinstance(prompt, list):
+            messages = prompt
+        else:
+            messages = [{"role": "user", "content": str(prompt)}]
+
+        def _structured_output_operation():
+            response = litellm.completion(messages=messages, **params)
+            content = response.choices[0].message.content
+
+            if hasattr(self, "_save_llm_trace"):
+                self._save_llm_trace(messages, content, None)
+
+            # Parse and validate with Pydantic model
+            try:
+                parsed_json = json.loads(content)
+                return output_type.model_validate(parsed_json)
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Failed to parse structured output: {e}, content: {content[:200]}")
+                # Try to extract JSON from response
+                import re
+
+                json_match = re.search(r"\{.*\}", content, re.DOTALL)
+                if json_match:
+                    try:
+                        parsed_json = json.loads(json_match.group(0))
+                        return output_type.model_validate(parsed_json)
+                    except Exception:
+                        pass
+                raise
+
+        return self._with_retry(_structured_output_operation, "structured output generation")
 
     @optional_traceable(name="openai_compatible_tools", run_type="chain")
     async def generate_with_tools(
@@ -544,9 +632,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Build ModelSettings with provider-specific configurations
                 model_settings_kwargs = {}
 
-                # Configure extra_body for token tracking (subclasses can override)
-                extra_body = self._build_tool_extra_body()
-                model_settings_kwargs["extra_body"] = extra_body
+                # Add provider-specific headers for structured output (e.g., Claude beta header)
+                structured_output_headers = self.litellm_adapter.get_structured_output_headers()
+                if structured_output_headers:
+                    model_settings_kwargs["extra_headers"] = structured_output_headers
+                    logger.debug(f"Added structured output headers: {structured_output_headers}")
 
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
@@ -711,9 +801,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Build ModelSettings with provider-specific configurations
                 model_settings_kwargs = {}
 
-                # Configure stream_options to include usage information for token tracking
-                extra_body = self._build_tool_extra_body()
-                model_settings_kwargs["extra_body"] = extra_body
+                # Add provider-specific headers for structured output (e.g., Claude beta header)
+                structured_output_headers = self.litellm_adapter.get_structured_output_headers()
+                if structured_output_headers:
+                    model_settings_kwargs["extra_headers"] = structured_output_headers
+                    logger.debug(f"Added structured output headers (streaming): {structured_output_headers}")
 
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
@@ -944,6 +1036,21 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                     final_output = result.final_output if hasattr(result, "final_output") else ""
                     self._save_llm_trace(messages, final_output, conversation_history)
+
+                # After streaming completes, yield a final action with result.final_output
+                # This is important for structured output: final_output may be a Pydantic object
+                if hasattr(result, "final_output") and result.final_output is not None:
+                    final_action = ActionHistory(
+                        action_id=f"final_{uuid.uuid4().hex[:8]}",
+                        role=ActionRole.ASSISTANT,
+                        messages="Final output",
+                        action_type="final_response",
+                        input={},
+                        output={"raw_output": result.final_output, "is_final": True},
+                        status=ActionStatus.SUCCESS,
+                    )
+                    action_history_manager.add_action(final_action)
+                    yield final_action
 
                 # After streaming completes, extract usage information from the final result
                 # and add it to the final assistant action

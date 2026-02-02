@@ -86,16 +86,20 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         """
 
     @abstractmethod
-    def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
+    def generate_with_json_output(self, prompt: Any, output_type: Optional[type] = None, **kwargs) -> Union[Dict, Any]:
         """
         Generate a response and ensure it conforms to the provided JSON schema.
 
         Args:
             prompt: The input prompt to send to the model
+            output_type: Optional Pydantic model class for structured output.
+                        When provided, the response will be validated against
+                        this schema and returned as the Pydantic model instance.
             **kwargs: Additional generation parameters
 
         Returns:
-            A dictionary representing the JSON response
+            If output_type is provided: Pydantic model instance
+            Otherwise: A dictionary representing the JSON response
         """
 
     @abstractmethod

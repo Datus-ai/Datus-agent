@@ -16,6 +16,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput, GenReportNodeResult
+from datus.schemas.output_types import ReportGenerationOutput
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -468,6 +469,7 @@ class GenReportAgenticNode(AgenticNode):
                 tools=self.tools,
                 mcp_servers=self.mcp_servers,
                 instruction=system_instruction,
+                output_type=ReportGenerationOutput,
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
@@ -510,20 +512,36 @@ class GenReportAgenticNode(AgenticNode):
 
             # If we still don't have response_content, check the last successful output
             if not response_content and last_successful_output:
-                response_content = (
-                    last_successful_output.get("content", "")
-                    or last_successful_output.get("text", "")
-                    or last_successful_output.get("response", "")
-                    or str(last_successful_output)
-                )
+                response_content = last_successful_output.get("raw_output", "")
 
-            # Extract report markdown from JSON response (if LLM returned structured output)
+            # Handle structured output (ReportGenerationOutput) or fallback to manual parsing
             report_metadata = None
-            if last_successful_output:
+            if isinstance(response_content, ReportGenerationOutput):
+                # Direct Pydantic object from structured output
+                report_metadata = {
+                    "data_sources": response_content.data_sources,
+                    "key_findings": response_content.key_findings,
+                }
+                response_content = response_content.report
+                logger.debug(f"Extracted from structured output, length={len(response_content)}")
+            elif isinstance(response_content, dict):
+                # Dict format (backward compatibility)
+                report_metadata = {
+                    "data_sources": response_content.get("data_sources", []),
+                    "key_findings": response_content.get("key_findings", []),
+                }
+                response_content = response_content.get("report", str(response_content))
+                logger.debug(f"Extracted from dict, length={len(response_content)}")
+            elif last_successful_output:
+                # String format - use legacy extraction method
                 extracted_report, report_metadata = self._extract_report_from_response(last_successful_output)
                 if extracted_report:
                     response_content = extracted_report
                     logger.debug(f"Extracted report from JSON response, length={len(response_content)}")
+
+            # Ensure response_content is a string for downstream processing
+            if not isinstance(response_content, str):
+                response_content = str(response_content) if response_content else ""
 
             # Extract report result from tool calls (subclass-specific)
             all_actions = action_history_manager.get_actions()

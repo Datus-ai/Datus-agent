@@ -171,30 +171,43 @@ class InteractiveInit:
                 "type": "openai",
                 "base_url": "https://api.openai.com/v1",
                 "model": "gpt-4.1",
-                "options": ["gpt-4o", "gpt-4.1", "o3", "o4-mini", "gpt-5"],
+                "options": ["gpt-5.2", "gpt-4.1", "gpt-4.1-mini", "o3", "o3-pro", "o4-mini"],
             },
             "deepseek": {
                 "type": "deepseek",
                 "base_url": "https://api.deepseek.com",
                 "model": "deepseek-chat",
+                "options": ["deepseek-chat", "deepseek-reasoner"],
             },
             "claude": {
                 "type": "claude",
                 "base_url": "https://api.anthropic.com",
-                "model": "claude-haiku-4-5",
-                "options": ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-opus-4"],
+                "model": "claude-sonnet-4-5",
+                "options": [
+                    "claude-haiku-4-5",
+                    "claude-sonnet-4-5",
+                    "claude-opus-4-5",
+                    "claude-sonnet-4",
+                    "claude-opus-4",
+                ],
             },
             "kimi": {
-                "type": "openai",
+                "type": "kimi",
                 "base_url": "https://api.moonshot.cn/v1",
-                "model": "kimi-k2-turbo-preview",
-                "options": ["kimi-k2", "kimi-k2-turbo-preview"],
+                "model": "kimi-k2.5",
+                "options": ["kimi-k2.5", "kimi-k2-turbo-preview", "kimi-k2-0905-Preview", "kimi-k2-thinking"],
             },
             "qwen": {
                 "type": "openai",
                 "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "model": "qwen-plus",
-                "options": ["qwen3-max", "qwen3-coder", "qwen-plus", "qwen-flash"],
+                "model": "qwen3-max",
+                "options": ["qwen3-max", "qwen3-coder-plus", "qwen-plus", "qwen-flash"],
+            },
+            "gemini": {
+                "type": "gemini",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                "model": "gemini-2.5-flash",
+                "options": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-preview"],
             },
         }
 
@@ -446,6 +459,7 @@ class InteractiveInit:
                 "claude": "ClaudeModel",
                 "qwen": "QwenModel",
                 "gemini": "GeminiModel",
+                "kimi": "KimiModel",
             }
 
             if model_type not in type_map:

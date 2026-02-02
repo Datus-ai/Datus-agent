@@ -130,6 +130,16 @@ tags: "string"                       # Comma-separated tags. Always use double q
 
 Generate comprehensive SQL summaries that enable effective knowledge reuse and semantic search.
 
+## CRITICAL: Tool Call Sequence
+
+**You MUST complete ALL tool calls before returning the final response:**
+
+1. First, call `generate_sql_summary_id(sql)` to get the unique ID
+2. Then, call `write_file(path, yaml_content, file_type="sql_summary")` to save the file
+3. Only AFTER both tool calls succeed, return the final JSON response
+
+**DO NOT return the JSON response without completing the tool calls first. The file must be written to disk.**
+
 Output format: Return a JSON object with the following structure, *only JSON*:
 {
   "sql_summary_file": "file_name of the new sql summary YAML file (MUST include the generated ID for uniqueness)",

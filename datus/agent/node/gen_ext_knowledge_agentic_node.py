@@ -23,6 +23,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput, ExtKnowledgeNodeResult
 from datus.schemas.node_models import SQLContext, SqlTask
+from datus.schemas.output_types import ExtKnowledgeGenerationOutput
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.base import FuncToolResult
@@ -783,11 +784,14 @@ Rules:
                 self._reset_verification_state()
 
                 # Stream response using the model's generate_with_tools_stream
+                # output_type is used for structured output when the model supports it
+                # Models that don't support it (DeepSeek, Kimi) will automatically fall back to str
                 async for stream_action in self.model.generate_with_tools_stream(
                     prompt=current_prompt,
                     tools=self.tools,
                     mcp_servers=self.mcp_servers,
                     instruction=system_instruction,
+                    output_type=ExtKnowledgeGenerationOutput,
                     max_turns=self.max_turns,
                     session=session,
                     action_history_manager=action_history_manager,
@@ -801,8 +805,12 @@ Rules:
                             last_successful_output = stream_action.output
                             # Look for content in various possible fields
                             raw_output = stream_action.output.get("raw_output", "")
+                            # Handle structured output (Pydantic object)
+                            if isinstance(raw_output, ExtKnowledgeGenerationOutput):
+                                ext_knowledge_file = raw_output.ext_knowledge_file
+                                response_content = raw_output.output
                             # Handle case where raw_output is already a dict
-                            if isinstance(raw_output, dict):
+                            elif isinstance(raw_output, dict):
                                 response_content = raw_output
                             elif raw_output:
                                 response_content = raw_output
@@ -849,19 +857,24 @@ Rules:
                 logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
                 # Try different fields that might contain the response
                 raw_output = last_successful_output.get("raw_output", "")
-                if isinstance(raw_output, dict):
+                # Handle structured output (Pydantic object)
+                if isinstance(raw_output, ExtKnowledgeGenerationOutput):
+                    ext_knowledge_file = raw_output.ext_knowledge_file
+                    response_content = raw_output.output
+                elif isinstance(raw_output, dict):
                     response_content = raw_output
                 elif raw_output:
                     response_content = raw_output
                 else:
                     response_content = str(last_successful_output)  # Fallback to string representation
 
-            # Extract ext_knowledge_file and output from the final response_content
-            ext_knowledge_file, extracted_output = self._extract_ext_knowledge_and_output_from_response(
-                {"content": response_content}
-            )
-            if extracted_output:
-                response_content = extracted_output
+            # Extract ext_knowledge_file and output from the final response_content (for legacy format)
+            if not ext_knowledge_file:
+                ext_knowledge_file, extracted_output = self._extract_ext_knowledge_and_output_from_response(
+                    {"content": response_content}
+                )
+                if extracted_output:
+                    response_content = extracted_output
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 

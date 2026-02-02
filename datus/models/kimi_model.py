@@ -3,21 +3,12 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import os
-from typing import Any, Dict
 
 from agents import set_tracing_disabled
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_compatible import OpenAICompatibleModel
 from datus.utils.loggings import get_logger
-
-# Import typing fix for Python 3.12+ compatibility
-try:
-    from datus.utils.typing_fix import patch_agents_typing_issue
-
-    patch_agents_typing_issue()
-except ImportError:
-    pass
 
 logger = get_logger(__name__)
 
@@ -29,9 +20,8 @@ class KimiModel(OpenAICompatibleModel):
     Implementation of the BaseModel for Moonshot Kimi's API.
 
     Kimi K2 and K2.5 models support a "thinking" mode that returns reasoning_content.
-    When using tool calls with the agents SDK, thinking mode must be disabled because
-    the SDK doesn't preserve reasoning_content in assistant messages, which causes
-    API errors: "thinking is enabled but reasoning_content is missing".
+    The sdk_patches.py module handles reasoning_content preservation by monkey-patching
+    the agents SDK to treat Kimi models like DeepSeek (which has native support).
     """
 
     def __init__(
@@ -41,6 +31,30 @@ class KimiModel(OpenAICompatibleModel):
     ):
         super().__init__(model_config, **kwargs)
         logger.debug(f"Using Kimi model: {self.model_name} base_url: {self.base_url}")
+
+    def _is_k25_model(self) -> bool:
+        """Check if this is a K2.5 model that requires temperature=1."""
+        return "k2.5" in self.model_name.lower()
+
+    def generate(self, prompt, enable_thinking: bool = False, **kwargs) -> str:
+        """Generate response with Kimi-specific parameter handling.
+
+        For K2.5 models, temperature must be 1 and top_p must be 0.95.
+
+        Args:
+            prompt: The input prompt to send to the model
+            enable_thinking: Enable thinking mode for hybrid models (default: False)
+            **kwargs: Additional generation parameters
+
+        Returns:
+            The generated text response
+        """
+        if self._is_k25_model():
+            kwargs["temperature"] = 1
+            kwargs["top_p"] = 0.95
+            logger.debug(f"Set temperature=1, top_p=0.95 for K2.5 model {self.model_name}")
+
+        return super().generate(prompt, enable_thinking, **kwargs)
 
     def _get_api_key(self) -> str:
         """Get Kimi API key from config or environment."""
@@ -52,27 +66,3 @@ class KimiModel(OpenAICompatibleModel):
     def _get_base_url(self) -> str:
         """Get Kimi base URL from config or environment."""
         return self.model_config.base_url or os.environ.get("KIMI_API_BASE", "https://api.moonshot.cn/v1")
-
-    def _build_tool_extra_body(self) -> Dict[str, Any]:
-        """Build extra_body for tool calls with Kimi-specific settings.
-
-        Disables thinking mode to avoid 'reasoning_content is missing' errors
-        when using tool calls. The agents SDK doesn't preserve reasoning_content
-        in assistant messages, which Kimi's API requires when thinking is enabled.
-
-        Returns:
-            Dict with extra_body parameters including thinking disabled
-        """
-        extra_body = super()._build_tool_extra_body()
-        # Disable thinking mode for Kimi to avoid reasoning_content requirement
-        # See: https://platform.moonshot.ai/docs/guide/use-kimi-k2-thinking-model
-        extra_body["thinking"] = {"type": "disabled"}
-        logger.debug("Kimi model: disabled thinking mode for tool calls")
-        return extra_body
-
-    def token_count(self, prompt: str) -> int:
-        """
-        Estimate the number of tokens in a text.
-        Kimi uses a similar tokenization to OpenAI models.
-        """
-        return int(len(prompt) * 0.3 + 0.5)

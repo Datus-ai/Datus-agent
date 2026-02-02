@@ -19,6 +19,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
+from datus.schemas.output_types import GenSqlOutput
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
@@ -610,15 +611,33 @@ class GenSQLAgenticNode(AgenticNode):
                             logger.debug(f"Extracted SQL from summary_report action: {sql_content[:100]}...")
                             break
 
-            # Fallback: try to extract SQL and output from response_content if not found
+            # Handle structured output (GenSqlOutput) or fallback to manual parsing
             if not sql_content:
-                extracted_sql, extracted_output = self._extract_sql_and_output_from_response(
-                    {"content": response_content}
-                )
-                if extracted_sql:
-                    sql_content = extracted_sql
-                if extracted_output:
-                    response_content = extracted_output
+                if isinstance(response_content, GenSqlOutput):
+                    # Direct Pydantic object from structured output
+                    sql_content = response_content.sql
+                    response_content = response_content.explanation
+                    logger.debug(
+                        f"Extracted from structured output: sql={sql_content[:100] if sql_content else None}..."
+                    )
+                elif isinstance(response_content, dict):
+                    # Dict format (backward compatibility)
+                    sql_content = response_content.get("sql")
+                    response_content = response_content.get("explanation", str(response_content))
+                    logger.debug(f"Extracted from dict: sql={sql_content[:100] if sql_content else None}...")
+                else:
+                    # String format - use legacy extraction method
+                    extracted_sql, extracted_output = self._extract_sql_and_output_from_response(
+                        {"content": response_content}
+                    )
+                    if extracted_sql:
+                        sql_content = extracted_sql
+                    if extracted_output:
+                        response_content = extracted_output
+
+            # Ensure response_content is a string for downstream processing
+            if not isinstance(response_content, str):
+                response_content = str(response_content) if response_content else ""
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
             logger.debug(f"Final sql_content: {sql_content[:100] if sql_content else 'None'}...")
@@ -793,6 +812,7 @@ class GenSQLAgenticNode(AgenticNode):
                 tools=config["tools"],
                 mcp_servers=self.mcp_servers,
                 instruction=config["instruction"],
+                output_type=GenSqlOutput,
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,

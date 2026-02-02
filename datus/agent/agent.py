@@ -276,7 +276,9 @@ class Agent:
         if not text:
             return
         for line in text.splitlines():
-            print(f"{prefix}{indent}{line}", flush=True)
+            # Only print non-empty lines to avoid blank output
+            if line.strip():
+                print(f"{prefix}{indent}{line}", flush=True)
 
     def _next_reference_sql_number(self, filepath: str) -> int:
         with self._print_lock:

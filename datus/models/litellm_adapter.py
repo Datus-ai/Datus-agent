@@ -219,11 +219,14 @@ class LiteLLMAdapter:
 
         Args:
             enable_structured_output: Whether to enable structured output support
-                                     (adds provider-specific headers/settings)
+                                     (Note: headers should be passed via ModelSettings.extra_headers)
 
         Returns:
             Model instance configured for this adapter
         """
+        # Mark for caller to retrieve headers separately
+        self._pending_structured_output = enable_structured_output
+
         try:
             from agents.extensions.models.litellm_model import LitellmModel
         except ImportError:
@@ -246,16 +249,26 @@ class LiteLLMAdapter:
         if self.base_url:
             model_kwargs["base_url"] = self.base_url
 
-        # Add provider-specific headers for structured output
-        if enable_structured_output:
-            extra_headers = self._get_structured_output_headers()
-            if extra_headers:
-                model_kwargs["extra_headers"] = extra_headers
-                logger.debug(f"Added structured output headers for {self.provider}: {extra_headers}")
+        # Note: extra_headers for structured output should be passed via ModelSettings,
+        # not LitellmModel constructor. Use get_structured_output_headers() to retrieve them.
 
         logger.debug(f"Creating LitellmModel with model={self.litellm_model_name}")
 
         return LitellmModel(**model_kwargs)
+
+    def get_structured_output_headers(self) -> Optional[dict]:
+        """
+        Get provider-specific headers for structured output support.
+
+        Call this after get_agents_sdk_model() to get headers that should be
+        passed to ModelSettings.extra_headers.
+
+        Returns:
+            Dict of extra headers, or None if not needed
+        """
+        if getattr(self, "_pending_structured_output", False):
+            return self._get_structured_output_headers()
+        return None
 
     def get_completion_kwargs(self) -> dict:
         """
