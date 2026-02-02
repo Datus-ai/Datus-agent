@@ -216,7 +216,8 @@ IMPORTANT: You MUST create or correct the external knowledge to fix the SQL.
 Actions required:
 1. Review the suggestions and column differences from the last verify_sql call
 2. Identify what knowledge is missing or incorrect
-3. Use edit_file to MODIFY existing knowledge entries in the external knowledge file, or use write_file to CREATE NEW ones if no file exists yet
+3. Use edit_file to MODIFY existing knowledge entries in the external knowledge file,
+   or use write_file to CREATE NEW ones if no file exists yet
 4. Based on the new/corrected knowledge, modify your SQL to match expected results
 5. Call verify_sql again with your corrected SQL
 
