@@ -123,6 +123,10 @@ class OpenAICompatibleModel(LLMBaseModel):
         # Cache for model info
         self._model_info = None
 
+        # Structured output support flag - can be overridden by subclasses
+        # DeepSeek and some other models don't support response_format
+        self._supports_structured_output = True
+
     def _get_api_key(self) -> str:
         """Get API key from config or environment. Override in subclasses."""
         raise NotImplementedError("Subclasses must implement _get_api_key")
@@ -130,6 +134,15 @@ class OpenAICompatibleModel(LLMBaseModel):
     def _get_base_url(self) -> Optional[str]:
         """Get base URL from config. Override in subclasses if needed."""
         return self.model_config.base_url
+
+    @property
+    def supports_structured_output(self) -> bool:
+        """Check if this model supports structured output (response_format).
+
+        Some models like DeepSeek don't support response_format parameter.
+        Subclasses can override this by setting self._supports_structured_output = False.
+        """
+        return self._supports_structured_output
 
     @staticmethod
     def _setup_custom_json_encoder():
@@ -559,12 +572,21 @@ class OpenAICompatibleModel(LLMBaseModel):
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
+        # Check if model supports structured output, fall back to str if not
+        effective_output_type = output_type
+        if output_type != str and not self.supports_structured_output:
+            logger.debug(
+                f"Model {self.model_name} doesn't support structured output, "
+                f"ignoring output_type={output_type.__name__ if hasattr(output_type, '__name__') else output_type}"
+            )
+            effective_output_type = str
+
         async for action in self._generate_with_tools_stream_internal(
             prompt,
             mcp_servers,
             tools,
             instruction,
-            output_type,
+            effective_output_type,
             strict_json_schema,
             max_turns,
             session,

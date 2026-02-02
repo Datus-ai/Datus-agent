@@ -2,7 +2,7 @@ agent:
   # Set home to tests directory so data paths resolve to tests/data instead of ~/.datus/data
   # Using relative path for portability across different environments
   home: tests
-  target: kimi-k2
+  target: deepseek
   models:
     deepseek:
       type: deepseek
@@ -36,13 +36,11 @@ agent:
       #model: claude-3-7-sonnet-latest
       model: claude-haiku-4-5
     kimi-k2:
-      type: openai
-      vendor: openai
+      type: kimi
+      vendor: kimi
       base_url: https://api.moonshot.cn/v1
-      api_key: ${MOONSHOT_API_KEY}
+      api_key: ${KIMI_API_KEY}
       model: kimi-k2.5
-      temperature: 1
-      top_p: 0.95
     openai-4o-mini:
       type: openai
       vendor: openai
@@ -59,16 +57,16 @@ agent:
 
   nodes:
     schema_linking:
-      model: kimi-k2
+      model: deepseek
       matching_rate: fast
     generate_sql:
-      model: kimi-k2
+      model: deepseek
       max_table_schemas_length: 10000
       max_data_details_length: 8000
       max_context_length: 8000
       max_value_length: 500
     reasoning:
-      model: kimi-k2
+      model: deepseek
       max_table_schemas_length: 10000
       max_data_details_length: 8000
       max_context_length: 8000
@@ -79,7 +77,7 @@ agent:
       check_result: true
   agentic_nodes:
     chatbot:
-      model: kimi-k2
+      model: deepseek
       system_prompt: gen_sql
       prompt_language: en
       tools: db_tools.*, context_search_tools.*, filesystem_tools.*

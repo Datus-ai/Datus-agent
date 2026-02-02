@@ -807,6 +807,8 @@ class GenSQLAgenticNode(AgenticNode):
                 final_prompt = self._build_plan_prompt(prompt)
 
             # Unified execution using configuration
+            # output_type is used for structured output when the model supports it
+            # Models that don't support it (DeepSeek, Kimi) will automatically fall back to str
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=final_prompt,
                 tools=config["tools"],

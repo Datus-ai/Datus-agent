@@ -30,6 +30,9 @@ class KimiModel(OpenAICompatibleModel):
         **kwargs,
     ):
         super().__init__(model_config, **kwargs)
+        # Kimi models may have issues with structured outputs + tool calls
+        # See: https://github.com/openai/openai-agents-python/issues/1778
+        self._supports_structured_output = False
         logger.debug(f"Using Kimi model: {self.model_name} base_url: {self.base_url}")
 
     def _is_k25_model(self) -> bool:

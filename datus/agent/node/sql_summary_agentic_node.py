@@ -405,6 +405,8 @@ class SqlSummaryAgenticNode(AgenticNode):
             last_successful_output = None
 
             # Stream response using the model's generate_with_tools_stream
+            # output_type is used for structured output when the model supports it
+            # Models that don't support it (DeepSeek, Kimi) will automatically fall back to str
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=enhanced_message,
                 tools=self.tools,
