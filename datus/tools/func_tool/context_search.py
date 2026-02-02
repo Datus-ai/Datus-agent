@@ -150,7 +150,7 @@ class ContextSearchTools:
         tools = []
         has_subject_tree = False
 
-        if self.has_metrics:
+        if self.has_merics:
             for tool in (self.list_subject_tree, self.search_metrics, self.get_metrics):
                 tools.append(trans_to_function_tool(tool))
             has_subject_tree = True

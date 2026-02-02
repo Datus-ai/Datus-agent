@@ -182,6 +182,7 @@ class ChatAgenticNode(GenSQLAgenticNode):
         self._setup_filesystem_tools()
         self._setup_skill_tools()
         self._rebuild_tools()
+        self._setup_platform_doc_tools()
 
         # Setup permission hooks after all tools are initialized
         self._setup_permission_hooks()

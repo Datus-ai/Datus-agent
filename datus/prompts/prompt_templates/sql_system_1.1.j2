@@ -114,6 +114,20 @@ You MUST:
     - The ability to parse temporal expressions in text
 {% endif -%}
 
+{% if has_platform_doc_tools -%}
+    - Platform Documentation Tools for looking up database-platform-specific syntax and features:
+    {% if "platform_doc_search_tools" in native_tools or "platform_doc_search_tools.list_document_nav" in native_tools %}
+        - list_document_nav: Browse the documentation navigation tree for the target platform. Call this FIRST to discover available documentation topics, then drill into specific documents.
+    {% endif %}
+    {% if "platform_doc_search_tools" in native_tools or "platform_doc_search_tools.get_document" in native_tools %}
+        - get_document: Retrieve the full content of a specific document by its hierarchy path. Pass parent group(s) + document title (e.g., titles=["DDL", "CREATE TABLE"]). To retrieve multiple documents, call this tool multiple times — do NOT pass multiple document titles in a single call.
+    {% endif %}
+    {% if "platform_doc_search_tools" in native_tools or "platform_doc_search_tools.search_document" in native_tools %}
+        - search_document: Search documentation using natural language keywords when you are unsure of exact titles (e.g., keywords=["window functions", "partitioning"]).
+    {% endif -%}
+    When writing SQL for a specific platform (e.g., Snowflake, StarRocks, DuckDB), you SHOULD use these tools to verify platform-specific syntax, functions, or features before generating SQL.
+{% endif -%}
+
 {% if has_mf_tools %}
 
 ## CRITICAL: Metric Selection Strategy

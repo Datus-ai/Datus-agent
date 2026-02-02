@@ -20,7 +20,7 @@ from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
+from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.mcp_tools import MCPServer
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -80,6 +80,7 @@ class GenSQLAgenticNode(AgenticNode):
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
+        self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
 
         # Initialize plan mode attributes
         self.plan_mode_active = False
@@ -220,6 +221,14 @@ class GenSQLAgenticNode(AgenticNode):
 
         logger.debug(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
+    def _setup_platform_doc_tools(self):
+        """Setup tools based on configuration."""
+        try:
+            self._platform_doc_tool = PlatformDocSearchTool(self.agent_config)
+            self.tools.extend(self._platform_doc_tool.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup platform_doc_search tools: {e}")
+
     def _setup_db_tools(self):
         """Setup database tools."""
         try:
@@ -276,6 +285,8 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_date_parsing_tools()
                 elif base_type == "filesystem_tools":
                     self._setup_filesystem_tools()
+                elif base_type == "platform_doc_tools":
+                    self._setup_platform_doc_tools()
                 else:
                     logger.warning(f"Unknown tool type: {base_type}")
 
@@ -288,6 +299,8 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_date_parsing_tools()
             elif pattern == "filesystem_tools":
                 self._setup_filesystem_tools()
+            elif pattern == "platform_doc_tools":
+                self._setup_platform_doc_tools()
 
             # Handle specific method patterns (e.g., "db_tools.list_tables")
             elif "." in pattern:
@@ -326,6 +339,10 @@ class GenSQLAgenticNode(AgenticNode):
                     root_path = self._resolve_workspace_root()
                     self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
                 tool_instance = self.filesystem_func_tool
+            elif tool_type == "platform_doc_tools":
+                if not self._platform_doc_tool:
+                    self._platform_doc_tool = PlatformDocSearchTool(self.agent_config)
+                tool_instance = self._platform_doc_tool
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
                 return
@@ -451,6 +468,7 @@ class GenSQLAgenticNode(AgenticNode):
             has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
             has_context_search_tools=bool(self.context_search_tools),
             has_parsing_tools=bool(self.date_parsing_tools),
+            has_platform_doc_tools=bool(self._platform_doc_tool),
             agent_config=self.agent_config,
             workspace_root=self._resolve_workspace_root(),
         )
@@ -941,6 +959,7 @@ def prepare_template_context(
     has_mf_tools: bool = True,
     has_context_search_tools: bool = True,
     has_parsing_tools: bool = True,
+    has_platform_doc_tools: bool = False,
     agent_config: Optional[AgentConfig] = None,
     workspace_root: Optional[str] = None,
 ) -> dict:
@@ -954,6 +973,7 @@ def prepare_template_context(
         has_mf_tools: Whether MetricFlow MCP tools are available
         has_context_search_tools: Whether context search tools are available
         has_parsing_tools: Whether date parsing tools are available
+        has_platform_doc_tools: Whether platform documentation search tools are available
         agent_config: Agent configuration
         workspace_root: Workspace root path
 
@@ -966,6 +986,7 @@ def prepare_template_context(
         "has_mf_tools": has_mf_tools,
         "has_context_search_tools": has_context_search_tools,
         "has_parsing_tools": has_parsing_tools,
+        "has_platform_doc_tools": has_platform_doc_tools,
     }
     if not isinstance(node_config, SubAgentConfig):
         node_config = SubAgentConfig.model_validate(node_config)

@@ -186,6 +186,57 @@ def create_parser() -> argparse.ArgumentParser:
         help="Skip confirmation prompts and automatically confirm deletions (useful for CI/CD)",
     )
 
+    # Document component arguments (used with --components document)
+    bootstrap_parser.add_argument(
+        "--doc-source",
+        type=str,
+        help="Source location for document component (GitHub repo 'owner/repo', website URL, or local path)",
+    )
+    bootstrap_parser.add_argument(
+        "--doc-source-type",
+        type=str,
+        choices=["github", "website", "local"],
+        default="local",
+        help="Source type for document component (default: local)",
+    )
+    bootstrap_parser.add_argument(
+        "--doc-platform",
+        type=str,
+        help="Platform name for document component (e.g., snowflake, duckdb, postgresql)",
+    )
+    bootstrap_parser.add_argument(
+        "--doc-version",
+        type=str,
+        help="Specific version for document component (auto-detected if not provided)",
+    )
+    bootstrap_parser.add_argument(
+        "--doc-github-ref",
+        type=str,
+        default=None,
+        help="Git ref (branch or tag) to fetch from for GitHub source type. "
+        "Examples: 'v3.4.0' (tag), 'versioned-docs' (branch). "
+        "If omitted, fetches from the default branch.",
+    )
+    bootstrap_parser.add_argument(
+        "--doc-paths",
+        type=str,
+        nargs="+",
+        default=["docs", "README.md"],
+        help="Paths to fetch for GitHub source type (default: docs README.md)",
+    )
+    bootstrap_parser.add_argument(
+        "--doc-chunk-size",
+        type=int,
+        default=1024,
+        help="Target chunk size in characters for document component (default: 1024)",
+    )
+    bootstrap_parser.add_argument(
+        "--doc-max-depth",
+        type=int,
+        default=1,
+        help="Maximum crawl depth for website source type (default: 1)",
+    )
+
     # benchmark command
     benchmark_parser = subparsers.add_parser(
         "benchmark",

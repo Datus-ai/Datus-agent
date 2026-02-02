@@ -10,6 +10,7 @@ from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool, filesyste
 from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.tools.func_tool.plan_tools import PlanTool, SessionTodoStorage
+from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "FilesystemFuncTool",
     "SemanticTools",
     "GenSemanticModelTools",
+    "PlatformDocSearchTool",
 ]

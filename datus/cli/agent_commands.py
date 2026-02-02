@@ -562,6 +562,81 @@ class AgentCommands:
         else:
             self.console.print("[yellow]No reference SQL queries found.[/]")
 
+    def cmd_doc_search(self, args: str):
+        """
+        Command to search platform documentation. Corresponds to !sd and !search_document
+        """
+        self.console.print("[bold blue]Search Document[/]")
+
+        platform = self.cli.prompt_input("Enter platform name (e.g., snowflake, duckdb, postgresql)")
+        if not platform or not platform.strip():
+            self.console.print("[bold red]Error:[/] Platform name is required.")
+            return
+        platform = platform.strip()
+
+        version = self.cli.prompt_input("Enter version (optional, press Enter to skip)", default="")
+        version = version.strip() or None
+
+        keywords_input = args.strip() or self.cli.prompt_input("Enter search keywords (comma-separated)")
+        if not keywords_input or not keywords_input.strip():
+            self.console.print("[bold red]Error:[/] Keywords cannot be empty.")
+            return
+        keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
+
+        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
+
+        with self.console.status("[bold green]Searching documentation...[/]"):
+            from datus.tools.search_tools.search_tool import SearchTool
+
+            search_tool = SearchTool(agent_config=self.cli.agent_config)
+            result = search_tool.search_document(
+                platform=platform,
+                keywords=keywords,
+                version=version,
+                top_n=int(top_n.strip()),
+            )
+
+        if result.success and result.doc_count > 0:
+            self.console.print(f"[bold green]Found {result.doc_count} document chunks.[/]")
+            for keyword, chunks in result.docs.items():
+                if not chunks:
+                    continue
+                self.console.print(f"\n[bold cyan]Keyword: {keyword}[/] ({len(chunks)} results)")
+                table = Table(
+                    show_header=True,
+                    header_style="bold cyan",
+                    border_style="blue",
+                    expand=True,
+                )
+                table.add_column("Title", style="bold green", max_width=30)
+                table.add_column("Titles", style="green", max_width=30)
+                table.add_column("Nav Path", style="magenta", max_width=30)
+                table.add_column("Hierarchy", style="yellow", max_width=40)
+                table.add_column("Content", style="default")
+                table.add_column("Doc Path", style="dim", max_width=30, overflow="fold")
+
+                for chunk in chunks:
+                    chunk_text = chunk.get("chunk_text", "")
+                    if len(chunk_text) > 200:
+                        chunk_text = chunk_text[:200] + "..."
+                    titles = chunk.get("titles", [])
+                    titles_str = " > ".join(titles) if isinstance(titles, list) else str(titles or "")
+                    nav_path = chunk.get("nav_path", [])
+                    nav_path_str = " > ".join(nav_path) if isinstance(nav_path, list) else str(nav_path or "")
+                    table.add_row(
+                        chunk.get("title", ""),
+                        titles_str,
+                        nav_path_str,
+                        chunk.get("hierarchy", ""),
+                        chunk_text,
+                        chunk.get("doc_path", ""),
+                    )
+                self.console.print(table)
+        elif not result.success:
+            self.console.print(f"[bold red]Error searching documents:[/] {result.error}")
+        else:
+            self.console.print("[yellow]No documents found.[/]")
+
     def cmd_save(self, args: str):
         """
         Command to save the last result to a file. Corresponds to !output/save
