@@ -1256,8 +1256,8 @@ class GenerationHooks(AgentHooks):
                 explanation = doc.get("explanation", "")
 
                 # Validate required fields
-                if not subject_path or not search_text:
-                    logger.warning(f"Document {i+1} missing required fields (subject_path or search_text), skipping")
+                if not subject_path or not search_text or not explanation:
+                    logger.warning(f"Document {i+1} missing required fields (subject_path, search_text, or explanation), skipping")
                     invalid_count += 1
                     continue
 
@@ -1276,14 +1276,14 @@ class GenerationHooks(AgentHooks):
             # Batch upsert all entries (update if exists, insert if not)
             upserted_ids = knowledge_store.batch_upsert_knowledge(knowledge_entries)
 
-            # Build result message
+            # Build result message from actual upserted names returned by the store
             upserted_count = len(upserted_ids)
-            upserted_names = [e["name"] for e in knowledge_entries[:3]]
 
             if upserted_count == 1:
-                message = f"Upserted 1 knowledge entry: {upserted_names[0]}"
+                message = f"Upserted 1 knowledge entry: {upserted_ids[0]}"
             else:
-                message = f"Upserted {upserted_count} knowledge entries: {', '.join(upserted_names)}"
+                display_names = upserted_ids[:3]
+                message = f"Upserted {upserted_count} knowledge entries: {', '.join(display_names)}"
                 if upserted_count > 3:
                     message += f" and {upserted_count - 3} more"
 
