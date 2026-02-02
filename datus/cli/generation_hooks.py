@@ -1257,7 +1257,9 @@ class GenerationHooks(AgentHooks):
 
                 # Validate required fields
                 if not subject_path or not search_text or not explanation:
-                    logger.warning(f"Document {i+1} missing required fields (subject_path, search_text, or explanation), skipping")
+                    logger.warning(
+                        f"Document {i+1} missing required fields (subject_path, search_text, or explanation), skipping"
+                    )
                     invalid_count += 1
                     continue
 

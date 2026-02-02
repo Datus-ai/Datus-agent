@@ -168,13 +168,13 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
                 - explanation: str - detailed explanation
 
         Returns:
-            List[str]: List of names of upserted knowledge entries
+            List[str]: List of ids of upserted knowledge entries
         """
         if not knowledge_entries:
             return []
 
         data = []
-        upserted_names = []
+        upserted_ids = []
 
         for entry in knowledge_entries:
             subject_path = entry.get("subject_path", [])
@@ -187,10 +187,9 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
                 logger.warning(f"Skipping entry with missing required fields: {entry}")
                 continue
 
-            upserted_names.append(name)
-
             # Generate id from subject_path + name
             knowledge_id = gen_subject_item_id(subject_path, name)
+            upserted_ids.append(knowledge_id)
 
             data.append(
                 {
@@ -207,7 +206,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             # Use id for deduplication
             self.batch_upsert(data, on_column="id")
 
-        return upserted_names
+        return upserted_ids
 
     def search_knowledge(
         self,
