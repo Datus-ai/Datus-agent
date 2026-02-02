@@ -170,7 +170,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.input.auto_execute_plan = auto_execute_plan
 
         # Set reference date for date parsing tools if configured
-        if self.date_parsing_tools and workflow.task.current_date:
+        # Always call set_reference_date to clear previous state even when current_date is None
+        if self.date_parsing_tools:
             self.date_parsing_tools.set_reference_date(workflow.task.current_date)
 
         return {"success": True, "message": "GenSQL input prepared from workflow"}
