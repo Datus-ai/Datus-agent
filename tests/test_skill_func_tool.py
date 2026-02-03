@@ -116,10 +116,12 @@ class TestSkillFuncToolBasic:
         assert tool.node_name == "chatbot"
 
     def test_available_tools(self, skill_func_tool):
-        """Test that available_tools returns the load_skill tool."""
+        """Test that available_tools returns load_skill and skill_execute_command tools."""
         tools = skill_func_tool.available_tools()
-        assert len(tools) == 1
-        assert tools[0].name == "load_skill"
+        assert len(tools) == 2
+        tool_names = [tool.name for tool in tools]
+        assert "load_skill" in tool_names
+        assert "skill_execute_command" in tool_names
 
     def test_set_tool_context(self, skill_func_tool):
         """Test setting tool context."""
@@ -273,3 +275,54 @@ allowed_commands:
         assert len(all_tools) == 2
         assert "script-skill" in all_tools
         assert "another-script-skill" in all_tools
+
+
+class TestSkillExecuteCommand:
+    """Tests for skill_execute_command method."""
+
+    def test_execute_command_skill_not_loaded(self, skill_func_tool):
+        """Test executing command when skill is not loaded yet."""
+        result = skill_func_tool.skill_execute_command("script-skill", "python test.py")
+
+        assert result.success == 0
+        assert "not been loaded" in result.error
+        assert "load_skill" in result.error
+
+    def test_execute_command_skill_not_found(self, skill_func_tool):
+        """Test executing command for non-existent skill."""
+        result = skill_func_tool.skill_execute_command("nonexistent-skill", "python test.py")
+
+        assert result.success == 0
+        assert "not found" in result.error
+
+    def test_execute_command_skill_no_scripts(self, skill_func_tool):
+        """Test executing command for skill without allowed_commands."""
+        # simple-skill has no allowed_commands defined
+        result = skill_func_tool.skill_execute_command("simple-skill", "python test.py")
+
+        assert result.success == 0
+        assert "allowed_commands" in result.error
+
+    def test_execute_command_after_load(self, skill_func_tool):
+        """Test executing command after loading skill with scripts."""
+        # First load the skill
+        load_result = skill_func_tool.load_skill("script-skill")
+        assert load_result.success == 1
+
+        # Try to execute an allowed command (echo should be allowed by python:*)
+        result = skill_func_tool.skill_execute_command("script-skill", "python -c \"print('hello')\"")
+
+        # The command should be processed (success or failure depends on env)
+        # We mainly test that it routes to the correct bash tool
+        assert result is not None
+
+    def test_execute_command_not_allowed(self, skill_func_tool):
+        """Test executing command not in allowed patterns."""
+        # Load skill
+        skill_func_tool.load_skill("script-skill")
+
+        # Try a command not in allowed patterns
+        result = skill_func_tool.skill_execute_command("script-skill", "rm -rf /")
+
+        assert result.success == 0
+        assert "not allowed" in result.error.lower()

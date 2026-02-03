@@ -193,13 +193,64 @@ class SkillFuncTool:
         """
         return self._loaded_skills
 
+    def skill_execute_command(self, skill_name: str, command: str) -> FuncToolResult:
+        """Execute a command within a loaded skill's directory.
+
+        This tool executes shell commands within the context of a loaded skill.
+        The skill must have been loaded first using load_skill() and must have
+        allowed_commands defined in its frontmatter.
+
+        Commands are restricted to patterns defined in the skill's allowed_commands.
+        For example, if a skill allows "python:scripts/*.py", only Python scripts
+        in the scripts/ directory can be executed.
+
+        Args:
+            skill_name: Name of the loaded skill (must have been loaded via load_skill)
+            command: The command to execute (e.g., "python scripts/analyze.py --input data.json")
+
+        Returns:
+            FuncToolResult with command output on success, error on failure
+
+        Example:
+            # First load the skill
+            load_skill(skill_name="data-analysis")
+
+            # Then execute a command within that skill
+            skill_execute_command(skill_name="data-analysis", command="python scripts/analyze.py")
+        """
+        # Check if skill is loaded
+        bash_tool = self._loaded_skills.get(skill_name)
+        if not bash_tool:
+            # Check if skill exists but hasn't been loaded
+            skill = self.manager.get_skill(skill_name)
+            if skill:
+                if not skill.has_scripts():
+                    return FuncToolResult(
+                        success=0,
+                        error=f"Skill '{skill_name}' does not have any allowed_commands defined",
+                    )
+                return FuncToolResult(
+                    success=0,
+                    error=f"Skill '{skill_name}' has not been loaded yet. Call load_skill(skill_name='{skill_name}') first.",
+                )
+            return FuncToolResult(
+                success=0,
+                error=f"Skill '{skill_name}' not found. Check available skills in <available_skills>.",
+            )
+
+        # Execute command via the skill's bash tool
+        return bash_tool.execute_command(command)
+
     def available_tools(self) -> List[Tool]:
         """Return the list of tools provided by this class.
 
         Returns:
-            List containing the load_skill tool
+            List containing the load_skill and skill_execute_command tools
         """
-        return [trans_to_function_tool(self.load_skill)]
+        return [
+            trans_to_function_tool(self.load_skill),
+            trans_to_function_tool(self.skill_execute_command),
+        ]
 
     def get_loaded_skill_tools(self) -> List[Tool]:
         """Get tools from all loaded skills (including bash tools).
