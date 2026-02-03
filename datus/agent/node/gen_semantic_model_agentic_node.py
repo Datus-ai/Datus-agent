@@ -380,17 +380,6 @@ class GenSemanticModelAgenticNode(AgenticNode):
             if enhanced_parts:
                 enhanced_message = f"{'\\n\\n'.join(enhanced_parts)}\\n\\nUser question: {user_input.user_message}"
 
-            # Create assistant action for processing
-            assistant_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="llm_generation",
-                messages="Generating response with tools...",
-                input_data={"prompt": enhanced_message, "system": system_instruction},
-                status=ActionStatus.PROCESSING,
-            )
-            action_history_manager.add_action(assistant_action)
-            yield assistant_action
-
             logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
             logger.debug(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")

@@ -809,8 +809,8 @@ class ClaudeModel(LLMBaseModel):
                         item_type = event.item.type
 
                         if item_type == "tool_call_item":
-                            # Store tool call info for later matching (don't create ActionHistory yet)
-                            self._store_tool_call_info(event, pending_tool_calls)
+                            # Store tool call info for later matching and create processing ActionHistory
+                            action = self._store_tool_call_info(event, pending_tool_calls)
                         elif item_type == "tool_call_output_item":
                             # Create complete action with both input and output
                             action = self._process_tool_call_complete_v2(
@@ -1020,7 +1020,7 @@ class ClaudeModel(LLMBaseModel):
         updated_action = action_history_manager.find_action_by_id(matching_action.action_id)
         return updated_action
 
-    def _store_tool_call_info(self, event, temp_tool_calls: dict) -> None:
+    def _store_tool_call_info(self, event, temp_tool_calls: dict) -> ActionHistory:
         """Store tool call information for later matching with completion event.
 
         This matches the OpenAI implementation pattern - we don't create ActionHistory
@@ -1053,6 +1053,16 @@ class ClaudeModel(LLMBaseModel):
         }
 
         logger.debug(f"Stored tool call: {function_name} (call_id={call_id[:20] if call_id else 'None'}...)")
+
+        return ActionHistory(
+            action_id=call_id,
+            role=ActionRole.TOOL,
+            messages=f"Tool call: {function_name}('{args_display}...')",
+            action_type=function_name,
+            input={"function_name": function_name, "arguments": arguments},
+            output={},
+            status=ActionStatus.PROCESSING,
+        )
 
     def _process_tool_call_complete_v2(
         self, event, action_history_manager: ActionHistoryManager, temp_tool_calls: dict

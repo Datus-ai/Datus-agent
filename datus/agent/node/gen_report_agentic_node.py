@@ -460,17 +460,6 @@ class GenReportAgenticNode(AgenticNode):
             tokens_used = 0
             last_successful_output = None
 
-            # Create assistant action for processing
-            assistant_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="llm_generation",
-                messages="Analyzing data and generating report...",
-                input_data={"prompt": enhanced_message, "system": system_instruction},
-                status=ActionStatus.PROCESSING,
-            )
-            action_history_manager.add_action(assistant_action)
-            yield assistant_action
-
             logger.debug(f"Tools available: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
             # Stream response using model's generate_with_tools_stream
