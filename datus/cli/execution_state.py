@@ -32,8 +32,6 @@ class PendingInteraction:
 class InteractionCancelled(Exception):
     """Raised when interaction is cancelled."""
 
-    pass
-
 
 class InteractionBroker:
     """

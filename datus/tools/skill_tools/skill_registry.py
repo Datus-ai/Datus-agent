@@ -164,6 +164,8 @@ class SkillRegistry:
     def get_skill(self, name: str) -> Optional[SkillMetadata]:
         """Get skill metadata by name.
 
+        Thread-safe - locks during access to prevent concurrent modification.
+
         Args:
             name: Skill name (from frontmatter)
 
@@ -173,10 +175,13 @@ class SkillRegistry:
         if not self._scanned:
             self.scan_directories()
 
-        return self._skills.get(name)
+        with self._lock:
+            return self._skills.get(name)
 
     def list_skills(self) -> List[SkillMetadata]:
         """List all discovered skills.
+
+        Thread-safe - returns a snapshot of skills list.
 
         Returns:
             List of SkillMetadata for all skills
@@ -184,7 +189,8 @@ class SkillRegistry:
         if not self._scanned:
             self.scan_directories()
 
-        return list(self._skills.values())
+        with self._lock:
+            return list(self._skills.values())
 
     def load_skill_content(self, name: str) -> Optional[str]:
         """Load full SKILL.md content for a skill.
@@ -233,6 +239,8 @@ class SkillRegistry:
     def skill_exists(self, name: str) -> bool:
         """Check if a skill exists.
 
+        Thread-safe - locks during access.
+
         Args:
             name: Skill name
 
@@ -242,10 +250,13 @@ class SkillRegistry:
         if not self._scanned:
             self.scan_directories()
 
-        return name in self._skills
+        with self._lock:
+            return name in self._skills
 
     def get_skills_by_tag(self, tag: str) -> List[SkillMetadata]:
         """Get all skills with a specific tag.
+
+        Thread-safe - returns a snapshot of filtered skills.
 
         Args:
             tag: Tag to filter by
@@ -256,10 +267,13 @@ class SkillRegistry:
         if not self._scanned:
             self.scan_directories()
 
-        return [skill for skill in self._skills.values() if tag in skill.tags]
+        with self._lock:
+            return [skill for skill in self._skills.values() if tag in skill.tags]
 
     def get_skill_count(self) -> int:
         """Get total number of discovered skills.
+
+        Thread-safe - locks during access.
 
         Returns:
             Number of skills in registry
@@ -267,4 +281,5 @@ class SkillRegistry:
         if not self._scanned:
             self.scan_directories()
 
-        return len(self._skills)
+        with self._lock:
+            return len(self._skills)

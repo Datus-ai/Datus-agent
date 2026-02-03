@@ -205,3 +205,56 @@ class TestPermissionConfig:
         assert data["default_permission"] == PermissionLevel.ASK
         assert len(data["rules"]) == 1
         assert data["rules"][0]["tool"] == "db_tools"
+
+    def test_permission_config_merge_with_none(self):
+        """Test merge_with returns self when override is None."""
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[
+                PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.ASK),
+            ],
+        )
+        merged = config.merge_with(None)
+        assert merged is config
+
+    def test_permission_config_merge_with_default_only(self):
+        """Test merge_with uses override's default_permission even without rules."""
+        base_config = PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[
+                PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.ASK),
+            ],
+        )
+        override_config = PermissionConfig(
+            default_permission=PermissionLevel.DENY,
+            rules=[],  # No rules, just override the default
+        )
+        merged = base_config.merge_with(override_config)
+
+        # Override's default_permission should be used even without rules
+        assert merged.default_permission == PermissionLevel.DENY
+        # Base rules should still be present
+        assert len(merged.rules) == 1
+        assert merged.rules[0].tool == "db_tools"
+
+    def test_permission_config_merge_with_rules(self):
+        """Test merge_with combines rules with override taking precedence."""
+        base_config = PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[
+                PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.ALLOW),
+            ],
+        )
+        override_config = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[
+                PermissionRule(tool="skills", pattern="*", permission=PermissionLevel.DENY),
+            ],
+        )
+        merged = base_config.merge_with(override_config)
+
+        assert merged.default_permission == PermissionLevel.ASK
+        # Rules should be combined: base rules first, then override rules
+        assert len(merged.rules) == 2
+        assert merged.rules[0].tool == "db_tools"  # Base rule
+        assert merged.rules[1].tool == "skills"  # Override rule (evaluated later)

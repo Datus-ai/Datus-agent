@@ -156,7 +156,9 @@ class PermissionConfig(BaseModel):
         # Override rules are appended (evaluated later, thus higher priority)
         merged_rules = self.rules + override.rules
 
+        # Always use override's default_permission when override is provided
+        # This allows overriding just the default without adding rules
         return PermissionConfig(
-            default_permission=override.default_permission if override.rules else self.default_permission,
+            default_permission=override.default_permission,
             rules=merged_rules,
         )
