@@ -266,13 +266,6 @@ class CompareAgenticNode(AgenticNode):
                 tokens_used=tokens_used,
             )
 
-            action_history_manager.update_action_by_id(
-                assistant_action.action_id,
-                status=ActionStatus.SUCCESS,
-                output=result.model_dump(),
-                messages="Comparison completed successfully.",
-            )
-
             self.actions.extend(action_history_manager.get_actions())
 
             final_action = ActionHistory.create_action(

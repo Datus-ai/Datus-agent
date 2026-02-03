@@ -230,10 +230,6 @@ class ChatAgenticNode(GenSQLAgenticNode):
             # Get or create session and any available summary
             session, conversation_summary = self._get_or_create_session()
 
-            # Get system instruction from template, passing summary and prompt version if available
-            prompt_version = user_input.prompt_version or self.node_config.get("prompt_version")
-            system_instruction = self._get_system_prompt(conversation_summary, prompt_version)
-
             # Add database context to user message if provided
             from datus.agent.node.gen_sql_agentic_node import build_enhanced_message
 

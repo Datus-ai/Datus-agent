@@ -534,8 +534,6 @@ class GenSQLAgenticNode(AgenticNode):
                 self.plan_hooks = PlanModeHooks(broker=broker, session=session, auto_mode=auto_mode)
                 logger.info(f"Plan mode activated (auto_mode={auto_mode})")
 
-            system_instruction = self._get_system_prompt(conversation_summary, user_input.prompt_version)
-
             # Add context to user message if provided
             enhanced_message = build_enhanced_message(
                 user_message=user_input.user_message,
