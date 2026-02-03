@@ -438,7 +438,11 @@ class AgenticNode(Node):
             logger.debug(f"Permission manager initialized for node '{self.get_node_name()}'")
 
         except Exception as e:
-            logger.error(f"Failed to setup permission manager: {e}")
+            logger.exception("Failed to setup permission manager")
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Permission manager init failed: {e}"},
+            ) from e
 
     def _setup_skill_manager(self) -> None:
         """
