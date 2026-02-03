@@ -57,13 +57,10 @@ class ChatAgenticNode(GenSQLAgenticNode):
             agent_config: Agent configuration
             tools: List of tools (will be populated in setup_tools)
         """
-        # Initialize skill tools attributes BEFORE calling parent constructor
+        # Initialize ChatAgenticNode-specific attributes BEFORE calling parent constructor
         # This is required because parent's __init__ calls setup_tools()
-        self.permission_manager: Optional[PermissionManager] = None
-        self.skill_manager: Optional[SkillManager] = None
+        # Note: permission_manager and skill_manager are initialized by parent AgenticNode
         self.skill_func_tool: Optional[SkillFuncTool] = None
-
-        # Initialize permission hooks attribute (will be set up in setup_tools)
         self.permission_hooks: Optional[PermissionHooks] = None
 
         # Call parent constructor with node_name="chat"
@@ -218,18 +215,20 @@ class ChatAgenticNode(GenSQLAgenticNode):
 
         Creates PermissionHooks instance and registers all available tools
         with their respective categories for unified permission checking.
+        Uses the InteractionBroker pattern for async user interactions.
         """
         if not self.permission_manager:
             logger.debug("No permission manager available, skipping permission hooks setup")
             return
 
         try:
-            from rich.console import Console
+            # Get the interaction broker from parent class
+            broker = self._get_or_create_broker()
 
             self.permission_hooks = PermissionHooks(
+                broker=broker,
                 permission_manager=self.permission_manager,
                 node_name=self.get_node_name(),
-                console=Console(),
             )
 
             # Register tools by category (follows existing FuncTool structure)

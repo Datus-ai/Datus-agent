@@ -77,9 +77,6 @@ class AgenticNode(Node):
         self.last_summary: Optional[str] = None
         self.context_length: Optional[int] = None
 
-        # InteractionBroker - created per-node instance for async user interactions
-        self.interaction_broker: Optional["InteractionBroker"] = None
-
         # Permission and skill management
         self.permission_manager: Optional["PermissionManager"] = None
         self.skill_manager: Optional["SkillManager"] = None
