@@ -231,7 +231,10 @@ class SkillFuncTool:
                     )
                 return FuncToolResult(
                     success=0,
-                    error=f"Skill '{skill_name}' has not been loaded yet. Call load_skill(skill_name='{skill_name}') first.",
+                    error=(
+                        f"Skill '{skill_name}' has not been loaded yet. "
+                        f"Call load_skill(skill_name='{skill_name}') first."
+                    ),
                 )
             return FuncToolResult(
                 success=0,
