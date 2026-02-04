@@ -14,10 +14,10 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import httpx
 import litellm
 import yaml
-from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool, set_tracing_disabled
+from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool, set_trace_processors
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
-from openai import APIConnectionError, APIError, APITimeoutError, OpenAI, RateLimitError
+from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 from openai.types.shared.reasoning import Reasoning
 from pydantic import AnyUrl
 
@@ -30,7 +30,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import create_openai_client, optional_traceable
+from datus.utils.traceable_utils import HAS_LANGSMITH, optional_traceable
 
 logger = get_logger(__name__)
 
@@ -39,10 +39,25 @@ logger = get_logger(__name__)
 # This allows us to set reasoning=Reasoning(effort=...) for preserve_thinking_blocks
 # while LiteLLM automatically drops reasoning_effort for providers like Moonshot
 litellm.drop_params = True
+# Enable modify_params to handle Anthropic tool calling requirements
+# When tool_choice is set but tools is empty, LiteLLM will add a dummy tool
+litellm.modify_params = True
 litellm.set_verbose = False
 
-# Disable OpenAI Agents SDK tracing to prevent sending traces to OpenAI
-set_tracing_disabled(True)
+# LangSmith tracing integration
+# Use OpenAIAgentsTracingProcessor to capture SDK traces (agent, tools, LLM calls)
+if HAS_LANGSMITH:
+    try:
+        from langsmith.wrappers import OpenAIAgentsTracingProcessor
+
+        # Enable LangSmith tracing for OpenAI Agents SDK
+        # This captures all SDK traces: agent runs, tool calls, LLM generations
+        set_trace_processors([OpenAIAgentsTracingProcessor()])
+        logger.info("LangSmith OpenAIAgentsTracingProcessor enabled for SDK tracing")
+    except ImportError:
+        logger.warning(
+            "OpenAIAgentsTracingProcessor not available. " "Install with: pip install 'langsmith[openai-agents]'"
+        )
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
@@ -105,10 +120,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.base_url = self._get_base_url()
         self.default_headers = self.model_config.default_headers
 
-        # Initialize clients
-        self.client = create_openai_client(OpenAI, self.api_key, self.base_url, default_headers=self.default_headers)
-
-        # Initialize LiteLLM adapter for Agent SDK integration
+        # Initialize LiteLLM adapter for unified LLM calls
         self.litellm_adapter = LiteLLMAdapter(
             provider=model_config.type,
             model=model_config.model,
@@ -130,14 +142,6 @@ class OpenAICompatibleModel(LLMBaseModel):
     def _get_base_url(self) -> Optional[str]:
         """Get base URL from config. Override in subclasses if needed."""
         return self.model_config.base_url
-
-    def _build_tool_extra_body(self) -> Dict[str, Any]:
-        """Build extra_body for streaming tool calls. Override in subclasses for model-specific settings.
-
-        Returns:
-            Dict with extra_body parameters for ModelSettings
-        """
-        return {"stream_options": {"include_usage": True}}
 
     @staticmethod
     def _setup_custom_json_encoder():
@@ -241,6 +245,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         """
         Generate a response from the model with error handling and retry logic.
 
+        Uses LiteLLM for unified provider support and consistent tracing.
+
         Args:
             prompt: The input prompt (string or list of messages)
             enable_thinking: Enable thinking mode for hybrid models (default: False)
@@ -251,9 +257,15 @@ class OpenAICompatibleModel(LLMBaseModel):
         """
 
         def _generate_operation():
+            # Use LiteLLM model name for unified provider support
             params = {
-                "model": self.model_name,
+                "model": self.litellm_adapter.litellm_model_name,
+                "api_key": self.api_key,
             }
+
+            # Add base_url if specified
+            if self.base_url:
+                params["api_base"] = self.base_url
 
             # Add temperature: priority is kwargs > model_config > default (0.7)
             if "temperature" in kwargs:
@@ -291,7 +303,8 @@ class OpenAICompatibleModel(LLMBaseModel):
             else:
                 messages = [{"role": "user", "content": str(prompt)}]
 
-            response = self.client.chat.completions.create(messages=messages, **params)
+            # Use LiteLLM for unified provider support
+            response = litellm.completion(messages=messages, **params)
             message = response.choices[0].message
             content = message.content
 
@@ -544,10 +557,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Build ModelSettings with provider-specific configurations
                 model_settings_kwargs = {}
 
-                # Configure extra_body for token tracking (subclasses can override)
-                extra_body = self._build_tool_extra_body()
-                model_settings_kwargs["extra_body"] = extra_body
-
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
                 # reasoning_content in multi-turn conversations with tool calls
@@ -571,6 +580,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_kwargs["hooks"] = hooks
 
                 agent = Agent(**agent_kwargs)
+
+                # Run agent with LangSmith tracing via OpenAIAgentsTracingProcessor
+                # (configured at module level, captures all SDK traces automatically)
                 try:
                     result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
                 except MaxTurnsExceeded as e:
@@ -711,10 +723,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Build ModelSettings with provider-specific configurations
                 model_settings_kwargs = {}
 
-                # Configure stream_options to include usage information for token tracking
-                extra_body = self._build_tool_extra_body()
-                model_settings_kwargs["extra_body"] = extra_body
-
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
                 # reasoning_content in multi-turn conversations with tool calls
@@ -739,6 +747,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 agent = Agent(**agent_kwargs)
 
+                # Run agent with LangSmith tracing via OpenAIAgentsTracingProcessor
+                # (configured at module level, captures all SDK traces automatically)
                 try:
                     result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
                 except MaxTurnsExceeded as e:
