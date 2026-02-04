@@ -35,7 +35,7 @@ dependencies = [
     "aiohttp>=3.11.16",
     "xlsxwriter>=3.2.2",
     "openai-agents[litellm]==0.7.0",
-    "litellm>=1.55.0",
+    "litellm>=1.67.4.post1,<2",
     "pydantic>=2.11.7,<3.0",
     "lancedb==0.18.0",
     # This library is required by lancedb

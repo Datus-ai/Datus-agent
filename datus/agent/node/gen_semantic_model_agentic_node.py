@@ -16,7 +16,6 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.output_types import SemanticModelGenerationOutput
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
@@ -397,7 +396,6 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 tools=self.tools,
                 mcp_servers=self.mcp_servers,
                 instruction=system_instruction,
-                output_type=SemanticModelGenerationOutput,
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
@@ -409,36 +407,32 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
                     if isinstance(stream_action.output, dict):
                         last_successful_output = stream_action.output
+                        # Look for content in various possible fields
                         raw_output = stream_action.output.get("raw_output", "")
-                        if raw_output:
+                        # Handle case where raw_output is already a dict
+                        if isinstance(raw_output, dict):
+                            response_content = raw_output
+                        elif raw_output:
                             response_content = raw_output
 
-            # Extract semantic_model_files and output from the final response
+            # If we still don't have response_content, check the last successful output
             if not response_content and last_successful_output:
-                response_content = last_successful_output.get("raw_output", "")
+                logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
+                # Try different fields that might contain the response
+                raw_output = last_successful_output.get("raw_output", "")
+                if isinstance(raw_output, dict):
+                    response_content = raw_output
+                elif raw_output:
+                    response_content = raw_output
+                else:
+                    response_content = str(last_successful_output)  # Fallback to string representation
 
-            # Handle structured output (SemanticModelGenerationOutput) or fallback to manual parsing
-            if isinstance(response_content, SemanticModelGenerationOutput):
-                # Direct Pydantic object from structured output
-                semantic_model_files = response_content.semantic_model_files
-                response_content = response_content.output
-                logger.debug(f"Extracted from structured output: {semantic_model_files}")
-            elif isinstance(response_content, dict):
-                # Dict format (backward compatibility)
-                semantic_model_files = response_content.get("semantic_model_files", [])
-                response_content = response_content.get("output", str(response_content))
-                logger.debug(f"Extracted from dict: {semantic_model_files}")
-            else:
-                # String format - use legacy extraction method
-                semantic_model_files, extracted_output = self._extract_semantic_model_and_output_from_response(
-                    {"content": response_content}
-                )
-                if extracted_output:
-                    response_content = extracted_output
-
-            # Ensure response_content is a string for downstream processing
-            if not isinstance(response_content, str):
-                response_content = str(response_content) if response_content else ""
+            # Extract semantic_model_files and output from the final response_content
+            semantic_model_files, extracted_output = self._extract_semantic_model_and_output_from_response(
+                {"content": response_content}
+            )
+            if extracted_output:
+                response_content = extracted_output
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 

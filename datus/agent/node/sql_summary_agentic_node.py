@@ -16,7 +16,6 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.output_types import SqlSummaryGenerationOutput
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
@@ -405,14 +404,11 @@ class SqlSummaryAgenticNode(AgenticNode):
             last_successful_output = None
 
             # Stream response using the model's generate_with_tools_stream
-            # output_type is used for structured output when the model supports it
-            # Models that don't support it (DeepSeek, Kimi) will automatically fall back to str
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=enhanced_message,
                 tools=self.tools,
                 mcp_servers=self.mcp_servers,
                 instruction=system_instruction,
-                output_type=SqlSummaryGenerationOutput,
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
@@ -424,36 +420,32 @@ class SqlSummaryAgenticNode(AgenticNode):
                 if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
                     if isinstance(stream_action.output, dict):
                         last_successful_output = stream_action.output
+                        # Look for content in various possible fields
                         raw_output = stream_action.output.get("raw_output", "")
-                        if raw_output:
+                        # Handle case where raw_output is already a dict
+                        if isinstance(raw_output, dict):
+                            response_content = raw_output
+                        elif raw_output:
                             response_content = raw_output
 
-            # Extract sql_summary_file and output from the final response
+            # If we still don't have response_content, check the last successful output
             if not response_content and last_successful_output:
-                response_content = last_successful_output.get("raw_output", "")
+                logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
+                # Try different fields that might contain the response
+                raw_output = last_successful_output.get("raw_output", "")
+                if isinstance(raw_output, dict):
+                    response_content = raw_output
+                elif raw_output:
+                    response_content = raw_output
+                else:
+                    response_content = str(last_successful_output)  # Fallback to string representation
 
-            # Handle structured output (SqlSummaryGenerationOutput) or fallback to manual parsing
-            if isinstance(response_content, SqlSummaryGenerationOutput):
-                # Direct Pydantic object from structured output
-                sql_summary_file = response_content.sql_summary_file
-                response_content = response_content.output
-                logger.debug(f"Extracted from structured output: sql_summary_file={sql_summary_file}")
-            elif isinstance(response_content, dict):
-                # Dict format (backward compatibility)
-                sql_summary_file = response_content.get("sql_summary_file")
-                response_content = response_content.get("output", str(response_content))
-                logger.debug(f"Extracted from dict: sql_summary_file={sql_summary_file}")
-            else:
-                # String format - use legacy extraction method
-                sql_summary_file, extracted_output = self._extract_sql_summary_and_output_from_response(
-                    {"content": response_content}
-                )
-                if extracted_output:
-                    response_content = extracted_output
-
-            # Ensure response_content is a string for downstream processing
-            if not isinstance(response_content, str):
-                response_content = str(response_content) if response_content else ""
+            # Extract sql_summary_file and output from the final response_content
+            sql_summary_file, extracted_output = self._extract_sql_summary_and_output_from_response(
+                {"content": response_content}
+            )
+            if extracted_output:
+                response_content = extracted_output
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 

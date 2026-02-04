@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Literal, Type, Union
+from typing import Literal, Optional, Type, Union
 
 from openai import AsyncOpenAI, OpenAI
 
@@ -22,9 +22,10 @@ except ImportError:
 def create_openai_client(
     cls: Type[Union[OpenAI, AsyncOpenAI]],
     api_key: str,
-    base_url: str,
+    base_url: Optional[str],
     default_headers: Union[dict[str, str], None] = None,
 ) -> Union[OpenAI, AsyncOpenAI]:
+    # OpenAI client accepts None for base_url (uses default URL)
     client = cls(api_key=api_key, base_url=base_url, default_headers=default_headers)
     if not HAS_LANGSMITH:
         return client

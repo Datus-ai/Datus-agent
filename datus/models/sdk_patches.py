@@ -138,19 +138,25 @@ def _postprocess_messages_for_reasoning(
     model: str | None,
 ) -> list[dict[str, Any]]:
     """
-    Post-process messages to ensure all assistant messages with tool_calls
-    have reasoning_content for Kimi/Moonshot models.
+    Post-process messages to preserve reasoning_content for Kimi/Moonshot models
+    during tool calling.
 
-    Moonshot API requires reasoning_content in all assistant messages that have
-    tool_calls, even if there's no corresponding reasoning item. This function
-    adds an empty reasoning_content to such messages.
+    Per DeepSeek/Moonshot documentation:
+    - During tool calling (same turn): reasoning_content must be passed back
+      to allow the model to continue reasoning
+    - Between user questions (new turn): reasoning_content should be cleared
+
+    This function copies existing reasoning_content to assistant messages with
+    tool_calls that are missing it. It does NOT inject fake placeholders.
+
+    See: https://api-docs.deepseek.com/guides/thinking_mode
 
     Args:
         messages: Converted messages from items_to_messages
         model: The model name
 
     Returns:
-        Messages with reasoning_content added where needed
+        Messages with reasoning_content preserved where needed
     """
     if not model:
         return messages
@@ -178,21 +184,22 @@ def _postprocess_messages_for_reasoning(
                 logger.debug(f"[SDK Patch] Found non-empty reasoning_content: {rc[:50]}...")
 
     # Add reasoning_content to assistant messages with tool_calls that don't have it
-    # IMPORTANT: Moonshot API requires non-empty reasoning_content when thinking is enabled
+    # Per DeepSeek/Moonshot docs: reasoning_content must be passed back during tool calling
+    # to allow the model to continue reasoning. We only copy existing reasoning_content,
+    # never inject fake placeholders - if the model didn't generate reasoning, don't add it.
+    # See: https://api-docs.deepseek.com/guides/thinking_mode
     for msg in messages:
         if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("tool_calls"):
             # Check if reasoning_content exists and is non-empty
             current_rc = msg.get("reasoning_content", "")
             if not current_rc or not current_rc.strip():
-                # Need to add/replace with a valid reasoning_content
+                # Only copy from previous reasoning_content if available
+                # Do NOT inject fake placeholders - respect what the model actually generated
                 if last_reasoning_content:
                     msg["reasoning_content"] = last_reasoning_content
-                    logger.debug("[SDK Patch] Added non-empty reasoning_content to assistant+tool_calls message")
-                else:
-                    # No valid reasoning_content found - use a placeholder
-                    # Moonshot thinking mode requires reasoning_content, so provide a minimal valid value
-                    msg["reasoning_content"] = "Analyzing the request and planning the tool calls."
-                    logger.debug("[SDK Patch] Added placeholder reasoning_content (no previous found)")
+                    logger.debug("[SDK Patch] Copied previous reasoning_content to assistant+tool_calls message")
+                # If no previous reasoning_content, leave it empty/missing
+                # The API will handle this correctly
 
             # Ensure content is empty string, not None (Moonshot requirement)
             if msg.get("content") is None:

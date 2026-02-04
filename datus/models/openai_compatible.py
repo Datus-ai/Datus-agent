@@ -19,7 +19,7 @@ from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from openai import APIConnectionError, APIError, APITimeoutError, OpenAI, RateLimitError
 from openai.types.shared.reasoning import Reasoning
-from pydantic import AnyUrl, BaseModel
+from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
@@ -123,10 +123,6 @@ class OpenAICompatibleModel(LLMBaseModel):
         # Cache for model info
         self._model_info = None
 
-        # Structured output support flag - can be overridden by subclasses
-        # DeepSeek and some other models don't support response_format
-        self._supports_structured_output = True
-
     def _get_api_key(self) -> str:
         """Get API key from config or environment. Override in subclasses."""
         raise NotImplementedError("Subclasses must implement _get_api_key")
@@ -135,14 +131,13 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Get base URL from config. Override in subclasses if needed."""
         return self.model_config.base_url
 
-    @property
-    def supports_structured_output(self) -> bool:
-        """Check if this model supports structured output (response_format).
+    def _build_tool_extra_body(self) -> Dict[str, Any]:
+        """Build extra_body for streaming tool calls. Override in subclasses for model-specific settings.
 
-        Some models like DeepSeek don't support response_format parameter.
-        Subclasses can override this by setting self._supports_structured_output = False.
+        Returns:
+            Dict with extra_body parameters for ModelSettings
         """
-        return self._supports_structured_output
+        return {"stream_options": {"include_usage": True}}
 
     @staticmethod
     def _setup_custom_json_encoder():
@@ -343,36 +338,28 @@ class OpenAICompatibleModel(LLMBaseModel):
             return result.get("content", "")
         return result
 
-    def generate_with_json_output(self, prompt: Any, output_type: Optional[type] = None, **kwargs) -> Union[Dict, Any]:
+    def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
         """
         Generate a JSON response with error handling.
 
         Args:
             prompt: Input prompt
-            output_type: Optional Pydantic model class for structured output.
-                        When provided, the response will be validated against
-                        this schema and returned as the Pydantic model instance.
             **kwargs: Additional parameters
 
         Returns:
-            If output_type is provided: Pydantic model instance
-            Otherwise: Parsed JSON dictionary
+            Parsed JSON dictionary
         """
+        # Set JSON mode
         json_kwargs = kwargs.copy()
+        json_kwargs["response_format"] = {"type": "json_object"}
 
         # Pass through enable_thinking if provided
         enable_thinking_param = json_kwargs.pop("enable_thinking", False)
-
-        # If output_type is a Pydantic model, use structured output
-        if output_type is not None and isinstance(output_type, type) and issubclass(output_type, BaseModel):
-            return self._generate_with_structured_output(prompt, output_type, **json_kwargs)
-
-        # Otherwise use simple JSON mode
-        json_kwargs["response_format"] = {"type": "json_object"}
         response_text = self.generate(prompt, enable_thinking=enable_thinking_param, **json_kwargs)
 
         try:
             parsed_json = json.loads(response_text)
+            # For LangSmith tracing, we want to capture metadata but return the actual JSON for backward compatibility
             return parsed_json
         except json.JSONDecodeError:
             # Try to extract JSON from response
@@ -387,92 +374,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                     pass
 
             return {"error": "Failed to parse JSON response", "raw_response": response_text}
-
-    def _generate_with_structured_output(self, prompt: Any, output_type: type, **kwargs) -> Any:
-        """
-        Generate response with structured output using Pydantic model.
-
-        Uses LiteLLM's response_format parameter with JSON schema for structured output.
-        Thinking mode is automatically detected via self.litellm_adapter.is_thinking_model.
-
-        Args:
-            prompt: Input prompt
-            output_type: Pydantic model class for structured output
-            **kwargs: Additional parameters
-
-        Returns:
-            Pydantic model instance
-        """
-        # Build JSON schema from Pydantic model
-        json_schema = output_type.model_json_schema()
-
-        # Use json_schema response format for structured output
-        response_format = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": output_type.__name__,
-                "schema": json_schema,
-                "strict": True,
-            },
-        }
-
-        params = {
-            "model": self.litellm_adapter.litellm_model_name,
-            "response_format": response_format,
-        }
-
-        # Add temperature and top_p settings
-        if self.model_config.temperature is not None:
-            params["temperature"] = self.model_config.temperature
-        elif not self.litellm_adapter.is_thinking_model:
-            params["temperature"] = 0.7
-
-        if self.model_config.top_p is not None:
-            params["top_p"] = self.model_config.top_p
-        elif not self.litellm_adapter.is_thinking_model:
-            params["top_p"] = 1.0
-
-        # Add provider-specific headers for structured output (e.g., Claude beta header)
-        extra_headers = self.litellm_adapter._get_structured_output_headers()
-        if extra_headers:
-            params["extra_headers"] = extra_headers
-
-        # Filter kwargs
-        excluded_params = ["temperature", "top_p", "max_tokens", "max_completion_tokens", "response_format"]
-        params.update({k: v for k, v in kwargs.items() if k not in excluded_params})
-
-        # Convert prompt to messages format
-        if isinstance(prompt, list):
-            messages = prompt
-        else:
-            messages = [{"role": "user", "content": str(prompt)}]
-
-        def _structured_output_operation():
-            response = litellm.completion(messages=messages, **params)
-            content = response.choices[0].message.content
-
-            if hasattr(self, "_save_llm_trace"):
-                self._save_llm_trace(messages, content, None)
-
-            # Parse and validate with Pydantic model
-            try:
-                parsed_json = json.loads(content)
-                return output_type.model_validate(parsed_json)
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"Failed to parse structured output: {e}, content: {content[:200]}")
-                # Try to extract JSON from response
-                import re
-
-                json_match = re.search(r"\{.*\}", content, re.DOTALL)
-                if json_match:
-                    try:
-                        parsed_json = json.loads(json_match.group(0))
-                        return output_type.model_validate(parsed_json)
-                    except Exception as parse_err:
-                        logger.debug(f"Failed to parse extracted JSON: {parse_err}")
-                raise
-
-        return self._with_retry(_structured_output_operation, "structured output generation")
 
     @optional_traceable(name="openai_compatible_tools", run_type="chain")
     async def generate_with_tools(
@@ -570,21 +471,12 @@ class OpenAICompatibleModel(LLMBaseModel):
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
-        # Check if model supports structured output, fall back to str if not
-        effective_output_type = output_type
-        if output_type is not str and not self.supports_structured_output:
-            logger.debug(
-                f"Model {self.model_name} doesn't support structured output, "
-                f"ignoring output_type={output_type.__name__ if hasattr(output_type, '__name__') else output_type}"
-            )
-            effective_output_type = str
-
         async for action in self._generate_with_tools_stream_internal(
             prompt,
             mcp_servers,
             tools,
             instruction,
-            effective_output_type,
+            output_type,
             strict_json_schema,
             max_turns,
             session,
@@ -618,7 +510,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # This ensures the model outputs valid JSON that matches the Pydantic schema
             actual_output_type = output_type
             enable_structured_output = False
-            if output_type is not str:
+            if output_type != str:
                 from agents import AgentOutputSchema
 
                 actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
@@ -652,11 +544,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Build ModelSettings with provider-specific configurations
                 model_settings_kwargs = {}
 
-                # Add provider-specific headers for structured output (e.g., Claude beta header)
-                structured_output_headers = self.litellm_adapter.get_structured_output_headers()
-                if structured_output_headers:
-                    model_settings_kwargs["extra_headers"] = structured_output_headers
-                    logger.debug(f"Added structured output headers: {structured_output_headers}")
+                # Configure extra_body for token tracking (subclasses can override)
+                extra_body = self._build_tool_extra_body()
+                model_settings_kwargs["extra_body"] = extra_body
 
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
@@ -684,10 +574,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                 try:
                     result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
                 except MaxTurnsExceeded as e:
-                    logger.exception("Max turns exceeded")
-                    raise DatusException(
-                        ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
-                    ) from e
+                    logger.error(f"Max turns exceeded: {str(e)}")
+                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
 
                 # Save LLM trace if method exists (for models that support it like DeepSeekModel)
                 if hasattr(self, "_save_llm_trace"):
@@ -789,7 +677,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # This ensures the model outputs valid JSON that matches the Pydantic schema
             actual_output_type = output_type
             enable_structured_output = False
-            if output_type is not str:
+            if output_type != str:
                 from agents import AgentOutputSchema
 
                 actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
@@ -823,11 +711,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Build ModelSettings with provider-specific configurations
                 model_settings_kwargs = {}
 
-                # Add provider-specific headers for structured output (e.g., Claude beta header)
-                structured_output_headers = self.litellm_adapter.get_structured_output_headers()
-                if structured_output_headers:
-                    model_settings_kwargs["extra_headers"] = structured_output_headers
-                    logger.debug(f"Added structured output headers (streaming): {structured_output_headers}")
+                # Configure stream_options to include usage information for token tracking
+                extra_body = self._build_tool_extra_body()
+                model_settings_kwargs["extra_body"] = extra_body
 
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
@@ -856,10 +742,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                 try:
                     result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
                 except MaxTurnsExceeded as e:
-                    logger.exception("Max turns exceeded in streaming")
-                    raise DatusException(
-                        ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
-                    ) from e
+                    logger.error(f"Max turns exceeded in streaming: {str(e)}")
+                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
 
                 # Streaming phase: yield progress actions in real-time
                 # After streaming completes, generate final summary report
@@ -1060,21 +944,6 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                     final_output = result.final_output if hasattr(result, "final_output") else ""
                     self._save_llm_trace(messages, final_output, conversation_history)
-
-                # After streaming completes, yield a final action with result.final_output
-                # This is important for structured output: final_output may be a Pydantic object
-                if hasattr(result, "final_output") and result.final_output is not None:
-                    final_action = ActionHistory(
-                        action_id=f"final_{uuid.uuid4().hex[:8]}",
-                        role=ActionRole.ASSISTANT,
-                        messages="Final output",
-                        action_type="final_response",
-                        input={},
-                        output={"raw_output": result.final_output, "is_final": True},
-                        status=ActionStatus.SUCCESS,
-                    )
-                    action_history_manager.add_action(final_action)
-                    yield final_action
 
                 # After streaming completes, extract usage information from the final result
                 # and add it to the final assistant action
@@ -1310,10 +1179,9 @@ class OpenAICompatibleModel(LLMBaseModel):
             "deepseek-reasoner": {"context_length": 65535, "max_tokens": 65535},
             "deepseek-r1": {"context_length": 65535, "max_tokens": 65535},
             # Moonshot (Kimi) Models - https://platform.moonshot.cn/docs/price/pricing
-            # kimi-k2-0905 and kimi-k2-turbo upgraded to 256K context (Aug-Sep 2025)
             "kimi-k2": {"context_length": 256000, "max_tokens": 8192},
             "kimi-k2.5": {"context_length": 256000, "max_tokens": 16384},
-            "kimi-k2-turbo": {"context_length": 256000, "max_tokens": 8192},
+            "kimi-k2-turbo": {"context_length": 128000, "max_tokens": 8192},
             # Qwen Models
             "qwen3-coder": {"context_length": 128000, "max_tokens": 8192},
             # Gemini Models

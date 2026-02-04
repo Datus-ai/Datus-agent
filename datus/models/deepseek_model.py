@@ -22,9 +22,6 @@ class DeepSeekModel(OpenAICompatibleModel):
         **kwargs,
     ):
         super().__init__(model_config, **kwargs)
-        # DeepSeek doesn't support response_format (structured outputs)
-        # Error: "This response_format type is unavailable now"
-        self._supports_structured_output = False
         logger.debug(f"Using DeepSeek model: {self.model_name} base Url: {self.base_url}")
 
     def _get_api_key(self) -> str:

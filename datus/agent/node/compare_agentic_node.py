@@ -7,7 +7,6 @@ from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput, CompareResult
-from datus.schemas.output_types import CompareOutput
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.utils.json_utils import llm_result2json
@@ -227,7 +226,6 @@ class CompareAgenticNode(AgenticNode):
                 tools=self.tools or [],
                 mcp_servers=self.mcp_servers or {},
                 instruction=system_instruction,
-                output_type=CompareOutput,
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
@@ -248,16 +246,7 @@ class CompareAgenticNode(AgenticNode):
                 logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
                 response_content = last_successful_output.get("raw_output", "")
 
-            # Handle structured output (CompareOutput) or fallback to manual parsing
-            if isinstance(response_content, CompareOutput):
-                # Direct Pydantic object from structured output
-                result_dict = {
-                    "explanation": response_content.explanation,
-                    "suggest": response_content.suggest,
-                }
-                logger.debug("Extracted from structured output: CompareOutput")
-            else:
-                result_dict = self._parse_comparison_output(response_content)
+            result_dict = self._parse_comparison_output(response_content)
             tokens_used = 0
 
             for action in reversed(action_history_manager.get_actions()):
