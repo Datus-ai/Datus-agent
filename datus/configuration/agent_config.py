@@ -136,6 +136,59 @@ class BenchmarkConfig:
 
 
 @dataclass
+class DocumentConfig:
+    """Per-platform document fetch configuration.
+
+    Maps to YAML ``agent.document.{platform}`` and CLI ``platform-doc`` args.
+    """
+
+    type: str = "local"  # github / website / local
+    source: Optional[str] = None  # GitHub repo "owner/repo", URL, or local path
+    version: Optional[str] = None  # Document version (auto-detected if omitted)
+    github_ref: Optional[str] = None  # Git branch / tag / commit
+    github_token: Optional[str] = None
+    paths: List[str] = field(default_factory=lambda: ["docs", "README.md"])
+    chunk_size: int = 1024
+    max_depth: int = 2  # Max crawl depth for website source
+    include_patterns: Optional[List[str]] = None  # File/URL patterns to include
+    exclude_patterns: Optional[List[str]] = None  # File/URL patterns to exclude
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DocumentConfig":
+        valid_fields = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in valid_fields})
+
+    def merge_cli_args(self, args) -> "DocumentConfig":
+        """Return a new config with non-None CLI args overriding YAML values.
+
+        CLI attr -> DocumentConfig field mapping:
+          source_type -> type, source -> source, version -> version,
+          github_ref -> github_ref, paths -> paths,
+          chunk_size -> chunk_size, max_depth -> max_depth,
+          include_patterns -> include_patterns, exclude_patterns -> exclude_patterns
+        """
+        mapping = {
+            "source_type": "type",
+            "source": "source",
+            "version": "version",
+            "github_ref": "github_ref",
+            "paths": "paths",
+            "chunk_size": "chunk_size",
+            "max_depth": "max_depth",
+            "include_patterns": "include_patterns",
+            "exclude_patterns": "exclude_patterns",
+        }
+        overrides = {}
+        for cli_attr, cfg_field in mapping.items():
+            cli_val = getattr(args, cli_attr, None)
+            if cli_val is not None:
+                overrides[cfg_field] = cli_val
+        data = {f.name: getattr(self, f.name) for f in fields(self)}
+        data.update(overrides)
+        return DocumentConfig(**data)
+
+
+@dataclass
 class DashboardConfig:
     platform: str
     # use login or api_key
@@ -254,6 +307,13 @@ class AgentConfig:
 
         # Initialize skills configuration
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
+
+        # Platform documentation fetch configs (namespace-independent)
+        self.document_configs: Dict[str, DocumentConfig] = {
+            name: DocumentConfig.from_dict(cfg)
+            for name, cfg in (kwargs.get("document", {}) or {}).items()
+            if isinstance(cfg, dict)
+        }
 
         self._init_dirs()
 
@@ -551,7 +611,7 @@ class AgentConfig:
             self.search_metrics_rate = kwargs["search_metrics_rate"]
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]
-        if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "namespace"]:
+        if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "namespace", "platform-doc"]:
             self.current_namespace = kwargs.get("namespace", "")
         if database_name := kwargs.get("database", ""):
             self.current_database = database_name
@@ -650,6 +710,17 @@ class AgentConfig:
                 message="Namespace is required, please run with --namespace <namespace>",
             )
         return rag_storage_path(self._current_namespace, self.rag_base_path)
+
+    def document_storage_path(self, platform: str) -> str:
+        """Per-platform document storage path (namespace-independent).
+
+        Returns: {home}/data/document/{platform}/
+        """
+        return os.path.join(self.rag_base_path, "document", platform)
+
+    def document_storage_base_path(self) -> str:
+        """Base document storage directory: {home}/data/document/"""
+        return os.path.join(self.rag_base_path, "document")
 
     def sub_agent_storage_path(self, sub_agent_name: str):
         return os.path.join(self.rag_base_path, "sub_agents", sub_agent_name)

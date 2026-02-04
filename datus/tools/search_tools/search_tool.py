@@ -2,7 +2,8 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, List, Literal, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.doc_search_node_models import DocNavResult, DocSearchInput, DocSearchResult, GetDocResult
@@ -30,14 +31,42 @@ class SearchTool(BaseTool):
         """Initialize with agent configuration."""
         super().__init__(**kwargs)
         self.agent_config = agent_config
-        self._document_store = None
 
-    @property
-    def document_store(self) -> DocumentStore:
-        """Lazy initialize document store."""
-        if self._document_store is None:
-            self._document_store = document_store(self.agent_config.rag_storage_path())
-        return self._document_store
+    def _get_document_store(self, platform: str) -> Optional[DocumentStore]:
+        """Get document store for a specific platform.
+
+        If ``_document_store`` was set manually (e.g. by PlatformDocSearchTool),
+        that instance is returned directly; otherwise a per-platform store is
+        resolved via ``agent_config.document_storage_path(platform)``.
+        """
+        store_path = self.agent_config.document_storage_path(platform)
+        if not os.path.exists(store_path):
+            return None
+        return document_store(store_path)
+
+    @staticmethod
+    def _version_sort_key(version_str: str):
+        """Generate a sort key that handles semantic versioning correctly.
+
+        Splits version string into numeric and non-numeric parts so that
+        ``v3.10`` sorts after ``v3.9`` (unlike plain lexicographic order).
+        Non-numeric prefixes (e.g. ``v``) are compared as strings.
+        """
+        import re
+
+        parts = re.split(r"(\d+)", version_str)
+        return [int(p) if p.isdigit() else p.lower() for p in parts]
+
+    @staticmethod
+    def _resolve_latest_version(store: DocumentStore) -> Optional[str]:
+        """Return the latest (max) version string from the store, or None if empty."""
+        versions_info = store.list_versions()
+        if not versions_info:
+            return None
+        return max(
+            (v["version"] for v in versions_info),
+            key=SearchTool._version_sort_key,
+        )
 
     def execute(self, input_data: DocSearchInput) -> DocSearchResult:
         """Execute document search (default entry point).
@@ -62,25 +91,16 @@ class SearchTool(BaseTool):
     ) -> DocNavResult:
         """List navigation structure for a platform's documentation.
 
-        Returns a hierarchical tree grouped by nav_path, with documents as leaves.
-
-        When **version is specified**, returns a flat tree::
-
-            [
-                {"name": "SQL Reference", "children": [...], "docs": ["CREATE TABLE", ...]},
-                ...
-            ]
-
-        When **version is empty** (multi-version), returns top-level version grouping::
+        Returns a pure hierarchical tree where internal nodes are navigation
+        categories and leaf nodes (empty ``children``) are document titles::
 
             [
-                {"version": "v3.4.0", "tree": [{"name": "SQL Reference", ...}]},
-                {"version": "v3.3.0", "tree": [...]},
+                {"name": "SQL Reference", "children": [
+                    {"name": "DDL", "children": [
+                        {"name": "CREATE TABLE", "children": []},
+                    ]},
+                ]},
             ]
-
-        Leaf naming rule:
-        - If nav_path != titles -> leaf title comes from the document title
-        - If nav_path == titles -> leaf title is the last element of nav_path
 
         Args:
             platform: Platform name (e.g., snowflake, duckdb, postgresql)
@@ -90,15 +110,23 @@ class SearchTool(BaseTool):
             DocNavResult with hierarchical navigation tree
         """
         try:
-            # Build where condition
-            conditions: List[Condition] = [eq("platform", platform)]
-            if version:
-                conditions.append(eq("version", version))
+            store = self._get_document_store(platform)
+            if store is None:
+                return DocNavResult(
+                    success=True,
+                    platform=platform,
+                    version=version,
+                    nav_tree=[],
+                    total_docs=0,
+                )
 
-            where: WhereExpr = And(conditions) if len(conditions) > 1 else conditions[0]
+            # Default to latest version when not specified
+            if not version:
+                version = self._resolve_latest_version(store)
 
-            # Get all chunks with navigation fields
-            rows = self.document_store.get_all_rows(
+            where: WhereExpr = eq("version", version) if version else None
+
+            rows = store.get_all_rows(
                 where=where,
                 select_fields=["title", "titles", "nav_path", "version", "doc_path"],
             )
@@ -119,24 +147,7 @@ class SearchTool(BaseTool):
                 if doc_path and doc_path not in doc_map:
                     doc_map[doc_path] = row
 
-            # Collect distinct versions
-            versions = sorted({row.get("version", "") for row in doc_map.values()}, reverse=True)
-
-            if version or len(versions) <= 1:
-                # Single version → flat tree
-                nav_tree = self._build_nav_tree(doc_map)
-            else:
-                # Multiple versions → group by version at the top level
-                nav_tree = []
-                for ver in versions:
-                    ver_doc_map = {k: v for k, v in doc_map.items() if v.get("version", "") == ver}
-                    if ver_doc_map:
-                        nav_tree.append(
-                            {
-                                "version": ver,
-                                "tree": self._build_nav_tree(ver_doc_map),
-                            }
-                        )
+            nav_tree = self._build_nav_tree(doc_map)
 
             logger.debug(f"Found {len(doc_map)} documents for platform '{platform}'")
 
@@ -169,11 +180,10 @@ class SearchTool(BaseTool):
         return []
 
     def _build_nav_tree(self, doc_map: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Build a lightweight hierarchical navigation tree for LLM browsing.
+        """Build a pure hierarchical navigation tree for LLM browsing.
 
-        Groups documents by nav_path to form internal tree nodes.
-        Leaf docs are just title strings — enough for the LLM to drill into
-        via ``get_document(platform, titles=[...])``.
+        Internal nodes are created from ``nav_path`` segments.
+        Leaf nodes are document titles (h1) with empty ``children``.
 
         Output format::
 
@@ -181,9 +191,11 @@ class SearchTool(BaseTool):
                 {
                     "name": "Administration",
                     "children": [
-                        {"name": "Cluster Management", "children": [], "docs": ["Cluster Snapshot", "Scale"]}
-                    ],
-                    "docs": []
+                        {"name": "Cluster Management", "children": [
+                            {"name": "Cluster Snapshot", "children": []},
+                            {"name": "Scale", "children": []},
+                        ]}
+                    ]
                 }
             ]
 
@@ -193,61 +205,33 @@ class SearchTool(BaseTool):
         Returns:
             List of root-level tree nodes
         """
-        # Internal tree node: {"children": {name: node}, "docs": [title_str, ...]}
-        root: Dict[str, Any] = {"children": {}, "docs": []}
+        root: Dict[str, Any] = {"children": {}}
 
         for doc_path, doc_info in doc_map.items():
             nav_path = self._normalize_list_field(doc_info.get("nav_path", []))
-            titles = self._normalize_list_field(doc_info.get("titles", []))
-            title = doc_info.get("title", "")
-
-            # Determine leaf name:
-            #   nav_path == titles  -> last element of nav_path
-            #   nav_path != titles  -> document title
-            if nav_path and nav_path == titles:
-                leaf_name = nav_path[-1]
-            else:
-                leaf_name = title or (titles[0] if titles else doc_path.rsplit("/", 1)[-1])
+            title = doc_info.get("title", "") or doc_path.rsplit("/", 1)[-1]
 
             # Walk the tree along nav_path, creating intermediate nodes as needed
             node = root
             for segment in nav_path:
                 if segment not in node["children"]:
-                    node["children"][segment] = {"children": {}, "docs": []}
+                    node["children"][segment] = {"children": {}}
                 node = node["children"][segment]
 
-            # Attach document title as a leaf
-            if leaf_name not in node["docs"]:
-                node["docs"].append(leaf_name)
+            # Insert document title as a leaf (skip if same as last nav_path segment)
+            if not nav_path or title != nav_path[-1]:
+                if title not in node["children"]:
+                    node["children"][title] = {"children": {}}
 
         # Convert the nested dict into a sorted list of tree nodes
-        def _to_list(node: Dict[str, Any]) -> List[Dict[str, Any]]:
+        def _to_list(tree_node: Dict[str, Any]) -> List[Dict[str, Any]]:
             result = []
-            for name in sorted(node["children"]):
-                child = node["children"][name]
-                result.append(
-                    {
-                        "name": name,
-                        "children": _to_list(child),
-                        "docs": sorted(child["docs"]),
-                    }
-                )
+            for name in sorted(tree_node["children"]):
+                child = tree_node["children"][name]
+                result.append({"name": name, "children": _to_list(child)})
             return result
 
-        tree = _to_list(root)
-
-        # Root-level docs (documents with empty nav_path) become top-level entries
-        if root["docs"]:
-            for title in sorted(root["docs"]):
-                tree.append(
-                    {
-                        "name": title,
-                        "children": [],
-                        "docs": [title],
-                    }
-                )
-
-        return tree
+        return _to_list(root)
 
     def get_document(
         self,
@@ -255,11 +239,17 @@ class SearchTool(BaseTool):
         titles: List[str],
         version: Optional[str] = None,
     ) -> GetDocResult:
-        """Get document chunks by matching a hierarchy path.
+        """Get document chunks by matching a hierarchy prefix path.
 
-        All elements in ``titles`` are AND-matched against the hierarchy field,
-        so they must all appear in the same document. Use this to locate ONE
-        document by its parent group(s) + document title.
+        The ``titles`` list is joined with ``" > "`` to form a hierarchy
+        prefix that is matched against the stored ``hierarchy`` field.
+        This directly maps to the navigation tree returned by
+        ``list_document_nav``.
+
+        Example::
+
+            titles=["DDL", "CREATE TABLE"]
+            → matches hierarchy "... > DDL > CREATE TABLE > ..."
 
         Args:
             platform: Platform name (e.g., snowflake, duckdb, postgresql)
@@ -270,32 +260,47 @@ class SearchTool(BaseTool):
             GetDocResult with document chunks
         """
         try:
-            # Build where condition for platform
-            conditions: List[Condition] = [eq("platform", platform)]
+            store = self._get_document_store(platform)
+
+            # Default to latest version when not specified
+            if not version and store is not None:
+                version = self._resolve_latest_version(store)
+
+            # Build where conditions
+            conditions: List[Condition] = []
             if version:
                 conditions.append(eq("version", version))
 
-            # Add hierarchy LIKE condition for each title
-            for title in titles:
-                conditions.append(like("hierarchy", f"%{title}%"))
+            # Join titles into a single hierarchy prefix for precise matching
+            if titles:
+                hierarchy_prefix = " > ".join(titles)
+                conditions.append(like("hierarchy", f"%{hierarchy_prefix}%"))
 
-            where: WhereExpr = And(conditions) if len(conditions) > 1 else conditions[0]
+            where: WhereExpr = None
+            if len(conditions) > 1:
+                where = And(conditions)
+            elif len(conditions) == 1:
+                where = conditions[0]
 
             # Get matching documents
-            rows = self.document_store.get_all_rows(
-                where=where,
-                select_fields=[
-                    "chunk_id",
-                    "chunk_index",
-                    "chunk_text",
-                    "title",
-                    "titles",
-                    "hierarchy",
-                    "nav_path",
-                    "doc_path",
-                    "version",
-                    "keywords",
-                ],
+            rows = (
+                []
+                if store is None
+                else store.get_all_rows(
+                    where=where,
+                    select_fields=[
+                        "chunk_id",
+                        "chunk_index",
+                        "chunk_text",
+                        "title",
+                        "titles",
+                        "hierarchy",
+                        "nav_path",
+                        "doc_path",
+                        "version",
+                        "keywords",
+                    ],
+                )
             )
 
             if not rows:
@@ -309,13 +314,25 @@ class SearchTool(BaseTool):
                     chunk_count=0,
                 )
 
+            # Group by doc_path — prefix matching may still hit multiple documents
+            doc_groups: Dict[str, List[Dict[str, Any]]] = {}
+            for row in rows:
+                dp = row.get("doc_path", "")
+                doc_groups.setdefault(dp, []).append(row)
+
+            # Pick the best matching document (fewest extra hierarchy segments)
+            best_doc_path = min(
+                doc_groups,
+                key=lambda dp: len(doc_groups[dp][0].get("hierarchy", "").split(">")),
+            )
+            best_rows = doc_groups[best_doc_path]
+
             # Sort chunks by chunk_index
-            rows.sort(key=lambda x: x.get("chunk_index", 0))
+            best_rows.sort(key=lambda x: x.get("chunk_index", 0))
 
-            # Get metadata from first chunk
-            first_chunk = rows[0]
+            first_chunk = best_rows[0]
 
-            logger.info(f"Found {len(rows)} chunks for titles {titles} in platform '{platform}'")
+            logger.info(f"Found {len(best_rows)} chunks for titles {titles} in platform '{platform}'")
 
             return GetDocResult(
                 success=True,
@@ -323,8 +340,8 @@ class SearchTool(BaseTool):
                 version=first_chunk.get("version"),
                 title=first_chunk.get("title", ""),
                 hierarchy=first_chunk.get("hierarchy", ""),
-                chunks=rows,
-                chunk_count=len(rows),
+                chunks=best_rows,
+                chunk_count=len(best_rows),
             )
 
         except Exception as e:
@@ -362,32 +379,37 @@ class SearchTool(BaseTool):
             docs: Dict[str, List[Dict[str, Any]]] = {}
             total_count = 0
 
-            for keyword in keywords:
-                try:
-                    results = self.document_store.search_docs(
-                        query=keyword,
-                        platform=platform,
-                        version=version,
-                        top_n=top_n,
-                        select_fields=[
-                            "chunk_id",
-                            "chunk_text",
-                            "title",
-                            "titles",
-                            "hierarchy",
-                            "nav_path",
-                            "doc_path",
-                            "version",
-                            "keywords",
-                        ],
-                    )
+            store = self._get_document_store(platform)
+            if store is not None:
+                # Default to latest version when not specified
+                if not version:
+                    version = self._resolve_latest_version(store)
 
-                    docs[keyword] = results
-                    total_count += len(results)
+                for keyword in keywords:
+                    try:
+                        results = store.search_docs(
+                            query=keyword,
+                            version=version,
+                            top_n=top_n,
+                            select_fields=[
+                                "chunk_id",
+                                "chunk_text",
+                                "title",
+                                "titles",
+                                "hierarchy",
+                                "nav_path",
+                                "doc_path",
+                                "version",
+                                "keywords",
+                            ],
+                        )
 
-                except Exception as e:
-                    logger.error(f"Error searching for keyword '{keyword}': {e}")
-                    docs[keyword] = []
+                        docs[keyword] = results
+                        total_count += len(results)
+
+                    except Exception as e:
+                        logger.error(f"Error searching for keyword '{keyword}': {e}")
+                        docs[keyword] = []
 
             logger.info(f"Found {total_count} documents for {len(keywords)} keywords in platform '{platform}'")
 
@@ -405,3 +427,99 @@ class SearchTool(BaseTool):
                 docs={},
                 doc_count=0,
             )
+
+
+def search_by_tavily(
+    keywords: List[str],
+    max_results: int = 5,
+    search_depth: Literal["basic", "advanced"] = "advanced",
+    include_answer: Literal[False, "basic", "advanced"] = False,
+    include_raw_content: Literal[False, "text", "markdown"] = False,
+    include_domains: Optional[List[str]] = None,
+) -> DocSearchResult:
+    """Search external documents using the Tavily Search API.
+
+    Sends all keywords as a single query (tab-joined) and returns results.
+    See https://docs.tavily.com/documentation/api-reference/endpoint/search
+
+    Args:
+        keywords: Keywords to search for (joined into a single query)
+        max_results: Maximum number of search results to return, 0-20 (default: 5)
+        search_depth: Controls latency vs. relevance tradeoff.
+            "basic" — fast, 1 credit per request.
+            "advanced" — slower but more relevant, 2 credits per request.
+        include_answer: Whether to include an LLM-generated answer summary.
+            False — no answer (default).
+            "basic" — quick short answer.
+            "advanced" — detailed long-form answer (3 extra credits).
+        include_raw_content: Whether to include cleaned HTML content per result.
+            False — only snippet content (default).
+            "text" — plain text.
+            "markdown" — markdown formatted.
+        include_domains: Restrict search to specific domains (max 300),
+            e.g. ["docs.snowflake.com", "stackoverflow.com"].
+
+    Returns:
+        DocSearchResult with matched documents.
+        If include_answer is enabled, the answer is prepended to the results list.
+    """
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return DocSearchResult(
+            success=False,
+            error="TAVILY_API_KEY not configured. Please set the TAVILY_API_KEY environment variable.",
+            docs={},
+            doc_count=0,
+        )
+    if not keywords:
+        return DocSearchResult(success=True, docs={}, doc_count=0)
+    import requests
+
+    try:
+        url = "https://api.tavily.com/search"
+
+        query = "\t".join(keywords)
+        payload: Dict[str, Any] = {
+            "query": query,
+            "search_depth": search_depth,
+            "max_results": max_results,
+        }
+        if include_answer:
+            payload["include_answer"] = include_answer
+        if include_raw_content:
+            payload["include_raw_content"] = include_raw_content
+        if include_domains:
+            payload["include_domains"] = include_domains
+
+        response = requests.post(
+            url,
+            json=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        result = response.json()
+        texts = [(item.get("raw_content") or item.get("content") or "") for item in result.get("results", [])]
+
+        # Prepend the generated answer if available
+        answer = result.get("answer")
+        if answer:
+            texts.insert(0, answer)
+
+        # DocSearchResult.docs expects Dict[str, List], key by the joined query
+        docs = {query: texts}
+        return DocSearchResult(success=True, docs=docs, doc_count=len(texts))
+    except requests.HTTPError as e:
+        return DocSearchResult(
+            success=False,
+            error=f"Tavily HTTP {e.response.status_code}: {e.response.text[:300]}",
+            docs={},
+            doc_count=0,
+        )
+    except Exception as e:
+        logger.error(f"External search failed: {e}")
+        return DocSearchResult(success=False, error=f"External search failed: {str(e)}", docs={}, doc_count=0)

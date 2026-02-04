@@ -10,7 +10,6 @@ from typing import Callable, Optional
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage import BaseEmbeddingStore
-from datus.storage.document import DocumentStore
 from datus.storage.embedding_models import EmbeddingModel, get_embedding_model
 from datus.storage.ext_knowledge import ExtKnowledgeStore
 from datus.storage.metric.store import MetricStorage
@@ -79,7 +78,6 @@ class StorageCache:
         self._metric_holder = StorageCacheHolder(MetricStorage, agent_config, "metric", "metrics")
         self._semantic_holder = StorageCacheHolder(SemanticModelStorage, agent_config, "metric", "semantic_models")
         self._reference_sql_holder = StorageCacheHolder(ReferenceSqlStorage, agent_config, "metric", "sqls")
-        self._document_holder = StorageCacheHolder(DocumentStore, agent_config, "document", "")
         self._ext_knowledge_holder = StorageCacheHolder(ExtKnowledgeStore, agent_config, "document", "ext_knowledge")
         self._subject_tree_store = None
 
@@ -98,9 +96,6 @@ class StorageCache:
 
     def reference_sql_storage(self, sub_agent_name: Optional[str] = None) -> ReferenceSqlStorage:
         return self._reference_sql_holder.storage_instance(sub_agent_name)
-
-    def document_storage(self, sub_agent_name: Optional[str] = None) -> DocumentStore:
-        return self._document_holder.storage_instance(sub_agent_name)
 
     def ext_knowledge_storage(self, sub_agent_name: Optional[str] = None) -> ExtKnowledgeStore:
         return self._ext_knowledge_holder.storage_instance(sub_agent_name)

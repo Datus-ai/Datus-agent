@@ -14,8 +14,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-import pyarrow as pa
-
 # =============================================================================
 # Fetching Stage Models
 # =============================================================================
@@ -146,7 +144,6 @@ class PlatformDocChunk:
         hierarchy: Full combined path (auto-generated for display/search)
             e.g., "Guides > User Guide > Loading Data > Snowpipe > Overview"
 
-        platform: Platform name (snowflake, duckdb, postgresql, etc.)
         version: Document version
         source_type: Source type (github/website)
         source_url: Full source URL
@@ -154,6 +151,7 @@ class PlatformDocChunk:
 
         keywords: Extracted keywords for search
         language: Language code (en, zh, etc.)
+        content_hash: MD5 hash of the raw document content (same for all chunks from one doc)
         created_at: Creation timestamp
         updated_at: Last update timestamp
     """
@@ -168,7 +166,6 @@ class PlatformDocChunk:
     group_name: str  # Top-level group (Guides, Get Started, etc.)
     hierarchy: str  # Full combined path for display
 
-    platform: str
     version: str
     source_type: str
     source_url: str
@@ -176,6 +173,7 @@ class PlatformDocChunk:
 
     keywords: List[str] = field(default_factory=list)
     language: str = "en"
+    content_hash: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -185,18 +183,16 @@ class PlatformDocChunk:
 
     @staticmethod
     def generate_chunk_id(
-        platform: str,
         doc_path: str,
         chunk_index: int,
         version: str,
     ) -> str:
         """Generate a unique chunk ID.
 
-        The ID is deterministic based on platform, path, index, and version,
+        The ID is deterministic based on path, index, and version,
         ensuring idempotent upserts.
 
         Args:
-            platform: Platform name
             doc_path: Document path
             chunk_index: Chunk index
             version: Document version
@@ -204,46 +200,8 @@ class PlatformDocChunk:
         Returns:
             MD5 hash string
         """
-        key = f"{platform}:{doc_path}:{chunk_index}:{version}"
+        key = f"{doc_path}:{chunk_index}:{version}"
         return hashlib.md5(key.encode()).hexdigest()
-
-
-# =============================================================================
-# LanceDB Schema
-# =============================================================================
-
-
-def get_platform_doc_schema(embedding_dim: int = 384) -> pa.Schema:
-    """Get PyArrow schema for platform documentation table.
-
-    Args:
-        embedding_dim: Dimension of the embedding vector
-
-    Returns:
-        PyArrow schema for the table
-    """
-    return pa.schema(
-        [
-            pa.field("chunk_id", pa.string()),
-            pa.field("chunk_text", pa.string()),  # Source field for embedding
-            pa.field("chunk_index", pa.int32()),
-            pa.field("title", pa.string()),
-            pa.field("titles", pa.list_(pa.string())),  # Page-internal headings
-            pa.field("nav_path", pa.list_(pa.string())),  # Site navigation path
-            pa.field("group_name", pa.string()),  # Top-level group
-            pa.field("hierarchy", pa.string()),  # Full combined path
-            pa.field("platform", pa.string()),
-            pa.field("version", pa.string()),
-            pa.field("source_type", pa.string()),
-            pa.field("source_url", pa.string()),
-            pa.field("doc_path", pa.string()),
-            pa.field("keywords", pa.list_(pa.string())),
-            pa.field("language", pa.string()),
-            pa.field("created_at", pa.string()),
-            pa.field("updated_at", pa.string()),
-            pa.field("vector", pa.list_(pa.float32(), list_size=embedding_dim)),
-        ]
-    )
 
 
 # =============================================================================

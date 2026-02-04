@@ -1,14 +1,12 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 # -*- coding: utf-8 -*-
 from typing import List, Optional
 
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.document.store import DocumentStore, document_store
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -18,42 +16,33 @@ _NAME = "platform_doc_search_tools"
 _NAME_LIST_NAV = "platform_doc_search_tools.list_document_nav"
 _NAME_GET_DOC = "platform_doc_search_tools.get_document"
 _NAME_SEARCH_DOC = "platform_doc_search_tools.search_document"
+_NAME_WEB_SEARCH = "platform_doc_search_tools.web_search"
 
 
 class PlatformDocSearchTool:
     """Function-call tool for platform documentation search.
 
-    Exposes three LLM-callable functions:
+    Exposes four LLM-callable functions:
     - list_document_nav: Browse the documentation navigation tree
     - get_document: Retrieve document chunks by title
     - search_document: Semantic search across documentation
+    - web_search_document: Web search via Tavily
     """
 
     def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
-        self._document_store: Optional[DocumentStore] = None
-        self._has_document = False
-
-    @property
-    def document_store(self) -> DocumentStore:
-        """Lazy initialize document store."""
-        if self._document_store is None:
-            self._document_store = document_store(self.agent_config.rag_storage_path())
-            self._has_document = self._document_store.table.count_rows() > 0
-        return self._document_store
 
     @staticmethod
     def all_tools_name() -> List[str]:
-        return ["list_document_nav", "get_document", "search_document"]
+        return ["list_document_nav", "get_document", "search_document", "web_search_document"]
 
     def available_tools(self) -> List[Tool]:
         """Return all platform doc search tools for LLM function calling."""
-        if not self._has_document:
-            return []
         return [
             trans_to_function_tool(self.list_document_nav),
             trans_to_function_tool(self.get_document),
             trans_to_function_tool(self.search_document),
+            trans_to_function_tool(self.web_search_document),
         ]
 
     def list_document_nav(
@@ -67,23 +56,22 @@ class PlatformDocSearchTool:
         Use this tool FIRST to discover what documentation is available,
         then use `get_document` to drill into specific documents.
 
-        When version is specified, returns a flat tree.
-        When version is omitted and multiple versions exist, returns grouped by version.
+        When version is omitted, the latest version is used automatically.
 
         Args:
             platform: Platform name (e.g., snowflake, duckdb, starrocks, postgresql)
-            version: Filter by specific version (optional, omit to see all versions)
+            version: Filter by specific version (optional, defaults to latest)
 
         Returns:
             FuncToolResult with navigation tree structure:
-            - Each node has: name, children (sub-groups), docs (document title strings)
-            - Use document titles from "docs" to call `get_document`
+            - Each node has: name, children (sub-groups or documents)
+            - Leaf nodes (empty children) are document titles
+            - Use leaf node names to call `get_document`
         """
         try:
             from datus.tools.search_tools.search_tool import SearchTool
 
             tool = SearchTool(agent_config=self.agent_config)
-            tool._document_store = self.document_store
             result = tool.list_document_nav(platform=platform, version=version)
 
             if not result.success:
@@ -112,18 +100,18 @@ class PlatformDocSearchTool:
         Get document content by matching a hierarchy path.
 
         Use the navigation tree from `list_document_nav` to build the hierarchy path.
-        The `titles` parameter represents ONE document's path from parent group to
-        document title. All elements are AND-matched, so they must all appear in the
-        same document's hierarchy.
+        The `titles` list is joined with " > " to form a hierarchy prefix that is
+        matched against the stored hierarchy field. This directly maps to the tree
+        structure returned by `list_document_nav`.
 
         IMPORTANT: To retrieve ONE document, pass its parent group(s) + document title.
         To retrieve MULTIPLE documents, call this tool multiple times.
 
         Examples:
             - Get "CREATE TABLE" under "DDL": titles=["DDL", "CREATE TABLE"]
+              → matches hierarchy containing "DDL > CREATE TABLE"
             - Get "ALTER TABLE" under "DDL": titles=["DDL", "ALTER TABLE"]
-            - WRONG: titles=["DDL", "CREATE TABLE", "ALTER TABLE"] → returns nothing
-              because no single document matches all three
+              → matches hierarchy containing "DDL > ALTER TABLE"
 
         Args:
             platform: Platform name (e.g., snowflake, duckdb, starrocks, postgresql)
@@ -140,7 +128,6 @@ class PlatformDocSearchTool:
             from datus.tools.search_tools.search_tool import SearchTool
 
             tool = SearchTool(agent_config=self.agent_config)
-            tool._document_store = self.document_store
             result = tool.get_document(platform=platform, titles=titles, version=version)
 
             if not result.success:
@@ -191,7 +178,6 @@ class PlatformDocSearchTool:
             from datus.tools.search_tools.search_tool import SearchTool
 
             tool = SearchTool(agent_config=self.agent_config)
-            tool._document_store = self.document_store
             result = tool.search_document(platform=platform, keywords=keywords, version=version, top_n=top_n)
 
             if not result.success:
@@ -206,4 +192,53 @@ class PlatformDocSearchTool:
             )
         except Exception as e:
             logger.error(f"Failed to search documents for keywords {keywords}: {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def web_search_document(
+        self,
+        keywords: List[str],
+        max_results: int = 5,
+        include_domains: Optional[List[str]] = None,
+    ) -> FuncToolResult:
+        """
+        Search the web for platform documentation or technical information using Tavily.
+
+        Use this tool when local documentation is insufficient or when you need
+        the latest information from official websites, blogs, or community resources.
+
+        Requires TAVILY_API_KEY environment variable to be set.
+
+        Args:
+            keywords: Search queries (e.g., ["StarRocks materialized view syntax", "Snowflake COPY INTO options"])
+            max_results: Maximum number of results to return, 1-20 (default: 5)
+            include_domains: Restrict search to specific domains (optional),
+                e.g., ["docs.snowflake.com", "docs.starrocks.io"]
+
+        Returns:
+            FuncToolResult with search results as a list of text content
+        """
+        try:
+            from datus.tools.search_tools.search_tool import search_by_tavily
+
+            result = search_by_tavily(
+                keywords=keywords,
+                max_results=max_results,
+                search_depth="advanced",
+                include_answer="basic",
+                include_raw_content="markdown",
+                include_domains=include_domains,
+            )
+
+            if not result.success:
+                return FuncToolResult(success=0, error=result.error)
+
+            return FuncToolResult(
+                success=1,
+                result={
+                    "docs": result.docs,
+                    "doc_count": result.doc_count,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Web search failed for keywords {keywords}: {e}")
             return FuncToolResult(success=0, error=str(e))

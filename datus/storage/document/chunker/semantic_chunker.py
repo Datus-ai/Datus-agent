@@ -85,6 +85,8 @@ class ChunkingConfig:
     preserve_code_blocks: bool = True
     preserve_paragraphs: bool = True  # New: prioritize paragraph integrity
     add_context_prefix: bool = True
+    max_heading_depth: int = 3  # Max heading level for splitting (h4+ content is flattened into parent)
+    section_merge_buffer: float = 1.2  # Buffer ratio for min section merge (1.2 = 120% of chunk_size)
 
 
 class SemanticChunker:
@@ -189,7 +191,6 @@ class SemanticChunker:
             chunk.chunk_index = i
             # Regenerate chunk_id with new index
             chunk.chunk_id = PlatformDocChunk.generate_chunk_id(
-                platform=chunk.platform,
                 doc_path=chunk.doc_path,
                 chunk_index=i,
                 version=chunk.version,
@@ -197,6 +198,29 @@ class SemanticChunker:
 
         logger.debug(f"Created {len(chunks)} chunks from '{doc.title}'")
         return chunks
+
+    @staticmethod
+    def _flatten_section_content(section: ParsedSection) -> str:
+        """Flatten a section and all its children into a single text block.
+
+        Preserves heading markers for children so the structure is readable
+        within a single chunk.
+
+        Args:
+            section: Section to flatten
+
+        Returns:
+            Combined text content
+        """
+        parts: List[str] = []
+        if section.content:
+            parts.append(section.content)
+        for child in section.children:
+            if child.title:
+                prefix = "#" * child.level
+                parts.append(f"{prefix} {child.title}")
+            parts.append(SemanticChunker._flatten_section_content(child))
+        return "\n\n".join(p for p in parts if p.strip())
 
     def _chunk_section(
         self,
@@ -206,6 +230,14 @@ class SemanticChunker:
         start_index: int,
     ) -> List[PlatformDocChunk]:
         """Recursively chunk a section.
+
+        Splitting stops at ``max_heading_depth`` (default 3).  Sections at
+        deeper levels have all their children flattened into a single text
+        block so that h4/h5/h6 headings never cause additional splits.
+
+        For h1/h2 sections whose total content (including children) is within
+        ``chunk_size * section_merge_buffer``, the entire section is kept as
+        one chunk instead of being split by child headings.
 
         Args:
             section: Section to chunk
@@ -221,6 +253,33 @@ class SemanticChunker:
         if section.title:
             current_titles.append(section.title)
 
+        # --- Rule 1: flatten content for sections at or beyond max heading depth ---
+        if section.level >= self.config.max_heading_depth and section.children:
+            flat_text = self._flatten_section_content(section)
+            if flat_text.strip():
+                return self._split_content(
+                    content=flat_text,
+                    titles=current_titles,
+                    base_metadata=base_metadata,
+                    start_index=start_index,
+                )
+            return []
+
+        # --- Rule 2: if total section size is small enough, keep as one chunk ---
+        merge_threshold = int(self.config.chunk_size * self.config.section_merge_buffer)
+        if section.children and section.level >= 1:
+            total_text = self._flatten_section_content(section)
+            if len(total_text) <= merge_threshold:
+                if total_text.strip():
+                    return self._split_content(
+                        content=total_text,
+                        titles=current_titles,
+                        base_metadata=base_metadata,
+                        start_index=start_index,
+                    )
+                return []
+
+        # --- Default: process content then recurse into children ---
         chunks = []
         current_index = start_index
 
@@ -582,12 +641,10 @@ class SemanticChunker:
                 content = f"[{hierarchy}]\n\n{content}"
 
         # Extract keywords
-        platform = base_metadata.get("platform", "")
-        keywords = self._metadata_extractor.extract_keywords(content, platform, max_keywords=5)
+        keywords = self._metadata_extractor.extract_keywords(content, base_metadata.get("platform", ""), max_keywords=5)
 
         # Generate chunk ID
         chunk_id = PlatformDocChunk.generate_chunk_id(
-            platform=platform,
             doc_path=base_metadata.get("doc_path", ""),
             chunk_index=chunk_index,
             version=base_metadata.get("version", ""),
@@ -604,13 +661,13 @@ class SemanticChunker:
             nav_path=nav_path,  # Site navigation path
             group_name=group_name,  # Top-level group
             hierarchy=hierarchy,  # Full combined path
-            platform=platform,
             version=base_metadata.get("version", ""),
             source_type=base_metadata.get("source_type", ""),
             source_url=base_metadata.get("source_url", ""),
             doc_path=base_metadata.get("doc_path", ""),
             keywords=keywords,
             language=base_metadata.get("language", "en"),
+            content_hash=base_metadata.get("content_hash", ""),
             created_at=now,
             updated_at=now,
         )
@@ -652,13 +709,13 @@ class SemanticChunker:
                     nav_path=current.nav_path,
                     group_name=current.group_name,
                     hierarchy=current.hierarchy,
-                    platform=current.platform,
                     version=current.version,
                     source_type=current.source_type,
                     source_url=current.source_url,
                     doc_path=current.doc_path,
                     keywords=list(set(current.keywords + next_chunk.keywords)),
                     language=current.language,
+                    content_hash=current.content_hash,
                     created_at=current.created_at,
                     updated_at=current.updated_at,
                 )

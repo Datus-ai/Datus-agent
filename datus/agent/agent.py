@@ -571,68 +571,6 @@ class Agent:
                 else:
                     result = {"status": "failed", "message": error_message}
                 return result
-            elif component == "document":
-                from datus.storage.document import DocumentStore, init_platform_docs
-                from datus.storage.embedding_models import get_embedding_model
-
-                document_path = os.path.join(dir_path, "document.lance")
-                if kb_update_strategy == "overwrite":
-                    if os.path.exists(document_path):
-                        shutil.rmtree(document_path)
-                        logger.info(f"Deleted existing directory {document_path}")
-                    self.global_config.save_storage_config("document")
-                else:
-                    self.global_config.check_init_storage_config("document")
-
-                # Check if source is provided for initialization
-                doc_source = getattr(self.args, "doc_source", None)
-                if doc_source:
-                    doc_platform = getattr(self.args, "doc_platform", None) or "default"
-                    doc_source_type = getattr(self.args, "doc_source_type", "local")
-                    doc_version = getattr(self.args, "doc_version", None)
-                    doc_paths = getattr(self.args, "doc_paths", ["docs", "README.md"])
-                    doc_chunk_size = getattr(self.args, "doc_chunk_size", 1024)
-                    doc_max_depth = getattr(self.args, "doc_max_depth", 2)
-                    doc_github_ref = getattr(self.args, "doc_github_ref", None)
-
-                    logger.info(f"Initializing document from {doc_source} (type: {doc_source_type})")
-
-                    result = init_platform_docs(
-                        db_path=dir_path,
-                        platform=doc_platform,
-                        source=doc_source,
-                        source_type=doc_source_type,
-                        version=doc_version,
-                        paths=doc_paths,
-                        build_mode=kb_update_strategy,
-                        chunk_size=doc_chunk_size,
-                        pool_size=pool_size,
-                        github_ref=doc_github_ref,
-                        max_depth=doc_max_depth,
-                    )
-
-                    if result.success:
-                        return {
-                            "status": "success",
-                            "message": f"document bootstrap completed, "
-                            f"platform={result.platform}, "
-                            f"version={result.version}, "
-                            f"docs={result.total_docs}, "
-                            f"chunks={result.total_chunks}",
-                        }
-                    else:
-                        return {
-                            "status": "failed",
-                            "message": f"document bootstrap failed: {', '.join(result.errors)}",
-                        }
-                else:
-                    # Just initialize the store without importing documents
-                    embedding_model = get_embedding_model(self.global_config.storage)
-                    self.storage_modules["document_store"] = DocumentStore(dir_path, embedding_model)
-                    return {
-                        "status": "success",
-                        "message": "document store initialized (no source provided)",
-                    }
             elif component == "ext_knowledge":
                 ext_knowledge_path = os.path.join(dir_path, "ext_knowledge.lance")
                 if kb_update_strategy == "overwrite":
@@ -1096,3 +1034,49 @@ class Agent:
             "format": output_format,
             "filtered_task_ids": allowed_task_ids,
         }
+
+
+def bootstrap_platform_doc(args: argparse.Namespace, agent_config: AgentConfig) -> dict:
+    """Initialize platform documentation (namespace-independent).
+
+    Standalone function that uses AgentConfig for path resolution but does NOT
+    require a valid namespace or Agent instance.
+
+    Parameters are resolved with: CLI args > YAML config (agent.document.{platform}) > defaults.
+    """
+    from datus.configuration.agent_config import DocumentConfig
+    from datus.storage.document import init_platform_docs
+
+    update_strategy = getattr(args, "update_strategy", "check")
+    pool_size = getattr(args, "pool_size", 4) or 4
+    doc_platform = getattr(args, "platform", None) or "default"
+
+    # Merge: YAML config as base, CLI args override non-None values
+    base_cfg = agent_config.document_configs.get(doc_platform, DocumentConfig())
+    cfg = base_cfg.merge_cli_args(args)
+
+    dir_path = agent_config.document_storage_path(doc_platform)
+
+    if not cfg.source:
+        return {"status": "success", "message": "no document source provided, skipped"}
+
+    logger.info(f"Initializing document from {cfg.source} (type: {cfg.type})")
+
+    result = init_platform_docs(
+        db_path=dir_path,
+        platform=doc_platform,
+        cfg=cfg,
+        build_mode=update_strategy,
+        pool_size=pool_size,
+    )
+
+    if result.success:
+        return {
+            "status": "success",
+            "message": f"document bootstrap completed, "
+            f"platform={result.platform}, "
+            f"version={result.version}, "
+            f"docs={result.total_docs}, "
+            f"chunks={result.total_chunks}",
+        }
+    return {"status": "failed", "message": f"document bootstrap failed: {', '.join(result.errors)}"}

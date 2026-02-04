@@ -6,7 +6,7 @@
 Document Storage Module
 
 Provides comprehensive document storage and processing with full-featured schema:
-- Platform/version tracking
+- Version tracking (each platform has its own store)
 - Navigation path (titles, nav_path, group_name, hierarchy)
 - Keywords extraction
 - Deduplication via chunk_id
@@ -37,12 +37,13 @@ Usage:
     )
 
     # Initialize from local directory
+    from datus.configuration.agent_config import DocumentConfig
+
+    cfg = DocumentConfig(type="local", source="/path/to/docs")
     result = init_platform_docs(
         db_path="/path/to/db",
-        embedding_model=model,
         platform="custom",
-        source="/path/to/docs",
-        source_type=SOURCE_TYPE_LOCAL,
+        cfg=cfg,
     )
 
     # Access store for custom operations
@@ -79,11 +80,10 @@ from datus.storage.document.schemas import (  # Constants
     ParsedDocument,
     ParsedSection,
     PlatformDocChunk,
-    get_platform_doc_schema,
 )
 
 # Store classes
-from datus.storage.document.store import DocumentStore, document_store
+from datus.storage.document.store import DocumentStore, document_store, get_platform_doc_schema
 
 __all__ = [
     # Store classes

@@ -8,14 +8,13 @@ Document Initialization Module
 Provides functions for importing and initializing documentation:
 - import_documents: Import local documents into DocumentStore
 - init_platform_docs: Full pipeline for platform documentation
-- search_platform_docs: Search indexed documentation
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Tuple
 
 from datus.storage.document.chunker import SemanticChunker
 from datus.storage.document.chunker.semantic_chunker import ChunkingConfig
@@ -30,8 +29,10 @@ from datus.storage.document.schemas import (
     PlatformDocChunk,
 )
 from datus.storage.document.store import document_store
-from datus.storage.embedding_models import EmbeddingModel
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.configuration.agent_config import DocumentConfig
 
 logger = get_logger(__name__)
 
@@ -115,11 +116,12 @@ def _process_batch(
                 parsed.metadata["group_name"] = doc.metadata["group_name"]
 
             base_metadata = {
-                "platform": doc.platform,
+                "platform": doc.platform,  # kept for keyword extraction only
                 "version": doc.version,
                 "source_type": doc.source_type,
                 "source_url": doc.source_url,
                 "doc_path": doc.doc_path,
+                "content_hash": doc.metadata.get("content_hash", ""),
             }
 
             return chunker.chunk(parsed, base_metadata)
@@ -151,63 +153,71 @@ def _process_batch(
 # =============================================================================
 
 
+def _make_empty_result(platform: str, version: str, source: str, start_time, errors=None) -> InitResult:
+    """Create an InitResult for empty/no-op cases."""
+    duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+    return InitResult(
+        platform=platform,
+        version=version or "unknown",
+        source=source,
+        total_docs=0,
+        total_chunks=0,
+        success=True,
+        errors=errors or [],
+        duration_seconds=duration,
+    )
+
+
 def init_platform_docs(
     db_path: str,
     platform: str,
-    source: str,
-    source_type: str = SOURCE_TYPE_GITHUB,
-    version: Optional[str] = None,
-    paths: Optional[List[str]] = None,
-    build_mode: str = "incremental",
-    chunk_size: int = 1024,
+    cfg: "DocumentConfig",
+    build_mode: str = "overwrite",
     pool_size: int = 4,
-    github_token: Optional[str] = None,
-    github_ref: Optional[str] = None,
-    max_depth: int = 2,
-    include_patterns: Optional[List[str]] = None,
-    exclude_patterns: Optional[List[str]] = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> InitResult:
     """Initialize platform documentation knowledge base.
 
-    Fetches documentation from the specified source, parses it, splits into
-    chunks, and stores in the vector database. Uses micro-batch processing
-    to limit peak memory usage.
+    Pipeline:
+      1. check mode: return existing store stats without any fetching
+      2. overwrite mode:
+         a. Resolve version (from source metadata or user input)
+         b. Delete existing data for the resolved version
+         c. Fetch → Parse → Clean → Chunk → Store (micro-batch)
+         d. Create indices
 
     Args:
         db_path: Path to LanceDB database
         platform: Target platform (snowflake, duckdb, postgresql, etc.)
-        source: Source location (GitHub repo "owner/repo", website URL, or local path)
-        source_type: Source type ("github", "website", or "local")
-        version: Specific version (auto-detected if not provided)
-        paths: Paths to fetch for GitHub (default: docs, README.md)
-        build_mode: Build mode ("check", "overwrite", "incremental")
-        chunk_size: Target chunk size in characters
+        cfg: DocumentConfig with source, version, paths, chunk_size,
+            include_patterns, exclude_patterns, etc.
+        build_mode: Build mode ("check" or "overwrite")
         pool_size: Thread pool size for parallel processing
-        github_token: GitHub API token (falls back to GITHUB_TOKEN env var)
-        github_ref: Explicit git ref (branch or tag) to fetch from
-        max_depth: Maximum crawl depth for websites
-        include_patterns: URL/file patterns to include
-        exclude_patterns: URL/file patterns to exclude
         batch_size: Number of documents to process per micro-batch
 
     Returns:
         InitResult with statistics and status
     """
+    source = cfg.source or ""
+    source_type = cfg.type
+    version = cfg.version
+
     start_time = datetime.now(timezone.utc)
-    errors = []
+    errors: List[str] = []
 
     logger.info(f"Initializing {platform} documentation from {source} ({source_type})")
 
     store = document_store(db_path)
 
-    # Check existing data for build mode
+    # ==================================================================
+    # Check mode: return existing store stats without any I/O or fetching
+    # ==================================================================
     if build_mode == "check":
-        stats = store.get_platform_stats(platform)
+        stats = store.get_stats()
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         return InitResult(
             platform=platform,
-            version=stats.get("versions", ["unknown"])[0] if stats["versions"] else "unknown",
+            version=stats.get("versions", ["unknown"])[0] if stats.get("versions") else "unknown",
             source=source,
             total_docs=stats.get("doc_count", 0),
             total_chunks=stats.get("total_chunks", 0),
@@ -216,71 +226,99 @@ def init_platform_docs(
             duration_seconds=duration,
         )
 
-    if build_mode == "overwrite":
-        deleted = store.delete_by_platform(platform)
-        logger.info(f"Deleted {deleted} existing chunks for {platform}")
-
     # Initialize pipeline components
     rate_limiter = RateLimiter()
     cleaner = DocumentCleaner()
     markdown_parser = MarkdownParser()
     html_parser = HTMLParser()
-    chunker = SemanticChunker(config=ChunkingConfig(chunk_size=chunk_size))
+    chunker = SemanticChunker(config=ChunkingConfig(chunk_size=cfg.chunk_size))
 
     total_docs = 0
     total_chunks = 0
 
     try:
+        # ==================================================================
+        # Phase 1: Resolve version + fetch documents
+        # ==================================================================
+        github_metadata = None  # only for GitHub source type
+
         if source_type == SOURCE_TYPE_GITHUB:
-            # GitHub: two-phase micro-batch processing
-            # Phase 1: Collect file paths + resolve nav_map (lightweight)
             fetcher = GitHubFetcher(
                 platform=platform,
                 version=version,
-                github_ref=github_ref,
-                token=github_token,
+                github_ref=cfg.github_ref,
+                token=cfg.github_token,
                 rate_limiter=rate_limiter,
                 pool_size=pool_size,
             )
-            metadata = fetcher.collect_metadata(source=source, paths=paths)
+            github_metadata = fetcher.collect_metadata(source=source, paths=cfg.paths)
 
-            if not metadata.file_paths:
+            if not github_metadata.file_paths:
                 logger.warning(f"No documentation files found in {source}")
-                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-                return InitResult(
-                    platform=platform,
-                    version=version or "unknown",
-                    source=source,
-                    total_docs=0,
-                    total_chunks=0,
-                    success=True,
-                    errors=["No documents found"],
-                    duration_seconds=duration,
-                )
+                return _make_empty_result(platform, version, source, start_time, ["No documents found"])
 
             if not version:
-                version = metadata.version
+                version = github_metadata.version
 
             logger.info(
-                f"GitHub Phase 1 complete: {len(metadata.file_paths)} files, " f"processing in batches of {batch_size}"
+                f"Phase 1 complete: version='{version}', "
+                f"{len(github_metadata.file_paths)} files, batch_size={batch_size}"
             )
 
-            # Phase 2: Batch fetch + process + store
-            for i in range(0, len(metadata.file_paths), batch_size):
-                batch_paths = metadata.file_paths[i : i + batch_size]
+        elif source_type == SOURCE_TYPE_LOCAL:
+            fetcher = LocalFetcher(platform=platform, version=version)
+            documents = fetcher.fetch(
+                source=source,
+                recursive=True,
+                include_patterns=cfg.include_patterns,
+                exclude_patterns=cfg.exclude_patterns,
+            )
+            if not documents:
+                logger.warning(f"No documents fetched from {source}")
+                return _make_empty_result(platform, version, source, start_time, ["No documents found"])
+            if not version:
+                version = documents[0].version
+
+        else:
+            # Website
+            fetcher = WebFetcher(
+                platform=platform,
+                version=version,
+                rate_limiter=rate_limiter,
+                pool_size=pool_size,
+            )
+            documents = fetcher.fetch(
+                source=source,
+                max_depth=cfg.max_depth,
+                include_patterns=cfg.include_patterns,
+                exclude_patterns=cfg.exclude_patterns,
+            )
+            if not documents:
+                logger.warning(f"No documents fetched from {source}")
+                return _make_empty_result(platform, version, source, start_time, ["No documents found"])
+            if not version:
+                version = documents[0].version
+
+        # ==================================================================
+        # Phase 2: Overwrite — delete existing data for the resolved version
+        # ==================================================================
+        deleted = store.delete_docs(version=version)
+        if deleted:
+            logger.info(f"Overwrite: deleted {deleted} existing chunks for version '{version}'")
+
+        # ==================================================================
+        # Phase 3: Process + Store (micro-batch)
+        # ==================================================================
+        if source_type == SOURCE_TYPE_GITHUB:
+            for i in range(0, len(github_metadata.file_paths), batch_size):
+                batch_paths = github_metadata.file_paths[i : i + batch_size]
                 batch_num = i // batch_size + 1
 
-                batch_docs = fetcher.fetch_batch(metadata, batch_paths)
+                batch_docs = fetcher.fetch_batch(github_metadata, batch_paths)
                 total_docs += len(batch_docs)
 
                 batch_chunks = _process_batch(
-                    batch_docs,
-                    cleaner,
-                    markdown_parser,
-                    html_parser,
-                    chunker,
-                    pool_size,
-                    errors,
+                    batch_docs, cleaner, markdown_parser, html_parser, chunker, pool_size, errors
                 )
                 total_chunks += len(batch_chunks)
 
@@ -294,62 +332,16 @@ def init_platform_docs(
                 logger.info(f"Batch {batch_num}: {len(batch_docs)} docs -> {len(batch_chunks)} chunks")
 
         else:
-            # Local/Web: fetch all, then process+store in micro-batches
-            if source_type == SOURCE_TYPE_LOCAL:
-                fetcher = LocalFetcher(platform=platform, version=version)
-                documents = fetcher.fetch(
-                    source=source,
-                    recursive=True,
-                    include_patterns=include_patterns,
-                    exclude_patterns=exclude_patterns,
-                )
-            else:
-                fetcher = WebFetcher(
-                    platform=platform,
-                    version=version,
-                    rate_limiter=rate_limiter,
-                    pool_size=pool_size,
-                )
-                documents = fetcher.fetch(
-                    source=source,
-                    max_depth=max_depth,
-                    include_patterns=include_patterns,
-                    exclude_patterns=exclude_patterns,
-                )
+            # Local/Web: documents already fetched in Phase 1
+            logger.info(f"Processing {len(documents)} documents in batches of {batch_size}")
 
-            if not documents:
-                logger.warning(f"No documents fetched from {source}")
-                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-                return InitResult(
-                    platform=platform,
-                    version=version or "unknown",
-                    source=source,
-                    total_docs=0,
-                    total_chunks=0,
-                    success=True,
-                    errors=["No documents found"],
-                    duration_seconds=duration,
-                )
-
-            if not version:
-                version = documents[0].version
-
-            logger.info(f"Fetched {len(documents)} documents, " f"processing in batches of {batch_size}")
-
-            # Process + store in micro-batches
             for i in range(0, len(documents), batch_size):
                 batch_docs = documents[i : i + batch_size]
                 batch_num = i // batch_size + 1
                 total_docs += len(batch_docs)
 
                 batch_chunks = _process_batch(
-                    batch_docs,
-                    cleaner,
-                    markdown_parser,
-                    html_parser,
-                    chunker,
-                    pool_size,
-                    errors,
+                    batch_docs, cleaner, markdown_parser, html_parser, chunker, pool_size, errors
                 )
                 total_chunks += len(batch_chunks)
 
@@ -387,7 +379,7 @@ def init_platform_docs(
 
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 
-    logger.info(f"Platform documentation initialized: " f"{total_docs} docs, {total_chunks} chunks, {duration:.1f}s")
+    logger.info(f"Platform documentation initialized: {total_docs} docs, {total_chunks} chunks, {duration:.1f}s")
 
     return InitResult(
         platform=platform,
@@ -399,80 +391,6 @@ def init_platform_docs(
         errors=errors,
         duration_seconds=duration,
     )
-
-
-def search_platform_docs(
-    db_path: str,
-    embedding_model: EmbeddingModel,
-    query: str,
-    platform: Optional[str] = None,
-    version: Optional[str] = None,
-    top_n: int = 10,
-) -> List[Dict[str, Any]]:
-    """Search platform documentation.
-
-    Args:
-        db_path: Path to LanceDB database
-        embedding_model: Embedding model for vectorization
-        query: Search query
-        platform: Filter by platform
-        version: Filter by version
-        top_n: Maximum results to return
-
-    Returns:
-        List of matching chunks as dictionaries
-    """
-    from datus.storage.document.store import DocumentStore
-
-    store = DocumentStore(db_path=db_path, embedding_model=embedding_model)
-    return store.search_docs(
-        query=query,
-        platform=platform,
-        version=version,
-        top_n=top_n,
-    )
-
-
-def list_platforms(
-    db_path: str,
-    embedding_model: EmbeddingModel,
-) -> List[Dict[str, Any]]:
-    """List all indexed platforms.
-
-    Args:
-        db_path: Path to LanceDB database
-        embedding_model: Embedding model for vectorization
-
-    Returns:
-        List of platform info dictionaries
-    """
-    from datus.storage.document.store import DocumentStore
-
-    store = DocumentStore(db_path=db_path, embedding_model=embedding_model)
-    return store.list_platforms()
-
-
-def delete_platform_docs(
-    db_path: str,
-    embedding_model: EmbeddingModel,
-    platform: str,
-    version: Optional[str] = None,
-) -> int:
-    """Delete platform documentation.
-
-    Args:
-        db_path: Path to LanceDB database
-        embedding_model: Embedding model for vectorization
-        platform: Platform to delete
-        version: Specific version to delete (all if not specified)
-
-    Returns:
-        Number of chunks deleted
-    """
-    from datus.storage.document.store import DocumentStore
-
-    store = DocumentStore(db_path=db_path, embedding_model=embedding_model)
-    return store.delete_by_platform(platform, version)
 
 
 # =============================================================================

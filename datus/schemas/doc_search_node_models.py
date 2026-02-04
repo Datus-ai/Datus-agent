@@ -31,7 +31,7 @@ class DocSearchInput(BaseInput):
 class DocSearchResult(BaseResult):
     """Result model for document search."""
 
-    docs: Dict[str, List[Dict[str, Any]]] = Field(
+    docs: Any = Field(
         default_factory=dict,
         description="Retrieved documents for each keyword, with full metadata",
     )

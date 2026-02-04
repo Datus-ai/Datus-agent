@@ -67,6 +67,28 @@ You MUST:
 - Use table schemas, column names, and the database itself (via DB tools) to resolve any remaining ambiguity.
 {% endif %}
 
+{% if has_platform_doc_tools %}
+## Platform Documentation Lookup Rules
+You MUST consult platform documentation tools **before** generating SQL when ANY of the following apply:
+- The query uses **platform-specific syntax** (e.g., built-in functions, data types unique to the target database)
+- You are **unsure** whether a SQL function, clause, or feature is supported on this platform
+- The query involves **advanced features** such as materialized views, external tables, partitioning, or storage integrations
+- The user explicitly asks about **platform behavior, limitations, or best practices**
+
+**Recommended workflow — use the available tools in this priority order:**
+{% if "platform_doc_search_tools" in native_tools or "platform_doc_search_tools.list_document_nav" in native_tools %}
+1. Call `list_document_nav` to browse the documentation tree for the target platform, then call `get_document` to retrieve the specific page by its title path. This gives you the most complete and structured documentation content.
+{% endif %}
+{% if "platform_doc_search_tools" in native_tools or "platform_doc_search_tools.search_document" in native_tools %}
+2. Call `search_document` with keywords describing the SQL feature you need (e.g., keywords=["CREATE MATERIALIZED VIEW", "lateral join"]). Use this when you already know what to look for or when browsing the nav tree did not surface the right document.
+{% endif %}
+{% if "platform_doc_search_tools" in native_tools or "platform_doc_search_tools.web_search_document" in native_tools %}
+3. If local documentation does not cover the topic, call `web_search_document` as a fallback to search the web. Use `include_domains` to restrict results to official documentation sites when possible.
+{% endif %}
+
+**You MUST NOT guess platform-specific syntax.** If documentation tools are available, use them to verify before generating SQL.
+{% endif %}
+
 ## 4. Tools usage
 
 ### Available tools:
@@ -124,8 +146,10 @@ You MUST:
     {% endif %}
     {% if "platform_doc_search_tools" in native_tools or "platform_doc_search_tools.search_document" in native_tools %}
         - search_document: Search documentation using natural language keywords when you are unsure of exact titles (e.g., keywords=["window functions", "partitioning"]).
+    {% endif %}
+    {% if "platform_doc_search_tools" in native_tools or "platform_doc_search_tools.web_search_document" in native_tools %}
+        - web_search_document: Search the web for platform documentation or technical information when local docs are insufficient. Supports domain filtering (e.g., include_domains=["docs.snowflake.com"]).
     {% endif -%}
-    When writing SQL for a specific platform (e.g., Snowflake, StarRocks, DuckDB), you SHOULD use these tools to verify platform-specific syntax, functions, or features before generating SQL.
 {% endif -%}
 
 {% if has_mf_tools %}

@@ -8,10 +8,7 @@ from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
-from datus.storage.document import DocumentStore
-from datus.storage.document.store import document_store
 from datus.tools.search_tools import SearchTool
-from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -33,18 +30,6 @@ class DocSearchNode(Node):
             input_data=input_data,
             agent_config=agent_config,
         )
-        self._document_store = None
-
-    @property
-    def document_store(self) -> DocumentStore:
-        """Lazy initialize document store"""
-        if self._document_store is None:
-            if not self.agent_config:
-                raise DatusException(
-                    ErrorCode.COMMON_CONFIG_ERROR, "AgentConfig is required to initialize DocumentStore"
-                )
-            self._document_store = document_store(self.agent_config.rag_storage_path())
-        return self._document_store
 
     def execute(self):
         self.result = self._execute_document()

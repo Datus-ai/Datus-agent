@@ -6,7 +6,7 @@
 Document Storage Module
 
 Provides vector storage for documents using LanceDB with full-featured schema:
-- Platform/version tracking
+- Version tracking
 - Navigation path (nav_path, group_name, hierarchy)
 - Titles and keywords extraction
 - Deduplication via chunk_id
@@ -16,24 +16,65 @@ import re
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
+import pyarrow as pa
+
 from datus.storage.base import BaseEmbeddingStore
-from datus.storage.document.schemas import PlatformDocChunk, get_platform_doc_schema
+from datus.storage.document.schemas import PlatformDocChunk
 from datus.storage.embedding_models import EmbeddingModel, get_document_embedding_model
-from datus.storage.lancedb_conditions import And, Condition, WhereExpr, eq, like
+from datus.storage.lancedb_conditions import And, Condition, WhereExpr, eq
 from datus.utils.loggings import get_logger
 
-# Validation pattern for platform/version strings to prevent SQL injection
+# Validation pattern for version strings to prevent SQL injection
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_\-. ]+$")
 
 logger = get_logger(__name__)
+
+# =============================================================================
+# LanceDB Schema
+# =============================================================================
+
+
+def get_platform_doc_schema(embedding_dim: int = 384) -> pa.Schema:
+    """Get PyArrow schema for platform documentation table.
+
+    Args:
+        embedding_dim: Dimension of the embedding vector
+
+    Returns:
+        PyArrow schema for the table
+    """
+    return pa.schema(
+        [
+            pa.field("chunk_id", pa.string()),
+            pa.field("chunk_text", pa.string()),  # Source field for embedding
+            pa.field("chunk_index", pa.int32()),
+            pa.field("title", pa.string()),
+            pa.field("titles", pa.list_(pa.string())),  # Page-internal headings
+            pa.field("nav_path", pa.list_(pa.string())),  # Site navigation path
+            pa.field("group_name", pa.string()),  # Top-level group
+            pa.field("hierarchy", pa.string()),  # Full combined path
+            pa.field("version", pa.string()),
+            pa.field("source_type", pa.string()),
+            pa.field("source_url", pa.string()),
+            pa.field("doc_path", pa.string()),
+            pa.field("keywords", pa.list_(pa.string())),
+            pa.field("language", pa.string()),
+            pa.field("created_at", pa.string()),
+            pa.field("updated_at", pa.string()),
+            pa.field("content_hash", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), list_size=embedding_dim)),
+        ]
+    )
 
 
 class DocumentStore(BaseEmbeddingStore):
     """Vector store for documentation with full-featured schema.
 
+    Each platform has its own DocumentStore instance (one LanceDB per platform).
+
     Features:
     - Semantic search with vector embeddings
-    - Filtering by platform, version
+    - Filtering by version
     - Full-text search on chunk_text and keywords
     - Upsert with deduplication on chunk_id
     - Navigation tracking (titles, nav_path, group_name, hierarchy)
@@ -41,7 +82,7 @@ class DocumentStore(BaseEmbeddingStore):
     Example:
         >>> store = DocumentStore(db_path, embedding_model)
         >>> store.store_chunks(chunks)
-        >>> results = store.search_docs("CREATE TABLE syntax", platform="snowflake")
+        >>> results = store.search_docs("CREATE TABLE syntax")
     """
 
     TABLE_NAME = "document"
@@ -110,15 +151,12 @@ class DocumentStore(BaseEmbeddingStore):
 
         self.store_batch(data)
 
-        logger.info(
-            f"Stored {len(chunks)} chunks for platform '{chunks[0].platform}' " f"version '{chunks[0].version}'"
-        )
+        logger.info(f"Stored {len(chunks)} chunks, version '{chunks[0].version}'")
         return len(chunks)
 
     def search_docs(
         self,
         query: str,
-        platform: Optional[str] = None,
         version: Optional[str] = None,
         top_n: int = 10,
         select_fields: Optional[List[str]] = None,
@@ -127,7 +165,6 @@ class DocumentStore(BaseEmbeddingStore):
 
         Args:
             query: Search query text
-            platform: Filter by platform (e.g., "snowflake")
             version: Filter by version (e.g., "v1.2.3")
             top_n: Maximum number of results to return
             select_fields: Fields to include in results (default: all)
@@ -136,9 +173,6 @@ class DocumentStore(BaseEmbeddingStore):
             List of matching chunks as dictionaries
         """
         conditions: List[Condition] = []
-
-        if platform:
-            conditions.append(eq("platform", platform))
 
         if version:
             conditions.append(eq("version", version))
@@ -158,90 +192,34 @@ class DocumentStore(BaseEmbeddingStore):
 
         return results.to_pylist()
 
-    def search_by_hierarchy(
-        self,
-        query: str,
-        hierarchy_prefix: str,
-        platform: Optional[str] = None,
-        top_n: int = 10,
-    ) -> List[Dict[str, Any]]:
-        """Search within a specific documentation hierarchy.
-
-        Args:
-            query: Search query text
-            hierarchy_prefix: Hierarchy prefix to filter (e.g., "SQL Reference > DDL")
-            platform: Filter by platform
-            top_n: Maximum number of results
+    def list_versions(self) -> List[Dict[str, Any]]:
+        """List all indexed versions with chunk counts.
 
         Returns:
-            List of matching chunks
-        """
-        conditions: List[Condition] = [like("hierarchy", f"{hierarchy_prefix}%")]
-
-        if platform:
-            conditions.append(eq("platform", platform))
-
-        where: WhereExpr = And(conditions) if len(conditions) > 1 else conditions[0]
-
-        results = self.search(
-            query_txt=query,
-            top_n=top_n,
-            where=where,
-        )
-
-        return results.to_pylist()
-
-    def list_platforms(self) -> List[Dict[str, Any]]:
-        """List all indexed platforms with their versions.
-
-        Returns:
-            List of dicts with platform, version, and chunk_count
+            List of dicts with version and chunk_count
         """
         self._ensure_table_ready()
 
         all_data = self._search_all(
-            select_fields=["platform", "version"],
+            select_fields=["version"],
         )
 
-        platform_versions: Dict[str, Dict[str, int]] = {}
+        version_counts: Dict[str, int] = {}
         for row in all_data.to_pylist():
-            platform = row["platform"]
             version = row["version"]
+            version_counts[version] = version_counts.get(version, 0) + 1
 
-            if platform not in platform_versions:
-                platform_versions[platform] = {}
+        return [{"version": ver, "chunk_count": count} for ver, count in sorted(version_counts.items())]
 
-            if version not in platform_versions[platform]:
-                platform_versions[platform][version] = 0
-
-            platform_versions[platform][version] += 1
-
-        result = []
-        for platform, versions in sorted(platform_versions.items()):
-            for version, count in sorted(versions.items()):
-                result.append(
-                    {
-                        "platform": platform,
-                        "version": version,
-                        "chunk_count": count,
-                    }
-                )
-
-        return result
-
-    def get_platform_stats(self, platform: str) -> Dict[str, Any]:
-        """Get statistics for a specific platform.
-
-        Args:
-            platform: Platform name
+    def get_stats(self) -> Dict[str, Any]:
+        """Get statistics for this document store.
 
         Returns:
-            Dict with versions, total_chunks, doc_paths, etc.
+            Dict with versions, total_chunks, doc_count, etc.
         """
         self._ensure_table_ready()
 
         all_data = self._search_all(
-            where=eq("platform", platform),
             select_fields=["version", "doc_path", "created_at"],
         )
 
@@ -249,7 +227,6 @@ class DocumentStore(BaseEmbeddingStore):
 
         if not rows:
             return {
-                "platform": platform,
                 "total_chunks": 0,
                 "versions": [],
                 "doc_count": 0,
@@ -267,7 +244,6 @@ class DocumentStore(BaseEmbeddingStore):
                 latest_update = created
 
         return {
-            "platform": platform,
             "total_chunks": len(rows),
             "versions": sorted(versions),
             "doc_count": len(doc_paths),
@@ -291,42 +267,57 @@ class DocumentStore(BaseEmbeddingStore):
                 f"Only alphanumeric characters, underscores, hyphens, dots, and spaces are allowed."
             )
 
-    def delete_by_platform(
+    def delete_docs(
         self,
-        platform: str,
         version: Optional[str] = None,
     ) -> int:
-        """Delete documentation for a platform.
+        """Delete documentation chunks with physical file cleanup.
 
         Args:
-            platform: Platform to delete
-            version: If specified, only delete this version
+            version: If specified, only delete this version (with compaction
+                     to reclaim disk space); otherwise physically remove the
+                     entire LanceDB directory and reinitialize.
 
         Returns:
             Number of chunks deleted
 
         Raises:
-            ValueError: If platform or version contains unsafe characters
+            ValueError: If version contains unsafe characters
         """
         self._ensure_table_ready()
 
-        self._validate_identifier(platform, "platform")
-        if version:
-            self._validate_identifier(version, "version")
-
-        where_clause = f"platform = '{platform}'"
-        if version:
-            where_clause += f" AND version = '{version}'"
-
-        count_before = self.table.count_rows(where_clause)
-
+        count_before = self.table.count_rows()
         if count_before == 0:
-            logger.info(f"No chunks found for platform '{platform}' version '{version or 'all'}'")
+            logger.info(f"No chunks found for version '{version or 'all'}'")
             return 0
 
-        self.table.delete(where_clause)
+        if version:
+            self._validate_identifier(version, "version")
+            where_clause = f"version = '{version}'"
+            count_before = self.table.count_rows(where_clause)
+            if count_before == 0:
+                logger.info(f"No chunks found for version '{version}'")
+                return 0
+            self.table.delete(where_clause)
+            # Compact and remove old data files to reclaim disk space
+            try:
+                self.table.compact_files()
+                self.table.cleanup_old_versions()
+            except Exception as e:
+                logger.warning(f"Post-delete cleanup failed (non-fatal): {e}")
+        else:
+            # Physically remove the entire lance directory and reinitialize.
+            # This is more thorough than drop_table which leaves orphan files.
+            import shutil
 
-        logger.info(f"Deleted {count_before} chunks for platform '{platform}' " f"version '{version or 'all'}'")
+            import lancedb
+
+            shutil.rmtree(self.db_path, ignore_errors=True)
+            self.db = lancedb.connect(self.db_path)
+            self._table_initialized = False
+            self._ensure_table_ready()
+
+        logger.info(f"Deleted {count_before} chunks for version '{version or 'all'}'")
         return count_before
 
     def get_all_rows(
@@ -362,40 +353,6 @@ class DocumentStore(BaseEmbeddingStore):
         self.create_fts_index(field_names=["chunk_text", "title", "hierarchy"])
 
         logger.info(f"Created indices for table '{self.TABLE_NAME}'")
-
-    def get_chunks_by_doc_path(
-        self,
-        doc_path: str,
-        platform: Optional[str] = None,
-        version: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Get all chunks for a specific document.
-
-        Args:
-            doc_path: Document path to filter
-            platform: Filter by platform
-            version: Filter by version
-
-        Returns:
-            List of chunks ordered by chunk_index
-        """
-        self._ensure_table_ready()
-
-        conditions: List[Condition] = [eq("doc_path", doc_path)]
-
-        if platform:
-            conditions.append(eq("platform", platform))
-        if version:
-            conditions.append(eq("version", version))
-
-        where: WhereExpr = And(conditions) if len(conditions) > 1 else conditions[0]
-
-        results = self._search_all(where=where)
-        chunks = results.to_pylist()
-
-        chunks.sort(key=lambda x: x.get("chunk_index", 0))
-
-        return chunks
 
 
 # =============================================================================

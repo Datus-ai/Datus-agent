@@ -1419,8 +1419,7 @@ class SubAgentWizard:
         """Validate current step's data."""
         if self.step == 0:
             name = self.name_buffer.text.strip()
-            description = self.description_area.text.strip()
-            if not name or not description:
+            if not name:
                 self._show_error_dialog("Agent Name and Description are required.")
                 return False
             if not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", name):

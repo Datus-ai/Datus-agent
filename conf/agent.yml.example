@@ -268,3 +268,39 @@ agent:
       password: admin
       extra: # Special configurations for different platforms
         provider: db
+  # Platform documentation (namespace-independent, stored at {home}/data/document/{platform}/)
+  # Each key under 'document' is a platform name with fetch parameters only.
+  #
+  # Common options:
+  #   type: github / website / local
+  #   source: GitHub repo "owner/repo", website URL, or local path
+  #   version: Document version (auto-detected if omitted)
+  #   chunk_size: Target chunk size in characters (default: 1024)
+  #   include_patterns: File/URL patterns to include (glob for local, regex for website)
+  #   exclude_patterns: File/URL patterns to exclude (glob for local, regex for website)
+  #
+  # GitHub-specific options:
+  #   github_token: GitHub API token (falls back to GITHUB_TOKEN env var)
+  #   github_ref: Git branch or tag to fetch from (default: default branch)
+  #   paths: Paths within the repo to fetch (default: ["docs", "README.md"])
+  #
+  # Website-specific options:
+  #   max_depth: Maximum crawl depth (default: 2)
+  #   NOTE: 'paths' is NOT supported for website type. Use include_patterns instead.
+  document:
+    starrocks:
+      type: github
+      source: StarRocks/starrocks
+      paths: ["docs/sql-reference"] # just for github
+      chunk_size: 1024
+      github_token: ${GITHUB_TOKEN}
+    snowflake:
+      type: website
+      source: https://docs.snowflake.com/en/
+      max_depth: 3
+      include_patterns: ["/en/user-guide", "/en/sql-reference"]
+    local_docs:
+      type: local
+      source: /path/to/docs
+      include_patterns: ["*.md"]
+      exclude_patterns: ["CHANGELOG.md"]
