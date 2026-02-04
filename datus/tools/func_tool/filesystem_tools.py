@@ -81,6 +81,19 @@ class FilesystemFuncTool(BaseTool):
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
 
+    def available_readonly_tools(self) -> List[Tool]:
+        """Get read-only filesystem tools (no write/edit/move/create operations)."""
+        from datus.tools.func_tool import trans_to_function_tool
+
+        readonly_methods = [
+            self.read_file,
+            self.read_multiple_files,
+            self.list_directory,
+            self.directory_tree,
+            self.search_files,
+        ]
+        return [trans_to_function_tool(m) for m in readonly_methods]
+
     def _get_safe_path(self, path: str) -> Optional[Path]:
         """Get a safe path within the root directory"""
         try:

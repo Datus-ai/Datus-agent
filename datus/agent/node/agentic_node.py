@@ -82,6 +82,11 @@ class AgenticNode(Node):
         self.skill_manager: Optional["SkillManager"] = None
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
+        # ActionBus - merges tool sub-actions into the main action stream
+        from datus.schemas.action_bus import ActionBus
+
+        self.action_bus = ActionBus()
+
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
 
@@ -743,7 +748,8 @@ class AgenticNode(Node):
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
         """
-        Execute with interaction support, merging execute_stream with broker.
+        Execute with interaction support, merging execute_stream with broker
+        and any tool action channels (e.g. explorer sub-actions).
 
         This is the method that UI components should call instead of execute_stream()
         when they want to handle interactions from hooks.
@@ -752,14 +758,13 @@ class AgenticNode(Node):
             action_history_manager: Optional action history manager for tracking
 
         Yields:
-            ActionHistory: Progress updates during execution, including INTERACTION actions
+            ActionHistory: Progress updates during execution, including
+            INTERACTION actions and tool sub-actions.
         """
-        from datus.cli.execution_state import merge_interaction_stream
-
         broker = self._get_or_create_broker()
 
         action_stream = self.execute_stream(action_history_manager)
-        async for action in merge_interaction_stream(action_stream, broker):
+        async for action in self.action_bus.merge(action_stream, broker.fetch()):
             yield action
 
     def clear_session(self) -> None:

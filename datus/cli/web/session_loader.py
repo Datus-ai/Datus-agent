@@ -80,6 +80,7 @@ class SessionLoader:
                 current_assistant_group = None
                 assistant_progress = []
                 current_actions = []  # Collect ActionHistory objects for detailed view
+                pending_tool_calls = {}  # {call_id: ActionHistory} for matching call start/end
                 last_timestamp = None
 
                 for message_data, created_at in cursor.fetchall():
@@ -99,6 +100,7 @@ class SessionLoader:
                                 current_assistant_group = None
                                 assistant_progress = []
                                 current_actions = []
+                                pending_tool_calls = {}
 
                             # Add user message
                             messages.append(
@@ -110,6 +112,7 @@ class SessionLoader:
                         if msg_type == "function_call":
                             tool_name = message_json.get("name", "unknown")
                             arguments = message_json.get("arguments", "{}")
+                            call_id = message_json.get("call_id")
 
                             # Initialize assistant group if needed
                             if not current_assistant_group:
@@ -132,19 +135,32 @@ class SessionLoader:
                                 messages=f"Tool call: {tool_name}",
                                 action_type=tool_name,
                                 input={"function_name": tool_name, **args_dict},
-                                output=None,  # Will be filled by next function_call_output
+                                output=None,  # Will be filled by matching function_call_output
                                 status=ActionStatus.PROCESSING,
                                 start_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
                             )
                             current_actions.append(action)
+                            # Track by call_id for matching with function_call_output
+                            if call_id:
+                                pending_tool_calls[call_id] = action
                             continue
 
                         # Handle function outputs (tool results)
                         if msg_type == "function_call_output":
-                            # Update the last action with output
-                            if current_actions:
-                                last_action = current_actions[-1]
+                            call_id = message_json.get("call_id")
 
+                            # Match by call_id first, fall back to last action
+                            matching_action = None
+                            if call_id and call_id in pending_tool_calls:
+                                matching_action = pending_tool_calls.pop(call_id)
+                            elif current_actions:
+                                # Fallback: use the last PROCESSING action
+                                for action in reversed(current_actions):
+                                    if action.status == ActionStatus.PROCESSING:
+                                        matching_action = action
+                                        break
+
+                            if matching_action:
                                 # Extract output directly from message_json
                                 output_text = message_json.get("output", "")
 
@@ -164,9 +180,9 @@ class SessionLoader:
                                             # Last resort: store as string
                                             output_data = {"result": output_text}
 
-                                last_action.output = output_data
-                                last_action.status = ActionStatus.SUCCESS
-                                last_action.end_time = (
+                                matching_action.output = output_data
+                                matching_action.status = ActionStatus.SUCCESS
+                                matching_action.end_time = (
                                     datetime.fromisoformat(created_at) if created_at else datetime.now()
                                 )
                             continue
@@ -210,6 +226,7 @@ class SessionLoader:
                                                 current_assistant_group = None
                                                 assistant_progress = []
                                                 current_actions = []
+                                                pending_tool_calls = {}
                                                 continue
                                         except json.JSONDecodeError:
                                             pass
