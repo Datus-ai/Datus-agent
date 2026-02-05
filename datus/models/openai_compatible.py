@@ -1193,7 +1193,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # Moonshot (Kimi) Models - https://platform.moonshot.cn/docs/price/pricing
             "kimi-k2": {"context_length": 256000, "max_tokens": 8192},
             "kimi-k2.5": {"context_length": 256000, "max_tokens": 16384},
-            "kimi-k2-turbo": {"context_length": 128000, "max_tokens": 8192},
+            "kimi-k2-turbo": {"context_length": 256000, "max_tokens": 8192},
             # Qwen Models
             "qwen3-coder": {"context_length": 128000, "max_tokens": 8192},
             # Gemini Models

@@ -33,7 +33,7 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 - Uses LiteLLM for unified token counting across all providers
 - Supports structured output and reasoning content
 
-**`claude_model.py`** - Anthropic Claude models  
+**`claude_model.py`** - Anthropic Claude models
 - Custom implementation for Claude's native API
 - Anthropic tool format conversion for MCP integration
 - Prompt caching support for improved performance
@@ -74,7 +74,7 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 ### `generate_with_json_output(prompt, **kwargs) -> Dict`
 ### async `generate_with_tools(prompt, mcp_servers=None, tools=None, **kwargs) -> Dict`
 
-### async `generate_with_tools_stream(promptr, tools, mcp_servers, instruction, output_type, 
+### async `generate_with_tools_stream(prompt, tools, mcp_servers, instruction, output_type,
         max_turns, action_history_manager, **kwargs) -> AsyncGenerator[ActionHistory, None]:
 )
 
@@ -114,7 +114,7 @@ from agents.mcp import MCPServerStdio
 async def use_mcp_tools():
     # Initialize model
     model = LLMBaseModel.create_model(config, "claude-3-5-sonnet")
-    
+
     # Setup MCP servers (database tools, etc.)
     mcp_servers = {
         "snowflake": MCPServerStdio(
@@ -122,7 +122,7 @@ async def use_mcp_tools():
             env={"SNOWFLAKE_USER": "user", "SNOWFLAKE_PASSWORD": "pass"}
         )
     }
-    
+
     # Generate with tool access
     result = await model.generate_with_tools(
         prompt="Show me the top 10 customers by revenue",
@@ -131,7 +131,7 @@ async def use_mcp_tools():
         output_type=str,
         max_turns=10
     )
-    
+
     print("Response:", result["content"])
     print("SQL Contexts:", result["sql_contexts"])
 
@@ -236,16 +236,16 @@ from datus.models.openai_compatible import OpenAICompatibleModel
 class NewModelModel(OpenAICompatibleModel):
     def __init__(self, model_config: ModelConfig, **kwargs):
         super().__init__(model_config, **kwargs)
-    
+
     def _get_api_key(self) -> str:
         api_key = self.model_config.api_key or os.environ.get("NEWMODEL_API_KEY")
         if not api_key:
             raise ValueError("NewModel API key required")
         return api_key
-    
+
     def _get_base_url(self) -> str:
         return self.model_config.base_url or "https://api.newmodel.com/v1"
-    
+
     # No need to override token_count - it's inherited from OpenAICompatibleModel
     # which uses LiteLLM's unified token counter for accurate counting
     # across all model providers
@@ -257,7 +257,7 @@ class NewModelModel(OpenAICompatibleModel):
 # datus/models/base.py - Add to MODEL_TYPE_MAP
 MODEL_TYPE_MAP: ClassVar[Dict[str, str]] = {
     LLMProvider.DEEPSEEK: "DeepSeekModel",
-    LLMProvider.QWEN: "QwenModel", 
+    LLMProvider.QWEN: "QwenModel",
     LLMProvider.OPENAI: "OpenAIModel",
     LLMProvider.CLAUDE: "ClaudeModel",
     LLMProvider.GEMINI: "GeminiModel",
@@ -312,11 +312,11 @@ from datus.configuration.agent_config import ModelConfig
 def test_newmodel_basic_generation():
     config = ModelConfig(
         type="newmodel",
-        model="newmodel-1.0", 
+        model="newmodel-1.0",
         api_key="test-key"
     )
     model = NewModelModel(config)
-    
+
     # Mock the API call for testing
     response = model.generate("Hello, world!")
     assert isinstance(response, str)
