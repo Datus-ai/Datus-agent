@@ -112,7 +112,7 @@ def _postprocess_messages_for_reasoning(
             rc = msg.get("reasoning_content", "")
             if rc and rc.strip():
                 last_reasoning_content = rc
-                logger.debug(f"[SDK Patch] Found non-empty reasoning_content: {rc[:50]}...")
+                logger.debug(f"[SDK Patch] Found non-empty reasoning_content, length={len(rc)}")
 
     # Copy reasoning_content to assistant messages with tool_calls that are missing it.
     # Only copy existing reasoning_content, never inject fake placeholders.
