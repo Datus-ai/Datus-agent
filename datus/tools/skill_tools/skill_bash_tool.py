@@ -123,13 +123,19 @@ class SkillBashTool:
                 f"Allowed patterns: {', '.join(self.allowed_patterns)}",
             )
 
+        # Parse command into argv list to prevent shell injection
+        try:
+            argv = shlex.split(command)
+        except ValueError as e:
+            return FuncToolResult(success=0, error=f"Invalid command syntax: {e}")
+
         try:
             # Execute command in skill directory
             logger.info(f"Executing command for skill '{self.skill.name}': {command}")
 
             result = subprocess.run(
-                command,
-                shell=True,
+                argv,
+                shell=False,
                 cwd=str(self.workspace_root),
                 capture_output=True,
                 text=True,
