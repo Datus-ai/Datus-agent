@@ -81,7 +81,6 @@ from datus.storage.document.schemas import (  # Constants
     ParsedDocument,
     ParsedSection,
     PlatformDocChunk,
-    WebCrawlMetadata,
 )
 
 # Store classes
@@ -99,7 +98,6 @@ __all__ = [
     "FetchedDocument",
     "ParsedDocument",
     "ParsedSection",
-    "WebCrawlMetadata",
     "get_platform_doc_schema",
     # Constants
     "SOURCE_TYPE_GITHUB",
