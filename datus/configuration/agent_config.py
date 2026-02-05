@@ -326,7 +326,10 @@ class AgentConfig:
         document_raw = kwargs.get("document", {}) or {}
         # Extract tavily_api_key from document config (top-level, not a platform)
         tavily_key_raw = document_raw.pop("tavily_api_key", None)
-        self.tavily_api_key = resolve_env(str(tavily_key_raw)) if tavily_key_raw else None
+        if tavily_key_raw:
+            self.tavily_api_key = resolve_env(str(tavily_key_raw))
+        else:
+            self.tavily_api_key = None
 
         self.document_configs: Dict[str, DocumentConfig] = {}
         for name, cfg in document_raw.items():

@@ -161,8 +161,18 @@ class DocFrameworkDetector:
         for candidate in spec.content_root_candidates:
             # Check if the first directory segment exists in root listing
             first_dir = candidate.split("/")[0]
-            if first_dir in root_names:
-                return candidate
+            if first_dir not in root_names:
+                continue
+
+            # For nested paths (e.g., "docs/en/"), verify the full path exists
+            candidate_path = candidate.rstrip("/")
+            if "/" in candidate_path:
+                # Need to verify the nested directory actually exists
+                dir_names = self._get_dir_names(repo, candidate_path, branch, rate_limiter)
+                if dir_names is None:
+                    continue  # Directory doesn't exist, try next candidate
+
+            return candidate
         return ""
 
     def _get_dir_names(

@@ -39,6 +39,20 @@ class BaseNavResolver(ABC):
                    ["SQL Reference", "DDL", "CREATE TABLE"]}
         """
 
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        """Normalize path separators to forward slashes.
+
+        Ensures consistent path handling across different operating systems.
+
+        Args:
+            path: File path that may contain backslashes
+
+        Returns:
+            Path with all backslashes converted to forward slashes
+        """
+        return path.replace("\\", "/")
+
     def _strip_content_root(self, file_path: str, content_root: str) -> str:
         """Strip content root prefix from a file path.
 
@@ -49,6 +63,10 @@ class BaseNavResolver(ABC):
         Returns:
             Relative path (e.g., "sql-reference/ddl/CREATE_TABLE.md")
         """
+        # Normalize both paths to use forward slashes
+        file_path = self._normalize_path(file_path)
+        content_root = self._normalize_path(content_root)
+
         if content_root and file_path.startswith(content_root):
             return file_path[len(content_root) :]
         return file_path
