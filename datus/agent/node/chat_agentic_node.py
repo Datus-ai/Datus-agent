@@ -350,6 +350,8 @@ class ChatAgenticNode(GenSQLAgenticNode):
         # Add skill tools
         if self.skill_func_tool:
             self.tools.extend(self.skill_func_tool.available_tools())
+        if self.explorer_tool:
+            self.tools.extend(self.explorer_tool.available_tools())
 
     @override
     def _get_system_prompt(

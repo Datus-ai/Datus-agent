@@ -29,9 +29,9 @@ from agents import Tool
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.tools.base import BaseTool
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
 
 if TYPE_CHECKING:
     from agents import SQLiteSession
@@ -45,24 +45,35 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-class ExplorerTool:
+class ExplorerTool(BaseTool):
     """Internal agent-based exploration tool for the main SQL agent.
 
     The explorer is exposed as a single ``explorer(query_text)`` function tool.
     Internally it creates a temporary *branch* of the parent conversation
     session, builds a sub-agent equipped with DB / context-search / read-only
     filesystem tools, runs it, and returns the final summary.
+
+    Inherits from :class:`BaseTool` to get ``set_tool_context`` / ``tool_ctx``
+    support, which provides access to the SDK ``ToolContext.tool_call_id``
+    for parent-child action linking.
     """
+
+    tool_name = "explorer"
+    tool_description = "Agent-based exploration tool"
 
     PROMPT_TEMPLATE = "explorer_system"
 
     def __init__(
         self,
         agent_config: "AgentConfig",
-        max_turns: int = 50,
+        node_name: Optional[str] = None,
     ):
+        super().__init__()
         self.agent_config = agent_config
-        self.max_turns = max_turns
+
+        # Resolve model_name and max_turns from agentic_nodes.explore,
+        # falling back to agentic_nodes.{node_name} if not set.
+        self._model_name, self.max_turns = self._resolve_config(agent_config, node_name)
 
         # Parent session – set via set_session() before execution
         self._session: Optional["SQLiteSession"] = None
@@ -77,6 +88,45 @@ class ExplorerTool:
 
         # ActionBus for forwarding sub-actions to the main stream
         self._action_bus: Optional["ActionBus"] = None
+
+        logger.debug(
+            "ExplorerTool initialized (model=%s, max_turns=%d)",
+            self._model_name or "default",
+            self.max_turns,
+        )
+
+    @staticmethod
+    def _resolve_config(
+        agent_config: "AgentConfig",
+        node_name: Optional[str],
+    ) -> tuple:
+        """Resolve explorer config with fallback to parent node config.
+
+        Priority:
+          1. agentic_nodes.explore.{key}
+          2. agentic_nodes.{node_name}.{key}  (parent node)
+          3. Defaults: None (active_model) / 50
+
+        Returns:
+            Tuple of (model_name, max_turns)
+        """
+        explore_config: dict = {}
+        parent_config: dict = {}
+
+        if agent_config and hasattr(agent_config, "agentic_nodes"):
+            nodes = agent_config.agentic_nodes
+            raw = nodes.get("explore")
+            if isinstance(raw, dict):
+                explore_config = raw
+            if node_name:
+                raw_parent = nodes.get(node_name)
+                if isinstance(raw_parent, dict):
+                    parent_config = raw_parent
+
+        model_name = explore_config.get("model") or parent_config.get("model")
+        max_turns = explore_config.get("max_turns") or parent_config.get("max_turns") or 20
+
+        return model_name, int(max_turns)
 
     # ------------------------------------------------------------------
     # Configuration helpers
@@ -116,7 +166,6 @@ class ExplorerTool:
         """Return the single ``explorer`` function tool."""
         return [trans_to_function_tool(self.explore)]
 
-    @optional_traceable(name="explore", run_type="tool")
     async def explore(self, query_text: str) -> FuncToolResult:
         """Explore databases, context, and files to gather information.
 
@@ -126,6 +175,13 @@ class ExplorerTool:
         Args:
             query_text: Natural-language description of what to explore.
         """
+        # Resolve call_id from SDK ToolContext for parent-child linking
+        call_id: Optional[str] = None
+        try:
+            call_id = self.tool_ctx.get().tool_call_id
+        except LookupError:
+            pass
+
         branch: Optional["SQLiteSession"] = None
         try:
             # 1. Create branch session
@@ -149,6 +205,9 @@ class ExplorerTool:
             ):
                 # Forward sub-action to the ActionBus (real-time)
                 if self._action_bus is not None:
+                    action.depth = 1
+                    if call_id:
+                        action.parent_action_id = call_id
                     self._action_bus.put(action)
 
                 # Extract content from the final successful action
@@ -252,7 +311,10 @@ class ExplorerTool:
 
     def _get_or_create_model(self) -> LLMBaseModel:
         if self._model is None:
-            self._model = LLMBaseModel.create_model(agent_config=self.agent_config)
+            self._model = LLMBaseModel.create_model(
+                agent_config=self.agent_config,
+                model_name=self._model_name,
+            )
         return self._model
 
     def _get_explorer_instruction(self) -> str:

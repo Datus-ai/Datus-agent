@@ -234,9 +234,10 @@ class UIComponents:
         if not agent_config or not hasattr(agent_config, "agentic_nodes"):
             return
 
-        # Get all agentic_nodes except 'chat' since it's the default
+        # Get all agentic_nodes except built-in ones
+        _BUILTIN_NODES = {"chat", "explore"}
         agentic_nodes = agent_config.agentic_nodes
-        available_subagents = {name: config for name, config in agentic_nodes.items() if name != "chat"}
+        available_subagents = {name: config for name, config in agentic_nodes.items() if name not in _BUILTIN_NODES}
 
         if not available_subagents:
             return

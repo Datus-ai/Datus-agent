@@ -283,6 +283,7 @@ class GenSQLAgenticNode(AgenticNode):
 
             self.explorer_tool = ExplorerTool(
                 agent_config=self.agent_config,
+                node_name=self.get_node_name(),
             )
             # Share existing sub-tool instances so the explorer can reuse them
             self.explorer_tool.set_sub_tools(

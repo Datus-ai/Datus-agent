@@ -51,6 +51,8 @@ class ActionHistory(BaseModel):
     status: ActionStatus = Field(..., description="Status of the action")
     start_time: datetime = Field(default_factory=datetime.now, description="Start time of the action")
     end_time: Optional[datetime] = Field(default=None, description="End time of the action")
+    depth: int = Field(default=0, description="Nesting depth for hierarchical display (0=main, 1=sub-agent)")
+    parent_action_id: Optional[str] = Field(default=None, description="Parent action ID for grouping sub-actions")
 
     @classmethod
     def create_action(
