@@ -300,8 +300,10 @@ class StreamingDocProcessor:
                 for future in futures_copy:
                     try:
                         future.result(timeout=0.1)
-                    except Exception:
-                        pass
+                    except TimeoutError:
+                        pass  # Expected - just polling
+                    except Exception as e:
+                        logger.debug(f"Future completed with error: {e}")
 
         # Reset state
         self._visited.clear()

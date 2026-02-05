@@ -269,7 +269,7 @@ agent:
       extra: # Special configurations for different platforms
         provider: db
   # Platform documentation (namespace-independent, stored at {home}/data/document/{platform}/)
-  # Each key under 'document' is a platform name with fetch parameters only.
+  # Each key under 'document' is either a reserved global setting (e.g. tavily_api_key)
   #
   # Common options:
   #   type: github / website / local

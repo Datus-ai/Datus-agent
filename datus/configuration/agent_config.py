@@ -187,7 +187,10 @@ class DocumentConfig:
         for cli_attr, cfg_field in mapping.items():
             cli_val = getattr(args, cli_attr, None)
             if cli_val is not None:
-                overrides[cfg_field] = cli_val
+                if isinstance(cli_val, str):
+                    overrides[cfg_field] = resolve_env(cli_val)
+                else:
+                    overrides[cfg_field] = cli_val
         data = {f.name: getattr(self, f.name) for f in fields(self)}
         data.update(overrides)
         return DocumentConfig(**data)

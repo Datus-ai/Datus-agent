@@ -92,9 +92,15 @@ def _detect_versions_from_paths(paths: List[str]) -> Set[str]:
         if match:
             versions.add(match.group(1))
 
-    # Only return versions if ALL paths match version pattern
+    # Only return versions if ALL paths start with a version pattern
     # (to avoid false positives from paths like "v1-api/docs")
-    if len(versions) == len(paths):
+    version_count = 0
+    for path in paths:
+        first_segment = path.split("/")[0]
+        if _VERSION_PATH_RE.match(first_segment):
+            version_count += 1
+
+    if version_count == len(paths):
         return versions
 
     return set()

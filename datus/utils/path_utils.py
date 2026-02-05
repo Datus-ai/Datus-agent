@@ -72,7 +72,8 @@ def safe_rmtree(
         file_count = sum(1 for item in items if item.is_file())
         dir_count = sum(1 for item in items if item.is_dir())
         if file_count <= 0 and dir_count <= 0:
-            return _do_delete()
+            print("   Contents: empty")
+            return True
         print(f"   Contents: {file_count} files, {dir_count} subdirectories")
     except Exception:
         pass

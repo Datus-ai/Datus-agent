@@ -283,6 +283,10 @@ class SearchTool(BaseTool):
         Returns:
             GetDocResult with document chunks
         """
+        if not platform:
+            return GetDocResult(success=False, error="platform can't be empty", platform=platform)
+        if not titles:
+            return GetDocResult(success=False, error="titles can't be empty", platform=platform)
         try:
             store = self._get_document_store(platform)
 
@@ -399,6 +403,10 @@ class SearchTool(BaseTool):
         Returns:
             DocSearchResult with matched documents for each keyword
         """
+        if not platform:
+            return DocSearchResult(success=False, error="platform can't be empty")
+        if not keywords:
+            return DocSearchResult(success=False, error="keywords can't be empty")
         try:
             docs: Dict[str, List[Dict[str, Any]]] = {}
             total_count = 0
