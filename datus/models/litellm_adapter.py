@@ -78,7 +78,7 @@ class LiteLLMAdapter:
         model: str,
         api_key: str,
         base_url: Optional[str] = None,
-        enable_thinking: Optional[bool] = None,
+        enable_thinking: bool = False,
     ):
         """
         Initialize the LiteLLM adapter.
@@ -88,8 +88,7 @@ class LiteLLMAdapter:
             model: The model name (e.g., gpt-4o, claude-sonnet-4, kimi-k2.5)
             api_key: API key for the provider
             base_url: Optional custom base URL (overrides default)
-            enable_thinking: Whether to enable thinking/reasoning mode for this model.
-                           None = auto-detect via LiteLLM, True = force enable, False = force disable
+            enable_thinking: Whether to enable thinking/reasoning mode (default: False)
         """
         # Auto-detect provider from model name if provider is generic
         detected_provider = self._detect_provider_from_model(provider, model)
@@ -97,7 +96,7 @@ class LiteLLMAdapter:
         self.model = model
         self.api_key = api_key
         self.base_url = base_url or self.DEFAULT_BASE_URLS.get(self.provider)
-        self._enable_thinking = enable_thinking  # User config, None means auto-detect
+        self._enable_thinking = enable_thinking
         self._litellm_model_name = None
 
     def _detect_provider_from_model(self, provider: str, model: str) -> str:
@@ -165,35 +164,14 @@ class LiteLLMAdapter:
     @property
     def is_thinking_model(self) -> bool:
         """
-        Check if thinking/reasoning mode is enabled for this model.
+        Check if thinking/reasoning mode is explicitly enabled for this model.
 
         When enabled, the model returns reasoning_content in responses and needs
         special handling to preserve thinking blocks in multi-turn conversations.
 
-        Detection priority:
-        1. User explicit config (enable_thinking: true/false)
-        2. LiteLLM auto-detection (supports_reasoning in model_info)
-
-        Returns:
-            True if thinking mode is enabled
+        Disabled by default. Set enable_thinking: true in config to enable.
         """
-        # 1. User explicit config takes priority
-        if self._enable_thinking is not None:
-            return self._enable_thinking
-
-        # 2. LiteLLM auto-detection as fallback
-        try:
-            import litellm
-
-            model_info = litellm.get_model_info(self.litellm_model_name)
-            # Note: model_info may have supports_reasoning=None, so we need explicit bool check
-            supports_reasoning = bool(model_info.get("supports_reasoning"))
-            if supports_reasoning:
-                logger.debug(f"LiteLLM auto-detected thinking support for model: {self.model}")
-            return supports_reasoning
-        except Exception as e:
-            logger.debug(f"LiteLLM model info lookup failed for {self.model}: {e}")
-            return False
+        return bool(self._enable_thinking)
 
     def get_agents_sdk_model(self) -> "Model":
         """
@@ -254,7 +232,7 @@ def create_litellm_adapter(
     model: str,
     api_key: str,
     base_url: Optional[str] = None,
-    enable_thinking: Optional[bool] = None,
+    enable_thinking: bool = False,
 ) -> LiteLLMAdapter:
     """
     Factory function to create a LiteLLM adapter.
@@ -264,8 +242,7 @@ def create_litellm_adapter(
         model: The model name
         api_key: API key for the provider
         base_url: Optional custom base URL
-        enable_thinking: Whether to enable thinking/reasoning mode.
-                        None = auto-detect, True = force enable, False = force disable
+        enable_thinking: Whether to enable thinking/reasoning mode (default: False)
 
     Returns:
         Configured LiteLLMAdapter instance

@@ -76,7 +76,7 @@ class ModelConfig:
     api_key: str
     model: str
     save_llm_trace: bool = False
-    enable_thinking: Optional[bool] = None  # None = auto-detect, True = force enable, False = force disable
+    enable_thinking: bool = False  # Set True to enable thinking/reasoning mode
     strict_json_schema: bool = True  # Enable strict JSON schema mode for structured output
     default_headers: Optional[Dict[str, str]] = None
     # Retry configuration for stream connection errors
@@ -735,7 +735,7 @@ def load_model_config(data: dict) -> ModelConfig:
         api_key=resolve_env(data["api_key"]),
         model=resolve_env(data["model"]),
         save_llm_trace=data.get("save_llm_trace", False),
-        enable_thinking=data.get("enable_thinking"),  # None = auto-detect
+        enable_thinking=data.get("enable_thinking", False),
         strict_json_schema=data.get("strict_json_schema", True),
         default_headers=data.get("default_headers"),
         max_retry=int(max_retry) if max_retry is not None else 3,
