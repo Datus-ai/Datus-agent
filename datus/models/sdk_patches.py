@@ -200,13 +200,17 @@ def remove_sdk_patches() -> None:
 
     Useful for testing or when patches are no longer needed.
     """
+    global _original_items_to_messages, _original_acompletion
+
     import litellm
     from agents.models.chatcmpl_converter import Converter
 
     if _original_items_to_messages is not None:
         Converter.items_to_messages = classmethod(_original_items_to_messages)  # type: ignore
+        _original_items_to_messages = None
         logger.info("Removed SDK patch: Converter.items_to_messages")
 
     if _original_acompletion is not None:
         litellm.acompletion = _original_acompletion
+        _original_acompletion = None
         logger.info("Removed SDK patch: litellm.acompletion")
