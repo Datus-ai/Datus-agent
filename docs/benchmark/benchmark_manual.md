@@ -98,16 +98,17 @@ datus-agent --help
 Sample output:
 
 ```
-usage: datus-agent [-h] [--debug] [--config CONFIG] {probe-llm,check-db,bootstrap-kb,benchmark,run} ...
+usage: datus-agent [-h] [--debug] [--config CONFIG] {probe-llm,check-db,bootstrap-kb,platform-doc,benchmark,run} ...
 
 Datus: AI-powered SQL Agent for data engineering
 
 positional arguments:
-  {probe-llm,check-db,bootstrap-kb,benchmark,run}
+  {probe-llm,check-db,bootstrap-kb,platform-doc,benchmark,run}
                         Action to perform
     probe-llm           Test LLM connectivity
     check-db            Check database connectivity
     bootstrap-kb        Initialize knowledge base
+    platform-doc        Initialize platform documentation
     benchmark           Run benchmarks
     run                 Run SQL agent
 
