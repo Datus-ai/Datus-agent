@@ -218,8 +218,10 @@ class LiteLLMAdapter:
         """
         kwargs = {
             "model": self.litellm_model_name,
-            "api_key": self.api_key,
         }
+
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
 
         if self.base_url:
             kwargs["api_base"] = self.base_url

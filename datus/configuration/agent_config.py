@@ -72,7 +72,7 @@ class DbConfig:
 @dataclass
 class ModelConfig:
     type: str
-    base_url: str
+    base_url: Optional[str] = None
     api_key: str
     model: str
     save_llm_trace: bool = False
