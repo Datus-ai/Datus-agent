@@ -72,9 +72,9 @@ class DbConfig:
 @dataclass
 class ModelConfig:
     type: str
-    base_url: Optional[str] = None
     api_key: str
     model: str
+    base_url: Optional[str] = None
     save_llm_trace: bool = False
     enable_thinking: bool = False  # Set True to enable thinking/reasoning mode
     strict_json_schema: bool = True  # Enable strict JSON schema mode for structured output
