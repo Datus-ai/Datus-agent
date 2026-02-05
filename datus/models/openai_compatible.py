@@ -523,7 +523,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # This ensures the model outputs valid JSON that matches the Pydantic schema
             actual_output_type = output_type
             enable_structured_output = False
-            if output_type != str:
+            if output_type is not str:
                 from agents import AgentOutputSchema
 
                 actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
@@ -534,8 +534,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 )
 
             # Use LiteLLM model for unified provider support
-            # Pass enable_structured_output to add provider-specific headers (e.g., Claude beta header)
-            litellm_model = self.litellm_adapter.get_agents_sdk_model(enable_structured_output=enable_structured_output)
+            litellm_model = self.litellm_adapter.get_agents_sdk_model()
 
             # DeepSeek requires "json" keyword in prompt for JSON mode
             # Add it to instructions if using structured output
@@ -587,7 +586,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                     result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
                 except MaxTurnsExceeded as e:
                     logger.error(f"Max turns exceeded: {str(e)}")
-                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+                    raise DatusException(
+                        ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
+                    ) from e
 
                 # Save LLM trace if method exists (for models that support it like DeepSeekModel)
                 if hasattr(self, "_save_llm_trace"):
@@ -689,7 +690,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # This ensures the model outputs valid JSON that matches the Pydantic schema
             actual_output_type = output_type
             enable_structured_output = False
-            if output_type != str:
+            if output_type is not str:
                 from agents import AgentOutputSchema
 
                 actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
@@ -700,8 +701,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 )
 
             # Use LiteLLM model for unified provider support
-            # Pass enable_structured_output to add provider-specific headers (e.g., Claude beta header)
-            litellm_model = self.litellm_adapter.get_agents_sdk_model(enable_structured_output=enable_structured_output)
+            litellm_model = self.litellm_adapter.get_agents_sdk_model()
 
             # DeepSeek requires "json" keyword in prompt for JSON mode
             # Add it to instructions if using structured output
@@ -753,7 +753,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                     result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
                 except MaxTurnsExceeded as e:
                     logger.error(f"Max turns exceeded in streaming: {str(e)}")
-                    raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns})
+                    raise DatusException(
+                        ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
+                    ) from e
 
                 # Streaming phase: yield progress actions in real-time
                 # After streaming completes, generate final summary report

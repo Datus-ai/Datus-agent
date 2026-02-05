@@ -195,42 +195,23 @@ class LiteLLMAdapter:
             logger.debug(f"LiteLLM model info lookup failed for {self.model}: {e}")
             return False
 
-    def _get_structured_output_headers(self) -> Optional[dict]:
-        """
-        Get provider-specific headers for structured output support.
-
-        Returns:
-            Dict of extra headers to pass to the model, or None if not needed
-        """
-        if self.provider == "claude":
-            # Claude requires beta header for structured outputs
-            # See: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
-            return {"anthropic-beta": "structured-outputs-2025-11-13"}
-
-        # Other providers (OpenAI, Gemini, Qwen, Kimi) don't need special headers
-        return None
-
-    def get_agents_sdk_model(self, enable_structured_output: bool = False) -> "Model":
+    def get_agents_sdk_model(self) -> "Model":
         """
         Get an openai-agents SDK compatible Model instance.
 
         Returns a LitellmModel for all providers. Kimi/Moonshot thinking models
         are supported via SDK patches that extend the reasoning_content handling.
 
-        Args:
-            enable_structured_output: Whether to enable structured output support
-                                     (adds provider-specific headers/settings)
-
         Returns:
             Model instance configured for this adapter
         """
         try:
             from agents.extensions.models.litellm_model import LitellmModel
-        except ImportError:
+        except ImportError as err:
             raise ImportError(
                 "LitellmModel not found. Please install openai-agents with litellm support: "
                 "pip install 'openai-agents[litellm]'"
-            )
+            ) from err
 
         # Build model kwargs
         model_kwargs = {
@@ -245,13 +226,6 @@ class LiteLLMAdapter:
         # Add base URL if specified
         if self.base_url:
             model_kwargs["base_url"] = self.base_url
-
-        # Add provider-specific headers for structured output
-        if enable_structured_output:
-            extra_headers = self._get_structured_output_headers()
-            if extra_headers:
-                model_kwargs["extra_headers"] = extra_headers
-                logger.debug(f"Added structured output headers for {self.provider}: {extra_headers}")
 
         logger.debug(f"Creating LitellmModel with model={self.litellm_model_name}")
 
