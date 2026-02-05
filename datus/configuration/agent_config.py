@@ -320,8 +320,13 @@ class AgentConfig:
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
 
         # Platform documentation fetch configs (namespace-independent)
+        document_raw = kwargs.get("document", {}) or {}
+        # Extract tavily_api_key from document config (top-level, not a platform)
+        tavily_key_raw = document_raw.pop("tavily_api_key", None)
+        self.tavily_api_key = resolve_env(str(tavily_key_raw)) if tavily_key_raw else None
+
         self.document_configs: Dict[str, DocumentConfig] = {}
-        for name, cfg in (kwargs.get("document", {}) or {}).items():
+        for name, cfg in document_raw.items():
             if not isinstance(cfg, dict):
                 continue
             if not _SAFE_NAME_RE.match(name):

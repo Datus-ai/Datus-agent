@@ -288,6 +288,7 @@ agent:
   #   max_depth: Maximum crawl depth (default: 2)
   #   NOTE: 'paths' is NOT supported for website type. Use include_patterns instead.
   document:
+    tavily_api_key: ${TAVILY_API_KEY}
     starrocks:
       type: github
       source: StarRocks/starrocks

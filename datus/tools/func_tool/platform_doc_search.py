@@ -206,7 +206,7 @@ class PlatformDocSearchTool:
         Use this tool when local documentation is insufficient or when you need
         the latest information from official websites, blogs, or community resources.
 
-        Requires TAVILY_API_KEY environment variable to be set.
+        Requires tavily_api_key in agent.document config or TAVILY_API_KEY env var.
 
         Args:
             keywords: Search queries (e.g., ["StarRocks materialized view syntax", "Snowflake COPY INTO options"])
@@ -220,6 +220,9 @@ class PlatformDocSearchTool:
         try:
             from datus.tools.search_tools.search_tool import search_by_tavily
 
+            # Get tavily_api_key from config (priority) or fall back to env var
+            tavily_key = getattr(self.agent_config, "tavily_api_key", None)
+
             result = search_by_tavily(
                 keywords=keywords,
                 max_results=max_results,
@@ -227,6 +230,7 @@ class PlatformDocSearchTool:
                 include_answer="basic",
                 include_raw_content="markdown",
                 include_domains=include_domains,
+                api_key=tavily_key,
             )
 
             if not result.success:

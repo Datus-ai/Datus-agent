@@ -455,6 +455,7 @@ def search_by_tavily(
     include_answer: Literal[False, "basic", "advanced"] = False,
     include_raw_content: Literal[False, "text", "markdown"] = False,
     include_domains: Optional[List[str]] = None,
+    api_key: Optional[str] = None,
 ) -> DocSearchResult:
     """Search external documents using the Tavily Search API.
 
@@ -477,12 +478,13 @@ def search_by_tavily(
             "markdown" — markdown formatted.
         include_domains: Restrict search to specific domains (max 300),
             e.g. ["docs.snowflake.com", "stackoverflow.com"].
+        api_key: Tavily API key. Falls back to TAVILY_API_KEY env var if not provided.
 
     Returns:
         DocSearchResult with matched documents.
         If include_answer is enabled, the answer is prepended to the results list.
     """
-    api_key = os.environ.get("TAVILY_API_KEY")
+    api_key = api_key or os.environ.get("TAVILY_API_KEY")
     if not api_key:
         return DocSearchResult(
             success=False,
