@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import os
+import re
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,9 @@ from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_utils import get_files_from_glob_pattern
+
+# Regex for validating platform/identifier names (no special chars that break paths)
+_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 
 @dataclass
@@ -269,6 +273,12 @@ class AgentConfig:
         self.init_dashboard(kwargs.get("dashboard", {}))
 
         for name, raw_config in self.agentic_nodes.items():
+            if not _SAFE_NAME_RE.match(name):
+                raise DatusException(
+                    ErrorCode.COMMON_FIELD_INVALID,
+                    message=f"Invalid agentic_node name '{name}'. "
+                    f"Only alphanumeric characters, underscores, and hyphens are allowed.",
+                )
             if not raw_config.get("system_prompt"):
                 raw_config["system_prompt"] = name
 
@@ -310,11 +320,17 @@ class AgentConfig:
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
 
         # Platform documentation fetch configs (namespace-independent)
-        self.document_configs: Dict[str, DocumentConfig] = {
-            name: DocumentConfig.from_dict(cfg)
-            for name, cfg in (kwargs.get("document", {}) or {}).items()
-            if isinstance(cfg, dict)
-        }
+        self.document_configs: Dict[str, DocumentConfig] = {}
+        for name, cfg in (kwargs.get("document", {}) or {}).items():
+            if not isinstance(cfg, dict):
+                continue
+            if not _SAFE_NAME_RE.match(name):
+                raise DatusException(
+                    ErrorCode.COMMON_FIELD_INVALID,
+                    message=f"Invalid document platform name '{name}'. "
+                    f"Only alphanumeric characters, underscores, and hyphens are allowed.",
+                )
+            self.document_configs[name] = DocumentConfig.from_dict(cfg)
 
         self._init_dirs()
 
@@ -369,6 +385,12 @@ class AgentConfig:
 
     def _init_namespace_config(self, namespace_config: Dict[str, Any]):
         for namespace, db_config_dict in namespace_config.items():
+            if not _SAFE_NAME_RE.match(namespace):
+                raise DatusException(
+                    ErrorCode.COMMON_FIELD_INVALID,
+                    message=f"Invalid namespace name '{namespace}'. "
+                    f"Only alphanumeric characters, underscores, and hyphens are allowed.",
+                )
             db_type = db_config_dict.get("type", "")
             self.namespaces[namespace] = {}
             if db_type in (DBType.SQLITE, DBType.DUCKDB):
@@ -590,6 +612,12 @@ class AgentConfig:
                     f"Please place it within the {self.home}/benchmark directory."
                 )
                 continue
+            if not _SAFE_NAME_RE.match(k):
+                raise DatusException(
+                    ErrorCode.COMMON_FIELD_INVALID,
+                    message=f"Invalid benchmark name '{k}'. "
+                    f"Only alphanumeric characters, underscores, and hyphens are allowed.",
+                )
             if not v.get("benchmark_path"):
                 v["benchmark_path"] = k
             self.benchmark_configs[k] = BenchmarkConfig.filter_kwargs(BenchmarkConfig, v)
