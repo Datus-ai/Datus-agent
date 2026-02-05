@@ -69,6 +69,7 @@ from datus.storage.document.parser import HTMLParser, MarkdownParser, MetadataEx
 from datus.storage.document.schemas import (  # Constants
     CONTENT_TYPE_HTML,
     CONTENT_TYPE_MARKDOWN,
+    CONTENT_TYPE_RST,
     DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_MAX_CHUNK_SIZE,
@@ -80,10 +81,14 @@ from datus.storage.document.schemas import (  # Constants
     ParsedDocument,
     ParsedSection,
     PlatformDocChunk,
+    WebCrawlMetadata,
 )
 
 # Store classes
 from datus.storage.document.store import DocumentStore, document_store, get_platform_doc_schema
+
+# Streaming processor
+from datus.storage.document.streaming_processor import ProcessingStats, StreamingDocProcessor
 
 __all__ = [
     # Store classes
@@ -94,6 +99,7 @@ __all__ = [
     "FetchedDocument",
     "ParsedDocument",
     "ParsedSection",
+    "WebCrawlMetadata",
     "get_platform_doc_schema",
     # Constants
     "SOURCE_TYPE_GITHUB",
@@ -101,6 +107,7 @@ __all__ = [
     "SOURCE_TYPE_LOCAL",
     "CONTENT_TYPE_MARKDOWN",
     "CONTENT_TYPE_HTML",
+    "CONTENT_TYPE_RST",
     "DEFAULT_CHUNK_SIZE",
     "DEFAULT_CHUNK_OVERLAP",
     "DEFAULT_MIN_CHUNK_SIZE",
@@ -123,4 +130,7 @@ __all__ = [
     "init_platform_docs",
     "import_documents",
     "InitResult",
+    # Streaming processor
+    "StreamingDocProcessor",
+    "ProcessingStats",
 ]

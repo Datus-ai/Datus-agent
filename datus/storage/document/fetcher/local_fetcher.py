@@ -14,7 +14,13 @@ from pathlib import Path
 from typing import List, Optional, Set
 
 from datus.storage.document.fetcher.base_fetcher import BaseFetcher
-from datus.storage.document.schemas import CONTENT_TYPE_HTML, CONTENT_TYPE_MARKDOWN, SOURCE_TYPE_LOCAL, FetchedDocument
+from datus.storage.document.schemas import (
+    CONTENT_TYPE_HTML,
+    CONTENT_TYPE_MARKDOWN,
+    CONTENT_TYPE_RST,
+    SOURCE_TYPE_LOCAL,
+    FetchedDocument,
+)
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -251,17 +257,21 @@ class LocalFetcher(BaseFetcher):
         """
         lines = content.strip().split("\n")
 
-        if content_type == CONTENT_TYPE_MARKDOWN:
+        if content_type in (CONTENT_TYPE_MARKDOWN, CONTENT_TYPE_RST):
             # Look for first heading
+            # Markdown ATX-style: # Title
+            # Markdown/RST setext-style: Title followed by === or ---
             for idx, line in enumerate(lines):
                 stripped = line.strip()
                 if stripped.startswith("# "):
                     return stripped[2:].strip()
-                # Also check for setext-style heading
+                # Check for setext-style heading (used by both Markdown and RST)
                 if stripped and idx + 1 < len(lines):
                     next_line = lines[idx + 1].strip()
-                    if next_line and all(c == "=" for c in next_line):
-                        return stripped
+                    # RST allows =, -, ~, ^, etc. as underline chars
+                    if next_line and len(next_line) >= 3 and next_line[0] in "=-~^":
+                        if all(c == next_line[0] for c in next_line):
+                            return stripped
 
         elif content_type == CONTENT_TYPE_HTML:
             # Simple title extraction from HTML

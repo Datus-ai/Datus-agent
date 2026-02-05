@@ -205,6 +205,38 @@ class PlatformDocChunk:
 
 
 # =============================================================================
+# Crawl Metadata Models
+# =============================================================================
+
+
+@dataclass
+class WebCrawlMetadata:
+    """Metadata collected during website URL discovery phase.
+
+    Used for streaming batch processing - first crawl to discover URLs,
+    then fetch content in batches.
+
+    Attributes:
+        base_url: Starting URL of the crawl
+        base_domain: Domain name (e.g., "docs.snowflake.com")
+        source_path_prefix: Path prefix for filtering (e.g., "/en/")
+        discovered_urls: List of discovered URLs to fetch
+        version: Detected or specified version
+    """
+
+    base_url: str
+    base_domain: str
+    source_path_prefix: Optional[str]
+    discovered_urls: List[str]
+    version: str
+
+    @property
+    def url_count(self) -> int:
+        """Get number of discovered URLs."""
+        return len(self.discovered_urls)
+
+
+# =============================================================================
 # Constants
 # =============================================================================
 
@@ -217,6 +249,7 @@ SOURCE_TYPE_LOCAL = "local"
 # Content types
 CONTENT_TYPE_MARKDOWN = "markdown"
 CONTENT_TYPE_HTML = "html"
+CONTENT_TYPE_RST = "rst"
 
 # Default chunking parameters
 DEFAULT_CHUNK_SIZE = 1024

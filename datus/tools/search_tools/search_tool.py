@@ -35,9 +35,14 @@ class SearchTool(BaseTool):
     def _get_document_store(self, platform: str) -> Optional[DocumentStore]:
         """Get document store for a specific platform.
 
-        If ``_document_store`` was set manually (e.g. by PlatformDocSearchTool),
-        that instance is returned directly; otherwise a per-platform store is
-        resolved via ``agent_config.document_storage_path(platform)``.
+        Per-platform store is resolved via ``agent_config.document_storage_path(platform)``,
+        which returns ``{home}/data/document/{platform}/``.
+
+        Args:
+            platform: Platform name (e.g., snowflake, starrocks, duckdb)
+
+        Returns:
+            DocumentStore instance if the platform directory exists, None otherwise.
         """
         store_path = self.agent_config.document_storage_path(platform)
         if not os.path.exists(store_path):

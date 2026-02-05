@@ -19,7 +19,7 @@ import httpx
 
 from datus.storage.document.fetcher.base_fetcher import BaseFetcher
 from datus.storage.document.fetcher.rate_limiter import RateLimiter, get_rate_limiter
-from datus.storage.document.schemas import CONTENT_TYPE_HTML, SOURCE_TYPE_WEBSITE, FetchedDocument
+from datus.storage.document.schemas import CONTENT_TYPE_HTML, SOURCE_TYPE_WEBSITE, FetchedDocument, WebCrawlMetadata
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -114,6 +114,7 @@ class WebFetcher(BaseFetcher):
         max_depth: int = 2,
         include_patterns: Optional[List[str]] = None,
         exclude_patterns: Optional[List[str]] = None,
+        enforce_source_prefix: bool = True,
         **kwargs,
     ) -> List[FetchedDocument]:
         """Fetch documentation from a website.
@@ -123,6 +124,8 @@ class WebFetcher(BaseFetcher):
             max_depth: Maximum crawl depth (0 = only starting URL)
             include_patterns: URL patterns to include (regex)
             exclude_patterns: URL patterns to exclude (regex)
+            enforce_source_prefix: If True, only follow links that share
+                the source URL's path prefix (e.g., /en/ won't explore /de/)
             **kwargs: Additional parameters
 
         Returns:
@@ -134,6 +137,9 @@ class WebFetcher(BaseFetcher):
 
         parsed = urlparse(source)
         base_domain = parsed.netloc
+
+        # Extract path prefix for filtering (e.g., /en/ from /en/docs/overview)
+        source_path_prefix = self._extract_path_prefix(parsed.path) if enforce_source_prefix else None
 
         # Compile patterns
         include_re = [re.compile(p) for p in (include_patterns or [])]
@@ -165,6 +171,12 @@ class WebFetcher(BaseFetcher):
 
             if not current_batch:
                 continue
+
+            # Log progress
+            logger.info(
+                f"Fetching batch: {len(current_batch)} URLs at depth {current_batch[0][1]}, "
+                f"visited: {len(visited)}, queued: {len(to_visit)}"
+            )
 
             # Fetch current batch in parallel
             with ThreadPoolExecutor(max_workers=self.pool_size) as executor:
@@ -200,8 +212,11 @@ class WebFetcher(BaseFetcher):
                             for link in links:
                                 if link not in visited:
                                     # Only follow links on same domain
-                                    link_domain = urlparse(link).netloc
-                                    if link_domain == base_domain:
+                                    link_parsed = urlparse(link)
+                                    if link_parsed.netloc == base_domain:
+                                        # Enforce source path prefix if enabled
+                                        if source_path_prefix and not link_parsed.path.startswith(source_path_prefix):
+                                            continue
                                         if self._should_include(link, include_re, exclude_re):
                                             to_visit.append((link, depth + 1))
 
@@ -242,6 +257,225 @@ class WebFetcher(BaseFetcher):
         if result:
             return result[0]
         return None
+
+    def crawl_urls(
+        self,
+        source: str,
+        max_depth: int = 2,
+        include_patterns: Optional[List[str]] = None,
+        exclude_patterns: Optional[List[str]] = None,
+        enforce_source_prefix: bool = True,
+        **kwargs,
+    ) -> WebCrawlMetadata:
+        """Crawl website to discover URLs without fetching full content.
+
+        This is Phase 1 of streaming batch processing - discover all URLs first,
+        then fetch content in batches via fetch_batch().
+
+        Args:
+            source: Starting URL
+            max_depth: Maximum crawl depth (0 = only starting URL)
+            include_patterns: URL patterns to include (regex)
+            exclude_patterns: URL patterns to exclude (regex)
+            enforce_source_prefix: If True, only follow links that share
+                the source URL's path prefix (e.g., /en/ won't explore /de/)
+            **kwargs: Additional parameters
+
+        Returns:
+            WebCrawlMetadata with discovered URLs
+        """
+        # Normalize URL
+        if not source.startswith(("http://", "https://")):
+            source = "https://" + source
+
+        parsed = urlparse(source)
+        base_domain = parsed.netloc
+
+        # Extract path prefix for filtering
+        source_path_prefix = self._extract_path_prefix(parsed.path) if enforce_source_prefix else None
+
+        # Compile patterns
+        include_re = [re.compile(p) for p in (include_patterns or [])]
+        exclude_re = [re.compile(p) for p in (exclude_patterns or [])]
+
+        # Track visited URLs and discovered URLs
+        visited: Set[str] = set()
+        discovered_urls: List[str] = []
+        to_visit: List[tuple] = [(source, 0)]  # (url, depth)
+
+        # Detect version
+        version = self.version or self._detect_version_from_url(source)
+
+        logger.info(f"Starting URL discovery from {source} (max_depth={max_depth})")
+
+        while to_visit:
+            # Get next batch of URLs at current depth
+            current_batch = []
+            next_batch = []
+
+            for url, depth in to_visit:
+                if url in visited:
+                    continue
+                if depth <= max_depth:
+                    current_batch.append((url, depth))
+                else:
+                    next_batch.append((url, depth))
+
+            to_visit = next_batch
+
+            if not current_batch:
+                continue
+
+            # Log progress
+            logger.info(
+                f"Discovering URLs: batch of {len(current_batch)} at depth {current_batch[0][1]}, "
+                f"discovered: {len(discovered_urls)}, queued: {len(to_visit)}"
+            )
+
+            # Crawl current batch in parallel (only fetch HTML to extract links)
+            with ThreadPoolExecutor(max_workers=self.pool_size) as executor:
+                futures = {
+                    executor.submit(
+                        self._crawl_page_for_links,
+                        url,
+                        base_domain,
+                    ): (url, depth)
+                    for url, depth in current_batch
+                    if url not in visited
+                }
+
+                for future in as_completed(futures):
+                    url, depth = futures[future]
+                    visited.add(url)
+
+                    try:
+                        links = future.result()
+
+                        # Add this URL to discovered list if it matches filters
+                        if self._should_include(url, include_re, exclude_re):
+                            discovered_urls.append(url)
+
+                        # Add discovered links for further crawling
+                        if depth < max_depth and links:
+                            for link in links:
+                                if link not in visited:
+                                    link_parsed = urlparse(link)
+                                    if link_parsed.netloc == base_domain:
+                                        if source_path_prefix and not link_parsed.path.startswith(source_path_prefix):
+                                            continue
+                                        if self._should_include(link, include_re, exclude_re):
+                                            to_visit.append((link, depth + 1))
+
+                    except Exception as e:
+                        logger.warning(f"Failed to crawl {url}: {e}")
+
+        logger.info(f"URL discovery complete: {len(discovered_urls)} URLs found from {base_domain}")
+
+        return WebCrawlMetadata(
+            base_url=source,
+            base_domain=base_domain,
+            source_path_prefix=source_path_prefix,
+            discovered_urls=discovered_urls,
+            version=version,
+        )
+
+    def fetch_batch(
+        self,
+        metadata: WebCrawlMetadata,
+        urls: List[str],
+    ) -> List[FetchedDocument]:
+        """Fetch content for a batch of URLs.
+
+        This is Phase 2 of streaming batch processing - fetch content for
+        a subset of discovered URLs.
+
+        Args:
+            metadata: WebCrawlMetadata from crawl_urls()
+            urls: List of URLs to fetch from the discovered URLs
+
+        Returns:
+            List of fetched documents
+        """
+        if not urls:
+            return []
+
+        documents = []
+
+        logger.info(f"Fetching batch of {len(urls)} pages from {metadata.base_domain}")
+
+        with ThreadPoolExecutor(max_workers=self.pool_size) as executor:
+            futures = {
+                executor.submit(
+                    self._fetch_page,
+                    url,
+                    0,  # depth not relevant for batch fetch
+                    metadata.base_domain,
+                    metadata.version,
+                ): url
+                for url in urls
+            }
+
+            for future in as_completed(futures):
+                url = futures[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        doc, _ = result  # Ignore links, already discovered
+                        documents.append(doc)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch {url}: {e}")
+
+        return documents
+
+    def _crawl_page_for_links(
+        self,
+        url: str,
+        base_domain: str,
+    ) -> List[str]:
+        """Crawl a page to extract links only (lightweight).
+
+        Unlike _fetch_page, this only extracts links without building
+        a full FetchedDocument. Used during URL discovery phase.
+
+        Args:
+            url: URL to crawl
+            base_domain: Base domain for relative links
+
+        Returns:
+            List of discovered URLs
+        """
+        try:
+            # Rate limit
+            self.rate_limiter.wait(base_domain)
+
+            # Fetch page with streaming to minimize memory for large pages
+            response = self._client.get(url)
+            response.raise_for_status()
+
+            content_type = response.headers.get("content-type", "")
+
+            # Only process HTML
+            if "text/html" not in content_type and "application/xhtml" not in content_type:
+                return []
+
+            raw_content = response.text
+
+            # Parse HTML
+            soup = BeautifulSoup(raw_content, "lxml")
+
+            # Extract links
+            return self._extract_links(soup, url, base_domain)
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 404:
+                logger.debug(f"HTTP error crawling {url}: {e.response.status_code}")
+            return []
+        except httpx.RequestError as e:
+            logger.debug(f"Request error crawling {url}: {e}")
+            return []
+        except Exception as e:
+            logger.debug(f"Error crawling {url}: {e}")
+            return []
 
     def _fetch_page(
         self,
@@ -416,6 +650,38 @@ class WebFetcher(BaseFetcher):
             return any(pattern.search(url) for pattern in include_patterns)
 
         return True
+
+    def _extract_path_prefix(self, path: str) -> Optional[str]:
+        """Extract path prefix for URL filtering.
+
+        Extracts the first significant path segment to use as a prefix filter.
+        This prevents crawling into other language versions or unrelated sections.
+
+        Examples:
+            /en/docs/overview → /en/
+            /docs/v1.2/guide → /docs/
+            /developer/guide → /developer/
+            / → None
+
+        Args:
+            path: URL path to analyze
+
+        Returns:
+            Path prefix string or None if no meaningful prefix
+        """
+        if not path or path == "/":
+            return None
+
+        # Split path into segments
+        segments = [s for s in path.split("/") if s]
+        if not segments:
+            return None
+
+        # Use first segment as prefix
+        first_segment = segments[0]
+
+        # Return prefix with leading and trailing slashes
+        return f"/{first_segment}/"
 
     def _detect_version_from_url(self, url: str) -> str:
         """Try to detect version from URL.

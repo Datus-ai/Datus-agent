@@ -288,16 +288,12 @@ class DocumentStore(BaseEmbeddingStore):
 
         count_before = self.table.count_rows()
         if count_before == 0:
-            logger.info(f"No chunks found for version '{version or 'all'}'")
+            logger.info(f"No chunks exists for version '{version or 'all'}'")
             return 0
 
         if version:
             self._validate_identifier(version, "version")
             where_clause = f"version = '{version}'"
-            count_before = self.table.count_rows(where_clause)
-            if count_before == 0:
-                logger.info(f"No chunks found for version '{version}'")
-                return 0
             self.table.delete(where_clause)
             # Compact and remove old data files to reclaim disk space
             try:
@@ -305,6 +301,9 @@ class DocumentStore(BaseEmbeddingStore):
                 self.table.cleanup_old_versions()
             except Exception as e:
                 logger.warning(f"Post-delete cleanup failed (non-fatal): {e}")
+            # Calculate actual deleted count
+            count_after = self.table.count_rows()
+            deleted_count = count_before - count_after
         else:
             # Physically remove the entire lance directory and reinitialize.
             # This is more thorough than drop_table which leaves orphan files.
@@ -316,9 +315,10 @@ class DocumentStore(BaseEmbeddingStore):
             self.db = lancedb.connect(self.db_path)
             self._table_initialized = False
             self._ensure_table_ready()
+            deleted_count = count_before
 
-        logger.info(f"Deleted {count_before} chunks for version '{version or 'all'}'")
-        return count_before
+        logger.info(f"Deleted {deleted_count} chunks for version '{version or 'all'}'")
+        return deleted_count
 
     def get_all_rows(
         self,

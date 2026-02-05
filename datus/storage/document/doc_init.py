@@ -8,28 +8,21 @@ Document Initialization Module
 Provides functions for importing and initializing documentation:
 - import_documents: Import local documents into DocumentStore
 - init_platform_docs: Full pipeline for platform documentation
+
+Uses streaming processing where each document is fully processed
+(fetch → chunk → store) in a single thread for maximum efficiency.
 """
 
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, List, Set, Tuple
 
-from datus.storage.document.chunker import SemanticChunker
-from datus.storage.document.chunker.semantic_chunker import ChunkingConfig
-from datus.storage.document.cleaner import DocumentCleaner
 from datus.storage.document.fetcher import GitHubFetcher, LocalFetcher, RateLimiter, WebFetcher
-from datus.storage.document.parser import HTMLParser, MarkdownParser
-from datus.storage.document.schemas import (
-    CONTENT_TYPE_MARKDOWN,
-    SOURCE_TYPE_GITHUB,
-    SOURCE_TYPE_LOCAL,
-    FetchedDocument,
-    PlatformDocChunk,
-)
+from datus.storage.document.schemas import SOURCE_TYPE_GITHUB, SOURCE_TYPE_LOCAL
 from datus.storage.document.store import document_store
+from datus.storage.document.streaming_processor import StreamingDocProcessor
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -69,88 +62,42 @@ class InitResult:
 
 
 # =============================================================================
-# Batch Processing Helpers
+# Version Detection Helpers
 # =============================================================================
 
-DEFAULT_BATCH_SIZE = 50
+# Pattern to detect version strings like "1.3.0", "v2.0.0", "1.2.3-beta"
+_VERSION_PATH_RE = re.compile(r"^v?(\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9.]+)?)$")
 
 
-def _process_batch(
-    documents: List[FetchedDocument],
-    cleaner: "DocumentCleaner",
-    markdown_parser: "MarkdownParser",
-    html_parser: "HTMLParser",
-    chunker: "SemanticChunker",
-    pool_size: int,
-    errors: List[str],
-) -> List[PlatformDocChunk]:
-    """Process a batch of documents into chunks using a thread pool.
+def _detect_versions_from_paths(paths: List[str]) -> Set[str]:
+    """Detect version strings from path list.
+
+    Used to identify when GitHub paths represent version directories
+    (e.g., ["1.3.0", "1.2.0"]) rather than regular paths (e.g., ["docs", "README.md"]).
 
     Args:
-        documents: Batch of fetched documents to process
-        cleaner: Document cleaner instance
-        markdown_parser: Markdown parser instance
-        html_parser: HTML parser instance
-        chunker: Semantic chunker instance
-        pool_size: Thread pool size for parallel processing
-        errors: Shared error list (appended to on failure)
+        paths: List of path strings to check
 
     Returns:
-        List of chunks produced from the batch
+        Set of detected version strings (empty if paths aren't version directories)
     """
-    if not documents:
-        return []
+    if not paths:
+        return set()
 
-    errors_lock = threading.Lock()
+    versions = set()
+    for path in paths:
+        # Get the first path component (e.g., "1.3.0" from "1.3.0/docs/intro.md")
+        first_segment = path.split("/")[0]
+        match = _VERSION_PATH_RE.match(first_segment)
+        if match:
+            versions.add(match.group(1))
 
-    def process_one(doc: FetchedDocument) -> List[PlatformDocChunk]:
-        try:
-            cleaned_doc = cleaner.clean(doc)
+    # Only return versions if ALL paths match version pattern
+    # (to avoid false positives from paths like "v1-api/docs")
+    if len(versions) == len(paths):
+        return versions
 
-            if cleaned_doc.content_type == CONTENT_TYPE_MARKDOWN:
-                parsed = markdown_parser.parse(cleaned_doc)
-            else:
-                parsed = html_parser.parse(cleaned_doc)
-
-            # Merge nav_path from fetcher metadata (set by NavResolverPipeline)
-            if doc.metadata.get("nav_path"):
-                parsed.metadata["nav_path"] = doc.metadata["nav_path"]
-            if doc.metadata.get("group_name"):
-                parsed.metadata["group_name"] = doc.metadata["group_name"]
-
-            base_metadata = {
-                "platform": doc.platform,  # kept for keyword extraction only
-                "version": doc.version,
-                "source_type": doc.source_type,
-                "source_url": doc.source_url,
-                "doc_path": doc.doc_path,
-                "content_hash": doc.metadata.get("content_hash", ""),
-            }
-
-            return chunker.chunk(parsed, base_metadata)
-
-        except Exception as e:
-            logger.warning(f"Failed to process {doc.doc_path}: {e}")
-            with errors_lock:
-                errors.append(f"Process error ({doc.doc_path}): {str(e)}")
-            return []
-
-    batch_chunks: List[PlatformDocChunk] = []
-
-    with ThreadPoolExecutor(max_workers=pool_size) as executor:
-        futures = {executor.submit(process_one, doc): doc for doc in documents}
-
-        for future in as_completed(futures):
-            doc = futures[future]
-            try:
-                chunks = future.result()
-                batch_chunks.extend(chunks)
-            except Exception as e:
-                logger.warning(f"Processing failed for {doc.doc_path}: {e}")
-                with errors_lock:
-                    errors.append(f"Error ({doc.doc_path}): {str(e)}")
-
-    return batch_chunks
+    return set()
 
 
 # =============================================================================
@@ -179,16 +126,18 @@ def init_platform_docs(
     cfg: "DocumentConfig",
     build_mode: str = "overwrite",
     pool_size: int = 4,
-    batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> InitResult:
     """Initialize platform documentation knowledge base.
+
+    Uses streaming processing where each document is fully processed
+    (fetch → chunk → store) in a single thread for maximum efficiency.
 
     Pipeline:
       1. check mode: return existing store stats without any fetching
       2. overwrite mode:
          a. Resolve version (from source metadata or user input)
          b. Delete existing data for the resolved version
-         c. Fetch → Parse → Clean → Chunk → Store (micro-batch)
+         c. Streaming process: fetch → chunk → store per document
          d. Create indices
 
     Args:
@@ -198,7 +147,6 @@ def init_platform_docs(
             include_patterns, exclude_patterns, etc.
         build_mode: Build mode ("check" or "overwrite")
         pool_size: Thread pool size for parallel processing
-        batch_size: Number of documents to process per micro-batch
 
     Returns:
         InitResult with statistics and status
@@ -208,7 +156,6 @@ def init_platform_docs(
     version = cfg.version
 
     start_time = datetime.now(timezone.utc)
-    errors: List[str] = []
 
     logger.info(f"Initializing {platform} documentation from {source} ({source_type})")
 
@@ -231,23 +178,27 @@ def init_platform_docs(
             duration_seconds=duration,
         )
 
-    # Initialize pipeline components
+    # Initialize components
     rate_limiter = RateLimiter()
-    cleaner = DocumentCleaner()
-    markdown_parser = MarkdownParser()
-    html_parser = HTMLParser()
-    chunker = SemanticChunker(config=ChunkingConfig(chunk_size=cfg.chunk_size))
+    processor = StreamingDocProcessor(
+        store=store,
+        chunk_size=cfg.chunk_size,
+        pool_size=pool_size,
+    )
 
-    total_docs = 0
-    total_chunks = 0
+    # Track versions from path-based directories (e.g., paths=["1.3.0", "1.2.0"])
+    path_versions: Set[str] = set()
 
     try:
         # ==================================================================
-        # Phase 1: Resolve version + fetch documents
+        # Phase 1: Resolve version + prepare for processing
         # ==================================================================
-        github_metadata = None  # only for GitHub source type
-
         if source_type == SOURCE_TYPE_GITHUB:
+            # Detect if paths represent version directories
+            path_versions = _detect_versions_from_paths(cfg.paths or [])
+            if path_versions:
+                logger.info(f"Detected versioned paths: {sorted(path_versions)}")
+
             fetcher = GitHubFetcher(
                 platform=platform,
                 version=version,
@@ -265,9 +216,17 @@ def init_platform_docs(
             if not version:
                 version = github_metadata.version
 
-            logger.info(
-                f"Phase 1 complete: version='{version}', "
-                f"{len(github_metadata.file_paths)} files, batch_size={batch_size}"
+            logger.info(f"Found {len(github_metadata.file_paths)} files, version='{version}'")
+
+            # Phase 2: Delete existing data
+            _delete_existing_versions(store, version, path_versions)
+
+            # Phase 3: Streaming process
+            stats = processor.process_github(
+                fetcher=fetcher,
+                metadata=github_metadata,
+                version=version,
+                platform=platform,
             )
 
         elif source_type == SOURCE_TYPE_LOCAL:
@@ -278,124 +237,125 @@ def init_platform_docs(
                 include_patterns=cfg.include_patterns,
                 exclude_patterns=cfg.exclude_patterns,
             )
+
             if not documents:
                 logger.warning(f"No documents fetched from {source}")
                 return _make_empty_result(platform, version, source, start_time, ["No documents found"])
+
             if not version:
                 version = documents[0].version
 
+            logger.info(f"Found {len(documents)} documents, version='{version}'")
+
+            # Phase 2: Delete existing data
+            _delete_existing_versions(store, version, path_versions)
+
+            # Phase 3: Streaming process
+            stats = processor.process_local(
+                fetcher=fetcher,
+                documents=documents,
+                version=version,
+                platform=platform,
+            )
+
         else:
-            # Website
+            # Website - true streaming with URL discovery
             fetcher = WebFetcher(
                 platform=platform,
                 version=version,
                 rate_limiter=rate_limiter,
                 pool_size=pool_size,
             )
-            documents = fetcher.fetch(
-                source=source,
+
+            # Detect version from URL
+            if not version:
+                version = fetcher._detect_version_from_url(source)
+
+            logger.info(f"Starting website crawl from {source}, version='{version}'")
+
+            # Phase 2: Delete existing data
+            _delete_existing_versions(store, version, path_versions)
+
+            # Phase 3: Streaming process with URL discovery
+            stats = processor.process_website(
+                fetcher=fetcher,
+                base_url=source,
+                version=version,
+                platform=platform,
                 max_depth=cfg.max_depth,
                 include_patterns=cfg.include_patterns,
                 exclude_patterns=cfg.exclude_patterns,
             )
-            if not documents:
-                logger.warning(f"No documents fetched from {source}")
-                return _make_empty_result(platform, version, source, start_time, ["No documents found"])
-            if not version:
-                version = documents[0].version
-
-        # ==================================================================
-        # Phase 2: Overwrite — delete existing data for the resolved version
-        # ==================================================================
-        deleted = store.delete_docs(version=version)
-        if deleted:
-            logger.info(f"Overwrite: deleted {deleted} existing chunks for version '{version}'")
-
-        # ==================================================================
-        # Phase 3: Process + Store (micro-batch)
-        # ==================================================================
-        if source_type == SOURCE_TYPE_GITHUB:
-            for i in range(0, len(github_metadata.file_paths), batch_size):
-                batch_paths = github_metadata.file_paths[i : i + batch_size]
-                batch_num = i // batch_size + 1
-
-                batch_docs = fetcher.fetch_batch(github_metadata, batch_paths)
-                total_docs += len(batch_docs)
-
-                batch_chunks = _process_batch(
-                    batch_docs, cleaner, markdown_parser, html_parser, chunker, pool_size, errors
-                )
-                total_chunks += len(batch_chunks)
-
-                if batch_chunks:
-                    try:
-                        store.store_chunks(batch_chunks)
-                    except Exception as e:
-                        logger.error(f"Failed to store batch {batch_num}: {e}")
-                        errors.append(f"Storage error (batch {batch_num}): {str(e)}")
-
-                logger.info(f"Batch {batch_num}: {len(batch_docs)} docs -> {len(batch_chunks)} chunks")
-
-        else:
-            # Local/Web: documents already fetched in Phase 1
-            logger.info(f"Processing {len(documents)} documents in batches of {batch_size}")
-
-            for i in range(0, len(documents), batch_size):
-                batch_docs = documents[i : i + batch_size]
-                batch_num = i // batch_size + 1
-                total_docs += len(batch_docs)
-
-                batch_chunks = _process_batch(
-                    batch_docs, cleaner, markdown_parser, html_parser, chunker, pool_size, errors
-                )
-                total_chunks += len(batch_chunks)
-
-                if batch_chunks:
-                    try:
-                        store.store_chunks(batch_chunks)
-                    except Exception as e:
-                        logger.error(f"Failed to store batch {batch_num}: {e}")
-                        errors.append(f"Storage error (batch {batch_num}): {str(e)}")
-
-                logger.info(f"Batch {batch_num}: {len(batch_docs)} docs -> {len(batch_chunks)} chunks")
 
     except Exception as e:
         logger.error(f"Failed to process documents: {e}")
-        errors.append(f"Fetch error: {str(e)}")
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+        error_version = ", ".join(sorted(path_versions)) if path_versions else (version or "unknown")
         return InitResult(
             platform=platform,
-            version=version or "unknown",
+            version=error_version,
             source=source,
-            total_docs=total_docs,
-            total_chunks=total_chunks,
+            total_docs=0,
+            total_chunks=0,
             success=False,
-            errors=errors,
+            errors=[f"Processing error: {str(e)}"],
             duration_seconds=duration,
         )
 
-    # Create indices once after all batches are stored
-    if total_chunks > 0:
+    # Create indices once after all processing is complete
+    if stats.total_chunks > 0:
         try:
             store.create_indices()
         except Exception as e:
             logger.error(f"Failed to create indices: {e}")
-            errors.append(f"Index error: {str(e)}")
+            stats.add_error(f"Index error: {str(e)}")
 
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 
-    logger.info(f"Platform documentation initialized: {total_docs} docs, {total_chunks} chunks, {duration:.1f}s")
+    # For multi-version mode, report versions as comma-separated string
+    result_version = version
+    if path_versions:
+        result_version = ", ".join(sorted(path_versions))
+
+    logger.info(
+        f"Platform documentation initialized: {stats.total_docs} docs, {stats.total_chunks} chunks, {duration:.1f}s"
+    )
 
     return InitResult(
         platform=platform,
-        version=version,
+        version=result_version,
         source=source,
-        total_docs=total_docs,
-        total_chunks=total_chunks,
-        success=len(errors) == 0 or total_chunks > 0,
-        errors=errors,
+        total_docs=stats.total_docs,
+        total_chunks=stats.total_chunks,
+        success=len(stats.errors) == 0 or stats.total_chunks > 0,
+        errors=stats.errors,
         duration_seconds=duration,
     )
+
+
+def _delete_existing_versions(store, version: str, path_versions: Set[str]) -> None:
+    """Delete existing data for the resolved version(s).
+
+    Args:
+        store: DocumentStore instance
+        version: Single version string
+        path_versions: Set of versions from path-based directories
+    """
+    if path_versions:
+        # Multi-version mode: delete each version from path directories
+        total_deleted = 0
+        for ver in sorted(path_versions):
+            deleted = store.delete_docs(version=ver)
+            if deleted:
+                logger.info(f"Overwrite: deleted {deleted} existing chunks for version '{ver}'")
+                total_deleted += deleted
+        if total_deleted:
+            logger.info(f"Overwrite: deleted {total_deleted} total chunks across {len(path_versions)} versions")
+    else:
+        # Single-version mode: delete for the resolved version
+        deleted = store.delete_docs(version=version)
+        if deleted:
+            logger.info(f"Overwrite: deleted {deleted} existing chunks for version '{version}'")
 
 
 # =============================================================================
@@ -408,22 +368,21 @@ def import_documents(
     directory_path: str,
     recursive: bool = False,
     chunk_size: int = 1024,
-    batch_size: int = DEFAULT_BATCH_SIZE,
+    pool_size: int = 4,
     platform: str = "local",
     version: str = "local",
 ) -> Tuple[int, List[str]]:
     """Import documents from a directory into the document store.
 
-    Uses the full pipeline with micro-batch processing:
-    - Fetches documents from local directory
-    - Processes and stores in batches to limit memory usage
+    Uses streaming processing where each document is fully processed
+    (fetch → chunk → store) in a single thread.
 
     Args:
         store: DocumentStore instance
         directory_path: Path to the directory containing documents
         recursive: Whether to scan subdirectories recursively
         chunk_size: Target chunk size in characters
-        batch_size: Number of documents to process per micro-batch
+        pool_size: Number of worker threads
         platform: Platform name to tag imported documents with
         version: Version string to tag imported documents with
 
@@ -436,14 +395,8 @@ def import_documents(
             logger.error(f"Directory not found: {directory_path}")
             return 0, []
 
-        # Initialize pipeline components
-        fetcher = LocalFetcher(platform=platform, version=version)
-        cleaner = DocumentCleaner()
-        markdown_parser = MarkdownParser()
-        html_parser = HTMLParser()
-        chunker = SemanticChunker(config=ChunkingConfig(chunk_size=chunk_size))
-
         # Fetch documents
+        fetcher = LocalFetcher(platform=platform, version=version)
         documents = fetcher.fetch(
             source=directory_path,
             recursive=recursive,
@@ -455,40 +408,33 @@ def import_documents(
 
         logger.info(f"Found {len(documents)} documents in {directory_path}")
 
-        total_chunks = 0
+        # Extract titles before processing
         imported_titles = []
-        errors = []
+        for doc in documents:
+            doc_metadata = doc.metadata or {}
+            title = doc_metadata.get("title", doc.doc_path)
+            imported_titles.append(title)
 
-        # Process and store in micro-batches
-        for i in range(0, len(documents), batch_size):
-            batch_docs = documents[i : i + batch_size]
+        # Streaming process
+        processor = StreamingDocProcessor(
+            store=store,
+            chunk_size=chunk_size,
+            pool_size=pool_size,
+        )
 
-            # Process batch into chunks
-            batch_chunks = _process_batch(
-                batch_docs,
-                cleaner,
-                markdown_parser,
-                html_parser,
-                chunker,
-                1,
-                errors,  # pool_size=1 for local imports
-            )
-            total_chunks += len(batch_chunks)
+        stats = processor.process_local(
+            fetcher=fetcher,
+            documents=documents,
+            version=version,
+            platform=platform,
+        )
 
-            # Extract titles from batch docs
-            for doc in batch_docs:
-                title = doc.metadata.get("title", doc.doc_path)
-                imported_titles.append(title)
-
-            if batch_chunks:
-                store.store_chunks(batch_chunks)
-
-        # Create indices once after all batches
-        if total_chunks > 0:
+        # Create indices once after all processing
+        if stats.total_chunks > 0:
             store.create_indices()
 
-        logger.info(f"Imported {total_chunks} chunks from {len(documents)} documents")
-        return total_chunks, imported_titles
+        logger.info(f"Imported {stats.total_chunks} chunks from {len(documents)} documents")
+        return stats.total_chunks, imported_titles
 
     except Exception as e:
         logger.error(f"Document import failed: {str(e)}")

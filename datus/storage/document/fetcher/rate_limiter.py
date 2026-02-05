@@ -80,9 +80,9 @@ class RateLimiter:
             burst_size=5,
         ),
         "default": RateLimitConfig(
-            requests_per_hour=120,
+            requests_per_hour=3600,  # 1 req/sec on average
             min_interval=0.5,
-            burst_size=5,
+            burst_size=10,
         ),
     }
 
@@ -238,15 +238,17 @@ class RateLimiter:
         self,
         config: RateLimitConfig,
         state: RateLimitState,
+        max_wait: float = 60.0,
     ) -> float:
         """Calculate how long to wait before the next request.
 
         Args:
             config: Rate limit configuration
             state: Current rate limit state
+            max_wait: Maximum wait time in seconds (default 60s)
 
         Returns:
-            Seconds to wait (0 if no wait needed)
+            Seconds to wait (0 if no wait needed, capped at max_wait)
         """
         now = time.time()
         wait_time = 0.0
@@ -259,22 +261,23 @@ class RateLimiter:
 
         # Check hourly rate limit
         if state.request_count >= config.requests_per_hour:
-            # Wait until window resets
+            # Wait until window resets, but cap the wait time
             window_elapsed = now - state.window_start
             if window_elapsed < 3600:
-                wait_time = max(wait_time, 3600 - window_elapsed)
+                wait_time = max(wait_time, min(3600 - window_elapsed, max_wait))
 
         # Check API-reported limits
         if state.remaining is not None and state.remaining <= 0:
             if state.reset_time and state.reset_time > now:
-                wait_time = max(wait_time, state.reset_time - now + 1)
+                wait_time = max(wait_time, min(state.reset_time - now + 1, max_wait))
 
         # Check burst limit (backoff if making too many rapid requests)
         if config.burst_size > 0 and state.request_count > 0 and state.request_count % config.burst_size == 0:
             # Add small delay after each burst
             wait_time = max(wait_time, 1.0)
 
-        return wait_time
+        # Cap total wait time
+        return min(wait_time, max_wait)
 
 
 # Global rate limiter instance
