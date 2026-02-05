@@ -204,6 +204,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.date_parsing_tools.available_tools())
         if self.filesystem_func_tool:
             self.tools.extend(self.filesystem_func_tool.available_tools())
+        if self._platform_doc_tool:
+            self.tools.extend(self._platform_doc_tool.available_tools())
 
     def setup_tools(self):
         """Setup tools based on configuration."""

@@ -226,6 +226,8 @@ class MarkdownParser:
                 depth = 1
                 while i < len(tokens) and depth > 0:
                     i += 1
+                    if i >= len(tokens):
+                        break
                     if tokens[i].type.endswith("_list_open"):
                         depth += 1
                     elif tokens[i].type.endswith("_list_close"):

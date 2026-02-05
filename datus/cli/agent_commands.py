@@ -584,6 +584,11 @@ class AgentCommands:
         keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
 
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
+        try:
+            top_n_value = int(top_n.strip())
+        except ValueError:
+            self.console.print("[bold red]Error:[/] top_n must be an integer.")
+            return
 
         with self.console.status("[bold green]Searching documentation...[/]"):
             from datus.tools.search_tools.search_tool import SearchTool
@@ -593,7 +598,7 @@ class AgentCommands:
                 platform=platform,
                 keywords=keywords,
                 version=version,
-                top_n=int(top_n.strip()),
+                top_n=top_n_value,
             )
 
         if result.success and result.doc_count > 0:

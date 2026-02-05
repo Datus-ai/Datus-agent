@@ -201,8 +201,12 @@ class DocFrameworkDetector:
             # For large files, use the download URL
             if hasattr(content_file, "download_url") and content_file.download_url:
                 import urllib.request
+                from urllib.parse import urlparse
 
-                with urllib.request.urlopen(content_file.download_url) as resp:
+                parsed = urlparse(content_file.download_url)
+                if parsed.scheme not in ("http", "https"):
+                    return None
+                with urllib.request.urlopen(content_file.download_url, timeout=30) as resp:
                     return resp.read().decode("utf-8")
             return None
         except Exception:

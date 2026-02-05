@@ -33,10 +33,10 @@ class FallbackResolver(BaseNavResolver):
 
     def resolve(
         self,
-        config_content: str,
+        config_content: str,  # noqa: ARG002
         file_paths: List[str],
         content_root: str,
-        extra_context: Optional[Dict[str, Any]] = None,
+        extra_context: Optional[Dict[str, Any]] = None,  # noqa: ARG002
     ) -> Dict[str, List[str]]:
         nav_map: Dict[str, List[str]] = {}
         for file_path in file_paths:

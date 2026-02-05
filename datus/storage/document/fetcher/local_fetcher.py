@@ -201,7 +201,7 @@ class LocalFetcher(BaseFetcher):
             title = self._extract_title(content, file_path.name, content_type)
 
             # Get file modification time
-            mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+            mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
 
             # Create source URL as file:// URI
             source_url = file_path.as_uri()
@@ -253,17 +253,15 @@ class LocalFetcher(BaseFetcher):
 
         if content_type == CONTENT_TYPE_MARKDOWN:
             # Look for first heading
-            for line in lines:
+            for idx, line in enumerate(lines):
                 stripped = line.strip()
                 if stripped.startswith("# "):
                     return stripped[2:].strip()
                 # Also check for setext-style heading
-                if len(lines) > 1:
-                    idx = lines.index(line) if line in lines else -1
-                    if idx >= 0 and idx + 1 < len(lines):
-                        next_line = lines[idx + 1].strip()
-                        if next_line and all(c == "=" for c in next_line):
-                            return stripped
+                if stripped and idx + 1 < len(lines):
+                    next_line = lines[idx + 1].strip()
+                    if next_line and all(c == "=" for c in next_line):
+                        return stripped
 
         elif content_type == CONTENT_TYPE_HTML:
             # Simple title extraction from HTML

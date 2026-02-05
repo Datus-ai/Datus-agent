@@ -294,6 +294,9 @@ class HTMLParser:
                 current_link = None
                 for a in sidebar.find_all("a", href=True):
                     href = a["href"]
+                    # Skip empty or anchor-only hrefs
+                    if not href or href == "#" or href.startswith("#"):
+                        continue
                     # Normalize href
                     if href.startswith("/"):
                         href_path = href.rstrip("/")

@@ -10,6 +10,7 @@ Provides functions for importing and initializing documentation:
 - init_platform_docs: Full pipeline for platform documentation
 """
 
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -100,6 +101,8 @@ def _process_batch(
     if not documents:
         return []
 
+    errors_lock = threading.Lock()
+
     def process_one(doc: FetchedDocument) -> List[PlatformDocChunk]:
         try:
             cleaned_doc = cleaner.clean(doc)
@@ -128,7 +131,8 @@ def _process_batch(
 
         except Exception as e:
             logger.warning(f"Failed to process {doc.doc_path}: {e}")
-            errors.append(f"Process error ({doc.doc_path}): {str(e)}")
+            with errors_lock:
+                errors.append(f"Process error ({doc.doc_path}): {str(e)}")
             return []
 
     batch_chunks: List[PlatformDocChunk] = []
@@ -143,7 +147,8 @@ def _process_batch(
                 batch_chunks.extend(chunks)
             except Exception as e:
                 logger.warning(f"Processing failed for {doc.doc_path}: {e}")
-                errors.append(f"Error ({doc.doc_path}): {str(e)}")
+                with errors_lock:
+                    errors.append(f"Error ({doc.doc_path}): {str(e)}")
 
     return batch_chunks
 
@@ -217,7 +222,7 @@ def init_platform_docs(
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         return InitResult(
             platform=platform,
-            version=stats.get("versions", ["unknown"])[0] if stats.get("versions") else "unknown",
+            version=stats.get("versions", ["unknown"])[-1] if stats.get("versions") else "unknown",
             source=source,
             total_docs=stats.get("doc_count", 0),
             total_chunks=stats.get("total_chunks", 0),

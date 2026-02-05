@@ -21,7 +21,6 @@ class BaseFetcher(ABC):
     documents from their respective sources.
 
     Attributes:
-        rate_limiter: Rate limiter instance for controlling request frequency
         platform: Target platform name
         version: Target version (optional)
     """
@@ -97,7 +96,7 @@ class BaseFetcher(ABC):
             content: File content
 
         Returns:
-            Content type ("markdown" or "html")
+            Content type ("markdown", "html", or "rst")
         """
         lower_name = filename.lower()
 

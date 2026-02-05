@@ -134,21 +134,17 @@ class RateLimiter:
             config = self._get_config(domain)
             state = self._get_state(domain)
             wait_time = self._calculate_wait_time(config, state)
-
-        if wait_time > 0:
-            logger.debug(f"Rate limiting: waiting {wait_time:.2f}s for {domain}")
-            time.sleep(wait_time)
-
-        # Update state after waiting
-        with self._lock:
-            state = self._get_state(domain)
-            state.last_request = time.time()
+            # Reserve the slot under lock to prevent concurrent bypass
+            state.last_request = time.time() + wait_time
             state.request_count += 1
-
             # Reset window if needed
             if time.time() - state.window_start >= 3600:
                 state.window_start = time.time()
                 state.request_count = 1
+
+        if wait_time > 0:
+            logger.debug(f"Rate limiting: waiting {wait_time:.2f}s for {domain}")
+            time.sleep(wait_time)
 
         return wait_time
 
@@ -167,21 +163,17 @@ class RateLimiter:
             config = self._get_config(domain)
             state = self._get_state(domain)
             wait_time = self._calculate_wait_time(config, state)
-
-        if wait_time > 0:
-            logger.debug(f"Rate limiting: waiting {wait_time:.2f}s for {domain}")
-            await asyncio.sleep(wait_time)
-
-        # Update state after waiting
-        with self._lock:
-            state = self._get_state(domain)
-            state.last_request = time.time()
+            # Reserve the slot under lock to prevent concurrent bypass
+            state.last_request = time.time() + wait_time
             state.request_count += 1
-
             # Reset window if needed
             if time.time() - state.window_start >= 3600:
                 state.window_start = time.time()
                 state.request_count = 1
+
+        if wait_time > 0:
+            logger.debug(f"Rate limiting: waiting {wait_time:.2f}s for {domain}")
+            await asyncio.sleep(wait_time)
 
         return wait_time
 
@@ -278,7 +270,7 @@ class RateLimiter:
                 wait_time = max(wait_time, state.reset_time - now + 1)
 
         # Check burst limit (backoff if making too many rapid requests)
-        if state.request_count > 0 and state.request_count % config.burst_size == 0:
+        if config.burst_size > 0 and state.request_count > 0 and state.request_count % config.burst_size == 0:
             # Add small delay after each burst
             wait_time = max(wait_time, 1.0)
 

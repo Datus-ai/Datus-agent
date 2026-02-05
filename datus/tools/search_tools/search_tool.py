@@ -140,23 +140,42 @@ class SearchTool(BaseTool):
                     total_docs=0,
                 )
 
-            # Group by doc_path to get one representative row per document
-            doc_map: Dict[str, Dict[str, Any]] = {}
+            # Group by (version, doc_path) to avoid collapsing across versions
+            versioned_doc_map: Dict[str, Dict[str, Dict[str, Any]]] = {}
             for row in rows:
                 doc_path = row.get("doc_path", "")
-                if doc_path and doc_path not in doc_map:
-                    doc_map[doc_path] = row
+                ver = row.get("version", "")
+                if not doc_path:
+                    continue
+                versioned_doc_map.setdefault(ver, {})
+                if doc_path not in versioned_doc_map[ver]:
+                    versioned_doc_map[ver][doc_path] = row
 
-            nav_tree = self._build_nav_tree(doc_map)
+            versions = sorted(
+                versioned_doc_map.keys(),
+                key=self._version_sort_key,
+                reverse=True,
+            )
 
-            logger.debug(f"Found {len(doc_map)} documents for platform '{platform}'")
+            if version or len(versions) <= 1:
+                # Single version → flat tree
+                flat_map = versioned_doc_map.get(version or (versions[0] if versions else ""), {})
+                nav_tree = self._build_nav_tree(flat_map)
+            else:
+                # Multiple versions → group by version at the top level
+                nav_tree = []
+                for ver in versions:
+                    nav_tree.append({"version": ver, "tree": self._build_nav_tree(versioned_doc_map[ver])})
+
+            total_docs = sum(len(v) for v in versioned_doc_map.values())
+            logger.debug(f"Found {total_docs} documents for platform '{platform}'")
 
             return DocNavResult(
                 success=True,
                 platform=platform,
                 version=version,
                 nav_tree=nav_tree,
-                total_docs=len(doc_map),
+                total_docs=total_docs,
             )
 
         except Exception as e:

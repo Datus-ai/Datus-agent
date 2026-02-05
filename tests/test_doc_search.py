@@ -518,6 +518,7 @@ class TestSearchTool:
         result = self.tool.search_document(
             platform=platform,
             keywords=keywords,
+            version=version if version else None,
             top_n=3,
         )
 

@@ -521,7 +521,7 @@ def main():
         result = bootstrap_platform_doc(args, agent_config)
         if result:
             logger.info(f"platform-doc result: {result}")
-        return result
+        return 0
 
     # Initialize agent with both args and config
     agent = Agent(args, agent_config)

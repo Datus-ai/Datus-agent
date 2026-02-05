@@ -172,6 +172,7 @@ class DocumentConfig:
             "source": "source",
             "version": "version",
             "github_ref": "github_ref",
+            "github_token": "github_token",
             "paths": "paths",
             "chunk_size": "chunk_size",
             "max_depth": "max_depth",
