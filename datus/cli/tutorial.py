@@ -112,7 +112,7 @@ class BenchmarkTutorial:
                 status.update("Ensuring configuration...")
             self.console.print("Configuration is ready.")
             california_schools_path = self.benchmark_path / self.namespace_name
-            from datus.cli.interactive_init import init_metadata_and_log_result, init_sql_and_log_result
+            from datus.cli.interactive_init import init_metadata_and_log_result, overwrite_sql_and_log_result
 
             self.console.print("[bold yellow][2/6] Initialize Metadata using command: [/bold yellow]")
             self.console.print(
@@ -163,7 +163,7 @@ class BenchmarkTutorial:
                 "california_schools/Enrollment/Total"
                 '" [/]'
             )
-            init_sql_and_log_result(
+            overwrite_sql_and_log_result(
                 namespace_name=self.namespace_name,
                 sql_dir=str(california_schools_path / "reference_sql"),
                 subject_tree="california_schools/Continuation/Free_Rate,"

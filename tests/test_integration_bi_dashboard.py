@@ -97,7 +97,9 @@ def agent_config() -> AgentConfig:
 def bi_commands(agent_config) -> BiDashboardCommands:
     """Create BiDashboardCommands for E2E tests."""
     console = Console(log_path=False, force_terminal=False)
-    return BiDashboardCommands(agent_config, console)
+    bi_commands = BiDashboardCommands(agent_config, console, force=True)
+    bi_commands._update_model = "overwrite"
+    return bi_commands
 
 
 @pytest.fixture(scope="module")

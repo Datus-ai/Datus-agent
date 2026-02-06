@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, List, Literal, Optional, Sequence, Union
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -70,7 +70,9 @@ def _parse_subject_path_for_metrics(tags: List[str]) -> Optional[str]:
 
 
 class BiDashboardCommands:
-    def __init__(self, agent_config: AgentConfig | "DatusCLI", console: Optional[Console] = None) -> None:
+    def __init__(
+        self, agent_config: AgentConfig | "DatusCLI", console: Optional[Console] = None, force: bool = False
+    ) -> None:
         self.cli: Optional["DatusCLI"] = None
         if hasattr(agent_config, "agent_config"):
             self.cli = agent_config
@@ -82,6 +84,8 @@ class BiDashboardCommands:
             self.console = console or Console(log_path=False)
             self._configuration_manager = None
         self._adaptor_registry = self._discover_adaptors()
+        self._update_model: Literal["check", "incremental", "overwrite"] = "incremental"
+        self._force = force
 
     @optional_traceable(name="bootstrap_bi")
     def cmd(self, args: str = "") -> None:
@@ -651,7 +655,7 @@ class BiDashboardCommands:
         result = init_reference_sql(
             storage=ReferenceSqlRAG(self.agent_config),
             global_config=self.agent_config,
-            build_mode="incremental",
+            build_mode=self._update_model,
             sql_dir=str(sql_dir),
             subject_tree=None,
             emit=stream_handler.handle_event,
@@ -670,7 +674,7 @@ class BiDashboardCommands:
             self.console.print(f"  [yellow]Warning: {invalid_entries} invalid SQL items skipped[/]")
         if valid_entries > processed_entries:
             skipped = valid_entries - processed_entries
-            self.console.print(f"  [dim]({skipped} items already existed, skipped in incremental mode)[/]")
+            self.console.print(f"  [dim]({skipped} items already existed, skipped in {self._update_model} mode)[/]")
 
         ref_sqls = []
         if result.get("status") != "success":
@@ -794,7 +798,7 @@ class BiDashboardCommands:
             target_file,
             agent_config=self.agent_config,
             console=self.console,
-            build_model="incremental",
+            build_model=self._update_model,
             extra_instructions=extra_instructions,
         )
 
@@ -860,7 +864,11 @@ class BiDashboardCommands:
                 pd.DataFrame(file_data, columns=["question", "sql"]).to_csv(target_f, index=False)
 
         successful, result = init_semantic_model(
-            target_file, agent_config=self.agent_config, console=self.console, build_mode="incremental"
+            target_file,
+            agent_config=self.agent_config,
+            console=self.console,
+            build_mode=self._update_model,
+            force=self._force,
         )
 
         if successful:

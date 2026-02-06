@@ -137,4 +137,6 @@ def sample_database_data():
 
 
 def load_acceptance_config(namespace: str = "snowflake", home: str = "") -> AgentConfig:
-    return load_agent_config(config="tests/conf/agent.yml", namespace=namespace, home=home, reload=True)
+    return load_agent_config(
+        config="tests/conf/agent.yml", namespace=namespace, home=home, reload=True, force=True, yes=True
+    )

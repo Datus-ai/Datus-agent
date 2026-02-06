@@ -393,7 +393,7 @@ class InteractiveInit:
         if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
             default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
             sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
-            init_sql_and_log_result(
+            overwrite_sql_and_log_result(
                 namespace_name=self.namespace_name, sql_dir=sql_dir, config_path=config_path, console=self.console
             )
 
@@ -693,12 +693,13 @@ def init_metadata_and_log_result(namespace_name: str, config_path: str, console:
             print_rich_exception(console, e, "Metadata initialization failed", logger)
 
 
-def init_sql_and_log_result(
+def overwrite_sql_and_log_result(
     namespace_name: str,
     sql_dir: str,
     config_path: str,
     subject_tree: Optional[str] = None,
     console: Optional[Console] = None,
+    force: bool = False,
 ):
     if not console:
         console = Console(log_path=False)
@@ -707,7 +708,7 @@ def init_sql_and_log_result(
     try:
         agent_config = load_agent_config(reload=True, config=config_path)
         agent_config.current_namespace = namespace_name
-        do_init_sql_and_log_result(agent_config, sql_dir, subject_tree, console)
+        do_init_sql_and_log_result(agent_config, sql_dir, subject_tree, console, force=force)
     except Exception as e:
         print_rich_exception(console, e, "Reference SQL initialization failed", logger)
 
@@ -718,6 +719,7 @@ def do_init_sql_and_log_result(
     subject_tree: Optional[str] = None,
     console: Optional[Console] = None,
     kb_update_strategy: str = "overwrite",
+    force: bool = False,
 ):
     from datus.storage.reference_sql.reference_sql_init import init_reference_sql
     from datus.storage.reference_sql.store import ReferenceSqlRAG
@@ -752,7 +754,7 @@ def do_init_sql_and_log_result(
 
             path_manager = get_path_manager(datus_home=agent_config.home)
             sql_summary_dir = path_manager.sql_summary_path(agent_config.current_namespace)
-            if sql_summary_dir.exists() and not safe_rmtree(sql_summary_dir, "SQL summary directory"):
+            if sql_summary_dir.exists() and not safe_rmtree(sql_summary_dir, "SQL summary directory", force=force):
                 console.print("[yellow]Cancelled by user[/yellow]")
                 return False, None
             agent_config.save_storage_config("reference_sql")
