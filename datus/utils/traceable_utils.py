@@ -41,6 +41,7 @@ def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain"):
 
 
 _tracing_initialized = False
+_tracing_processor = None
 
 
 def setup_tracing():
@@ -51,7 +52,7 @@ def setup_tracing():
 
     Safe to call multiple times; initialization only happens once.
     """
-    global _tracing_initialized
+    global _tracing_initialized, _tracing_processor
     if _tracing_initialized:
         return
     _tracing_initialized = True
@@ -81,8 +82,15 @@ def setup_tracing():
                         logger.debug(f"Failed to get trace URL: {e}")
                 super().on_trace_end(trace)
 
-        processor = DatusTracingProcessor()
-        set_trace_processors([processor])
+        _tracing_processor = DatusTracingProcessor()
+        set_trace_processors([_tracing_processor])
         logger.info("LangSmith DatusTracingProcessor enabled for SDK tracing")
     except ImportError:
         logger.warning("OpenAIAgentsTracingProcessor not available")
+
+
+def get_trace_url() -> str | None:
+    """Return the last captured LangSmith trace URL, or None."""
+    if _tracing_processor is not None:
+        return getattr(_tracing_processor, "_last_trace_url", None)
+    return None

@@ -12,7 +12,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseResult
 from datus.schemas.node_models import SqlTask
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
+from datus.utils.traceable_utils import get_trace_url, optional_traceable
 
 logger = get_logger(__name__)
 
@@ -112,6 +112,10 @@ class WorkflowRunner:
         # Use new hierarchical directory structure: {trajectory_dir}/{namespace}/{run_id}/
         trajectory_dir = self.global_config.get_trajectory_run_dir(self.run_id)
         os.makedirs(trajectory_dir, exist_ok=True)
+
+        trace_url = get_trace_url()
+        if trace_url:
+            self.workflow.metadata["trace_url"] = trace_url
 
         save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
         self.workflow.save(save_path)
