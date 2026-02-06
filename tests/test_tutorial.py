@@ -387,7 +387,7 @@ class TestBenchmarkTutorialRun:
         mock_init_metadata = MagicMock()
         mock_init_sql = MagicMock()
         monkeypatch.setattr("datus.cli.interactive_init.init_metadata_and_log_result", mock_init_metadata)
-        monkeypatch.setattr("datus.cli.interactive_init.init_sql_and_log_result", mock_init_sql)
+        monkeypatch.setattr("datus.cli.interactive_init.overwrite_sql_and_log_result", mock_init_sql)
 
         # Mock _init_metrics to return success
         monkeypatch.setattr(BenchmarkTutorial, "_init_metrics", lambda self, path: True)
