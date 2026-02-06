@@ -83,7 +83,7 @@ class BiDashboardCommands:
             self._configuration_manager = None
         self._adaptor_registry = self._discover_adaptors()
 
-    @optional_traceable(name="bootstrap_bi", log_trace_url=True)
+    @optional_traceable(name="bootstrap_bi")
     def cmd(self, args: str = "") -> None:
         try:
             options = self._prompt_options()

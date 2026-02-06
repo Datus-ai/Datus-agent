@@ -30,7 +30,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import HAS_LANGSMITH, optional_traceable
+from datus.utils.traceable_utils import HAS_LANGSMITH, create_tracing_processor, optional_traceable
 
 logger = get_logger(__name__)
 
@@ -45,19 +45,13 @@ litellm.modify_params = True
 litellm.set_verbose = False
 
 # LangSmith tracing integration
-# Use OpenAIAgentsTracingProcessor to capture SDK traces (agent, tools, LLM calls)
+# Use DatusTracingProcessor (subclass of OpenAIAgentsTracingProcessor) to capture
+# SDK traces and automatically log trace URLs on trace completion.
 if HAS_LANGSMITH:
-    try:
-        from langsmith.wrappers import OpenAIAgentsTracingProcessor
-
-        # Enable LangSmith tracing for OpenAI Agents SDK
-        # This captures all SDK traces: agent runs, tool calls, LLM generations
-        set_trace_processors([OpenAIAgentsTracingProcessor()])
-        logger.info("LangSmith OpenAIAgentsTracingProcessor enabled for SDK tracing")
-    except ImportError:
-        logger.warning(
-            "OpenAIAgentsTracingProcessor not available. " "Install with: pip install 'langsmith[openai-agents]'"
-        )
+    _processor = create_tracing_processor()
+    if _processor:
+        set_trace_processors([_processor])
+        logger.info("LangSmith DatusTracingProcessor enabled for SDK tracing")
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
@@ -388,7 +382,6 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             return {"error": "Failed to parse JSON response", "raw_response": response_text}
 
-    @optional_traceable(name="openai_compatible_tools", run_type="chain")
     async def generate_with_tools(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -448,7 +441,6 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         return enhanced_result
 
-    @optional_traceable(name="openai_compatible_tools_stream", run_type="chain")
     async def generate_with_tools_stream(
         self,
         prompt: Union[str, List[Dict[str, str]]],

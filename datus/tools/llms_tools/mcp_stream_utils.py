@@ -10,12 +10,10 @@ from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
 
-@optional_traceable()
 async def base_mcp_stream(
     model: LLMBaseModel,
     input_data: Any,

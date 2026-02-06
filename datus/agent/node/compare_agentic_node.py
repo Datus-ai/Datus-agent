@@ -11,7 +11,6 @@ from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -168,7 +167,6 @@ class CompareAgenticNode(AgenticNode):
         logger.debug(f"Unexpected comparison output type: {type(raw_output)}")
         return {}
 
-    @optional_traceable(name="compare_stream", run_type="chain")
     async def execute_stream(
         self,
         action_history_manager: Optional[ActionHistoryManager] = None,

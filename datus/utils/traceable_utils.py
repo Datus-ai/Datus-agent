@@ -3,9 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from typing import Literal, Optional, Type, Union
-import asyncio
-import inspect
-from functools import wraps
 
 from openai import AsyncOpenAI, OpenAI
 
@@ -41,107 +38,89 @@ def create_openai_client(
         return client
 
 
-def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain", log_trace_url: bool = False):
+def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain"):
     """
     Optional traceable decorator that wraps functions with LangSmith tracing.
-
-    This decorator always uses @traceable to preserve proper trace nesting.
-    When log_trace_url=True, it additionally captures and logs the trace URL
-    using get_current_run_tree() after function execution.
 
     Args:
         name: The name of the trace. Defaults to the function name.
         run_type: The type of run (e.g., "chain", "llm", "tool").
-        log_trace_url: If True, log the trace URL after function execution.
     """
 
     def decorator(func):
         if not HAS_LANGSMITH:
             return func
         try:
-            from langsmith import get_current_run_tree, traceable
+            from langsmith import traceable
 
-            # Use provided run_name or fallback to function name
             trace_name = name or getattr(func, "__name__", "agent_operation")
-
-            def _log_trace_url():
-                """Log trace URL from current run tree."""
-                try:
-                    rt = get_current_run_tree()
-                    if rt:
-                        url = rt.get_url()
-                        if url:
-                            logger.info(f"LangSmith Trace: {url}")
-                            return url
-                except Exception as e:
-                    logger.debug(f"Failed to get trace URL: {e}")
-                return None
-
-            if not log_trace_url:
-                # Simple case: just apply traceable decorator
-                return traceable(name=trace_name, run_type=run_type)(func)
-
-            # With log_trace_url: wrap function to capture URL after execution
-            # Still use @traceable to preserve nesting hierarchy
-
-            if inspect.isasyncgenfunction(func):
-                # Handle async generator functions
-                @traceable(name=trace_name, run_type=run_type)
-                @wraps(func)
-                async def async_gen_wrapper(*args, **kwargs):
-                    _log_trace_url()
-                    async for item in func(*args, **kwargs):
-                        yield item
-
-                return async_gen_wrapper
-            elif asyncio.iscoroutinefunction(func):
-                # Handle async functions
-                @traceable(name=trace_name, run_type=run_type)
-                @wraps(func)
-                async def async_wrapper(*args, **kwargs):
-                    _log_trace_url()
-                    return await func(*args, **kwargs)
-
-                return async_wrapper
-            else:
-                # Handle sync functions
-                @traceable(name=trace_name, run_type=run_type)
-                @wraps(func)
-                def sync_wrapper(*args, **kwargs):
-                    _log_trace_url()
-                    return func(*args, **kwargs)
-
-                return sync_wrapper
-
+            return traceable(name=trace_name, run_type=run_type)(func)
         except ImportError:
-            # If langsmith is not available, just return the original function
             return func
 
     return decorator
 
 
-def get_current_trace_url() -> str | None:
-    """
-    Get the URL of the current LangSmith trace from the run tree.
+# Global tracing processor instance
+_tracing_processor = None
+
+
+def create_tracing_processor(**kwargs):
+    """Create a DatusTracingProcessor that captures trace URLs on trace end.
+
+    This processor subclasses OpenAIAgentsTracingProcessor and intercepts
+    on_trace_end() to capture the trace URL directly from the RunTree object,
+    bypassing all contextvars propagation issues (asyncio.run boundaries,
+    async generator yield boundaries, etc.).
 
     Returns:
-        The trace URL string, or None if unavailable.
-
-    Usage:
-        url = get_current_trace_url()
-        if url:
-            print(f"View trace: {url}")
+        A DatusTracingProcessor instance, or None if dependencies are unavailable.
     """
+    global _tracing_processor
+    if _tracing_processor is not None:
+        return _tracing_processor
+
     if not HAS_LANGSMITH:
         return None
 
     try:
-        from langsmith import get_current_run_tree
+        from langsmith.wrappers import OpenAIAgentsTracingProcessor
 
-        rt = get_current_run_tree()
-        if rt:
-            return rt.get_url()
-    except Exception:
-        pass
+        class DatusTracingProcessor(OpenAIAgentsTracingProcessor):
+            """Extended tracing processor that captures trace URLs."""
 
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._last_trace_url: str | None = None
+
+            def on_trace_end(self, trace) -> None:
+                # Capture trace URL from RunTree before super() pops it
+                run = self._runs.get(trace.trace_id)
+                if run:
+                    try:
+                        self._last_trace_url = run.get_url()
+                        logger.info(f"LangSmith Trace: {self._last_trace_url}")
+                    except Exception as e:
+                        logger.debug(f"Failed to get trace URL: {e}")
+                super().on_trace_end(trace)
+
+        _tracing_processor = DatusTracingProcessor(**kwargs)
+        return _tracing_processor
+    except ImportError:
+        logger.warning("OpenAIAgentsTracingProcessor not available")
+        return None
+
+
+def get_last_trace_url() -> str | None:
+    """Get the last trace URL captured by the tracing processor.
+
+    This retrieves the trace URL from the most recently completed trace,
+    captured in on_trace_end(). Works reliably across all execution
+    boundaries (asyncio.run, async generators, etc.).
+
+    Returns:
+        The trace URL string, or None if unavailable.
+    """
+    if _tracing_processor is not None:
+        return _tracing_processor._last_trace_url
     return None

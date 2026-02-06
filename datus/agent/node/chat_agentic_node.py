@@ -22,7 +22,6 @@ from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from datus.tools.skill_tools.skill_manager import SkillManager
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 

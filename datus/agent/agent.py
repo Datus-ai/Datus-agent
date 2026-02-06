@@ -363,7 +363,7 @@ class Agent:
             logger.info("Metrics item success")
             return
 
-    @optional_traceable(name="bootstrap_kb", log_trace_url=True)
+    @optional_traceable(name="bootstrap_kb")
     def bootstrap_kb(self):
         """Initialize knowledge base storage components."""
         logger.info("Initializing knowledge base components")

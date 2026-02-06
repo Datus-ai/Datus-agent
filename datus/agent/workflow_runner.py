@@ -12,7 +12,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseResult
 from datus.schemas.node_models import SqlTask
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import get_current_trace_url, optional_traceable
+from datus.utils.traceable_utils import get_last_trace_url, optional_traceable
 
 logger = get_logger(__name__)
 
@@ -161,7 +161,7 @@ class WorkflowRunner:
             if output_data:
                 action.output.update(output_data)
 
-    @optional_traceable(name="agent", log_trace_url=True)
+    @optional_traceable(name="agent")
     def run(self, sql_task: Optional[SqlTask] = None, check_storage: bool = False) -> Dict:
         """Execute the workflow synchronously."""
         logger.info("Starting agent execution")
@@ -217,7 +217,7 @@ class WorkflowRunner:
             logger.warning(f"Workflow execution stopped after reaching max steps: {max_steps}")
 
         # Capture trace URL before finalizing workflow
-        trace_url = get_current_trace_url()
+        trace_url = get_last_trace_url()
         if trace_url and self.workflow:
             self.workflow.metadata["trace_url"] = trace_url
             logger.info(f"Trace URL captured: {trace_url}")
@@ -225,7 +225,7 @@ class WorkflowRunner:
         metadata = self._finalize_workflow(step_count)
         return metadata.get("final_result", {})
 
-    @optional_traceable(name="agent_stream", log_trace_url=True)
+    @optional_traceable(name="agent_stream")
     async def run_stream(
         self,
         sql_task: Optional[SqlTask] = None,
@@ -332,7 +332,7 @@ class WorkflowRunner:
             step_count += 1
 
         # Capture trace URL before finalizing workflow
-        trace_url = get_current_trace_url()
+        trace_url = get_last_trace_url()
         if trace_url and self.workflow:
             self.workflow.metadata["trace_url"] = trace_url
             logger.info(f"Trace URL captured: {trace_url}")
