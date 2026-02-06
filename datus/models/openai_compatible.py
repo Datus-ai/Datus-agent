@@ -14,7 +14,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import httpx
 import litellm
 import yaml
-from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool, set_trace_processors
+from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
@@ -30,7 +30,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import HAS_LANGSMITH, create_tracing_processor, optional_traceable
+from datus.utils.traceable_utils import optional_traceable, setup_tracing
 
 logger = get_logger(__name__)
 
@@ -44,14 +44,7 @@ litellm.drop_params = True
 litellm.modify_params = True
 litellm.set_verbose = False
 
-# LangSmith tracing integration
-# Use DatusTracingProcessor (subclass of OpenAIAgentsTracingProcessor) to capture
-# SDK traces and automatically log trace URLs on trace completion.
-if HAS_LANGSMITH:
-    _processor = create_tracing_processor()
-    if _processor:
-        set_trace_processors([_processor])
-        logger.info("LangSmith DatusTracingProcessor enabled for SDK tracing")
+setup_tracing()
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:

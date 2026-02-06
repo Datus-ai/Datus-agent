@@ -40,29 +40,27 @@ def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain"):
     return decorator
 
 
-# Global tracing processor instance
-_tracing_processor = None
+_tracing_initialized = False
 
 
-def create_tracing_processor(**kwargs):
-    """Create a DatusTracingProcessor that captures trace URLs on trace end.
+def setup_tracing():
+    """Set up LangSmith tracing with DatusTracingProcessor.
 
-    This processor subclasses OpenAIAgentsTracingProcessor and intercepts
-    on_trace_end() to capture the trace URL directly from the RunTree object,
-    bypassing all contextvars propagation issues (asyncio.run boundaries,
-    async generator yield boundaries, etc.).
+    Creates a DatusTracingProcessor (subclass of OpenAIAgentsTracingProcessor)
+    that captures trace URLs on trace end, and registers it via set_trace_processors.
 
-    Returns:
-        A DatusTracingProcessor instance, or None if dependencies are unavailable.
+    Safe to call multiple times; initialization only happens once.
     """
-    global _tracing_processor
-    if _tracing_processor is not None:
-        return _tracing_processor
+    global _tracing_initialized
+    if _tracing_initialized:
+        return
+    _tracing_initialized = True
 
     if not HAS_LANGSMITH:
-        return None
+        return
 
     try:
+        from agents import set_trace_processors
         from langsmith.wrappers import OpenAIAgentsTracingProcessor
 
         class DatusTracingProcessor(OpenAIAgentsTracingProcessor):
@@ -83,8 +81,8 @@ def create_tracing_processor(**kwargs):
                         logger.debug(f"Failed to get trace URL: {e}")
                 super().on_trace_end(trace)
 
-        _tracing_processor = DatusTracingProcessor(**kwargs)
-        return _tracing_processor
+        processor = DatusTracingProcessor()
+        set_trace_processors([processor])
+        logger.info("LangSmith DatusTracingProcessor enabled for SDK tracing")
     except ImportError:
         logger.warning("OpenAIAgentsTracingProcessor not available")
-        return None
