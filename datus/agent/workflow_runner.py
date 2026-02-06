@@ -12,7 +12,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseResult
 from datus.schemas.node_models import SqlTask
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import get_last_trace_url, optional_traceable
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -216,12 +216,6 @@ class WorkflowRunner:
         if step_count >= max_steps:
             logger.warning(f"Workflow execution stopped after reaching max steps: {max_steps}")
 
-        # Capture trace URL before finalizing workflow
-        trace_url = get_last_trace_url()
-        if trace_url and self.workflow:
-            self.workflow.metadata["trace_url"] = trace_url
-            logger.info(f"Trace URL captured: {trace_url}")
-
         metadata = self._finalize_workflow(step_count)
         return metadata.get("final_result", {})
 
@@ -330,12 +324,6 @@ class WorkflowRunner:
 
             self.workflow.advance_to_next_node()
             step_count += 1
-
-        # Capture trace URL before finalizing workflow
-        trace_url = get_last_trace_url()
-        if trace_url and self.workflow:
-            self.workflow.metadata["trace_url"] = trace_url
-            logger.info(f"Trace URL captured: {trace_url}")
 
         completion_action = self._create_action_history(
             action_id="workflow_completion",

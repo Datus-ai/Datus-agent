@@ -2,9 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Literal, Optional, Type, Union
-
-from openai import AsyncOpenAI, OpenAI
+from typing import Literal
 
 from datus.utils.loggings import get_logger
 
@@ -17,25 +15,6 @@ try:
     HAS_LANGSMITH = True
 except ImportError:
     RUN_TYPE_T = Literal["tool", "chain", "llm", "retriever", "embedding", "prompt", "parser"]
-
-
-def create_openai_client(
-    cls: Type[Union[OpenAI, AsyncOpenAI]],
-    api_key: str,
-    base_url: Optional[str],
-    default_headers: Union[dict[str, str], None] = None,
-) -> Union[OpenAI, AsyncOpenAI]:
-    # OpenAI client accepts None for base_url (uses default URL)
-    client = cls(api_key=api_key, base_url=base_url, default_headers=default_headers)
-    if not HAS_LANGSMITH:
-        return client
-    try:
-        from langsmith.wrappers import wrap_openai
-
-        return wrap_openai(client)
-    except ImportError:
-        logger.warning("langsmith wrapper not available")
-        return client
 
 
 def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain"):
@@ -109,18 +88,3 @@ def create_tracing_processor(**kwargs):
     except ImportError:
         logger.warning("OpenAIAgentsTracingProcessor not available")
         return None
-
-
-def get_last_trace_url() -> str | None:
-    """Get the last trace URL captured by the tracing processor.
-
-    This retrieves the trace URL from the most recently completed trace,
-    captured in on_trace_end(). Works reliably across all execution
-    boundaries (asyncio.run, async generators, etc.).
-
-    Returns:
-        The trace URL string, or None if unavailable.
-    """
-    if _tracing_processor is not None:
-        return _tracing_processor._last_trace_url
-    return None
