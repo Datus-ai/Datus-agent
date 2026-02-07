@@ -283,3 +283,49 @@ class SkillRegistry:
 
         with self._lock:
             return len(self._skills)
+
+    def install_skill(self, name: str, skill_dir: Path) -> Optional[SkillMetadata]:
+        """Register a marketplace-installed skill.
+
+        Parses the SKILL.md in the given directory and adds it to the registry
+        with source='marketplace'.
+
+        Args:
+            name: Skill name (used as key)
+            skill_dir: Path to extracted skill directory
+
+        Returns:
+            SkillMetadata if successful, None otherwise
+        """
+        skill_file = Path(skill_dir) / "SKILL.md"
+        if not skill_file.exists():
+            logger.error(f"SKILL.md not found in {skill_dir}")
+            return None
+
+        metadata = self._parse_skill_file(skill_file)
+        if not metadata:
+            return None
+
+        metadata.source = "marketplace"
+        with self._lock:
+            self._skills[metadata.name] = metadata
+            logger.info(f"Installed marketplace skill: {metadata.name} at {skill_dir}")
+        return metadata
+
+    def remove_skill(self, name: str) -> bool:
+        """Remove a skill from the registry.
+
+        Does NOT delete files from disk.
+
+        Args:
+            name: Skill name
+
+        Returns:
+            True if removed, False if not found
+        """
+        with self._lock:
+            if name in self._skills:
+                del self._skills[name]
+                logger.info(f"Removed skill from registry: {name}")
+                return True
+            return False

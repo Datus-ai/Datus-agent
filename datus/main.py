@@ -433,6 +433,22 @@ def create_parser() -> argparse.ArgumentParser:
     )
     setup_base_parser_args(multi_benchmark_parser)
 
+    # skill command
+    skill_parser = subparsers.add_parser(
+        "skill",
+        help="Skill marketplace operations",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    skill_parser.add_argument(
+        "subcommand",
+        choices=["list", "search", "install", "publish", "info", "update", "remove"],
+        help="Skill subcommand",
+    )
+    skill_parser.add_argument("skill_args", nargs="*", help="Arguments for the skill subcommand")
+    skill_parser.add_argument("--owner", type=str, default="", help="Owner name for publish")
+    skill_parser.add_argument("--marketplace", type=str, default="", help="Marketplace URL override")
+
     # tutorial command
     subparsers.add_parser(
         "tutorial",
@@ -505,6 +521,12 @@ def main():
         configure_logging(args.debug, console_output=False)
         namespace_manager = NamespaceManager(args.config or "")
         return namespace_manager.run(args.command)
+
+    if args.action == "skill":
+        configure_logging(args.debug, console_output=False)
+        from datus.cli.skill_cli import run_skill_command
+
+        return run_skill_command(args)
 
     configure_logging(args.debug)
     setup_exception_handler()

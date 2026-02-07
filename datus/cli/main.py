@@ -126,6 +126,19 @@ class Application:
 
 def main():
     """Entry point for console scripts"""
+    import sys
+
+    # Intercept 'skill' subcommand and delegate to datus.main's skill handler
+    if len(sys.argv) > 1 and sys.argv[1] == "skill":
+        from datus.main import create_parser as create_main_parser
+
+        parser = create_main_parser()
+        args = parser.parse_args()
+        configure_logging(getattr(args, "debug", False), console_output=False)
+        from datus.cli.skill_cli import run_skill_command
+
+        sys.exit(run_skill_command(args))
+
     app = Application()
     app.run()
 

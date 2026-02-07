@@ -254,3 +254,112 @@ class SkillManager:
             return PermissionLevel.ALLOW
 
         return self.permission_manager.check_permission("skills", skill_name, node_name)
+
+    # --- Marketplace operations ---
+
+    def _get_marketplace_client(self):
+        """Lazy-initialize marketplace client."""
+        from datus.tools.skill_tools.marketplace_client import SkillMarketplaceClient
+
+        return SkillMarketplaceClient(base_url=self.config.marketplace_url)
+
+    def search_marketplace(self, query: str = "", tag: str = "") -> List[dict]:
+        """Search skills in the remote marketplace.
+
+        Args:
+            query: Search query
+            tag: Filter by tag
+
+        Returns:
+            List of skill info dicts from marketplace
+        """
+        try:
+            client = self._get_marketplace_client()
+            return client.search(query=query, tag=tag)
+        except Exception as e:
+            logger.error(f"Marketplace search failed: {e}")
+            return []
+
+    def install_from_marketplace(self, name: str, version: str = "latest") -> Tuple[bool, str]:
+        """Install a skill from the marketplace.
+
+        Downloads the bundle from Town and extracts it to the install directory.
+
+        Args:
+            name: Skill name
+            version: Version to install (default: "latest")
+
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            from pathlib import Path
+
+            client = self._get_marketplace_client()
+            install_dir = Path(self.config.install_dir).expanduser()
+            install_dir.mkdir(parents=True, exist_ok=True)
+
+            # Download and extract
+            dest = client.download_bundle(name, version, install_dir)
+
+            # Register in local registry
+            self.registry.install_skill(name, dest)
+
+            return True, f"Installed {name}@{version} to {dest}"
+        except Exception as e:
+            logger.error(f"Failed to install {name}: {e}")
+            return False, f"Installation failed: {e}"
+
+    def publish_to_marketplace(self, skill_dir: str, owner: str = "") -> Tuple[bool, str]:
+        """Publish a local skill to the marketplace.
+
+        Args:
+            skill_dir: Path to the skill directory, OR a skill name
+                       (resolved from registry if not a valid path)
+            owner: Optional owner name
+
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            from pathlib import Path
+
+            path = Path(skill_dir)
+            # If path doesn't exist or has no SKILL.md, try resolving as a skill name
+            if not (path.is_dir() and (path / "SKILL.md").exists()):
+                skill_meta = self.registry.get_skill(skill_dir)
+                if skill_meta and skill_meta.location and (skill_meta.location / "SKILL.md").exists():
+                    path = skill_meta.location
+                    logger.info(f"Resolved skill name '{skill_dir}' to {path}")
+
+            client = self._get_marketplace_client()
+            result = client.publish_skill(path, owner=owner)
+            name = result.get("name", "unknown")
+            version = result.get("latest_version", "?")
+            return True, f"Published {name}@{version} to marketplace"
+        except Exception as e:
+            logger.error(f"Failed to publish: {e}")
+            return False, f"Publish failed: {e}"
+
+    def sync_promoted_skills(self) -> List[str]:
+        """Auto-sync promoted skills from marketplace.
+
+        Downloads any promoted skills that aren't locally installed.
+
+        Returns:
+            List of newly synced skill names
+        """
+        synced = []
+        try:
+            client = self._get_marketplace_client()
+            promoted = client.list_skills(promoted=True)
+            for skill_info in promoted:
+                name = skill_info.get("name")
+                if name and not self.registry.skill_exists(name):
+                    ok, msg = self.install_from_marketplace(name)
+                    if ok:
+                        synced.append(name)
+                        logger.info(f"Auto-synced promoted skill: {name}")
+        except Exception as e:
+            logger.error(f"Failed to sync promoted skills: {e}")
+        return synced

@@ -168,6 +168,7 @@ class DatusCLI:
             ".namespace": self._cmd_switch_namespace,
             ".subagent": self.sub_agent_commands.cmd,
             ".mcp": self._cmd_mcp,
+            ".skill": self._cmd_skill,
             ".bootstrap-bi": self.bi_dashboard_commands.cmd,
             ".help": self._cmd_help,
             ".exit": self._cmd_exit,
@@ -451,6 +452,11 @@ class DatusCLI:
         from datus.cli.mcp_commands import MCPCommands
 
         MCPCommands(self).cmd_mcp(args)
+
+    def _cmd_skill(self, args):
+        from datus.cli.skill_commands import SkillCommands
+
+        SkillCommands(self).cmd_skill(args)
 
     def _smart_display_table(
         self,
@@ -955,6 +961,14 @@ class DatusCLI:
             ),
             ("       .mcp filter get <server>", "Get current tool filter configuration"),
             ("       .mcp filter remove <server>", "Remove tool filter configuration"),
+            (".skill", "Manage skills and marketplace"),
+            ("     .skill list", "List locally installed skills"),
+            ("     .skill search <query>", "Search skills in marketplace"),
+            ("     .skill install <name> [version]", "Install skill from marketplace"),
+            ("     .skill publish <path>", "Publish local skill to marketplace"),
+            ("     .skill info <name>", "Show skill details"),
+            ("     .skill update", "Update all marketplace skills to latest"),
+            ("     .skill remove <name>", "Remove a locally installed skill"),
         ]
         for cmd, desc in internal_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")

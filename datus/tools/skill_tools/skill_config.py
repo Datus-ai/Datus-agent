@@ -44,6 +44,12 @@ class SkillConfig(BaseModel):
     whitelist_from_compaction: bool = Field(
         default=True, description="Preserve skill responses during session compaction"
     )
+    # Marketplace settings
+    marketplace_url: str = Field(
+        default="http://localhost:9000", description="Town backend URL for skill marketplace"
+    )
+    auto_sync: bool = Field(default=False, description="Auto-sync promoted skills on startup")
+    install_dir: str = Field(default="~/.datus/skills", description="Directory for marketplace-installed skills")
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SkillConfig":
@@ -62,6 +68,9 @@ class SkillConfig(BaseModel):
             directories=data.get("directories", cls.model_fields["directories"].default_factory()),
             warn_duplicates=data.get("warn_duplicates", True),
             whitelist_from_compaction=data.get("whitelist_from_compaction", True),
+            marketplace_url=data.get("marketplace_url", "http://localhost:9000"),
+            auto_sync=data.get("auto_sync", False),
+            install_dir=data.get("install_dir", "~/.datus/skills"),
         )
 
 
@@ -120,6 +129,12 @@ class SkillMetadata(BaseModel):
     context: Optional[str] = Field(default=None, description="'fork' to run in isolated subagent")
     agent: Optional[str] = Field(default=None, description="Subagent type when context=fork")
 
+    # Marketplace metadata
+    license: Optional[str] = Field(default=None, description="License identifier (e.g. Apache-2.0)")
+    compatibility: Optional[Dict[str, Any]] = Field(default=None, description="Compatibility map")
+    source: Optional[str] = Field(default=None, description="'local' or 'marketplace'")
+    marketplace_version: Optional[str] = Field(default=None, description="Version from marketplace")
+
     # Content (lazy loaded)
     content: Optional[str] = Field(default=None, description="Full SKILL.md content (lazy loaded)")
 
@@ -159,6 +174,8 @@ class SkillMetadata(BaseModel):
             user_invocable=frontmatter.get("user_invocable", True),
             context=frontmatter.get("context"),
             agent=frontmatter.get("agent"),
+            license=frontmatter.get("license"),
+            compatibility=frontmatter.get("compatibility"),
         )
 
     def has_scripts(self) -> bool:
@@ -202,4 +219,8 @@ class SkillMetadata(BaseModel):
             "user_invocable": self.user_invocable,
             "context": self.context,
             "agent": self.agent,
+            "license": self.license,
+            "compatibility": self.compatibility,
+            "source": self.source,
+            "marketplace_version": self.marketplace_version,
         }
