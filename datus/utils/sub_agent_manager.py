@@ -131,6 +131,10 @@ class SubAgentManager:
         agents[config.system_prompt] = config.as_payload(self._namespace)
 
         self._configuration_manager.update_item("agentic_nodes", agents, delete_old_key=True)
+        # Keep in-memory agent_config in sync so that subsequent bootstrap
+        # can locate the sub-agent via storage_instance().
+        self._agent_config.agentic_nodes = agents
+
         prompt_path = self._write_prompt_template(config)
         result["prompt_path"] = prompt_path
 

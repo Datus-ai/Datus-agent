@@ -21,7 +21,7 @@ from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.reference_paths import normalize_reference_path
+from datus.utils.reference_paths import split_reference_path
 
 logger = get_logger(__name__)
 
@@ -509,11 +509,7 @@ class SubAgentBootstrapper:
         invalid_tokens = []
         missing = []
         for metric in metrics:
-            token = normalize_reference_path(metric)
-            if not token:
-                invalid_tokens.append(metric)
-                continue
-            parts = [p.strip() for p in token.split(".") if p.strip()]
+            parts = split_reference_path(metric)
             if not parts:
                 invalid_tokens.append(metric)
                 continue
@@ -597,11 +593,7 @@ class SubAgentBootstrapper:
         missing = []
         sql_rows = []
         for sql in historical_sql:
-            token = normalize_reference_path(sql)
-            if not token:
-                invalid_tokens.append(sql)
-                continue
-            parts = [p.strip() for p in token.split(".") if p.strip()]
+            parts = split_reference_path(sql)
             if not parts:
                 invalid_tokens.append(sql)
                 continue

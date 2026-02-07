@@ -41,6 +41,7 @@ from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
+from datus.utils.reference_paths import quote_path_segment
 from datus.utils.stream_output import StreamOutputManager
 from datus.utils.sub_agent_manager import SubAgentManager
 from datus.utils.traceable_utils import optional_traceable
@@ -65,7 +66,9 @@ def _parse_subject_path_for_metrics(tags: List[str]) -> Optional[str]:
         return None
     for tag in tags:
         if tag.startswith("subject_tree:"):
-            return ".".join(tag[13:].strip().split("/"))
+            parts = [p.strip() for p in tag[13:].strip().split("/") if p.strip()]
+            if parts:
+                return ".".join(parts)
     return None
 
 
@@ -685,12 +688,12 @@ class BiDashboardCommands:
             for item in result.get("processed_items", []):
                 subject_tree = item.get("subject_tree")
                 if subject_tree:
-                    parts = subject_tree.split("/")
-                    domain = parts[0].strip() if len(parts) > 0 else ""
-                    layer1 = parts[1].strip() if len(parts) > 1 else ""
-                    layer2 = parts[2].strip() if len(parts) > 2 else ""
-                    layers = f"{domain}.{layer1}.{layer2}.{item.get('name')}"
-                    subject_trees.add(layers)
+                    parts = [p.strip() for p in subject_tree.split("/") if p.strip()]
+                    name = (item.get("name") or "").strip()
+                    if name:
+                        parts.append(quote_path_segment(name))
+                    if parts:
+                        subject_trees.add(".".join(parts))
             ref_sqls.extend(subject_trees)
         return ref_sqls
 
@@ -826,7 +829,7 @@ class BiDashboardCommands:
                         name = meta.get("name")
                         subject_tree = _parse_subject_path_for_metrics(meta.get("locked_metadata", {}).get("tags", []))
                         if name and subject_tree:
-                            metrics.add(f"{subject_tree}.{name}")
+                            metrics.add(f"{subject_tree}.{quote_path_segment(name)}")
 
         return list(metrics)
 
