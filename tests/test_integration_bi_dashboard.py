@@ -3,6 +3,8 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 
+import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -12,10 +14,10 @@ from rich.console import Console
 
 from datus.cli.bi_dashboard import BiDashboardCommands, DashboardCliOptions
 from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config_loader import load_agent_config
 from datus.tools.bi_tools.base_adaptor import AuthParam
 from datus.tools.bi_tools.dashboard_assembler import ChartSelection, DashboardAssembler
 from datus.utils.loggings import configure_logging
-from tests.conftest import load_acceptance_config
 
 configure_logging(False, console_output=False)
 
@@ -87,9 +89,13 @@ def validate_chart_sql(chart_id: str, actual_sql: str, expected_sql: str) -> tup
 
 
 @pytest.fixture(scope="module")
-def agent_config() -> AgentConfig:
-    """Load agent config with superset namespace."""
-    config = load_acceptance_config(namespace="superset")
+def agent_config(tmp_path_factory) -> AgentConfig:
+    """Load agent config from a temp copy so the source file is never modified."""
+    src = Path(__file__).parent / "conf" / "agent.yml"
+    tmp_dir = tmp_path_factory.mktemp("bi_conf")
+    tmp_cfg = tmp_dir / "agent.yml"
+    shutil.copy2(src, tmp_cfg)
+    config = load_agent_config(config=str(tmp_cfg), namespace="superset", reload=True, force=True, yes=True)
     return config
 
 
@@ -98,7 +104,6 @@ def bi_commands(agent_config) -> BiDashboardCommands:
     """Create BiDashboardCommands for E2E tests."""
     console = Console(log_path=False, force_terminal=False)
     bi_commands = BiDashboardCommands(agent_config, console, force=True)
-    bi_commands._update_model = "overwrite"
     return bi_commands
 
 
@@ -151,15 +156,40 @@ class TestE2EIntegration:
         This test has ZERO mocks and tests the complete real workflow:
         1. Extract dashboard from Superset (REAL API)
         2. Extract charts and SQL (REAL API)
-        3. Generate reference SQL (REAL LLM CALL)
-        4. Generate semantic model (REAL LLM CALL)
-        5. Generate metrics (REAL LLM CALL)
-        6. Create sub-agent files (REAL FILE SYSTEM)
-        7. Verify all artifacts created
+        3. Assemble dashboard data (REAL)
+        4. Save sub-agent: gen metadata/reference SQL/semantic model/metrics + bootstrap (REAL LLM)
+        5. Verify 2 sub-agents created (main + attribution)
+        6. Verify bootstrapped data: metrics, reference_sql, semantic_model in sub-agent stores
+        7. Verify file artifacts (SQL, CSV, semantic model YAML)
 
         Cost: ~$0.05-0.20 per run
         Time: ~2-5 minutes
         """
+        # Step 0: Clean storage directories for a clean slate
+        storage_dir = agent_config.rag_storage_path()
+        for component_dirpath in [
+            "schema_metadata.lance",
+            "schema_value.lance",
+            "metrics.lance",
+            "semantic_model.lance",
+            "reference_sql.lance",
+        ]:
+            dirpath = os.path.join(storage_dir, component_dirpath)
+            if os.path.isdir(dirpath):
+                shutil.rmtree(dirpath)
+                print(f"✓ Cleaned {agent_config.current_namespace} storage: {dirpath}")
+            else:
+                print(f"  Storage does not exist (clean): {dirpath}")
+
+        from datus.utils.path_manager import DatusPathManager
+
+        path_manager = DatusPathManager(agent_config.home)
+
+        semantic_model_dir = path_manager.semantic_model_path(agent_config.current_namespace)
+        if semantic_model_dir.exists():
+            shutil.rmtree(semantic_model_dir)
+            print(f"✓ Cleaned semantic model: {semantic_model_dir}")
+
         # Collect results for final summary
         test_results = []
 
@@ -205,11 +235,8 @@ class TestE2EIntegration:
                 "error": None,
                 "dashboard_name": None,
                 "charts_processed": 0,
-                "reference_sqls": 0,
-                "metrics": 0,
+                "sub_agents": [],
                 "tables": 0,
-                "sql_files": 0,
-                "csv_files": 0,
             }
 
             try:
@@ -316,85 +343,95 @@ class TestE2EIntegration:
                 print(f"           Assembled {len(result.metric_sqls)} metric SQLs")
                 print(f"           Extracted {len(result.tables)} tables")
 
-                # Step 4: Generate reference SQL with REAL LLM
-                print("\n⏳ Step 4: Generating reference SQL (REAL LLM, may take 30-60s)...")
-                print(f"           Input: {len(result.reference_sqls)} reference SQL candidates")
+                # Step 4: Save sub-agent (complete flow: gen + save + bootstrap)
+                print(
+                    f"\n⏳ Step 4: Running complete sub-agent build "
+                    f"({len(result.reference_sqls)} ref SQLs, "
+                    f"{len(result.metric_sqls)} metric SQLs, "
+                    f"{len(result.tables)} tables)..."
+                )
 
-                ref_sqls = bi_commands._gen_reference_sqls(result.reference_sqls, platform, dashboard)
+                bi_commands._save_sub_agent(platform, dashboard, result)
 
-                print(f"           Output: {len(ref_sqls)} reference SQL entries")
-                if len(ref_sqls) == 0:
-                    print("           ⚠️  No reference SQL entries generated!")
-                    print("           Possible reasons:")
-                    print("           1. LLM call failed")
-                    print("           2. All SQLs already exist (incremental mode)")
-                    print("           3. Check console output above for errors")
+                print("✓ Step 4: Sub-agent build flow completed")
 
-                assert len(ref_sqls) > 0, "Should generate reference SQL entries"
-                print(f"✓ Step 4: Generated {len(ref_sqls)} reference SQL entries")
+                # Step 5: Verify 2 sub-agents created
+                sub_agent_name = bi_commands._build_sub_agent_name(platform, dashboard.name or "")
+                attr_name = f"{sub_agent_name}_attribution"
 
-                # Verify SQL file was created
+                assert (
+                    sub_agent_name in agent_config.agentic_nodes
+                ), f"Main sub-agent '{sub_agent_name}' not found in agentic_nodes"
+                assert (
+                    attr_name in agent_config.agentic_nodes
+                ), f"Attribution sub-agent '{attr_name}' not found in agentic_nodes"
+
+                attr_node = agent_config.agentic_nodes[attr_name]
+                assert attr_node.get("node_class") == "gen_report", (
+                    f"Attribution sub-agent should have node_class='gen_report', "
+                    f"got '{attr_node.get('node_class')}'"
+                )
+
+                print(f"✓ Step 5: Verified 2 sub-agents: '{sub_agent_name}' + '{attr_name}'")
+
+                # Step 6: Verify all 5 LanceDB tables in both sub-agent stores
+                import lancedb
+
+                required_tables = [
+                    "schema_metadata",
+                    "schema_value",
+                    "metrics",
+                    "semantic_model",
+                    "reference_sql",
+                ]
+
+                for name in [sub_agent_name, attr_name]:
+                    store_path = agent_config.sub_agent_storage_path(name)
+                    assert os.path.isdir(
+                        store_path
+                    ), f"Sub-agent '{name}' storage directory does not exist: {store_path}"
+                    db = lancedb.connect(store_path)
+                    actual_tables = db.table_names()
+                    print(f"           Sub-agent '{name}' tables: {actual_tables}")
+
+                    for tbl_name in required_tables:
+                        assert tbl_name in actual_tables, (
+                            f"Sub-agent '{name}' missing required table '{tbl_name}'. " f"Found: {actual_tables}"
+                        )
+                        row_count = db.open_table(tbl_name).count_rows()
+                        assert row_count > 0, f"Sub-agent '{name}' table '{tbl_name}' is empty (0 rows)"
+                        print(f"           ✓ '{name}'.{tbl_name}: {row_count} rows")
+
+                print("✓ Step 6: Verified all 5 tables with data for both sub-agents")
+
+                # Step 7: Verify file artifacts
                 from datus.utils.path_manager import get_path_manager
 
                 sql_dir = get_path_manager(agent_config.home).dashboard_path() / platform
                 sql_files = list(sql_dir.glob("*.sql"))
-                assert len(sql_files) > 0, "Should create SQL files"
-                print(f"           Created SQL file: {sql_files[0].name}")
-
-                # Step 5: Generate semantic model with REAL LLM
-                print("\n⏳ Step 5: Generating semantic model (REAL LLM, may take 30-60s)...")
-
-                semantic_result = bi_commands._gen_semantic_model(result.metric_sqls, platform, dashboard)
-
-                assert semantic_result is True, "Semantic model generation should succeed"
-                print("✓ Step 5: Generated semantic model")
-
-                # Step 6: Generate metrics with REAL LLM
-                print("\n⏳ Step 6: Generating metrics (REAL LLM, may take 30-60s)...")
-
-                metrics = bi_commands._gen_metrics(result.metric_sqls, platform, dashboard)
-
-                assert metrics is not None, "Should generate metrics"
-                if metrics and len(metrics) > 0:
-                    print(f"✓ Step 6: Generated {len(metrics)} metrics")
-                    for metric in metrics[:3]:  # Show first 3
-                        print(f"           - {metric}")
-                else:
-                    print("✓ Step 6: Metrics generation completed (0 metrics generated)")
-
-                # Step 7: Verify artifacts
-                print("\n✓ Step 7: Verifying all artifacts created")
-
-                # Check SQL files
                 assert len(sql_files) > 0, "SQL files should exist"
-                sql_content = sql_files[0].read_text()
-                assert len(sql_content) > 0, "SQL file should have content"
-                assert "SELECT" in sql_content.upper(), "SQL file should contain SQL"
-                print(f"           - SQL file: {sql_files[0].name} ({len(sql_content)} bytes)")
 
-                # Check CSV files (metrics input)
                 csv_files = list(sql_dir.glob("*.csv"))
-                if len(csv_files) > 0:
-                    csv_content = csv_files[0].read_text()
-                    assert "question,sql" in csv_content, "CSV should have header"
-                    print(f"           - CSV file: {csv_files[0].name} ({len(csv_content)} bytes)")
+                assert len(csv_files) > 0, "CSV files should exist"
 
-                # Check semantic model files
                 semantic_dir = get_path_manager(agent_config.home).semantic_model_path(agent_config.current_namespace)
+                semantic_files = []
                 if semantic_dir.exists():
-                    semantic_files = list(semantic_dir.glob("*.yml"))
-                    if len(semantic_files) > 0:
-                        print(f"           - Semantic files: {len(semantic_files)} files")
+                    semantic_files = list(semantic_dir.glob("*.yml")) + list(semantic_dir.glob("*.yaml"))
+                if not semantic_files:
+                    print("           ⚠ No semantic model YAML files found (LLM may not have generated them)")
 
-                # Update test result with success
+                print(
+                    f"✓ Step 7: Artifacts verified - "
+                    f"{len(sql_files)} SQL, {len(csv_files)} CSV, {len(semantic_files)} semantic model files"
+                )
+
+                # Update test result
                 test_result["status"] = "passed"
                 test_result["dashboard_name"] = dashboard.name
                 test_result["charts_processed"] = len(chart_selections)
-                test_result["reference_sqls"] = len(ref_sqls)
-                test_result["metrics"] = len(metrics) if metrics else 0
+                test_result["sub_agents"] = [sub_agent_name, attr_name]
                 test_result["tables"] = len(result.tables)
-                test_result["sql_files"] = len(sql_files)
-                test_result["csv_files"] = len(csv_files)
 
                 print(f"\n✅ {platform} dashboard test PASSED")
 
@@ -436,10 +473,8 @@ class TestE2EIntegration:
                 print(f"  Dashboard: {result['dashboard_name']}")
                 print(f"  URL: {result['dashboard_url']}")
                 print(f"  Charts processed: {result['charts_processed']}")
-                print(f"  Reference SQLs: {result['reference_sqls']}")
-                print(f"  Metrics: {result['metrics']}")
                 print(f"  Tables: {result['tables']}")
-                print(f"  Artifacts: {result['sql_files']} SQL + {result['csv_files']} CSV files")
+                print(f"  Sub-agents: {', '.join(result['sub_agents'])}")
 
         if failed_tests:
             print("\n" + "─" * 80)

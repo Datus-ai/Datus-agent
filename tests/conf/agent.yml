@@ -76,6 +76,9 @@ agent:
     output:
       check_result: true
   agentic_nodes:
+    gen_semantic_model:
+      max_turns: 40
+      system_prompt: gen_semantic_model
     chatbot:
       model: deepseek
       system_prompt: gen_sql

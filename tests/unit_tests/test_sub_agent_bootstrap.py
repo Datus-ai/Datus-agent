@@ -60,12 +60,12 @@ def test_scoped_context_lists_any_returns_false_when_empty():
 
 
 def test_metadata_condition_applies_defaults_and_wildcards(bootstrapper):
-    # Default database/schema applied
+    # Single-part token maps to table_name (rightmost field)
     condition = bootstrapper._metadata_condition_for_token("sales")
     clause = build_where(condition)
-    assert "database_name = 'sales'" in clause
+    assert "table_name = 'sales'" in clause
 
-    # Schema/table wildcards honored
+    # Two-part token: database_name.table_name (with wildcard)
     condition = bootstrapper._metadata_condition_for_token("sales.orders*")
     clause = build_where(condition)
     assert "database_name = 'sales'" in clause
