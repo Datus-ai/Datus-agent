@@ -34,11 +34,11 @@ class StorageCacheHolder[T: BaseEmbeddingStore]:
         self,
         storage_factory: Callable[[str, EmbeddingModel], T],
         agent_config: AgentConfig,
-        storage_name: str,
+        embedding_model_conf_name: str,
         check_scope_attr: str,
     ):
         self.storage_factory = storage_factory
-        self.storage_name = storage_name
+        self.embedding_model_conf_name = embedding_model_conf_name
         self._agent_config = agent_config
         self.check_scope_attr = check_scope_attr
 
@@ -55,9 +55,12 @@ class StorageCacheHolder[T: BaseEmbeddingStore]:
                     )
                 )
                 return self.storage_factory(
-                    self._agent_config.sub_agent_storage_path(sub_agent_name), get_embedding_model(self.storage_name)
+                    self._agent_config.sub_agent_storage_path(sub_agent_name),
+                    get_embedding_model(self.embedding_model_conf_name),
                 )
-        return _cached_storage(self.storage_factory, self._agent_config.rag_storage_path(), self.storage_name)
+        return _cached_storage(
+            self.storage_factory, self._agent_config.rag_storage_path(), self.embedding_model_conf_name
+        )
 
 
 class StorageCache:
