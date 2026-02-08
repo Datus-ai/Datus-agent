@@ -143,7 +143,16 @@ agent:
       model_name: all-MiniLM-L6-v2 #~100MB The lightest model
       dim_size: 384
     metric:
-      model_name: all-MiniLM-L6-v2 #~100MB The lightest model
+      model_name: all-MiniLM-L6-v2
+      dim_size: 384
+    semantic_model:
+      model_name: all-MiniLM-L6-v2
+      dim_size: 384
+    reference_sql:
+      model_name: all-MiniLM-L6-v2
+      dim_size: 384
+    ext_knowledge:
+      model_name: all-MiniLM-L6-v2
       dim_size: 384
 
   workflow:
