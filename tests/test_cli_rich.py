@@ -218,6 +218,80 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     assert stdout.count("Chat Session Info:") > 0, "Should have latest chat session info"
 
 
+@pytest.mark.nightly
+def test_chat_command_with_ext_knowledge(mock_args):
+    """
+    Tests the '/<chat>' command with ext_knowledge context.
+    Verifies that the query with 'consider all knowledge' triggers knowledge search
+    and generates SQL correctly.
+    """
+    import logging
+
+    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+
+    # bird california_schools q2
+    question = (
+        "Please list the zip code of all the charter schools "
+        "in Fresno County Office of Education. consider all knowledge"
+    )
+
+    with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
+        mock_prompt.side_effect = [
+            f"/{question}",
+            ".chat_info",
+            EOFError,
+        ]
+        with (
+            patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt,
+        ):
+            mock_internal_prompt.side_effect = ["n"]
+            cli = DatusCLI(args=mock_args)
+
+            import time
+
+            # Wait for agent to be ready to avoid flakiness
+            timeout = 60  # seconds
+            start_time = time.time()
+            while not cli.agent_ready:
+                if time.time() - start_time > timeout:
+                    pytest.fail("Agent initialization timed out.")
+                time.sleep(0.5)
+
+            cli.run()
+
+    # Use internal state for assertions instead of capsys,
+    # because Rich Live streaming display may not be fully captured by capsys.
+    actions = cli.actions.get_actions()
+    assert len(actions) > 0, "Should have action history from chat execution."
+
+    # Find the final chat_response action which contains execution_stats
+    chat_response = [a for a in actions if a.action_type == "chat_response"]
+    assert len(chat_response) == 1, "Should have exactly one chat_response action."
+
+    response_output = chat_response[0].output
+    assert response_output.get("success") is True, "Chat response should be successful."
+
+    # Check execution stats for tool usage
+    exec_stats = response_output.get("execution_stats", {})
+    tools_used = exec_stats.get("tools_used", [])
+    assert len(tools_used) > 0, "Should have used tools during execution."
+
+    # Verify ext_knowledge specific tools were called:
+    # 1. list_subject_tree - explores the knowledge hierarchy
+    assert "list_subject_tree" in tools_used, "Should call list_subject_tree to explore knowledge hierarchy."
+    # 2. get_knowledge - retrieves specific knowledge entries
+    assert "get_knowledge" in tools_used, "Should call get_knowledge to retrieve ext_knowledge entries."
+
+    # Check that SQL was generated
+    assert response_output.get("sql"), "Should have generated SQL in the response."
+
+    # Check that a chat node was created and has an active session
+    assert cli.chat_commands.current_node is not None, "Should have an active chat node."
+    session_info = cli.chat_commands.current_node.get_session_info()
+    assert session_info.get("session_id"), "Should have a valid session ID."
+    assert session_info.get("action_count", 0) > 0, "Session should have recorded actions."
+
+
 @pytest.mark.acceptance
 def test_chat_info(mock_args, capsys):
     """
