@@ -454,7 +454,7 @@ class TestE2EIntegration:
         # Print final summary after all test cases
         print("────────────────────────────────────────────────────────────────────────────────")
         print(" 📊 BI DASHBOARD INTEGRATION TEST SUMMARY")
-        print("-" * 80)
+        print("─" * 80)
 
         total_tests = len(test_results)
         passed_tests = [r for r in test_results if r["status"] == "passed"]
@@ -485,4 +485,4 @@ class TestE2EIntegration:
                 print(f"  URL: {result['dashboard_url']}")
                 print(f"  Error: {result['error']}")
 
-        print("\n" + "-" * 80)
+        print("\n" + "─" * 80)
