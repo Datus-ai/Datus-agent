@@ -60,7 +60,7 @@ jobs:
         run: |
           LOG_FILE="test_output_bi_$(date +%Y%m%d_%H%M%S).log"
           echo "log_file=$LOG_FILE" >> $GITHUB_OUTPUT
-          python -m pytest tests/test_integration_bi_dashboard.py --tb=short --verbose | tee "$LOG_FILE"
+          python -m pytest tests/integration/test_integration_bi_dashboard.py --tb=short --verbose | tee "$LOG_FILE"
           echo "test_exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
 
       - name: Upload test results

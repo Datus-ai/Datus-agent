@@ -16,9 +16,68 @@ from datus.tools.bi_tools.base_adaptor import AuthParam
 from datus.tools.bi_tools.dashboard_assembler import ChartSelection, DashboardAssembler
 from datus.utils.loggings import configure_logging
 from tests.conftest import load_acceptance_config
-from tests.test_integration_bi_dashboard import validate_chart_sql
 
 configure_logging(False, console_output=False)
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+
+def normalize_sql(sql: str) -> str:
+    """
+    Normalize SQL for comparison by:
+    - Converting to lowercase
+    - Removing extra whitespace
+    - Removing trailing semicolons
+    - Normalizing line breaks
+    - Replacing dynamic timestamps with placeholders
+    """
+    import re
+
+    if not sql:
+        return ""
+
+    # Convert to lowercase
+    normalized = sql.lower().strip()
+
+    # Replace multiple whitespace with single space
+    normalized = re.sub(r"\s+", " ", normalized)
+
+    # Remove trailing semicolon
+    normalized = normalized.rstrip(";").strip()
+
+    # Replace dynamic timestamps in TO_TIMESTAMP functions with placeholder
+    # Pattern matches: to_timestamp('YYYY-MM-DD HH:MI:SS.FFFFFF', 'format')
+    # The timestamp value changes on each run, so we normalize it
+    normalized = re.sub(
+        r"to_timestamp\s*\(\s*'[\d\-:\s.]+'",
+        "to_timestamp('<TIMESTAMP>'",
+        normalized,
+    )
+
+    return normalized
+
+
+def validate_chart_sql(chart_id: str, actual_sql: str, expected_sql: str) -> tuple[bool, str]:
+    """
+    Validate that actual SQL matches expected SQL.
+
+    Returns:
+        (is_valid, error_message)
+    """
+    normalized_actual = normalize_sql(actual_sql)
+    normalized_expected = normalize_sql(expected_sql)
+
+    if normalized_actual == normalized_expected:
+        return True, ""
+
+    # Generate detailed error message
+    error_msg = f"\n ❌ SQL mismatch for chart {chart_id}:\n"
+    error_msg += f"Expected (normalized):\n{normalized_expected}\n\n"
+    error_msg += f"Actual (normalized):\n{normalized_actual}\n"
+
+    return False, error_msg
 
 
 @pytest.fixture(scope="module")
