@@ -33,3 +33,4 @@ before_reflection_*.yaml
 /dist
 *.egg-info
 .claude
+/.omc
