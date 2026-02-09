@@ -69,6 +69,9 @@ class StreamOutputManager:
         # Store complete LLM output for markdown rendering (bounded to prevent memory growth)
         self.full_output: deque[str] = deque(maxlen=500)
 
+        # Store extracted summary outputs separately for reliable rendering
+        self.summary_outputs: list[str] = []
+
     def _create_progress(self, total_items: int) -> Progress:
         """
         Create progress bar based on total items count.
@@ -265,27 +268,42 @@ class StreamOutputManager:
         """
         self.add_message(f"✓ {message}", style="green")
 
+    def add_summary_content(self, content: str):
+        """
+        Add content for summary rendering only (not displayed in scrolling window).
+
+        Use this to store structured output summaries that should appear in the
+        final markdown summary panel but not in the real-time scrolling display.
+
+        Args:
+            content: Summary text to display in the final summary panel
+        """
+        self.summary_outputs.append(content)
+
     def render_markdown_summary(self, title: str = "Summary", last_n: Optional[int] = None):
         """
         Render complete markdown output after task completion.
 
-        This method extracts markdown content from the stored LLM output
-        and displays it in a formatted panel.
+        Uses directly stored summary outputs if available (from add_summary_content),
+        otherwise falls back to extracting from full LLM output.
 
         Args:
             title: Title for the summary panel
             last_n: If specified, only show the last N markdown outputs (useful for batch processing)
         """
-        if not self.full_output:
+        # Prefer explicitly stored summary outputs
+        if self.summary_outputs:
+            markdown_outputs = list(self.summary_outputs)
+        elif self.full_output:
+            # Fallback: extract from full LLM output
+            full_text = "\n".join(self.full_output)
+            markdown_outputs = self._extract_all_markdown_outputs(full_text)
+        else:
             return
 
-        # Combine all output and extract markdown content
-        full_text = "\n".join(self.full_output)
-        markdown_outputs = self._extract_all_markdown_outputs(full_text)
-
         if not markdown_outputs:
-            # Clear full_output after rendering
             self.full_output.clear()
+            self.summary_outputs.clear()
             return
 
         # If last_n specified, only show the last N outputs
@@ -299,8 +317,9 @@ class StreamOutputManager:
             md = Markdown(markdown_content)
             self.console.print(Panel(md, title=f"📋 {title}", border_style="green"))
 
-        # Clear full_output after rendering
+        # Clear after rendering
         self.full_output.clear()
+        self.summary_outputs.clear()
 
     def _extract_all_markdown_outputs(self, text: str) -> list[str]:
         """
@@ -330,10 +349,7 @@ class StreamOutputManager:
             except json.JSONDecodeError:
                 continue
 
-        # If no JSON outputs found, return the original text as a single item
-        if not outputs and text.strip():
-            return [text]
-
+        # If no JSON outputs found, return empty list (don't dump raw text as summary)
         return outputs
 
     def _render(self):

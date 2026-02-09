@@ -123,6 +123,13 @@ def init_metrics(
                 messages = payload.get("messages")
                 if messages:
                     output_mgr.add_llm_output(str(messages))
+                # Capture summary from the final action (SemanticNodeResult with success + response)
+                output = payload.get("output")
+                if output and isinstance(output, dict) and output.get("success") and output.get("response"):
+                    response = output["response"]
+                    if isinstance(response, str) and response.strip():
+                        output_mgr.summary_outputs.clear()
+                        output_mgr.add_summary_content(response)
                 return
 
             if stage == BatchStage.TASK_COMPLETED:
@@ -226,6 +233,13 @@ def init_semantic_model(
                 messages = payload.get("messages")
                 if messages:
                     output_mgr.add_llm_output(str(messages))
+                # Capture summary from the final action (SemanticNodeResult with success + response)
+                output = payload.get("output")
+                if output and isinstance(output, dict) and output.get("success") and output.get("response"):
+                    response = output["response"]
+                    if isinstance(response, str) and response.strip():
+                        output_mgr.summary_outputs.clear()
+                        output_mgr.add_summary_content(response)
                 return
 
             if stage == BatchStage.TASK_COMPLETED:

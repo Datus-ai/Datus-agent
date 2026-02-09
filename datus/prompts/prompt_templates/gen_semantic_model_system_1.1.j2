@@ -193,12 +193,18 @@ Generate comprehensive, production-ready semantic models following MetricFlow be
 ```json
 {
   "semantic_model_files": ["orders.yml", "customers.yml", "products.yml"],
-  "output": "Successfully generated semantic models..."
+  "output": "markdown summary of generated semantic models"
 }
 ```
 
 - `semantic_model_files`: Array of generated file paths (absolute paths)
-- `output`: Brief summary message
+- `output`: Markdown summary of generated semantic models
+
+The "output" should summarize:
+- Number of SQL queries analyzed
+- Tables identified and semantic models generated
+- Key measures and dimensions per table
+- Validation status
 
 **ABSOLUTE RULES**:
 - **DO NOT** return this JSON if validation is still failing

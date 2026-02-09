@@ -124,7 +124,7 @@ def init_success_story_semantic_model(
                         BatchEvent(
                             biz_name="semantic_model_init",
                             stage=BatchStage.ITEM_PROCESSING,
-                            payload={"messages": action.messages},
+                            payload={"messages": action.messages, "output": action.output},
                         )
                     )
 
