@@ -1261,7 +1261,9 @@ HTTP Client Usage:
 
     args = parser.parse_args()
 
-    configure_logging(debug=args.debug)
+    # For stdio transport, disable console logging to avoid polluting the
+    # JSONRPC channel (stdout must contain only JSONRPC messages).
+    configure_logging(debug=args.debug, console_output=(args.transport != "stdio"))
 
     if args.dynamic:
         # Dynamic mode: run multi-namespace server
