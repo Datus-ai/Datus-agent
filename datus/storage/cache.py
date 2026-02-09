@@ -81,7 +81,9 @@ class StorageCache:
         self._metric_holder = StorageCacheHolder(MetricStorage, agent_config, "metric", "metrics")
         self._semantic_holder = StorageCacheHolder(SemanticModelStorage, agent_config, "semantic_model", "tables")
         self._reference_sql_holder = StorageCacheHolder(ReferenceSqlStorage, agent_config, "reference_sql", "sqls")
-        self._ext_knowledge_holder = StorageCacheHolder(ExtKnowledgeStore, agent_config, "ext_knowledge", "ext_knowledge")
+        self._ext_knowledge_holder = StorageCacheHolder(
+            ExtKnowledgeStore, agent_config, "ext_knowledge", "ext_knowledge"
+        )
         self._subject_tree_store = None
 
     def schema_storage(self, sub_agent_name: Optional[str] = None) -> SchemaStorage:
