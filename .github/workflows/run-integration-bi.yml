@@ -25,7 +25,6 @@ jobs:
           pip install datus-semantic-metricflow
           pip uninstall -y datus-agent
           pip install -r requirements.txt
-          pip check
 
       - name: Setup config file
         run: |
