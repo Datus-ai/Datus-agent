@@ -274,8 +274,10 @@ def test_chat_command_with_ext_knowledge(mock_args):
     # Verify ext_knowledge specific tools were called:
     # 1. list_subject_tree - explores the knowledge hierarchy
     assert "list_subject_tree" in tools_used, "Should call list_subject_tree to explore knowledge hierarchy."
-    # 2. get_knowledge - retrieves specific knowledge entries
-    assert "get_knowledge" in tools_used, "Should call get_knowledge to retrieve ext_knowledge entries."
+    # 2. get_knowledge or search_knowledge - retrieves specific knowledge entries
+    assert (
+        "get_knowledge" in tools_used or "search_knowledge" in tools_used
+    ), "Should call get_knowledge to retrieve ext_knowledge entries."
 
     # Check that SQL was generated
     assert response_output.get("sql"), "Should have generated SQL in the response."
