@@ -225,9 +225,6 @@ def test_chat_command_with_ext_knowledge(mock_args):
     Verifies that the query with 'consider all knowledge' triggers knowledge search
     and generates SQL correctly.
     """
-    import logging
-
-    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
     # bird california_schools q2
     question = (
