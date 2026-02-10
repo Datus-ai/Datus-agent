@@ -8,7 +8,6 @@ HTTP client for Town Skills Marketplace.
 Talks to the Town Backend's skills API to search, download, and publish skills.
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,7 +15,6 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from datus.tools.skill_tools.skill_bundle import (
-    calculate_sha256,
     create_bundle,
     extract_bundle_from_bytes,
 )
@@ -131,9 +129,9 @@ class SkillMarketplaceClient:
 
         # Parse frontmatter
         content = skill_md_path.read_text(encoding="utf-8")
-        from datus.tools.skill_tools.skill_registry import FRONTMATTER_PATTERN
-
         import yaml
+
+        from datus.tools.skill_tools.skill_registry import FRONTMATTER_PATTERN
 
         match = FRONTMATTER_PATTERN.match(content)
         if not match:

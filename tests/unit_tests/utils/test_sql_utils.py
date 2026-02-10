@@ -178,9 +178,7 @@ def test_parse_sqlserver():
 
 
 def test_json_utils():
-    print(
-        llm_result2json(
-            """```json
+    print(llm_result2json("""```json
 [
   {
     "table": "NOAA_HISTORIC_SEVERE_STORMS.HAIL_REPORTS",
@@ -391,9 +389,7 @@ def test_json_utils():
     "reason": "not relevant to hail storm events"
   }]
   ```
-"""
-        )
-    )
+"""))
 
 
 def parse_and_print(select_sql, except_tables, dialect=DBType.SQLITE):

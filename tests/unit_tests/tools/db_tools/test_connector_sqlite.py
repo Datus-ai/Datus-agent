@@ -146,27 +146,19 @@ def test_input_validation(sqlite_connector):
 def test_get_schema(sqlite_connector):
     """Test schema retrieval"""
     # Create test tables
-    sqlite_connector.execute(
-        {
-            "sql_query": """
+    sqlite_connector.execute({"sql_query": """
         CREATE TABLE test_table1 (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
             value INTEGER
         )
-        """
-        }
-    )
-    sqlite_connector.execute(
-        {
-            "sql_query": """
+        """})
+    sqlite_connector.execute({"sql_query": """
         CREATE TABLE test_table2 (
             id INTEGER PRIMARY KEY,
             description TEXT
         )
-        """
-        }
-    )
+        """})
 
     schema_list = sqlite_connector.get_tables_with_ddl()
     log.debug("schema_list", schema_list=schema_list)

@@ -549,7 +549,7 @@ class DBFuncTool:
         self,
         query_text: str,
         catalog: str = "",
-        database_name: str = "",
+        database: str = "",
         schema_name: str = "",
         top_n: int = 5,
         simple_sample_data: bool = True,
@@ -575,7 +575,7 @@ class DBFuncTool:
             query_text: Description of the table you want (e.g. "daily active users per country").
             catalog: Catalog filter. Only use for databases that support catalogs (StarRocks, Databricks).
                 Leave empty for PostgreSQL, MySQL, Snowflake, SQLite, DuckDB.
-            database_name: Database filter. Use for PostgreSQL, MySQL, Snowflake, StarRocks, DuckDB.
+            database: Database filter. Use for PostgreSQL, MySQL, Snowflake, StarRocks, DuckDB.
                 Leave empty for SQLite (uses file path instead).
             schema_name: Schema filter. Use for PostgreSQL, Snowflake, DuckDB (e.g., "public").
                 Leave empty for MySQL (database = schema), StarRocks, SQLite.
@@ -583,11 +583,11 @@ class DBFuncTool:
             simple_sample_data: If True, sample rows omit catalog/database/schema fields for brevity.
 
         Database-specific parameter usage:
-            - PostgreSQL: database_name + schema_name (e.g., database_name="mydb", schema_name="public")
-            - MySQL: database_name only (schema = database)
-            - Snowflake: database_name + schema_name
-            - StarRocks: catalog_name + database_name
-            - SQLite/DuckDB: database_name only or leave all empty
+            - PostgreSQL: database + schema_name (e.g., database="mydb", schema_name="public")
+            - MySQL: database only (schema = database)
+            - Snowflake: database + schema_name
+            - StarRocks: catalog + database
+            - SQLite/DuckDB: database only or leave all empty
 
         Returns:
             FuncToolResult where:
@@ -602,7 +602,7 @@ class DBFuncTool:
             metadata, sample_values = self.schema_rag.search_similar(
                 query_text,
                 catalog_name=catalog,
-                database_name=self._reset_database_for_rag(database_name),
+                database_name=self._reset_database_for_rag(database),
                 schema_name=schema_name,
                 table_type="full",
                 top_n=top_n,

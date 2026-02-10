@@ -45,9 +45,7 @@ class SkillConfig(BaseModel):
         default=True, description="Preserve skill responses during session compaction"
     )
     # Marketplace settings
-    marketplace_url: str = Field(
-        default="http://localhost:9000", description="Town backend URL for skill marketplace"
-    )
+    marketplace_url: str = Field(default="http://localhost:9000", description="Town backend URL for skill marketplace")
     auto_sync: bool = Field(default=False, description="Auto-sync promoted skills on startup")
     install_dir: str = Field(default="~/.datus/skills", description="Directory for marketplace-installed skills")
 

@@ -31,8 +31,7 @@ def simple_skill(temp_skills_dir):
     skill_dir.mkdir()
 
     skill_md = skill_dir / "SKILL.md"
-    skill_md.write_text(
-        """---
+    skill_md.write_text("""---
 name: simple-skill
 description: A simple test skill
 tags:
@@ -48,8 +47,7 @@ This is a simple skill for testing.
 ## Usage
 
 Just load and use it.
-"""
-    )
+""")
     return skill_dir
 
 
@@ -60,8 +58,7 @@ def skill_with_scripts(temp_skills_dir):
     skill_dir.mkdir()
 
     skill_md = skill_dir / "SKILL.md"
-    skill_md.write_text(
-        """---
+    skill_md.write_text("""---
 name: script-skill
 description: A skill with scripts
 tags:
@@ -75,8 +72,7 @@ allowed_commands:
 # Script Skill
 
 This skill includes executable scripts.
-"""
-    )
+""")
 
     # Create scripts directory
     scripts_dir = skill_dir / "scripts"
@@ -93,8 +89,7 @@ def skill_disabled_model(temp_skills_dir):
     skill_dir.mkdir()
 
     skill_md = skill_dir / "SKILL.md"
-    skill_md.write_text(
-        """---
+    skill_md.write_text("""---
 name: user-only-skill
 description: A skill that can only be invoked by user
 disable_model_invocation: true
@@ -103,8 +98,7 @@ disable_model_invocation: true
 # User-Only Skill
 
 This skill can only be invoked by user commands.
-"""
-    )
+""")
     return skill_dir
 
 
@@ -237,15 +231,13 @@ class TestSkillRegistryRefresh:
         # Add a new skill
         new_skill_dir = temp_skills_dir / "new-skill"
         new_skill_dir.mkdir()
-        (new_skill_dir / "SKILL.md").write_text(
-            """---
+        (new_skill_dir / "SKILL.md").write_text("""---
 name: new-skill
 description: A newly added skill
 ---
 
 # New Skill
-"""
-        )
+""")
 
         registry.refresh()
         assert registry.get_skill_count() == 2
@@ -259,13 +251,11 @@ class TestSkillRegistryEdgeCases:
         """Test handling skill without YAML frontmatter."""
         skill_dir = temp_skills_dir / "no-frontmatter"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            """
+        (skill_dir / "SKILL.md").write_text("""
 # No Frontmatter Skill
 
 This skill has no YAML frontmatter.
-"""
-        )
+""")
 
         config = SkillConfig(directories=[str(temp_skills_dir)])
         registry = SkillRegistry(config=config)
@@ -278,15 +268,13 @@ This skill has no YAML frontmatter.
         """Test handling skill with invalid YAML frontmatter."""
         skill_dir = temp_skills_dir / "invalid-yaml"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            """---
+        (skill_dir / "SKILL.md").write_text("""---
 name: invalid-yaml
 description: [invalid yaml here
 ---
 
 # Invalid YAML Skill
-"""
-        )
+""")
 
         config = SkillConfig(directories=[str(temp_skills_dir)])
         registry = SkillRegistry(config=config)
@@ -299,16 +287,14 @@ description: [invalid yaml here
         """Test handling skill with missing required fields."""
         skill_dir = temp_skills_dir / "missing-fields"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            """---
+        (skill_dir / "SKILL.md").write_text("""---
 name: missing-fields
 ---
 
 # Missing Fields Skill
 
 No description field.
-"""
-        )
+""")
 
         config = SkillConfig(directories=[str(temp_skills_dir)])
         registry = SkillRegistry(config=config)
@@ -323,25 +309,21 @@ No description field.
         # Create two directories with same skill name
         dir1 = temp_skills_dir / "dir1" / "dup-skill"
         dir1.mkdir(parents=True)
-        (dir1 / "SKILL.md").write_text(
-            """---
+        (dir1 / "SKILL.md").write_text("""---
 name: dup-skill
 description: First duplicate
 ---
 # Dup 1
-"""
-        )
+""")
 
         dir2 = temp_skills_dir / "dir2" / "dup-skill"
         dir2.mkdir(parents=True)
-        (dir2 / "SKILL.md").write_text(
-            """---
+        (dir2 / "SKILL.md").write_text("""---
 name: dup-skill
 description: Second duplicate
 ---
 # Dup 2
-"""
-        )
+""")
 
         config = SkillConfig(
             directories=[str(temp_skills_dir / "dir1"), str(temp_skills_dir / "dir2")],

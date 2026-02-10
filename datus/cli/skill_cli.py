@@ -6,9 +6,6 @@
 Non-REPL skill CLI handler for `datus skill <subcommand>` usage.
 """
 
-import json
-from pathlib import Path
-
 from rich.console import Console
 from rich.table import Table
 
@@ -148,7 +145,7 @@ def _cmd_update(manager: SkillManager):
         console.print(f"[dim]Checking {s.name}...[/]")
         ok, msg = manager.install_from_marketplace(s.name)
         if ok:
-            console.print(f"  [green]Updated[/]")
+            console.print("  [green]Updated[/]")
 
 
 def _cmd_remove(manager: SkillManager, name: str):

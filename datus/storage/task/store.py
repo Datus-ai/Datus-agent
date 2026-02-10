@@ -39,8 +39,7 @@ class TaskStore:
                 cursor = conn.cursor()
 
                 # Create unified tasks table with user feedback
-                cursor.execute(
-                    """
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS tasks (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         task_id TEXT NOT NULL,
@@ -53,15 +52,12 @@ class TaskStore:
                         updated_at TEXT NOT NULL,
                         UNIQUE(task_id)
                     )
-                """
-                )
+                """)
 
                 # Create index for faster lookups
-                cursor.execute(
-                    """
+                cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_tasks_task_id ON tasks(task_id)
-                """
-                )
+                """)
 
                 conn.commit()
                 logger.debug(f"Tasks table ensured in {self.db_file}")
@@ -197,14 +193,12 @@ class TaskStore:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT task_id, task_query, sql_query, sql_result, status, user_feedback, created_at, updated_at
                     FROM tasks
                     WHERE user_feedback != ''
                     ORDER BY updated_at DESC
-                """
-                )
+                """)
 
                 rows = cursor.fetchall()
                 return [

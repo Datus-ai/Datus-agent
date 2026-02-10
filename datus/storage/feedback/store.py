@@ -37,8 +37,7 @@ class FeedbackStore:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    """
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS feedback (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         task_id TEXT NOT NULL,
@@ -46,15 +45,12 @@ class FeedbackStore:
                         created_at TEXT NOT NULL,
                         UNIQUE(task_id)
                     )
-                """
-                )
+                """)
 
                 # Create index for faster task_id lookups
-                cursor.execute(
-                    """
+                cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_task_id ON feedback(task_id)
-                """
-                )
+                """)
 
                 conn.commit()
                 logger.debug(f"Feedback table ensured in {self.db_file}")
@@ -156,13 +152,11 @@ class FeedbackStore:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT task_id, status, created_at
                     FROM feedback
                     ORDER BY created_at DESC
-                """
-                )
+                """)
 
                 rows = cursor.fetchall()
                 return [{"task_id": row[0], "status": row[1], "recorded_at": row[2]} for row in rows]

@@ -21,20 +21,17 @@ class ExtendedSQLiteSession(SQLiteSession):
     def _init_db_for_connection(self, conn: sqlite3.Connection) -> None:
         """Initialize the database schema with total_tokens column."""
         # Create sessions table with total_tokens column
-        conn.execute(
-            f"""
+        conn.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.sessions_table} (
                 session_id TEXT PRIMARY KEY,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 total_tokens INTEGER DEFAULT 0
             )
-        """
-        )
+        """)
 
         # Create messages table (unchanged from parent)
-        conn.execute(
-            f"""
+        conn.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.messages_table} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
@@ -43,16 +40,13 @@ class ExtendedSQLiteSession(SQLiteSession):
                 FOREIGN KEY (session_id) REFERENCES {self.sessions_table} (session_id)
                     ON DELETE CASCADE
             )
-        """
-        )
+        """)
 
         # Create index (unchanged from parent)
-        conn.execute(
-            f"""
+        conn.execute(f"""
             CREATE INDEX IF NOT EXISTS idx_{self.messages_table}_session_id
             ON {self.messages_table} (session_id, created_at)
-        """
-        )
+        """)
 
         conn.commit()
 

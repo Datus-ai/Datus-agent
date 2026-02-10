@@ -8,7 +8,6 @@ Follows the same pattern as MCPCommands.
 """
 
 import shutil
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.table import Table
@@ -195,7 +194,7 @@ class SkillCommands:
             if local_skill.license:
                 self.console.print(f"  License: {local_skill.license}")
         else:
-            self.console.print(f"[dim]Not installed locally. Checking marketplace...[/]")
+            self.console.print("[dim]Not installed locally. Checking marketplace...[/]")
 
         # Remote info
         try:
@@ -238,7 +237,7 @@ class SkillCommands:
                     else:
                         self.console.print(f"  [red]Failed: {msg}[/]")
                 else:
-                    self.console.print(f"  [dim]Already up to date[/]")
+                    self.console.print("  [dim]Already up to date[/]")
             except Exception as e:
                 self.console.print(f"  [red]Error checking {skill.name}: {e}[/]")
 

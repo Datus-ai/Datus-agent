@@ -35,8 +35,7 @@ def temp_skills_dir(tmp_path):
     ]:
         skill_dir = skills_dir / skill_name
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            f"""---
+        (skill_dir / "SKILL.md").write_text(f"""---
 name: {skill_name}
 description: {desc}
 tags: {tags}
@@ -45,8 +44,7 @@ tags: {tags}
 # {skill_name.replace('-', ' ').title()}
 
 {desc}
-"""
-        )
+""")
 
     return skills_dir
 
@@ -341,14 +339,12 @@ class TestSkillManagerRefresh:
         # Add a new skill
         new_skill_dir = temp_skills_dir / "new-skill"
         new_skill_dir.mkdir()
-        (new_skill_dir / "SKILL.md").write_text(
-            """---
+        (new_skill_dir / "SKILL.md").write_text("""---
 name: new-skill
 description: A new skill
 ---
 # New Skill
-"""
-        )
+""")
 
         manager.refresh()
         assert manager.get_skill_count() == initial_count + 1

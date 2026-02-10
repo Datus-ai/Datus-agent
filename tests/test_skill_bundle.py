@@ -4,8 +4,6 @@
 """Tests for skill bundle utilities."""
 
 import tarfile
-import tempfile
-from pathlib import Path
 
 import pytest
 

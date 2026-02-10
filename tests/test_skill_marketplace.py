@@ -3,14 +3,12 @@
 
 """Tests for skill marketplace client and CLI commands."""
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from datus.tools.skill_tools.marketplace_client import SkillMarketplaceClient
-
 
 SKILL_MD = """---
 name: test-skill
@@ -170,11 +168,13 @@ class TestSkillConfigMarketplace:
     def test_from_dict_marketplace(self):
         from datus.tools.skill_tools.skill_config import SkillConfig
 
-        config = SkillConfig.from_dict({
-            "marketplace_url": "http://custom:8080",
-            "auto_sync": True,
-            "install_dir": "/custom/path",
-        })
+        config = SkillConfig.from_dict(
+            {
+                "marketplace_url": "http://custom:8080",
+                "auto_sync": True,
+                "install_dir": "/custom/path",
+            }
+        )
         assert config.marketplace_url == "http://custom:8080"
         assert config.auto_sync is True
         assert config.install_dir == "/custom/path"
