@@ -241,9 +241,7 @@ def test_chat_command_with_ext_knowledge(mock_args):
             ".chat_info",
             EOFError,
         ]
-        with (
-            patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt,
-        ):
+        with (patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt,):
             mock_internal_prompt.side_effect = ["n"]
             cli = DatusCLI(args=mock_args)
 
