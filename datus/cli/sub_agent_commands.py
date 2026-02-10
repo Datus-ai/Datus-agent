@@ -49,6 +49,9 @@ class SubAgentCommands:
                     self.cli_instance.available_subagents.update(
                         name for name in self.cli_instance.agent_config.agentic_nodes.keys() if name != "chat"
                     )
+            # Refresh the SubagentCompleter so autocomplete reflects the change
+            if hasattr(self.cli_instance, "subagent_completer"):
+                self.cli_instance.subagent_completer.refresh()
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to refresh in-memory agent config: %s", exc)
 
@@ -299,6 +302,7 @@ class SubAgentCommands:
             )
             return
         self.cli_instance.console.print(f"- Removed agent '[bold green]{agent_name}[/]' from configuration.")
+        self._refresh_agent_config()
 
     def _do_update_agent(
         self, data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None, original_name: Optional[str] = None

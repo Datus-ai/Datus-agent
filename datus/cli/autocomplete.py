@@ -981,15 +981,22 @@ class SubagentCompleter(Completer):
     def __init__(self, agent_config: AgentConfig):
         """Initialize with agent configuration."""
         self.agent_config = agent_config
+        self._available_subagent = []
+        self.refresh()
+
+    def refresh(self):
         self._available_subagents = self._load_subagents()
 
     def _load_subagents(self) -> List[str]:
         """Load available subagents from configuration and include built-in subagents."""
         subagents = list(SYS_SUB_AGENTS)
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
-            for name in self.agent_config.agentic_nodes.keys():
+            for name, sub_config in self.agent_config.agentic_nodes.items():
                 if name != "chat" and name not in SYS_SUB_AGENTS:  # Exclude default chat and avoid duplicates
-                    subagents.append(name)
+                    sub_namespace = sub_config.get("scoped_context", {}).get("namespace")
+                    # Can only access sub-agent under the current namespace
+                    if not sub_namespace or sub_namespace == self.agent_config.current_namespace:
+                        subagents.append(name)
         return subagents
 
     def get_completions(self, document: Document, complete_event=None) -> Iterable[Completion]:

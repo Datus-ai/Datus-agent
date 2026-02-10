@@ -298,14 +298,14 @@ class DatusCLI:
 
         sql_completer = SQLCompleter()
         self.at_completer = AtReferenceCompleter(self.agent_config)  # Router completer
-        subagent_completer = SubagentCompleter(self.agent_config)  # Subagent completer
+        self.subagent_completer = SubagentCompleter(self.agent_config)  # Subagent completer
 
         # Use merge_completers to combine completers
         from prompt_toolkit.completion import merge_completers
 
         return merge_completers(
             [
-                subagent_completer,  # Subagent completer (highest priority)
+                self.subagent_completer,  # Subagent completer (highest priority)
                 self.at_completer,  # @ reference completer
                 sql_completer,  # SQL keyword completer (lowest priority)
             ]
