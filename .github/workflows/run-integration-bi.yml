@@ -21,9 +21,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
           pip install datus-postgresql
           pip install datus-semantic-metricflow
+          pip install -r requirements.txt
+          pip check
 
       - name: Setup config file
         run: |
