@@ -654,11 +654,11 @@ class TestSearchToolIntegration:
         tool = SearchTool(agent_config=test_config)
 
         # First get nav to find a title
-        nav_result = tool.list_document_nav(platform="test_search")
-        assert nav_result.success
+        _nav_result = tool.list_document_nav(platform="test_search")
+        assert _nav_result.success
 
         # Find a leaf node (document title)
-        title = _find_nav_leaf(nav_result.nav_tree)
+        title = _find_nav_leaf(_nav_result.nav_tree)
         assert title, "Should find at least one document title"
 
         # Get document by title
@@ -1147,21 +1147,21 @@ def _find_nav_leaf(nodes):
 def _run_e2e_workflow(db_path, platform, cfg, search_keywords):
     """Run the complete E2E workflow: init -> list_nav -> search -> get_document.
 
-    Returns (init_result, nav_result, search_result, doc_result) tuple.
+    Returns (_init_result, _nav_result, _search_result, _doc_result) tuple.
     """
     # Step 1: Initialize platform docs
-    init_result = init_platform_docs(
+    _init_result = init_platform_docs(
         db_path=db_path,
         platform=platform,
         cfg=cfg,
         build_mode="overwrite",
     )
-    assert init_result.success, f"Init failed for {platform}: {init_result.errors}"
-    assert init_result.total_docs >= 1, f"No docs found for {platform}"
-    assert init_result.total_chunks >= 1, f"No chunks created for {platform}"
+    assert _init_result.success, f"Init failed for {platform}: {_init_result.errors}"
+    assert _init_result.total_docs >= 1, f"No docs found for {platform}"
+    assert _init_result.total_chunks >= 1, f"No chunks created for {platform}"
     logger.info(
-        f"[{platform}] Initialized {init_result.total_chunks} chunks "
-        f"from {init_result.total_docs} docs (v{init_result.version})"
+        f"[{platform}] Initialized {_init_result.total_chunks} chunks "
+        f"from {_init_result.total_docs} docs (v{_init_result.version})"
     )
 
     # Step 2: Create SearchTool with test config
@@ -1172,31 +1172,31 @@ def _run_e2e_workflow(db_path, platform, cfg, search_keywords):
     tool = SearchTool(agent_config=_TestConfig())
 
     # Step 3: List navigation
-    nav_result = tool.list_document_nav(platform=platform)
-    assert nav_result.success, f"list_document_nav failed for {platform}: {nav_result.error}"
-    assert nav_result.total_docs > 0, f"Nav tree empty for {platform}"
-    logger.info(f"[{platform}] Navigation tree has {nav_result.total_docs} documents")
+    _nav_result = tool.list_document_nav(platform=platform)
+    assert _nav_result.success, f"list_document_nav failed for {platform}: {_nav_result.error}"
+    assert _nav_result.total_docs > 0, f"Nav tree empty for {platform}"
+    logger.info(f"[{platform}] Navigation tree has {_nav_result.total_docs} documents")
 
     # Step 4: Search for content
-    search_result = tool.search_document(
+    _search_result = tool.search_document(
         platform=platform,
         keywords=search_keywords,
         top_n=5,
     )
-    assert search_result.success, f"search_document failed for {platform}: {search_result.error}"
-    assert search_result.doc_count > 0, f"Search returned no results for {platform}"
-    logger.info(f"[{platform}] Search found {search_result.doc_count} results")
+    assert _search_result.success, f"search_document failed for {platform}: {_search_result.error}"
+    assert _search_result.doc_count > 0, f"Search returned no results for {platform}"
+    logger.info(f"[{platform}] Search found {_search_result.doc_count} results")
 
     # Step 5: Get document by title from nav tree
-    title = _find_nav_leaf(nav_result.nav_tree)
+    title = _find_nav_leaf(_nav_result.nav_tree)
     assert title, f"Could not find a leaf document title in nav tree for {platform}"
 
-    doc_result = tool.get_document(platform=platform, titles=[title])
-    assert doc_result.success, f"get_document failed for {platform}: {doc_result.error}"
-    assert doc_result.chunk_count > 0, f"get_document returned no chunks for {platform}"
-    logger.info(f"[{platform}] Got document '{title}' with {doc_result.chunk_count} chunks")
+    _doc_result = tool.get_document(platform=platform, titles=[title])
+    assert _doc_result.success, f"get_document failed for {platform}: {_doc_result.error}"
+    assert _doc_result.chunk_count > 0, f"get_document returned no chunks for {platform}"
+    logger.info(f"[{platform}] Got document '{title}' with {_doc_result.chunk_count} chunks")
 
-    return init_result, nav_result, search_result, doc_result
+    return _init_result, _nav_result, _search_result, _doc_result
 
 
 # =============================================================================
@@ -1218,7 +1218,7 @@ class TestEndToEndIntegration:
             chunk_size=256,
         )
 
-        init_result, nav_result, search_result, doc_result = _run_e2e_workflow(
+        _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
             db_path=db_path,
             platform="test_e2e",
             cfg=cfg,
@@ -1226,12 +1226,12 @@ class TestEndToEndIntegration:
         )
 
         # Verify chunk content
-        for chunk in doc_result.chunks[:3]:
+        for chunk in _doc_result.chunks[:3]:
             assert "chunk_text" in chunk
             assert chunk["chunk_text"]
             logger.info(f"  Chunk: {chunk.get('title', 'N/A')[:50]}...")
 
-    def test_complete_workflow_local_multi_dir(self, temp_dir, agent_config):
+    def test_complete_workflow_local_multi_dir(self, temp_dir):
         """Test complete workflow with multiple separate local doc directories."""
         db_path = str(Path(temp_dir) / "store")
         root_dir = Path(temp_dir) / "multi_docs"
@@ -1342,7 +1342,7 @@ User Query → Parser → Linker → Generator → Database → Results
             chunk_size=256,
         )
 
-        init_result, nav_result, search_result, doc_result = _run_e2e_workflow(
+        _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
             db_path=db_path,
             platform="test_multi_dir",
             cfg=cfg,
@@ -1350,12 +1350,12 @@ User Query → Parser → Linker → Generator → Database → Results
         )
 
         # Multi-dir specific: should find docs from all 3 directories
-        assert init_result.total_docs == 4, f"Expected 4 docs from 3 directories, got {init_result.total_docs}"
-        assert nav_result.total_docs == 4
+        assert _init_result.total_docs == 4, f"Expected 4 docs from 3 directories, got {_init_result.total_docs}"
+        assert _nav_result.total_docs == 4
         # Should find results for keywords spanning different directories
         for keyword in ["authentication", "installation", "schema linker"]:
-            assert keyword in search_result.docs, f"Missing search results for '{keyword}'"
-            assert len(search_result.docs[keyword]) > 0, f"No results for '{keyword}'"
+            assert keyword in _search_result.docs, f"Missing search results for '{keyword}'"
+            assert len(_search_result.docs[keyword]) > 0, f"No results for '{keyword}'"
 
 
 # =============================================================================
@@ -1383,7 +1383,7 @@ class TestEndToEndRealPlatforms:
             chunk_size=512,
         )
 
-        init_result, nav_result, search_result, doc_result = _run_e2e_workflow(
+        _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
             db_path=db_path,
             platform="starrocks_e2e",
             cfg=cfg,
@@ -1391,7 +1391,7 @@ class TestEndToEndRealPlatforms:
         )
 
         # StarRocks-specific assertions
-        assert init_result.version == "4.0.5"
+        assert _init_result.version == "4.0.5"
 
     @pytest.mark.skipif(
         not os.environ.get("GITHUB_TOKEN"),
@@ -1410,7 +1410,7 @@ class TestEndToEndRealPlatforms:
             chunk_size=512,
         )
 
-        init_result, nav_result, search_result, doc_result = _run_e2e_workflow(
+        _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
             db_path=db_path,
             platform="starrocks_multi_e2e",
             cfg=cfg,
@@ -1418,8 +1418,8 @@ class TestEndToEndRealPlatforms:
         )
 
         # Multi-dir: should have docs from both sql-statements and loading
-        assert init_result.version == "4.0.5"
-        assert init_result.total_docs >= 2, "Should have docs from multiple directories"
+        assert _init_result.version == "4.0.5"
+        assert _init_result.total_docs >= 2, "Should have docs from multiple directories"
 
     @pytest.mark.skipif(
         not os.environ.get("GITHUB_TOKEN"),
@@ -1438,7 +1438,7 @@ class TestEndToEndRealPlatforms:
             chunk_size=512,
         )
 
-        init_result, nav_result, search_result, doc_result = _run_e2e_workflow(
+        _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
             db_path=db_path,
             platform="polaris_e2e",
             cfg=cfg,
@@ -1446,8 +1446,8 @@ class TestEndToEndRealPlatforms:
         )
 
         # Polaris-specific: multi-version paths should be detected
-        assert "1.3.0" in init_result.version
-        assert "1.2.0" in init_result.version
+        assert "1.3.0" in _init_result.version
+        assert "1.2.0" in _init_result.version
 
     @pytest.mark.skipif(
         os.environ.get("SKIP_NETWORK_TESTS", "").lower() in ("1", "true"),

@@ -37,6 +37,17 @@ from datus.mcp_server import DatusMCPServer, create_dynamic_app
 
 CONFIG_PATH = str(Path(__file__).resolve().parents[1] / "conf" / "agent.yml")
 
+# Expected tool names for assertion reuse
+STATIC_EXPECTED_TOOLS = {
+    "list_tables",
+    "describe_table",
+    "read_query",
+    "list_databases",
+    "get_table_ddl",
+    "list_subject_tree",
+}
+DYNAMIC_EXPECTED_TOOLS = {"list_tables", "describe_table", "read_query"}
+
 
 # =============================================================================
 # Helpers
@@ -87,6 +98,15 @@ async def mcp_sse_session(url: str):
             yield session
 
 
+@asynccontextmanager
+async def mcp_stdio_session(server_params: StdioServerParameters):
+    """Context manager that yields an initialized MCP ClientSession over stdio."""
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            yield session
+
+
 def parse_tool_result(result) -> dict:
     """Parse a CallToolResult into a dict with success/error/result keys."""
     assert not result.isError, f"Tool call returned error: {result}"
@@ -96,12 +116,189 @@ def parse_tool_result(result) -> dict:
 
 
 # =============================================================================
-# Test Class 1: Static Mode with HTTP Streamable
+# Static Mode Base Class
+# =============================================================================
+
+
+class StaticModeTestBase:
+    """Base test class for static-mode MCP server tests across transports.
+
+    Subclasses must implement ``_session()`` returning an async context manager
+    that yields an initialized ``ClientSession``.
+    """
+
+    def _session(self):
+        """Return an async context manager yielding an initialized ClientSession."""
+        raise NotImplementedError
+
+    async def test_list_tools(self):
+        """Verify that expected tools are registered and discoverable."""
+        async with self._session() as session:
+            result = await session.list_tools()
+            tool_names = {t.name for t in result.tools}
+            for expected in STATIC_EXPECTED_TOOLS:
+                assert expected in tool_names, f"Missing expected tool: {expected}"
+
+    async def test_list_tables(self):
+        """Verify list_tables returns the SSB benchmark tables."""
+        async with self._session() as session:
+            result = await session.call_tool("list_tables", {})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"list_tables failed: {data.get('error')}"
+            tables_text = str(data["result"]).lower()
+            assert "lineorder" in tables_text
+            assert "customer" in tables_text
+
+    async def test_describe_table(self):
+        """Verify describe_table returns column information for the customer table."""
+        async with self._session() as session:
+            result = await session.call_tool("describe_table", {"table_name": "customer"})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"describe_table failed: {data.get('error')}"
+            assert data["result"] is not None
+
+    async def test_read_query(self):
+        """Verify read_query executes SQL and returns results."""
+        async with self._session() as session:
+            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"read_query failed: {data.get('error')}"
+            assert data["result"] is not None
+
+    async def test_list_databases(self):
+        """Verify list_databases returns database info."""
+        async with self._session() as session:
+            result = await session.call_tool("list_databases", {})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"list_databases failed: {data.get('error')}"
+
+    async def test_get_table_ddl(self):
+        """Verify get_table_ddl returns DDL for a known table."""
+        async with self._session() as session:
+            result = await session.call_tool("get_table_ddl", {"table_name": "customer"})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"get_table_ddl failed: {data.get('error')}"
+            ddl_text = str(data["result"]).upper()
+            assert "CREATE" in ddl_text or "TABLE" in ddl_text
+
+    async def test_list_subject_tree(self):
+        """Verify list_subject_tree is callable and does not error."""
+        async with self._session() as session:
+            result = await session.call_tool("list_subject_tree", {})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"list_subject_tree failed: {data.get('error')}"
+
+
+# =============================================================================
+# Dynamic Mode Base Class
+# =============================================================================
+
+
+class DynamicModeTestBase:
+    """Base test class for dynamic-mode MCP server tests across transports.
+
+    Subclasses must implement ``_ssb_session()`` and ``_duckdb_session()``
+    returning async context managers that yield initialized ``ClientSession``s.
+    """
+
+    def _ssb_session(self):
+        """Return an async context manager for the ssb_sqlite namespace."""
+        raise NotImplementedError
+
+    def _duckdb_session(self):
+        """Return an async context manager for the duckdb namespace."""
+        raise NotImplementedError
+
+    async def test_list_tools_ssb(self):
+        """Verify tools are discoverable on ssb_sqlite namespace."""
+        async with self._ssb_session() as session:
+            result = await session.list_tools()
+            tool_names = {t.name for t in result.tools}
+            for expected in DYNAMIC_EXPECTED_TOOLS:
+                assert expected in tool_names, f"Missing expected tool: {expected}"
+
+    async def test_list_tools_duckdb(self):
+        """Verify tools are discoverable on duckdb namespace."""
+        async with self._duckdb_session() as session:
+            result = await session.list_tools()
+            tool_names = {t.name for t in result.tools}
+            for expected in DYNAMIC_EXPECTED_TOOLS:
+                assert expected in tool_names, f"Missing expected tool: {expected}"
+
+    async def test_list_tables_ssb(self):
+        """Verify list_tables on ssb_sqlite returns SSB tables."""
+        async with self._ssb_session() as session:
+            result = await session.call_tool("list_tables", {})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"list_tables ssb failed: {data.get('error')}"
+            tables_text = str(data["result"]).lower()
+            assert "lineorder" in tables_text
+            assert "customer" in tables_text
+
+    async def test_list_tables_duckdb(self):
+        """Verify list_tables on duckdb returns MetricFlow demo tables."""
+        async with self._duckdb_session() as session:
+            result = await session.call_tool("list_tables", {})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"list_tables duckdb failed: {data.get('error')}"
+            tables_text = str(data["result"]).lower()
+            assert "mf_demo" in tables_text
+
+    async def test_describe_table_ssb(self):
+        """Verify describe_table on ssb_sqlite returns column info."""
+        async with self._ssb_session() as session:
+            result = await session.call_tool("describe_table", {"table_name": "supplier"})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"describe_table ssb failed: {data.get('error')}"
+            assert data["result"] is not None
+
+    async def test_read_query_ssb(self):
+        """Verify read_query on ssb_sqlite executes SQL."""
+        async with self._ssb_session() as session:
+            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM supplier"})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"read_query ssb failed: {data.get('error')}"
+            assert data["result"] is not None
+
+    async def test_read_query_duckdb(self):
+        """Verify read_query on duckdb executes SQL."""
+        async with self._duckdb_session() as session:
+            result = await session.call_tool(
+                "read_query", {"sql": "SELECT COUNT(*) AS cnt FROM mf_demo.mf_demo_customers"}
+            )
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"read_query duckdb failed: {data.get('error')}"
+            assert data["result"] is not None
+
+    async def test_multi_namespace_isolation(self):
+        """Verify that ssb_sqlite and duckdb return different table sets."""
+        async with self._ssb_session() as ssb_session:
+            ssb_result = await ssb_session.call_tool("list_tables", {})
+            ssb_data = parse_tool_result(ssb_result)
+
+        async with self._duckdb_session() as duck_session:
+            duck_result = await duck_session.call_tool("list_tables", {})
+            duck_data = parse_tool_result(duck_result)
+
+        ssb_text = str(ssb_data["result"]).lower()
+        duck_text = str(duck_data["result"]).lower()
+
+        # SSB has lineorder, duckdb does not
+        assert "lineorder" in ssb_text
+        assert "lineorder" not in duck_text
+
+        # DuckDB has mf_demo tables, SSB does not
+        assert "mf_demo" in duck_text
+        assert "mf_demo" not in ssb_text
+
+
+# =============================================================================
+# Static Mode: HTTP Streamable
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestStaticModeHTTPStreamable:
+class TestStaticModeHTTPStreamable(StaticModeTestBase):
     """Test DatusMCPServer in static mode using HTTP Streamable transport."""
 
     @pytest_asyncio.fixture(autouse=True)
@@ -118,76 +315,17 @@ class TestStaticModeHTTPStreamable:
         await task
         server.close()
 
-    async def test_list_tools(self):
-        """Verify that expected tools are registered and discoverable."""
-        async with mcp_http_session(self.url) as session:
-            result = await session.list_tools()
-            tool_names = {t.name for t in result.tools}
-            assert "list_tables" in tool_names
-            assert "describe_table" in tool_names
-            assert "read_query" in tool_names
-            assert "list_databases" in tool_names
-            assert "get_table_ddl" in tool_names
-            assert "list_subject_tree" in tool_names
-
-    async def test_list_tables(self):
-        """Verify list_tables returns the SSB benchmark tables."""
-        async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("list_tables", {})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"list_tables failed: {data.get('error')}"
-            tables_text = str(data["result"]).lower()
-            assert "lineorder" in tables_text
-            assert "customer" in tables_text
-
-    async def test_describe_table(self):
-        """Verify describe_table returns column information for the customer table."""
-        async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("describe_table", {"table_name": "customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"describe_table failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_read_query(self):
-        """Verify read_query executes SQL and returns results."""
-        async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_list_databases(self):
-        """Verify list_databases returns database info."""
-        async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("list_databases", {})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"list_databases failed: {data.get('error')}"
-
-    async def test_get_table_ddl(self):
-        """Verify get_table_ddl returns DDL for a known table."""
-        async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("get_table_ddl", {"table_name": "customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"get_table_ddl failed: {data.get('error')}"
-            ddl_text = str(data["result"]).upper()
-            assert "CREATE" in ddl_text or "TABLE" in ddl_text
-
-    async def test_list_subject_tree(self):
-        """Verify list_subject_tree is callable and does not error."""
-        async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("list_subject_tree", {})
-            data = parse_tool_result(result)
-            # Subject tree may be empty for test namespaces, but should not error
-            assert data["success"] == 1, f"list_subject_tree failed: {data.get('error')}"
+    def _session(self):
+        return mcp_http_session(self.url)
 
 
 # =============================================================================
-# Test Class 2: Static Mode with SSE
+# Static Mode: SSE
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestStaticModeSSE:
+class TestStaticModeSSE(StaticModeTestBase):
     """Test DatusMCPServer in static mode using SSE transport."""
 
     @pytest_asyncio.fixture(autouse=True)
@@ -204,77 +342,17 @@ class TestStaticModeSSE:
         await task
         server.close()
 
-    async def test_list_tools(self):
-        """Verify that expected tools are registered and discoverable via SSE."""
-        async with mcp_sse_session(self.url) as session:
-            result = await session.list_tools()
-            tool_names = {t.name for t in result.tools}
-            assert "list_tables" in tool_names
-            assert "describe_table" in tool_names
-            assert "read_query" in tool_names
-            assert "list_databases" in tool_names
-            assert "get_table_ddl" in tool_names
-            assert "list_subject_tree" in tool_names
-
-    async def test_list_tables(self):
-        """Verify list_tables returns the SSB benchmark tables via SSE."""
-        async with mcp_sse_session(self.url) as session:
-            result = await session.call_tool("list_tables", {})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"list_tables failed: {data.get('error')}"
-            tables_text = str(data["result"]).lower()
-            assert "lineorder" in tables_text
-            assert "customer" in tables_text
-
-    async def test_describe_table(self):
-        """Verify describe_table returns column information via SSE."""
-        async with mcp_sse_session(self.url) as session:
-            result = await session.call_tool("describe_table", {"table_name": "customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"describe_table failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_read_query(self):
-        """Verify read_query executes SQL and returns results via SSE."""
-        async with mcp_sse_session(self.url) as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_get_table_ddl(self):
-        """Verify get_table_ddl returns DDL via SSE."""
-        async with mcp_sse_session(self.url) as session:
-            result = await session.call_tool("get_table_ddl", {"table_name": "customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"get_table_ddl failed: {data.get('error')}"
-            ddl_text = str(data["result"]).upper()
-            assert "CREATE" in ddl_text or "TABLE" in ddl_text
-
-    async def test_list_subject_tree(self):
-        """Verify list_subject_tree is callable via SSE."""
-        async with mcp_sse_session(self.url) as session:
-            result = await session.call_tool("list_subject_tree", {})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"list_subject_tree failed: {data.get('error')}"
+    def _session(self):
+        return mcp_sse_session(self.url)
 
 
 # =============================================================================
-# Test Class 3: Static Mode with stdio
+# Static Mode: stdio
 # =============================================================================
-
-
-@asynccontextmanager
-async def mcp_stdio_session(server_params: StdioServerParameters):
-    """Context manager that yields an initialized MCP ClientSession over stdio."""
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
 
 
 @pytest.mark.asyncio
-class TestStaticModeStdio:
+class TestStaticModeStdio(StaticModeTestBase):
     """Test DatusMCPServer in static mode using stdio transport."""
 
     @staticmethod
@@ -294,68 +372,17 @@ class TestStaticModeStdio:
             ],
         )
 
-    async def test_list_tools(self):
-        """Verify that expected tools are registered and discoverable via stdio."""
-        async with mcp_stdio_session(self._server_params()) as session:
-            result = await session.list_tools()
-            tool_names = {t.name for t in result.tools}
-            assert "list_tables" in tool_names
-            assert "describe_table" in tool_names
-            assert "read_query" in tool_names
-            assert "list_databases" in tool_names
-            assert "get_table_ddl" in tool_names
-            assert "list_subject_tree" in tool_names
-
-    async def test_list_tables(self):
-        """Verify list_tables returns the SSB benchmark tables via stdio."""
-        async with mcp_stdio_session(self._server_params()) as session:
-            result = await session.call_tool("list_tables", {})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"list_tables failed: {data.get('error')}"
-            tables_text = str(data["result"]).lower()
-            assert "lineorder" in tables_text
-            assert "customer" in tables_text
-
-    async def test_describe_table(self):
-        """Verify describe_table returns column information via stdio."""
-        async with mcp_stdio_session(self._server_params()) as session:
-            result = await session.call_tool("describe_table", {"table_name": "customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"describe_table failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_read_query(self):
-        """Verify read_query executes SQL and returns results via stdio."""
-        async with mcp_stdio_session(self._server_params()) as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_get_table_ddl(self):
-        """Verify get_table_ddl returns DDL via stdio."""
-        async with mcp_stdio_session(self._server_params()) as session:
-            result = await session.call_tool("get_table_ddl", {"table_name": "customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"get_table_ddl failed: {data.get('error')}"
-            ddl_text = str(data["result"]).upper()
-            assert "CREATE" in ddl_text or "TABLE" in ddl_text
-
-    async def test_list_subject_tree(self):
-        """Verify list_subject_tree is callable via stdio."""
-        async with mcp_stdio_session(self._server_params()) as session:
-            result = await session.call_tool("list_subject_tree", {})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"list_subject_tree failed: {data.get('error')}"
+    def _session(self):
+        return mcp_stdio_session(self._server_params())
 
 
 # =============================================================================
-# Test Class 4: Dynamic Mode with HTTP Streamable
+# Dynamic Mode: HTTP Streamable
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestDynamicModeHTTPStreamable:
+class TestDynamicModeHTTPStreamable(DynamicModeTestBase):
     """Test LightweightDynamicMCPServer with HTTP Streamable transport."""
 
     @pytest_asyncio.fixture(autouse=True)
@@ -371,97 +398,20 @@ class TestDynamicModeHTTPStreamable:
         uvi_server.should_exit = True
         await task
 
-    async def test_list_tools_namespace_ssb(self):
-        """Verify tools are discoverable on ssb_sqlite namespace."""
-        async with mcp_http_session(self.ssb_url) as session:
-            result = await session.list_tools()
-            tool_names = {t.name for t in result.tools}
-            assert "list_tables" in tool_names
-            assert "describe_table" in tool_names
-            assert "read_query" in tool_names
+    def _ssb_session(self):
+        return mcp_http_session(self.ssb_url)
 
-    async def test_list_tools_namespace_duckdb(self):
-        """Verify tools are discoverable on duckdb namespace."""
-        async with mcp_http_session(self.duckdb_url) as session:
-            result = await session.list_tools()
-            tool_names = {t.name for t in result.tools}
-            assert "list_tables" in tool_names
-            assert "read_query" in tool_names
-
-    async def test_list_tables_ssb(self):
-        """Verify list_tables on ssb_sqlite returns SSB tables."""
-        async with mcp_http_session(self.ssb_url) as session:
-            result = await session.call_tool("list_tables", {})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"list_tables ssb failed: {data.get('error')}"
-            tables_text = str(data["result"]).lower()
-            assert "lineorder" in tables_text
-            assert "customer" in tables_text
-
-    async def test_list_tables_duckdb(self):
-        """Verify list_tables on duckdb returns MetricFlow demo tables."""
-        async with mcp_http_session(self.duckdb_url) as session:
-            result = await session.call_tool("list_tables", {})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"list_tables duckdb failed: {data.get('error')}"
-            tables_text = str(data["result"]).lower()
-            assert "mf_demo" in tables_text
-
-    async def test_describe_table_ssb(self):
-        """Verify describe_table on ssb_sqlite returns column info."""
-        async with mcp_http_session(self.ssb_url) as session:
-            result = await session.call_tool("describe_table", {"table_name": "supplier"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"describe_table ssb failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_read_query_ssb(self):
-        """Verify read_query on ssb_sqlite executes SQL."""
-        async with mcp_http_session(self.ssb_url) as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM supplier"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query ssb failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_read_query_duckdb(self):
-        """Verify read_query on duckdb executes SQL."""
-        async with mcp_http_session(self.duckdb_url) as session:
-            result = await session.call_tool(
-                "read_query", {"sql": "SELECT COUNT(*) AS cnt FROM mf_demo.mf_demo_customers"}
-            )
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query duckdb failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_multi_namespace_isolation(self):
-        """Verify that ssb_sqlite and duckdb return different table sets."""
-        async with mcp_http_session(self.ssb_url) as ssb_session:
-            ssb_result = await ssb_session.call_tool("list_tables", {})
-            ssb_data = parse_tool_result(ssb_result)
-
-        async with mcp_http_session(self.duckdb_url) as duck_session:
-            duck_result = await duck_session.call_tool("list_tables", {})
-            duck_data = parse_tool_result(duck_result)
-
-        ssb_text = str(ssb_data["result"]).lower()
-        duck_text = str(duck_data["result"]).lower()
-
-        # SSB has lineorder, duckdb does not
-        assert "lineorder" in ssb_text
-        assert "lineorder" not in duck_text
-
-        # DuckDB has mf_demo tables, SSB does not
-        assert "mf_demo" in duck_text
-        assert "mf_demo" not in ssb_text
+    def _duckdb_session(self):
+        return mcp_http_session(self.duckdb_url)
 
 
 # =============================================================================
-# Test Class 5: Dynamic Mode with SSE
+# Dynamic Mode: SSE
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestDynamicModeSSE:
+class TestDynamicModeSSE(DynamicModeTestBase):
     """Test LightweightDynamicMCPServer with SSE transport."""
 
     @pytest_asyncio.fixture(autouse=True)
@@ -477,57 +427,8 @@ class TestDynamicModeSSE:
         uvi_server.should_exit = True
         await task
 
-    async def test_list_tools_sse(self):
-        """Verify tools are discoverable via SSE on ssb_sqlite namespace."""
-        async with mcp_sse_session(self.ssb_url) as session:
-            result = await session.list_tools()
-            tool_names = {t.name for t in result.tools}
-            assert "list_tables" in tool_names
-            assert "describe_table" in tool_names
-            assert "read_query" in tool_names
+    def _ssb_session(self):
+        return mcp_sse_session(self.ssb_url)
 
-    async def test_list_tables_sse(self):
-        """Verify list_tables returns SSB tables via SSE."""
-        async with mcp_sse_session(self.ssb_url) as session:
-            result = await session.call_tool("list_tables", {})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"list_tables sse failed: {data.get('error')}"
-            tables_text = str(data["result"]).lower()
-            assert "lineorder" in tables_text
-
-    async def test_describe_table_sse(self):
-        """Verify describe_table returns column info via SSE."""
-        async with mcp_sse_session(self.ssb_url) as session:
-            result = await session.call_tool("describe_table", {"table_name": "part"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"describe_table sse failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_read_query_sse(self):
-        """Verify read_query executes SQL via SSE."""
-        async with mcp_sse_session(self.ssb_url) as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM date"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query sse failed: {data.get('error')}"
-            assert data["result"] is not None
-
-    async def test_multi_namespace_sse(self):
-        """Verify different namespaces return different tables via SSE."""
-        async with mcp_sse_session(self.ssb_url) as ssb_session:
-            ssb_result = await ssb_session.call_tool("list_tables", {})
-            ssb_data = parse_tool_result(ssb_result)
-
-        async with mcp_sse_session(self.duckdb_url) as duck_session:
-            duck_result = await duck_session.call_tool("list_tables", {})
-            duck_data = parse_tool_result(duck_result)
-
-        ssb_text = str(ssb_data["result"]).lower()
-        duck_text = str(duck_data["result"]).lower()
-
-        # SSB has lineorder, duckdb does not
-        assert "lineorder" in ssb_text
-        assert "lineorder" not in duck_text
-
-        # DuckDB has mf_demo tables, SSB does not
-        assert "mf_demo" in duck_text
-        assert "mf_demo" not in ssb_text
+    def _duckdb_session(self):
+        return mcp_sse_session(self.duckdb_url)
