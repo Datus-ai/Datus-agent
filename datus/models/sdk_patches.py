@@ -35,30 +35,39 @@ def _is_kimi_model(model_name: str) -> bool:
     return "kimi" in name or "moonshot" in name or "k2.5" in name or "k2-" in name
 
 
-def _normalize_provider_data(item: dict[str, Any]) -> dict[str, Any]:
+def _normalize_provider_data(item: Any) -> Any:
     """
     Normalize provider_data model name to use 'deepseek' prefix if it's a
     Kimi/Moonshot model. This allows the SDK's existing DeepSeek logic to
     handle reasoning_content correctly.
+
+    Handles both plain dicts and Pydantic model objects (e.g., ResponseReasoningItem,
+    ResponseFunctionToolCall) which the agents SDK uses internally.
     """
-    if not isinstance(item, dict):
-        return item
-
-    provider_data = item.get("provider_data")
-    if not provider_data or not isinstance(provider_data, dict):
-        return item
-
-    item_model = provider_data.get("model")
-    if not item_model:
-        return item
-
-    if _is_kimi_model(item_model):
-        # Prefix with 'deepseek-' so the SDK condition "deepseek" in model.lower() matches
+    if isinstance(item, dict):
+        provider_data = item.get("provider_data")
+        if not provider_data or not isinstance(provider_data, dict):
+            return item
+        item_model = provider_data.get("model")
+        if not item_model or not _is_kimi_model(item_model):
+            return item
         item_copy = copy.deepcopy(item)
         item_copy["provider_data"]["model"] = f"deepseek-{item_model}"
         return item_copy
 
-    return item
+    # Handle Pydantic/object items with provider_data attribute
+    # (e.g., ResponseReasoningItem, ResponseFunctionToolCall from agents SDK)
+    provider_data = getattr(item, "provider_data", None)
+    if not provider_data or not isinstance(provider_data, dict):
+        return item
+    item_model = provider_data.get("model")
+    if not item_model or not _is_kimi_model(item_model):
+        return item
+
+    # Deep copy the Pydantic object to avoid mutating the SDK's internal state
+    item_copy = item.model_copy(deep=True) if hasattr(item, "model_copy") else item
+    item_copy.provider_data["model"] = f"deepseek-{item_model}"
+    return item_copy
 
 
 def _preprocess_items_for_reasoning(
@@ -89,6 +98,11 @@ def _preprocess_items_for_reasoning(
 _original_items_to_messages = None
 _original_acompletion = None
 
+# Cache reasoning_content from API responses, keyed by model name.
+# This provides a fallback when the SDK converter fails to extract
+# reasoning_content from items (e.g., when summary is empty).
+_reasoning_content_cache: dict[str, str] = {}
+
 
 def _postprocess_messages_for_reasoning(
     messages: list[dict[str, Any]],
@@ -112,16 +126,27 @@ def _postprocess_messages_for_reasoning(
             rc = msg.get("reasoning_content", "")
             if rc and rc.strip():
                 last_reasoning_content = rc
-                logger.debug(f"[SDK Patch] Found non-empty reasoning_content, length={len(rc)}")
+                logger.debug(f"[SDK Patch] Found non-empty reasoning_content in messages, length={len(rc)}")
 
-    # Copy reasoning_content to assistant messages with tool_calls that are missing it.
-    # Only copy existing reasoning_content, never inject fake placeholders.
+    # Fallback: use cached reasoning_content from a previous API response
+    if not last_reasoning_content and model:
+        cached_rc = _reasoning_content_cache.get(model)
+        if cached_rc:
+            last_reasoning_content = cached_rc
+            logger.debug(f"[SDK Patch] Using cached reasoning_content as fallback, length={len(cached_rc)}")
+
+    # Ensure all assistant messages with tool_calls have reasoning_content field.
+    # Kimi/Moonshot requires this field to be present when thinking is enabled.
     for msg in messages:
         if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("tool_calls"):
             current_rc = msg.get("reasoning_content", "")
             if (not current_rc or not current_rc.strip()) and last_reasoning_content:
                 msg["reasoning_content"] = last_reasoning_content
-                logger.debug("[SDK Patch] Copied previous reasoning_content to assistant+tool_calls message")
+                logger.debug("[SDK Patch] Injected reasoning_content into assistant+tool_calls message")
+            elif "reasoning_content" not in msg:
+                # Kimi requires the field to exist even if empty
+                msg["reasoning_content"] = ""
+                logger.debug("[SDK Patch] Added empty reasoning_content to assistant+tool_calls message")
 
             # Ensure content is empty string, not None (Moonshot requirement)
             if msg.get("content") is None:
@@ -188,7 +213,27 @@ def apply_sdk_patches() -> None:
             model = kwargs.get("model", "")
             if "messages" in kwargs:
                 kwargs["messages"] = _postprocess_messages_for_reasoning(kwargs["messages"], model)
-            return await _original_acompletion(*args, **kwargs)
+            response = await _original_acompletion(*args, **kwargs)
+
+            # Cache reasoning_content from the API response for future fallback.
+            # This handles cases where the SDK converter fails to extract it from items.
+            if model and _is_kimi_model(model):
+                try:
+                    for choice in getattr(response, "choices", []):
+                        msg = getattr(choice, "message", None)
+                        if msg:
+                            rc = getattr(msg, "reasoning_content", None)
+                            if rc and isinstance(rc, str) and rc.strip():
+                                _reasoning_content_cache[model] = rc
+                                logger.debug(
+                                    f"[SDK Patch] Cached reasoning_content from response, "
+                                    f"model={model}, length={len(rc)}"
+                                )
+                                break
+                except Exception:
+                    pass  # Never let caching break the main flow
+
+            return response
 
         litellm.acompletion = _patched_acompletion
         logger.info("Applied SDK patch: litellm.acompletion (Kimi/Moonshot reasoning_content)")
@@ -214,3 +259,5 @@ def remove_sdk_patches() -> None:
         litellm.acompletion = _original_acompletion
         _original_acompletion = None
         logger.info("Removed SDK patch: litellm.acompletion")
+
+    _reasoning_content_cache.clear()

@@ -228,7 +228,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 raise
 
     @optional_traceable(name="openai_compatible_generate", run_type="chain")
-    def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
+    def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """
         Generate a response from the model with error handling and retry logic.
 
@@ -236,12 +236,15 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         Args:
             prompt: The input prompt (string or list of messages)
-            enable_thinking: Enable thinking mode for hybrid models (default: False)
+            enable_thinking: Enable thinking mode for hybrid models (default: uses model_config)
             **kwargs: Additional generation parameters
 
         Returns:
             Generated text response
         """
+        # Fall back to model_config.enable_thinking if not explicitly provided
+        if enable_thinking is None:
+            enable_thinking = self.model_config.enable_thinking
 
         def _generate_operation():
             # Use LiteLLM model name for unified provider support
