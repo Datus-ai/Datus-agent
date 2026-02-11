@@ -1,0 +1,178 @@
+name: "Coverage Check"
+on:
+  workflow_call:
+
+jobs:
+  coverage:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: git fetch origin ${{ github.event.pull_request.base.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --upgrade --no-cache-dir datus-semantic-metricflow
+          pip install pytest-cov diff-cover
+
+      - name: Setup config file
+        run: |
+          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
+          cp /home/datus_ci/ci_template/ci.env .env
+
+      - name: Load environment variables
+        run: |
+          echo "Loading environment variables from .env file..."
+          # Export all variables from .env to GITHUB_ENV so they persist across steps
+          while IFS= read -r line || [ -n "$line" ]; do
+            # Skip empty lines and comments
+            if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
+              # Remove any surrounding whitespace and export to GITHUB_ENV
+              var_name=$(echo "$line" | cut -d'=' -f1)
+              echo "Loading variable: $var_name"
+              echo "$line" >> $GITHUB_ENV
+            fi
+          done < .env
+          echo "Environment variables loaded successfully"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Cache knowledge base data
+        id: kb-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            tests/data/datus_db_bird_school
+            tests/data/datus_db_bird_sqlite
+            tests/data/datus_db_ssb_sqlite
+          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'sample_data/**', 'datus/storage/**/*.py') }}
+          restore-keys: |
+            ${{ runner.os }}-kb-
+
+      - name: Build test data
+        if: steps.kb-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Building test data before running pytest..."
+          chmod +x build_scripts/build_test_data.sh
+          ./build_scripts/build_test_data.sh || exit 1
+          echo "Test data build completed"
+
+      - name: Run unit tests with coverage
+        id: run-tests
+        continue-on-error: true
+        run: |
+          python -m pytest tests/unit_tests/ \
+            --cov=datus \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            -s -vv --tb=short --showlocals \
+            --ignore=tests/test_full_gen_sql.py \
+            | tee pytest-coverage.txt
+
+      - name: Extract coverage metrics
+        id: metrics
+        if: always() && steps.run-tests.outcome != 'cancelled'
+        run: |
+          python3 - <<'PYEOF'
+          import xml.etree.ElementTree as ET
+          import subprocess, json, os
+
+          # Overall coverage: parse coverage.xml
+          try:
+              tree = ET.parse("coverage.xml")
+              overall = float(tree.getroot().attrib.get("line-rate", 0)) * 100
+          except Exception:
+              overall = 0
+
+          # Diff coverage: run diff-cover and generate JSON
+          subprocess.run([
+              "diff-cover", "coverage.xml",
+              "--compare-branch=origin/${{ github.event.pull_request.base.ref }}",
+              "--json-report", "diff-cover.json",
+              "--markdown-report", "diff-cover-report.md",
+              "--fail-under=0"
+          ], capture_output=True)
+
+          try:
+              with open("diff-cover.json") as f:
+                  diff_pct = json.load(f).get("total_percent_covered", 0)
+          except Exception:
+              diff_pct = 0
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"overall={overall:.2f}\n")
+              f.write(f"diff={diff_pct:.2f}\n")
+          PYEOF
+
+      - name: Post coverage comment
+        if: always() && steps.run-tests.outcome != 'cancelled'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let diffReport = '';
+            try { diffReport = fs.readFileSync('diff-cover-report.md', 'utf8'); } catch {}
+
+            const overall = '${{ steps.metrics.outputs.overall }}';
+            const diff = '${{ steps.metrics.outputs.diff }}';
+            const tests = '${{ steps.run-tests.outcome }}';
+            const ok = (v) => parseFloat(v) >= 80 ? '✅' : '❌';
+
+            const body = `## 📊 Unit Test Coverage Report\n\n` +
+              `| Metric | Value | Threshold | Status |\n|--------|-------|-----------|--------|\n` +
+              `| **Overall Coverage** | ${overall}% | - | ℹ️ |\n` +
+              `| **Diff Coverage** | ${diff}% | 80% | ${ok(diff)} |\n` +
+              `| **Unit Tests** | ${tests} | pass | ${tests==='success'?'✅':'❌'} |\n\n` +
+              `<details><summary>Diff Coverage Details (files changed in this PR)</summary>\n\n${diffReport}\n</details>\n\n` +
+              `---\n*Generated by pytest-cov + diff-cover*`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            const existing = comments.find(c => c.body?.includes('Unit Test Coverage Report'));
+            const params = { owner: context.repo.owner, repo: context.repo.repo, body };
+            if (existing) {
+              await github.rest.issues.updateComment({ ...params, comment_id: existing.id });
+            } else {
+              await github.rest.issues.createComment({ ...params, issue_number: context.payload.pull_request.number });
+            }
+
+      - name: Check coverage thresholds
+        if: always() && steps.run-tests.outcome != 'cancelled'
+        run: |
+          python3 -c "
+          import sys
+          diff = float('${{ steps.metrics.outputs.diff }}')
+          tests = '${{ steps.run-tests.outcome }}'
+          failed = False
+          if diff < 80:
+              print(f'::error::Diff coverage {diff}% is below the 80% threshold')
+              failed = True
+          if tests != 'success':
+              print('::error::Unit tests did not pass')
+              failed = True
+          sys.exit(1 if failed else 0)
+          "

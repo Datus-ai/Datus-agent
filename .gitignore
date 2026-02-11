@@ -33,3 +33,12 @@ before_reflection_*.yaml
 /dist
 *.egg-info
 .claude
+/.omc
+
+# Coverage
+coverage.xml
+.coverage
+htmlcov/
+diff-cover-report.*
+diff-cover.json
+pytest-coverage.txt

@@ -161,3 +161,22 @@ dev = [
     "langsmith>=0.0.77",
     "langsmith-fetch>=0.1.0",
 ]
+
+[tool.coverage.run]
+source = ["datus"]
+omit = [
+    "datus/mcp_server.py",
+    "datus/cli/*",
+    "datus/api/*",
+    "datus/prompts/prompt_templates/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "except ImportError",
+]
+show_missing = true
+precision = 2
