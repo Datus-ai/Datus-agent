@@ -658,21 +658,7 @@ class TestSearchToolIntegration:
         assert nav_result.success
 
         # Find a leaf node (document title)
-        def find_leaf(nodes):
-            for node in nodes:
-                if "tree" in node:
-                    leaf = find_leaf(node["tree"])
-                    if leaf:
-                        return leaf
-                elif not node.get("children"):
-                    return node.get("name")
-                else:
-                    leaf = find_leaf(node["children"])
-                    if leaf:
-                        return leaf
-            return None
-
-        title = find_leaf(nav_result.nav_tree)
+        title = _find_nav_leaf(nav_result.nav_tree)
         assert title, "Should find at least one document title"
 
         # Get document by title
@@ -1055,6 +1041,10 @@ class TestGitHubFetcherIntegration:
 # =============================================================================
 
 
+@pytest.mark.skipif(
+    os.environ.get("SKIP_NETWORK_TESTS", "").lower() in ("1", "true"),
+    reason="Skipping network-dependent tests (SKIP_NETWORK_TESTS is set)",
+)
 class TestWebFetcherIntegration:
     """Integration tests for web fetcher (requires network access)."""
 
@@ -1459,6 +1449,10 @@ class TestEndToEndRealPlatforms:
         assert "1.3.0" in init_result.version
         assert "1.2.0" in init_result.version
 
+    @pytest.mark.skipif(
+        os.environ.get("SKIP_NETWORK_TESTS", "").lower() in ("1", "true"),
+        reason="Skipping network-dependent tests (SKIP_NETWORK_TESTS is set)",
+    )
     def test_complete_workflow_snowflake(self, temp_dir):
         """Test complete workflow with Snowflake website documentation."""
         db_path = str(Path(temp_dir) / "store")

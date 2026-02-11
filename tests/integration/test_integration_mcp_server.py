@@ -23,6 +23,7 @@ import json
 import socket
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -34,7 +35,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from datus.mcp_server import DatusMCPServer, create_dynamic_app
 
-CONFIG_PATH = "tests/conf/agent.yml"
+CONFIG_PATH = str(Path(__file__).resolve().parents[1] / "conf" / "agent.yml")
 
 
 # =============================================================================
@@ -263,6 +264,15 @@ class TestStaticModeSSE:
 # =============================================================================
 
 
+@asynccontextmanager
+async def mcp_stdio_session(server_params: StdioServerParameters):
+    """Context manager that yields an initialized MCP ClientSession over stdio."""
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            yield session
+
+
 @pytest.mark.asyncio
 class TestStaticModeStdio:
     """Test DatusMCPServer in static mode using stdio transport."""
@@ -286,69 +296,57 @@ class TestStaticModeStdio:
 
     async def test_list_tools(self):
         """Verify that expected tools are registered and discoverable via stdio."""
-        async with stdio_client(self._server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.list_tools()
-                tool_names = {t.name for t in result.tools}
-                assert "list_tables" in tool_names
-                assert "describe_table" in tool_names
-                assert "read_query" in tool_names
-                assert "list_databases" in tool_names
-                assert "get_table_ddl" in tool_names
-                assert "list_subject_tree" in tool_names
+        async with mcp_stdio_session(self._server_params()) as session:
+            result = await session.list_tools()
+            tool_names = {t.name for t in result.tools}
+            assert "list_tables" in tool_names
+            assert "describe_table" in tool_names
+            assert "read_query" in tool_names
+            assert "list_databases" in tool_names
+            assert "get_table_ddl" in tool_names
+            assert "list_subject_tree" in tool_names
 
     async def test_list_tables(self):
         """Verify list_tables returns the SSB benchmark tables via stdio."""
-        async with stdio_client(self._server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("list_tables", {})
-                data = parse_tool_result(result)
-                assert data["success"] == 1, f"list_tables failed: {data.get('error')}"
-                tables_text = str(data["result"]).lower()
-                assert "lineorder" in tables_text
-                assert "customer" in tables_text
+        async with mcp_stdio_session(self._server_params()) as session:
+            result = await session.call_tool("list_tables", {})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"list_tables failed: {data.get('error')}"
+            tables_text = str(data["result"]).lower()
+            assert "lineorder" in tables_text
+            assert "customer" in tables_text
 
     async def test_describe_table(self):
         """Verify describe_table returns column information via stdio."""
-        async with stdio_client(self._server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("describe_table", {"table_name": "customer"})
-                data = parse_tool_result(result)
-                assert data["success"] == 1, f"describe_table failed: {data.get('error')}"
-                assert data["result"] is not None
+        async with mcp_stdio_session(self._server_params()) as session:
+            result = await session.call_tool("describe_table", {"table_name": "customer"})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"describe_table failed: {data.get('error')}"
+            assert data["result"] is not None
 
     async def test_read_query(self):
         """Verify read_query executes SQL and returns results via stdio."""
-        async with stdio_client(self._server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
-                data = parse_tool_result(result)
-                assert data["success"] == 1, f"read_query failed: {data.get('error')}"
-                assert data["result"] is not None
+        async with mcp_stdio_session(self._server_params()) as session:
+            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"read_query failed: {data.get('error')}"
+            assert data["result"] is not None
 
     async def test_get_table_ddl(self):
         """Verify get_table_ddl returns DDL via stdio."""
-        async with stdio_client(self._server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("get_table_ddl", {"table_name": "customer"})
-                data = parse_tool_result(result)
-                assert data["success"] == 1, f"get_table_ddl failed: {data.get('error')}"
-                ddl_text = str(data["result"]).upper()
-                assert "CREATE" in ddl_text or "TABLE" in ddl_text
+        async with mcp_stdio_session(self._server_params()) as session:
+            result = await session.call_tool("get_table_ddl", {"table_name": "customer"})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"get_table_ddl failed: {data.get('error')}"
+            ddl_text = str(data["result"]).upper()
+            assert "CREATE" in ddl_text or "TABLE" in ddl_text
 
     async def test_list_subject_tree(self):
         """Verify list_subject_tree is callable via stdio."""
-        async with stdio_client(self._server_params()) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("list_subject_tree", {})
-                data = parse_tool_result(result)
-                assert data["success"] == 1, f"list_subject_tree failed: {data.get('error')}"
+        async with mcp_stdio_session(self._server_params()) as session:
+            result = await session.call_tool("list_subject_tree", {})
+            data = parse_tool_result(result)
+            assert data["success"] == 1, f"list_subject_tree failed: {data.get('error')}"
 
 
 # =============================================================================
