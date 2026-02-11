@@ -2,7 +2,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.agent.node import Node
 from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
@@ -40,7 +39,7 @@ class TestPlanning:
         def mock_init_tools(self):
             self.tools = []
 
-        with patch.object(Workflow, '_init_tools', mock_init_tools):
+        with patch.object(Workflow, "_init_tools", mock_init_tools):
             # Call generate_workflow with the default plan_type
             workflow = generate_workflow(
                 task=sql_task,
@@ -69,7 +68,7 @@ class TestPlanning:
         def mock_init_tools(self):
             self.tools = []
 
-        with patch.object(Workflow, '_init_tools', mock_init_tools):
+        with patch.object(Workflow, "_init_tools", mock_init_tools):
             # Call generate_workflow with a valid builtin plan type
             workflow = generate_workflow(
                 task=sql_task,
@@ -100,7 +99,7 @@ class TestPlanning:
         def mock_init_tools(self):
             self.tools = []
 
-        with patch.object(Workflow, '_init_tools', mock_init_tools):
+        with patch.object(Workflow, "_init_tools", mock_init_tools):
             # Call generate_workflow with the 'fixed' plan type (simpler workflow)
             workflow = generate_workflow(
                 task=sql_task,

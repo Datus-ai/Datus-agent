@@ -21,9 +21,7 @@ class DummyAgentConfig(AgentConfig):
 
     def add_sub_agent_with_scoped_context(self, sub_agent_name: str, scoped_attrs: dict):
         """Add a sub agent with scoped context configuration."""
-        self._sub_agent_configs[sub_agent_name] = {
-            "scoped_context": scoped_attrs
-        }
+        self._sub_agent_configs[sub_agent_name] = {"scoped_context": scoped_attrs}
 
 
 class RecordingStorage:

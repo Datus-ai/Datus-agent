@@ -3,7 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 
-from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest

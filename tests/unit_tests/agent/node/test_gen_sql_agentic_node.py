@@ -20,18 +20,15 @@ import pytest
 
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
-from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
-
+from datus.schemas.chat_agentic_node_models import ChatNodeInput
+from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from tests.unit_tests.mock_llm_model import (
     MockLLMModel,
     MockLLMResponse,
     MockToolCall,
     build_simple_response,
-    build_sql_response,
     build_tool_then_response,
 )
-
 
 # ===========================================================================
 # GenSQLAgenticNode Tests
@@ -106,9 +103,11 @@ class TestGenSQLAgenticNodeExecution:
         """execute_stream with simple text response (no tool calls) produces USER and ASSISTANT actions."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Here is a simple text response about SAT scores."),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Here is a simple text response about SAT scores."),
+            ]
+        )
 
         node = GenSQLAgenticNode(
             node_id="test_gensql_simple",
@@ -142,18 +141,22 @@ class TestGenSQLAgenticNodeExecution:
         """execute_stream where LLM calls list_tables then responds with SQL."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(name="list_tables", arguments="{}"),
-                ],
-                content=json.dumps({
-                    "sql": "SELECT * FROM satscores LIMIT 10",
-                    "tables": ["satscores"],
-                    "explanation": "Query SAT scores from the satscores table",
-                }),
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(name="list_tables", arguments="{}"),
+                    ],
+                    content=json.dumps(
+                        {
+                            "sql": "SELECT * FROM satscores LIMIT 10",
+                            "tables": ["satscores"],
+                            "explanation": "Query SAT scores from the satscores table",
+                        }
+                    ),
+                ),
+            ]
+        )
 
         node = GenSQLAgenticNode(
             node_id="test_gensql_tools",
@@ -189,17 +192,22 @@ class TestGenSQLAgenticNodeExecution:
         """LLM calls read_query on the real database, verify real results returned."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="read_query",
-                        arguments='{"sql": "SELECT cds, AvgScrRead FROM satscores WHERE AvgScrRead IS NOT NULL ORDER BY cds LIMIT 5"}',
-                    ),
-                ],
-                content="The satscores table has SAT reading scores for various schools.",
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="read_query",
+                            arguments=(
+                                '{"sql": "SELECT cds, AvgScrRead FROM satscores '
+                                'WHERE AvgScrRead IS NOT NULL ORDER BY cds LIMIT 5"}'
+                            ),
+                        ),
+                    ],
+                    content="The satscores table has SAT reading scores for various schools.",
+                ),
+            ]
+        )
 
         node = GenSQLAgenticNode(
             node_id="test_gensql_exec_sql",
@@ -235,17 +243,22 @@ class TestGenSQLAgenticNodeExecution:
         """LLM calls describe_table, verify real schema returned from SQLite."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="describe_table",
-                        arguments='{"table_name": "satscores"}',
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="describe_table",
+                            arguments='{"table_name": "satscores"}',
+                        ),
+                    ],
+                    content=(
+                        "The satscores table has columns: cds, sname, dname, cname, enroll12, "
+                        "NumTstTakr, AvgScrRead, AvgScrMath, AvgScrWrite, NumGE1500."
                     ),
-                ],
-                content="The satscores table has columns: cds, sname, dname, cname, enroll12, NumTstTakr, AvgScrRead, AvgScrMath, AvgScrWrite, NumGE1500.",
-            ),
-        ])
+                ),
+            ]
+        )
 
         node = GenSQLAgenticNode(
             node_id="test_gensql_describe",
@@ -281,18 +294,22 @@ class TestGenSQLAgenticNodeExecution:
         """Verify ActionHistory objects are yielded correctly and tracked in ActionHistoryManager."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(name="list_tables", arguments="{}"),
-                ],
-                content=json.dumps({
-                    "sql": "SELECT COUNT(*) FROM schools",
-                    "tables": ["schools"],
-                    "explanation": "Count schools",
-                }),
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(name="list_tables", arguments="{}"),
+                    ],
+                    content=json.dumps(
+                        {
+                            "sql": "SELECT COUNT(*) FROM schools",
+                            "tables": ["schools"],
+                            "explanation": "Count schools",
+                        }
+                    ),
+                ),
+            ]
+        )
 
         node = GenSQLAgenticNode(
             node_id="test_gensql_history",
@@ -331,15 +348,19 @@ class TestGenSQLAgenticNodeExecution:
         """Response content contains SQL in JSON format, verify it is extracted to the result."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
-        mock_llm_create.reset(responses=[
-            MockLLMResponse(
-                content=json.dumps({
-                    "sql": "SELECT * FROM satscores WHERE AvgScrRead > 500",
-                    "tables": ["satscores"],
-                    "explanation": "Get schools with high SAT reading scores",
-                }),
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                MockLLMResponse(
+                    content=json.dumps(
+                        {
+                            "sql": "SELECT * FROM satscores WHERE AvgScrRead > 500",
+                            "tables": ["satscores"],
+                            "explanation": "Get schools with high SAT reading scores",
+                        }
+                    ),
+                ),
+            ]
+        )
 
         node = GenSQLAgenticNode(
             node_id="test_gensql_extract",
@@ -469,9 +490,11 @@ class TestChatAgenticNodeExecution:
         """execute_stream with simple response produces USER and ASSISTANT actions."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Hello! I can help you with your database queries."),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Hello! I can help you with your database queries."),
+            ]
+        )
 
         node = ChatAgenticNode(
             node_id="test_chat_simple",
@@ -505,14 +528,16 @@ class TestChatAgenticNodeExecution:
         """Chat calls real db tools (list_tables) and gets actual results."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(name="list_tables", arguments="{}"),
-                ],
-                content="I found the following tables: frpm, satscores, schools.",
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(name="list_tables", arguments="{}"),
+                    ],
+                    content="I found the following tables: frpm, satscores, schools.",
+                ),
+            ]
+        )
 
         node = ChatAgenticNode(
             node_id="test_chat_db_tools",
@@ -569,14 +594,16 @@ class TestChatAgenticNodeExecution:
         if len(ctx_tool_names) > 0:
             # If there are context search tools available, test calling one
             first_tool_name = ctx_tool_names[0]
-            mock_llm_create.reset(responses=[
-                build_tool_then_response(
-                    tool_calls=[
-                        MockToolCall(name=first_tool_name, arguments="{}"),
-                    ],
-                    content="Search completed.",
-                ),
-            ])
+            mock_llm_create.reset(
+                responses=[
+                    build_tool_then_response(
+                        tool_calls=[
+                            MockToolCall(name=first_tool_name, arguments="{}"),
+                        ],
+                        content="Search completed.",
+                    ),
+                ]
+            )
 
             node.input = ChatNodeInput(
                 user_message="Search for order metrics",

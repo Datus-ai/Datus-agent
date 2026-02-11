@@ -176,13 +176,15 @@ class MockLLMModel(LLMBaseModel):
         **kwargs,
     ) -> Dict:
         """Generate response with tools (non-streaming). Tools are executed for real."""
-        self._call_history.append({
-            "method": "generate_with_tools",
-            "prompt": prompt,
-            "instruction": instruction,
-            "tools": [t.name for t in tools] if tools else [],
-            "kwargs": kwargs,
-        })
+        self._call_history.append(
+            {
+                "method": "generate_with_tools",
+                "prompt": prompt,
+                "instruction": instruction,
+                "tools": [t.name for t in tools] if tools else [],
+                "kwargs": kwargs,
+            }
+        )
         if self._response_index < len(self._responses):
             response = self._responses[self._response_index]
             self._response_index += 1
@@ -218,13 +220,15 @@ class MockLLMModel(LLMBaseModel):
         Tool calls are ACTUALLY EXECUTED against real tool implementations.
         Only the LLM's decision (which tool + arguments + final response) is mocked.
         """
-        self._call_history.append({
-            "method": "generate_with_tools_stream",
-            "prompt": prompt,
-            "instruction": instruction,
-            "tools": [t.name for t in tools] if tools else [],
-            "kwargs": kwargs,
-        })
+        self._call_history.append(
+            {
+                "method": "generate_with_tools_stream",
+                "prompt": prompt,
+                "instruction": instruction,
+                "tools": [t.name for t in tools] if tools else [],
+                "kwargs": kwargs,
+            }
+        )
 
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
@@ -463,11 +467,13 @@ def build_sql_response(
     tool_calls: Optional[List[MockToolCall]] = None,
 ) -> MockLLMResponse:
     """Build a response that returns SQL in the expected JSON format."""
-    content = json.dumps({
-        "sql": sql,
-        "tables": tables or [],
-        "explanation": explanation,
-    })
+    content = json.dumps(
+        {
+            "sql": sql,
+            "tables": tables or [],
+            "explanation": explanation,
+        }
+    )
     return MockLLMResponse(content=content, tool_calls=tool_calls or [])
 
 

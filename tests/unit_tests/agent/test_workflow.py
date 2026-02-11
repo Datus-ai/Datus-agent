@@ -3,7 +3,6 @@ from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
 from datus.configuration.node_type import NodeType
 from datus.schemas.node_models import SqlTask
-from datus.utils.constants import LLMProvider
 
 
 class TestNode:
@@ -123,7 +122,7 @@ class TestNode:
 
         # Test failure when node type is invalid - should raise ValueError during creation
         with pytest.raises(ValueError, match="Invalid node type"):
-            node = Node.new_instance(
+            Node.new_instance(
                 node_id="invalid_node",
                 description="Invalid node",
                 node_type="invalid_type",
@@ -193,7 +192,9 @@ class TestWorkflow:
     def test_workflow_save_load(self, tmp_path, real_agent_config):
         """Test saving and loading a workflow with multiple nodes."""
         # Create a workflow with multiple nodes
-        workflow = Workflow(name="test_workflow", task=SqlTask(task="Test workflow save/load"), agent_config=real_agent_config)
+        workflow = Workflow(
+            name="test_workflow", task=SqlTask(task="Test workflow save/load"), agent_config=real_agent_config
+        )
 
         node1 = Node.new_instance(
             node_id="node1",

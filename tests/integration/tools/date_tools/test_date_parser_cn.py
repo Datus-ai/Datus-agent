@@ -112,11 +112,7 @@ class TestChineseDateParser:
         """Test Chinese temporal expressions parsing"""
         parser, model = date_parser_cn
         for test_case in chinese_expressions_test_cases:
-            results = parser.extract_and_parse_dates(
-                test_case["text"],
-                test_case["reference"],
-                model
-            )
+            results = parser.extract_and_parse_dates(test_case["text"], test_case["reference"], model)
 
             assert results is not None, f"No results for: {test_case['description']}"
             assert len(results) > 0, f"Empty results for: {test_case['description']}"
@@ -144,11 +140,7 @@ class TestChineseDateParser:
         """Test mixed Chinese temporal expressions parsing"""
         parser, model = date_parser_cn
         for test_case in mixed_expressions_test_cases:
-            results = parser.extract_and_parse_dates(
-                test_case["text"],
-                test_case["reference"],
-                model
-            )
+            results = parser.extract_and_parse_dates(test_case["text"], test_case["reference"], model)
 
             assert results is not None, f"No results for: {test_case['description']}"
             assert len(results) > 0, f"Empty results for: {test_case['description']}"

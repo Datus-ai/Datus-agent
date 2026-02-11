@@ -32,11 +32,8 @@ from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from tests.conftest import TEST_DATA_DIR, load_acceptance_config
 from tests.unit_tests.mock_llm_model import (
-    MockLLMModel,
     MockLLMResponse,
     MockToolCall,
-    build_simple_response,
-    build_sql_response,
     build_tool_then_response,
 )
 
@@ -202,27 +199,31 @@ class TestNode:
     def test_schema_linking_node(self, schema_linking_input, agent_config: AgentConfig, mock_llm_create):
         """Test schema linking node"""
         # Mock LLM response for schema linking
-        mock_llm_create.reset(responses=[
-            MockLLMResponse(
-                tool_calls=[
-                    MockToolCall(name="list_tables", arguments="{}"),
-                ],
-                content=json.dumps({
-                    "schemas": [
-                        {
-                            "catalog_name": "",
-                            "database_name": "california_schools",
-                            "schema_name": "",
-                            "table_name": "schools",
-                            "columns": ["CDSCode", "NCESDist", "NCESSchool"],
-                            "description": "School information table"
-                        }
+        mock_llm_create.reset(
+            responses=[
+                MockLLMResponse(
+                    tool_calls=[
+                        MockToolCall(name="list_tables", arguments="{}"),
                     ],
-                    "values": [],
-                    "explanation": "Identified relevant schema for the query"
-                }),
-            ),
-        ])
+                    content=json.dumps(
+                        {
+                            "schemas": [
+                                {
+                                    "catalog_name": "",
+                                    "database_name": "california_schools",
+                                    "schema_name": "",
+                                    "table_name": "schools",
+                                    "columns": ["CDSCode", "NCESDist", "NCESSchool"],
+                                    "description": "School information table",
+                                }
+                            ],
+                            "values": [],
+                            "explanation": "Identified relevant schema for the query",
+                        }
+                    ),
+                ),
+            ]
+        )
 
         # Take first test case from the list
         for inputs in schema_linking_input:
@@ -250,24 +251,28 @@ class TestNode:
     def test_schema_linking_fallback(self, agent_config: AgentConfig, mock_llm_create):
         """Test schema linking node with fallback"""
         # Mock LLM response for schema linking fallback
-        mock_llm_create.reset(responses=[
-            MockLLMResponse(
-                content=json.dumps({
-                    "schemas": [
+        mock_llm_create.reset(
+            responses=[
+                MockLLMResponse(
+                    content=json.dumps(
                         {
-                            "catalog_name": "",
-                            "database_name": "california_schools",
-                            "schema_name": "",
-                            "table_name": "schools",
-                            "columns": ["CDSCode", "NCESDist"],
-                            "description": "School data"
+                            "schemas": [
+                                {
+                                    "catalog_name": "",
+                                    "database_name": "california_schools",
+                                    "schema_name": "",
+                                    "table_name": "schools",
+                                    "columns": ["CDSCode", "NCESDist"],
+                                    "description": "School data",
+                                }
+                            ],
+                            "values": [],
+                            "explanation": "Using fallback schema linking",
                         }
-                    ],
-                    "values": [],
-                    "explanation": "Using fallback schema linking"
-                }),
-            ),
-        ])
+                    ),
+                ),
+            ]
+        )
 
         agent_config.current_namespace = "bird_sqlite"
         agent_config.rag_base_path = "/tmp/test_data"
@@ -294,19 +299,23 @@ class TestNode:
         """Test SQL generation node with mock LLM and SQLite database"""
         try:
             # Mock LLM response for SQL generation
-            mock_llm_create.reset(responses=[
-                build_tool_then_response(
-                    tool_calls=[
-                        MockToolCall(name="list_tables", arguments="{}"),
-                        MockToolCall(name="describe_table", arguments='{"table_name": "schools"}'),
-                    ],
-                    content=json.dumps({
-                        "sql": "SELECT * FROM schools WHERE City = 'Fresno' LIMIT 10",
-                        "tables": ["schools"],
-                        "explanation": "Query to retrieve schools in Fresno city"
-                    }),
-                ),
-            ])
+            mock_llm_create.reset(
+                responses=[
+                    build_tool_then_response(
+                        tool_calls=[
+                            MockToolCall(name="list_tables", arguments="{}"),
+                            MockToolCall(name="describe_table", arguments='{"table_name": "schools"}'),
+                        ],
+                        content=json.dumps(
+                            {
+                                "sql": "SELECT * FROM schools WHERE City = 'Fresno' LIMIT 10",
+                                "tables": ["schools"],
+                                "explanation": "Query to retrieve schools in Fresno city",
+                            }
+                        ),
+                    ),
+                ]
+            )
 
             # Create table schema from input data
             input_data = GenerateSQLInput(**generate_sql_input[0]["input"])
@@ -410,27 +419,32 @@ class TestNode:
         assert reflect_input.sql_context[1]
         # save_to_yaml(reflection_input, "ReflectionInput.yaml")
 
-
     def test_reasoning_node(self, agent_config, function_tools: List[Tool], mock_llm_create):
         """Test reasoning node with SSB SQLite database using revenue calculation task"""
         try:
             # Mock LLM response for reasoning
             # Note: reasoning_sql_with_mcp expects "sql" key in JSON response, not "sql_query"
-            mock_llm_create.reset(responses=[
-                MockLLMResponse(
-                    tool_calls=[
-                        MockToolCall(name="list_tables", arguments="{}"),
-                    ],
-                    content=json.dumps({
-                        "sql": (
-                            "SELECT SUM(lo_revenue) as total_revenue FROM lineorder "
-                            "WHERE lo_orderdate >= 19940101 AND lo_orderdate < 19940201 "
-                            "AND lo_discount BETWEEN 4 AND 6 AND lo_quantity BETWEEN 26 AND 35"
+            mock_llm_create.reset(
+                responses=[
+                    MockLLMResponse(
+                        tool_calls=[
+                            MockToolCall(name="list_tables", arguments="{}"),
+                        ],
+                        content=json.dumps(
+                            {
+                                "sql": (
+                                    "SELECT SUM(lo_revenue) as total_revenue FROM lineorder "
+                                    "WHERE lo_orderdate >= 19940101 AND lo_orderdate < 19940201 "
+                                    "AND lo_discount BETWEEN 4 AND 6 AND lo_quantity BETWEEN 26 AND 35"
+                                ),
+                                "explanation": (
+                                    "Calculate total revenue for January 1994 " "with specified discount and quantity"
+                                ),
+                            }
                         ),
-                        "explanation": "Calculate total revenue for January 1994 with specified discount and quantity"
-                    }),
-                ),
-            ])
+                    ),
+                ]
+            )
 
             agent_config.current_namespace = "ssb_sqlite"
 
@@ -486,18 +500,24 @@ class TestNode:
         """Test reflection node with test case[0] from YAML"""
         try:
             # Mock LLM response for reflection
-            mock_llm_create.reset(responses=[
-                MockLLMResponse(
-                    content=json.dumps({
-                        "strategy": "SUCCESS",
-                        "details": {
-                            "reflection_strategy": "SUCCESS",
-                            "reflection_explanation": "The SQL query executed successfully and returned valid results",
-                            "is_correct": "true"
-                        }
-                    }),
-                ),
-            ])
+            mock_llm_create.reset(
+                responses=[
+                    MockLLMResponse(
+                        content=json.dumps(
+                            {
+                                "strategy": "SUCCESS",
+                                "details": {
+                                    "reflection_strategy": "SUCCESS",
+                                    "reflection_explanation": (
+                                        "The SQL query executed successfully and returned valid results"
+                                    ),
+                                    "is_correct": "true",
+                                },
+                            }
+                        ),
+                    ),
+                ]
+            )
 
             # Create reflection input data
             index = 0
@@ -630,20 +650,22 @@ class TestNode:
         """Test compare node with mock LLM and california_schools data"""
         try:
             # Mock LLM response for SQL comparison
-            mock_llm_create.reset(responses=[
-                MockLLMResponse(
-                    content=json.dumps({
-                        "explanation": (
-                            "The two queries differ in approach: the first query directly selects from schools table "
-                            "using Charter and FundingType columns, while the expected query joins frpm and schools tables."
-                        ),
-                        "suggest": (
-                            "Consider joining with the frpm table to ensure data consistency. "
-                            "The frpm table may contain the authoritative charter funding information."
-                        )
-                    }),
+            resp = {
+                "explanation": (
+                    "The two queries differ in approach: the first query directly "
+                    "selects from schools table using Charter and FundingType columns, "
+                    "while the expected query joins frpm and schools tables."
                 ),
-            ])
+                "suggest": (
+                    "Consider joining with the frpm table to ensure data consistency. "
+                    "The frpm table may contain the authoritative charter funding information."
+                ),
+            }
+            mock_llm_create.reset(
+                responses=[
+                    MockLLMResponse(content=json.dumps(resp)),
+                ]
+            )
 
             # Create test SQL task
             sql_task = SqlTask(
@@ -737,25 +759,30 @@ class TestNode:
         """Test compare node with MCP streaming for enhanced database analysis"""
         try:
             # Mock LLM response for SQL comparison with MCP
-            mock_llm_create.reset(responses=[
-                MockLLMResponse(
-                    tool_calls=[
-                        MockToolCall(name="describe_table", arguments='{"table_name": "schools"}'),
-                        MockToolCall(name="describe_table", arguments='{"table_name": "frpm"}'),
-                    ],
-                    content=json.dumps({
-                        "explanation": (
-                            "The MCP analysis reveals that the frpm table contains the authoritative charter "
-                            "funding information. The current query uses schools table directly which may not "
-                            "accurately reflect the charter funding type."
+            mock_llm_create.reset(
+                responses=[
+                    MockLLMResponse(
+                        tool_calls=[
+                            MockToolCall(name="describe_table", arguments='{"table_name": "schools"}'),
+                            MockToolCall(name="describe_table", arguments='{"table_name": "frpm"}'),
+                        ],
+                        content=json.dumps(
+                            {
+                                "explanation": (
+                                    "The MCP analysis reveals that the frpm table contains the authoritative charter "
+                                    "funding information. The current query uses schools table directly which may not "
+                                    "accurately reflect the charter funding type."
+                                ),
+                                "suggest": (
+                                    "Join with the frpm table using CDSCode to accurately retrieve "
+                                    "charter school information. Use `Charter Funding Type` and "
+                                    "`Charter School (Y/N)` columns from frpm table."
+                                ),
+                            }
                         ),
-                        "suggest": (
-                            "Join with the frpm table using CDSCode to accurately retrieve charter school information. "
-                            "Use `Charter Funding Type` and `Charter School (Y/N)` columns from frpm table."
-                        )
-                    }),
-                ),
-            ])
+                    ),
+                ]
+            )
 
             # Create test SQL task
             sql_task = SqlTask(

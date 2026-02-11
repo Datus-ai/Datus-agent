@@ -38,7 +38,6 @@ from tests.unit_tests.mock_llm_model import (
     build_tool_then_response,
 )
 
-
 # ---------------------------------------------------------------------------
 # Initialization Tests
 # ---------------------------------------------------------------------------
@@ -175,9 +174,11 @@ class TestGenReportAgenticNodeExecution:
         """Test basic execute_stream produces actions."""
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Revenue analysis report completed."),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Revenue analysis report completed."),
+            ]
+        )
 
         node = GenReportAgenticNode(
             node_id="report_exec_test",
@@ -210,17 +211,19 @@ class TestGenReportAgenticNodeExecution:
         """Test execute_stream where LLM calls describe_table tool to gather data for report."""
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="describe_table",
-                        arguments=json.dumps({"table_name": "satscores"}),
-                    ),
-                ],
-                content="Based on the satscores table schema, the average SAT reading score is 479.7.",
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="describe_table",
+                            arguments=json.dumps({"table_name": "satscores"}),
+                        ),
+                    ],
+                    content="Based on the satscores table schema, the average SAT reading score is 479.7.",
+                ),
+            ]
+        )
 
         node = GenReportAgenticNode(
             node_id="report_tools_exec",
@@ -261,14 +264,18 @@ class TestGenReportAgenticNodeExecution:
         """Test that JSON report responses are properly handled."""
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
-        report_json = json.dumps({
-            "report": "## Revenue Analysis\n\nRevenue grew 15% this quarter.",
-            "data_sources": ["revenue_total"],
-            "key_findings": ["15% growth"],
-        })
-        mock_llm_create.reset(responses=[
-            build_simple_response(report_json),
-        ])
+        report_json = json.dumps(
+            {
+                "report": "## Revenue Analysis\n\nRevenue grew 15% this quarter.",
+                "data_sources": ["revenue_total"],
+                "key_findings": ["15% growth"],
+            }
+        )
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(report_json),
+            ]
+        )
 
         node = GenReportAgenticNode(
             node_id="report_json_test",

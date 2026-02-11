@@ -35,7 +35,6 @@ from tests.unit_tests.mock_llm_model import (
     build_tool_then_response,
 )
 
-
 # ---------------------------------------------------------------------------
 # Initialization Tests
 # ---------------------------------------------------------------------------
@@ -127,9 +126,11 @@ class TestGenMetricsAgenticNodeExecution:
         """Test execute_stream with a simple text response."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Metrics generation completed successfully."),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Metrics generation completed successfully."),
+            ]
+        )
 
         node = GenMetricsAgenticNode(
             agent_config=real_agent_config,
@@ -159,20 +160,24 @@ class TestGenMetricsAgenticNodeExecution:
         """Test execute_stream where LLM calls write_file tool."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="write_file",
-                        arguments=json.dumps({
-                            "path": "revenue_metrics.yml",
-                            "content": "metric:\n  name: revenue\n  type: simple",
-                        }),
-                    ),
-                ],
-                content="I have generated the revenue metrics file.",
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="write_file",
+                            arguments=json.dumps(
+                                {
+                                    "path": "revenue_metrics.yml",
+                                    "content": "metric:\n  name: revenue\n  type: simple",
+                                }
+                            ),
+                        ),
+                    ],
+                    content="I have generated the revenue metrics file.",
+                ),
+            ]
+        )
 
         node = GenMetricsAgenticNode(
             agent_config=real_agent_config,
@@ -207,9 +212,11 @@ class TestGenMetricsAgenticNodeExecution:
         """Test node in workflow mode has no hooks."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Done generating metrics."),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Done generating metrics."),
+            ]
+        )
 
         node = GenMetricsAgenticNode(
             agent_config=real_agent_config,
@@ -250,12 +257,14 @@ class TestGenMetricsAgenticNodeExecution:
         """Test response with thinking content yields a thinking action."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_simple_response(
-                content="Generated revenue metrics.",
-                thinking="I need to analyze the revenue data and create appropriate metrics.",
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    content="Generated revenue metrics.",
+                    thinking="I need to analyze the revenue data and create appropriate metrics.",
+                ),
+            ]
+        )
 
         node = GenMetricsAgenticNode(
             agent_config=real_agent_config,

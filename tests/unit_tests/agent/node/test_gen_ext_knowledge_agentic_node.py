@@ -14,16 +14,13 @@ import json
 
 import pytest
 
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
-
 from tests.unit_tests.mock_llm_model import (
-    MockLLMResponse,
     MockToolCall,
     build_simple_response,
     build_tool_then_response,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -122,9 +119,11 @@ class TestGenExtKnowledgeNodeExecution:
         """execute_stream with a simple LLM response produces USER + SUCCESS actions."""
         node = _create_node(real_agent_config, execution_mode="workflow")
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Generated external knowledge for order amounts"),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Generated external knowledge for order amounts"),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = ExtKnowledgeNodeInput(
@@ -147,14 +146,16 @@ class TestGenExtKnowledgeNodeExecution:
         """LLM calls list_tables tool then responds; tool is ACTUALLY EXECUTED."""
         node = _create_node(real_agent_config, execution_mode="workflow")
 
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(name="list_tables", arguments="{}"),
-                ],
-                content="External knowledge generated after checking tables",
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(name="list_tables", arguments="{}"),
+                    ],
+                    content="External knowledge generated after checking tables",
+                ),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = ExtKnowledgeNodeInput(
@@ -185,17 +186,19 @@ class TestGenExtKnowledgeNodeExecution:
         node = _create_node(real_agent_config, execution_mode="workflow")
 
         # verify_sql tool call without gold_sql set on the node
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="verify_sql",
-                        arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
-                    ),
-                ],
-                content="SQL verified successfully, no reference available",
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="verify_sql",
+                            arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
+                        ),
+                    ],
+                    content="SQL verified successfully, no reference available",
+                ),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = ExtKnowledgeNodeInput(
@@ -209,10 +212,7 @@ class TestGenExtKnowledgeNodeExecution:
             actions.append(action)
 
         # verify_sql should succeed since no gold_sql is set
-        tool_success_actions = [
-            a for a in actions
-            if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS
-        ]
+        tool_success_actions = [a for a in actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
         assert len(tool_success_actions) >= 1
 
         # Check the tool result indicates success
@@ -228,17 +228,19 @@ class TestGenExtKnowledgeNodeExecution:
 
         # Use a multi-step response:
         # Step 1: The LLM generates the response. Before that we set gold_sql.
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="verify_sql",
-                        arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
-                    ),
-                ],
-                content="SQL verified against gold reference",
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="verify_sql",
+                            arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
+                        ),
+                    ],
+                    content="SQL verified against gold reference",
+                ),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = ExtKnowledgeNodeInput(
@@ -260,22 +262,28 @@ class TestGenExtKnowledgeNodeExecution:
         node = _create_node(real_agent_config, execution_mode="workflow")
 
         # Need 2 responses: first for the main loop, second for compare suggestions
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="verify_sql",
-                        arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
-                    ),
-                ],
-                content="SQL verification result received",
-            ),
-            # Response for _generate_compare_suggestions internal generate_with_json_output call
-            build_simple_response(json.dumps({
-                "explanation": "Row count differs",
-                "suggest": "Check the query",
-            })),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="verify_sql",
+                            arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
+                        ),
+                    ],
+                    content="SQL verification result received",
+                ),
+                # Response for _generate_compare_suggestions internal generate_with_json_output call
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "explanation": "Row count differs",
+                            "suggest": "Check the query",
+                        }
+                    )
+                ),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = ExtKnowledgeNodeInput(
@@ -301,9 +309,11 @@ class TestGenExtKnowledgeNodeExecution:
         assert node.hooks is None
         assert node.execution_mode == "workflow"
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Knowledge generated in workflow mode"),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Knowledge generated in workflow mode"),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = ExtKnowledgeNodeInput(

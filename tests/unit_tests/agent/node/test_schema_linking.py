@@ -2,7 +2,6 @@ import os
 import shutil
 import tempfile
 
-import lancedb
 import pytest
 
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput

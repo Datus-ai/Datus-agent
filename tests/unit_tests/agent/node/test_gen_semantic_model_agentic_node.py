@@ -35,7 +35,6 @@ from tests.unit_tests.mock_llm_model import (
     build_tool_then_response,
 )
 
-
 # ---------------------------------------------------------------------------
 # Initialization Tests
 # ---------------------------------------------------------------------------
@@ -145,9 +144,11 @@ class TestGenSemanticModelAgenticNodeExecution:
         """Test execute_stream with a simple text response."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Semantic model generation completed."),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Semantic model generation completed."),
+            ]
+        )
 
         node = GenSemanticModelAgenticNode(
             agent_config=real_agent_config,
@@ -177,17 +178,19 @@ class TestGenSemanticModelAgenticNodeExecution:
         """Test execute_stream where LLM calls describe_table tool against real SQLite."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="describe_table",
-                        arguments=json.dumps({"table_name": "satscores"}),
-                    ),
-                ],
-                content="I have examined the satscores table and created the semantic model.",
-            ),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="describe_table",
+                            arguments=json.dumps({"table_name": "satscores"}),
+                        ),
+                    ],
+                    content="I have examined the satscores table and created the semantic model.",
+                ),
+            ]
+        )
 
         node = GenSemanticModelAgenticNode(
             agent_config=real_agent_config,
@@ -222,9 +225,11 @@ class TestGenSemanticModelAgenticNodeExecution:
         """Test node in workflow mode has no hooks and executes correctly."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Done generating semantic model."),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Done generating semantic model."),
+            ]
+        )
 
         node = GenSemanticModelAgenticNode(
             agent_config=real_agent_config,

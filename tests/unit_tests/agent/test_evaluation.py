@@ -34,7 +34,7 @@ class TestEvaluation:
         )
 
         # Mock _init_tools to avoid database initialization
-        with patch.object(Workflow, '_init_tools', return_value=None):
+        with patch.object(Workflow, "_init_tools", return_value=None):
             workflow = Workflow("test_workflow", task=sql_task, agent_config=mock_agent_config)
             workflow.tools = []
 
@@ -79,7 +79,7 @@ class TestEvaluation:
         )
 
         # Mock _init_tools to avoid database initialization
-        with patch.object(Workflow, '_init_tools', return_value=None):
+        with patch.object(Workflow, "_init_tools", return_value=None):
             workflow = Workflow("test_workflow", task=sql_task, agent_config=mock_agent_config)
             workflow.tools = []
 
@@ -102,8 +102,10 @@ class TestEvaluation:
             gen_node.status = "failed"
 
             # Mock setup_input to return failure
-            with patch("datus.agent.evaluate.setup_node_input",
-                       return_value={"success": False, "suggestions": ["Fix SQL syntax error: 'FORM' should be 'FROM'"]}):
+            with patch(
+                "datus.agent.evaluate.setup_node_input",
+                return_value={"success": False, "suggestions": ["Fix SQL syntax error: 'FORM' should be 'FROM'"]},
+            ):
                 evaluation = evaluate_result(gen_node, workflow)
 
                 assert evaluation["success"] is False
@@ -122,7 +124,7 @@ class TestEvaluation:
         )
 
         # Mock _init_tools to avoid database initialization
-        with patch.object(Workflow, '_init_tools', return_value=None):
+        with patch.object(Workflow, "_init_tools", return_value=None):
             workflow = Workflow("test_workflow", task=sql_task, agent_config=mock_agent_config)
             workflow.tools = []
 
@@ -144,8 +146,10 @@ class TestEvaluation:
             gen_node.result = ""
             gen_node.status = "failed"
 
-            with patch("datus.agent.evaluate.setup_node_input",
-                       return_value={"success": False, "suggestions": ["No SQL query was generated"]}):
+            with patch(
+                "datus.agent.evaluate.setup_node_input",
+                return_value={"success": False, "suggestions": ["No SQL query was generated"]},
+            ):
                 evaluation = evaluate_result(gen_node, workflow)
 
                 assert evaluation["success"] is False
@@ -164,7 +168,7 @@ class TestEvaluation:
         )
 
         # Mock _init_tools to avoid database initialization
-        with patch.object(Workflow, '_init_tools', return_value=None):
+        with patch.object(Workflow, "_init_tools", return_value=None):
             workflow = Workflow("test_workflow", task=sql_task, agent_config=mock_agent_config)
             workflow.tools = []
 
@@ -186,8 +190,10 @@ class TestEvaluation:
             exec_node.result = {"error": "Table 'employees' not found"}
             exec_node.status = "failed"
 
-            with patch("datus.agent.evaluate.setup_node_input",
-                       return_value={"success": False, "suggestions": ["Create or verify the 'employees' table exists"]}):
+            with patch(
+                "datus.agent.evaluate.setup_node_input",
+                return_value={"success": False, "suggestions": ["Create or verify the 'employees' table exists"]},
+            ):
                 evaluation = evaluate_result(exec_node, workflow)
 
                 assert evaluation["success"] is False
@@ -206,7 +212,7 @@ class TestEvaluation:
         )
 
         # Mock _init_tools to avoid database initialization
-        with patch.object(Workflow, '_init_tools', return_value=None):
+        with patch.object(Workflow, "_init_tools", return_value=None):
             workflow = Workflow("test_workflow", task=sql_task, agent_config=mock_agent_config)
             workflow.tools = []
 

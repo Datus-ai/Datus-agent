@@ -14,17 +14,14 @@ import json
 
 import pytest
 
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.compare_node_models import CompareInput, CompareResult
+from datus.schemas.action_history import ActionRole, ActionStatus
+from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.node_models import SQLContext, SqlTask
-
 from tests.unit_tests.mock_llm_model import (
-    MockLLMResponse,
     MockToolCall,
     build_simple_response,
     build_tool_then_response,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -111,13 +108,17 @@ class TestCompareAgenticNodeExecution:
         """execute_stream with a JSON comparison response."""
         node = _create_compare_node(real_agent_config)
 
-        response_content = json.dumps({
-            "explanation": "The SQL correctly aggregates average SAT reading score.",
-            "suggest": "No changes needed.",
-        })
-        mock_llm_create.reset(responses=[
-            build_simple_response(response_content),
-        ])
+        response_content = json.dumps(
+            {
+                "explanation": "The SQL correctly aggregates average SAT reading score.",
+                "suggest": "No changes needed.",
+            }
+        )
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(response_content),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = _create_compare_input()
@@ -147,21 +148,25 @@ class TestCompareAgenticNodeExecution:
         """LLM calls read_query tool to verify, then responds with comparison."""
         node = _create_compare_node(real_agent_config)
 
-        response_content = json.dumps({
-            "explanation": "After checking the table, the SQL is correct.",
-            "suggest": "Consider adding an index on AvgScrRead column.",
-        })
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="read_query",
-                        arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
-                    ),
-                ],
-                content=response_content,
-            ),
-        ])
+        response_content = json.dumps(
+            {
+                "explanation": "After checking the table, the SQL is correct.",
+                "suggest": "Consider adding an index on AvgScrRead column.",
+            }
+        )
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="read_query",
+                            arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
+                        ),
+                    ],
+                    content=response_content,
+                ),
+            ]
+        )
         node.model = mock_llm_create
         node.input = _create_compare_input()
 
@@ -215,9 +220,7 @@ class TestCompareStaticMethods:
         """_parse_comparison_output returns dict as-is."""
         from datus.agent.node.compare_agentic_node import CompareAgenticNode
 
-        result = CompareAgenticNode._parse_comparison_output(
-            {"explanation": "Good", "suggest": "None needed"}
-        )
+        result = CompareAgenticNode._parse_comparison_output({"explanation": "Good", "suggest": "None needed"})
         assert result["explanation"] == "Good"
         assert result["suggest"] == "None needed"
 

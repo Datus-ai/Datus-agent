@@ -7,7 +7,6 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.models.base import LLMBaseModel
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.storage.embedding_models import get_db_embedding_model
@@ -45,9 +44,16 @@ class TestLLMsTools:
     def test_reasoning_sql(self, mock_llm_create, test_data):
         """Test basic tool execution."""
         # Configure MockLLMModel response - reasoning_sql_with_mcp expects JSON with 'sql' field
-        mock_llm_create.reset(responses=[
-            build_simple_response(content='{"sql": "SELECT Zip FROM frpm WHERE frpm.`Charter School (Y/N)` = 1", "tables": ["frpm"], "explanation": "Query charter schools zip codes"}'),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    content=(
+                        '{"sql": "SELECT Zip FROM frpm WHERE frpm.`Charter School (Y/N)` = 1", '
+                        '"tables": ["frpm"], "explanation": "Query charter schools zip codes"}'
+                    )
+                ),
+            ]
+        )
 
         # Using test data from YAML
         input_data = ReasoningInput(**test_data[0]["input"])
@@ -55,7 +61,9 @@ class TestLLMsTools:
         from datus.tools.llms_tools.reasoning_sql import reasoning_sql_with_mcp
 
         # Use mock_llm_create directly (it's already a MockLLMModel instance)
-        result = reasoning_sql_with_mcp(model=mock_llm_create, input_data=input_data, tools=[], tool_config={"max_turns": 10})
+        result = reasoning_sql_with_mcp(
+            model=mock_llm_create, input_data=input_data, tools=[], tool_config={"max_turns": 10}
+        )
         assert result is not None, "Tool execution should return a result"
 
 

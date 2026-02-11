@@ -14,16 +14,13 @@ import json
 
 import pytest
 
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
-
 from tests.unit_tests.mock_llm_model import (
-    MockLLMResponse,
     MockToolCall,
     build_simple_response,
     build_tool_then_response,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -111,9 +108,11 @@ class TestSqlSummaryAgenticNodeExecution:
         """execute_stream with a simple LLM response produces USER + SUCCESS actions."""
         node = _create_node(real_agent_config, execution_mode="workflow")
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("SQL summary created for the revenue query"),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("SQL summary created for the revenue query"),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = SqlSummaryNodeInput(
@@ -138,21 +137,25 @@ class TestSqlSummaryAgenticNodeExecution:
         """LLM calls filesystem tools then responds; tools are ACTUALLY EXECUTED."""
         node = _create_node(real_agent_config, execution_mode="workflow")
 
-        response_content = json.dumps({
-            "sql_summary_file": "summary_001.yaml",
-            "output": "Summary with filesystem operations",
-        })
-        mock_llm_create.reset(responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(
-                        name="list_directory",
-                        arguments=json.dumps({"path": "."}),
-                    ),
-                ],
-                content=response_content,
-            ),
-        ])
+        response_content = json.dumps(
+            {
+                "sql_summary_file": "summary_001.yaml",
+                "output": "Summary with filesystem operations",
+            }
+        )
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="list_directory",
+                            arguments=json.dumps({"path": "."}),
+                        ),
+                    ],
+                    content=response_content,
+                ),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = SqlSummaryNodeInput(
@@ -182,9 +185,11 @@ class TestSqlSummaryAgenticNodeExecution:
         assert node.hooks is None
         assert node.execution_mode == "workflow"
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Summary generated in workflow mode"),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Summary generated in workflow mode"),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = SqlSummaryNodeInput(
@@ -215,14 +220,19 @@ class TestSqlSummaryAgenticNodeExecution:
         """Input with sql_query and comment enriches the user message."""
         node = _create_node(real_agent_config, execution_mode="workflow")
 
-        mock_llm_create.reset(responses=[
-            build_simple_response("Summary for complex query with context"),
-        ])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Summary for complex query with context"),
+            ]
+        )
         node.model = mock_llm_create
 
         node.input = SqlSummaryNodeInput(
             user_message="Summarize this query",
-            sql_query="SELECT s.County, AVG(sc.AvgScrRead) FROM satscores sc JOIN schools s ON sc.cds = s.CDSCode GROUP BY s.County",
+            sql_query=(
+                "SELECT s.County, AVG(sc.AvgScrRead) FROM satscores sc "
+                "JOIN schools s ON sc.cds = s.CDSCode GROUP BY s.County"
+            ),
             comment="Average SAT reading score by county",
             database="california_schools",
             db_schema="main",

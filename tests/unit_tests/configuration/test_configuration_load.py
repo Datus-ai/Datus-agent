@@ -2,9 +2,8 @@ import pytest
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.storage.storage_cfg import check_storage_config
 from datus.utils.constants import DBType
-from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.exceptions import DatusException
 from tests.conftest import TEST_CONF_DIR
 
 

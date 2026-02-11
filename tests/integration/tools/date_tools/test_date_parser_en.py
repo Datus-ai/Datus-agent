@@ -84,11 +84,7 @@ class TestEnglishDateParser:
         """Test English temporal expressions parsing"""
         parser, model = date_parser_en
         for test_case in english_expressions_test_cases:
-            results = parser.extract_and_parse_dates(
-                test_case["text"],
-                test_case["reference"],
-                model
-            )
+            results = parser.extract_and_parse_dates(test_case["text"], test_case["reference"], model)
 
             assert results is not None, f"No results for: {test_case['description']}"
             assert len(results) > 0, f"Empty results for: {test_case['description']}"
