@@ -802,9 +802,61 @@ class SubjectScreen(ContextScreen):
         for name, node_data in tree_data.items():
             attach_entries_for_node(node_data, [name])
 
+    def _collect_expanded_paths(self, node: TreeNode, current_path: Optional[List[str]] = None) -> set:
+        """Collect paths of all expanded nodes in the tree.
+
+        Args:
+            node: The tree node to start collecting from (usually root)
+            current_path: Current path prefix for recursion
+
+        Returns:
+            Set of tuples representing paths of expanded nodes
+        """
+        if current_path is None:
+            current_path = []
+
+        expanded = set()
+
+        for child in node.children:
+            child_data = child.data or {}
+            child_name = child_data.get("name", "")
+            if child_name and child_data.get("type") == "subject_node":
+                child_path = current_path + [child_name]
+                if child.is_expanded:
+                    expanded.add(tuple(child_path))
+                expanded.update(self._collect_expanded_paths(child, child_path))
+
+        return expanded
+
+    def _restore_expanded_paths(
+        self, node: TreeNode, expanded_paths: set, current_path: Optional[List[str]] = None
+    ) -> None:
+        """Restore expansion state for nodes matching the saved paths.
+
+        Args:
+            node: The tree node to start restoring from (usually root)
+            expanded_paths: Set of tuples representing paths that should be expanded
+            current_path: Current path prefix for recursion
+        """
+        if current_path is None:
+            current_path = []
+
+        for child in node.children:
+            child_data = child.data or {}
+            child_name = child_data.get("name", "")
+            if child_name and child_data.get("type") == "subject_node":
+                child_path = current_path + [child_name]
+                if tuple(child_path) in expanded_paths:
+                    child.expand()
+                self._restore_expanded_paths(child, expanded_paths, child_path)
+
     def _populate_tree(self, tree_data: Dict[str, Any]) -> None:
         """Populate tree with subject nodes and entries from tree_data."""
         tree = self.query_one("#subject-tree", EditableTree)
+
+        # Save expanded state before clearing
+        expanded_paths = self._collect_expanded_paths(tree.root)
+
         tree.clear()
         tree.root.expand()
 
@@ -815,6 +867,9 @@ class SubjectScreen(ContextScreen):
         # Recursively build tree for each root node
         for name, node_data in sorted(tree_data.items()):
             self._add_tree_node_recursive(tree.root, name, node_data)
+
+        # Restore expanded state
+        self._restore_expanded_paths(tree.root, expanded_paths)
 
         # Focus on pending path if set (after tree is fully populated)
         if self._pending_focus_path:
@@ -1927,6 +1982,11 @@ class SubjectScreen(ContextScreen):
             _fetch_metrics_with_cache.cache_clear()
             _sql_details_cache.cache_clear()
 
+            # Focus parent node after reload
+            parent_path = node_path[:-1] if len(node_path) > 1 else None
+            if parent_path:
+                self._pending_focus_path = parent_path
+
             # Reload tree
             self._current_loading_task = self.run_worker(self._load_subject_tree_data, thread=True)
 
@@ -1967,8 +2027,8 @@ class SubjectScreen(ContextScreen):
         try:
             deleted = False
             if entry_type == "metric":
-                # Delete metric (from lancedb and yaml file)
-                result = self.metrics_rag.delete_metric(subject_path, entry_name)
+                # Delete metric (from lancedb, yaml, and sub-agent storages)
+                result = self.subject_updater.delete_metric(subject_path, entry_name)
                 deleted = result.get("success", False)
                 if deleted:
                     _fetch_metrics_with_cache.cache_clear()
@@ -1978,8 +2038,8 @@ class SubjectScreen(ContextScreen):
                     self.app.notify(result.get("message", "Failed to delete metric"), severity="error")
 
             elif entry_type == "sql":
-                # Delete reference SQL (only from lancedb)
-                deleted = self.sql_rag.delete_reference_sql(subject_path, entry_name)
+                # Delete reference SQL (from lancedb and sub-agent storages)
+                deleted = self.subject_updater.delete_reference_sql(subject_path, entry_name)
                 if deleted:
                     _sql_details_cache.cache_clear()
                     self.app.notify(f"Deleted reference SQL: {entry_name}", severity="success")
@@ -1987,8 +2047,8 @@ class SubjectScreen(ContextScreen):
                     self.app.notify(f"Failed to delete reference SQL: {entry_name}", severity="error")
 
             elif entry_type == "ext_knowledge":
-                # Delete ext_knowledge (only from lancedb)
-                deleted = self.ext_knowledge_rag.delete_knowledge(subject_path, entry_name)
+                # Delete ext_knowledge (from lancedb and sub-agent storages)
+                deleted = self.subject_updater.delete_ext_knowledge(subject_path, entry_name)
                 if deleted:
                     self.app.notify(f"Deleted knowledge: {entry_name}", severity="success")
                 else:
@@ -1999,6 +2059,8 @@ class SubjectScreen(ContextScreen):
                 return
 
             if deleted:
+                # Focus parent subject node after reload
+                self._pending_focus_path = subject_path
                 # Reload tree to reflect changes
                 self._current_loading_task = self.run_worker(self._load_subject_tree_data, thread=True)
                 # Clear selected data since entry is deleted
