@@ -90,4 +90,4 @@ jobs:
 
       - name: run integration tests
         run: |
-          python -m pytest -m ci tests/integration/
+          python -m pytest -m acceptance  tests/
