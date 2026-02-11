@@ -551,6 +551,8 @@ class HTMLParser:
 
         # Remove elements with non-content classes/IDs
         for element in soup.find_all(True):
+            if element.attrs is None:
+                continue
             classes = element.get("class", [])
             element_id = element.get("id", "")
 
