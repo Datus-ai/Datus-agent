@@ -88,6 +88,6 @@ jobs:
           ./build_scripts/build_test_data.sh || exit 1
           echo "Test data build completed"
 
-      - name: run pytest
+      - name: run integration tests
         run: |
-          python -m pytest -m ci tests/
+          python -m pytest -m ci tests/integration/
