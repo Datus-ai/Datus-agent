@@ -109,6 +109,57 @@ _original_acompletion = None
 _reasoning_content_cache: dict[str, str] = {}
 
 
+class _ReasoningContentStreamWrapper:
+    """
+    Async iterator wrapper that intercepts streaming chunks to cache
+    reasoning_content for Kimi/Moonshot models.
+
+    When stream=True, litellm.acompletion returns an async iterable (not a
+    ModelResponse with .choices), so reasoning_content must be captured from
+    individual delta chunks as they stream through.
+    """
+
+    def __init__(self, stream: Any, model: str):
+        self._stream = stream
+        self._model = model
+        self._reasoning_chunks: list[str] = []
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            chunk = await self._stream.__anext__()
+        except StopAsyncIteration:
+            self._flush_cache()
+            raise
+
+        try:
+            for choice in getattr(chunk, "choices", []):
+                delta = getattr(choice, "delta", None)
+                if delta:
+                    rc = getattr(delta, "reasoning_content", None)
+                    if rc and isinstance(rc, str):
+                        self._reasoning_chunks.append(rc)
+        except Exception:
+            pass
+
+        return chunk
+
+    def _flush_cache(self) -> None:
+        """Flush accumulated reasoning_content chunks into the cache."""
+        if self._reasoning_chunks:
+            full_rc = "".join(self._reasoning_chunks)
+            if full_rc.strip():
+                _reasoning_content_cache[self._model] = full_rc
+                logger.debug(
+                    f"[SDK Patch] Cached reasoning_content from stream, " f"model={self._model}, length={len(full_rc)}"
+                )
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
+
+
 def _postprocess_messages_for_reasoning(
     messages: list[dict[str, Any]],
     model: str | None,
@@ -149,9 +200,14 @@ def _postprocess_messages_for_reasoning(
                 msg["reasoning_content"] = last_reasoning_content
                 logger.debug("[SDK Patch] Injected reasoning_content into assistant+tool_calls message")
             elif "reasoning_content" not in msg:
-                # Kimi requires the field to exist even if empty
+                # No reasoning_content available from messages or cache.
+                # Moonshot API requires non-empty reasoning_content for thinking models.
+                # This path should be rare after the streaming cache fix.
                 msg["reasoning_content"] = ""
-                logger.debug("[SDK Patch] Added empty reasoning_content to assistant+tool_calls message")
+                logger.warning(
+                    "[SDK Patch] No reasoning_content available for assistant+tool_calls message. "
+                    "Moonshot API may reject this request. Check if streaming cache is working."
+                )
 
             # Ensure content is empty string, not None (Moonshot requirement)
             if msg.get("content") is None:
@@ -223,20 +279,27 @@ def apply_sdk_patches() -> None:
             # Cache reasoning_content from the API response for future fallback.
             # This handles cases where the SDK converter fails to extract it from items.
             if model and _is_kimi_model(model):
-                try:
-                    for choice in getattr(response, "choices", []):
-                        msg = getattr(choice, "message", None)
-                        if msg:
-                            rc = getattr(msg, "reasoning_content", None)
-                            if rc and isinstance(rc, str) and rc.strip():
-                                _reasoning_content_cache[model] = rc
-                                logger.debug(
-                                    f"[SDK Patch] Cached reasoning_content from response, "
-                                    f"model={model}, length={len(rc)}"
-                                )
-                                break
-                except Exception:
-                    pass  # Never let caching break the main flow
+                stream = kwargs.get("stream", False)
+                if stream:
+                    # Streaming: wrap the async iterator to capture reasoning_content
+                    # from delta chunks as they flow through.
+                    response = _ReasoningContentStreamWrapper(response, model)
+                else:
+                    # Non-streaming: extract from ModelResponse.choices directly.
+                    try:
+                        for choice in getattr(response, "choices", []):
+                            msg = getattr(choice, "message", None)
+                            if msg:
+                                rc = getattr(msg, "reasoning_content", None)
+                                if rc and isinstance(rc, str) and rc.strip():
+                                    _reasoning_content_cache[model] = rc
+                                    logger.debug(
+                                        f"[SDK Patch] Cached reasoning_content from response, "
+                                        f"model={model}, length={len(rc)}"
+                                    )
+                                    break
+                    except Exception:
+                        pass  # Never let caching break the main flow
 
             return response
 
