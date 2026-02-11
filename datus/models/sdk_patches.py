@@ -65,7 +65,12 @@ def _normalize_provider_data(item: Any) -> Any:
         return item
 
     # Deep copy the Pydantic object to avoid mutating the SDK's internal state
-    item_copy = item.model_copy(deep=True) if hasattr(item, "model_copy") else item
+    if hasattr(item, "model_copy"):
+        item_copy = item.model_copy(deep=True)
+    elif hasattr(item, "copy"):
+        item_copy = item.copy(deep=True)
+    else:
+        item_copy = copy.deepcopy(item)
     item_copy.provider_data["model"] = f"deepseek-{item_model}"
     return item_copy
 

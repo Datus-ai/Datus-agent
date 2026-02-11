@@ -53,8 +53,8 @@ def streamlit_server():
             "--namespace",
             "ssb_sqlite",
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
     # Poll until ready (max 30s)

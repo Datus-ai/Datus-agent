@@ -357,7 +357,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         json_kwargs["response_format"] = {"type": "json_object"}
 
         # Pass through enable_thinking if provided
-        enable_thinking_param = json_kwargs.pop("enable_thinking", False)
+        enable_thinking_param = json_kwargs.pop("enable_thinking", None)
         response_text = self.generate(prompt, enable_thinking=enable_thinking_param, **json_kwargs)
 
         try:
