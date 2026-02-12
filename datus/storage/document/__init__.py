@@ -57,7 +57,7 @@ from datus.storage.document.chunker import SemanticChunker
 from datus.storage.document.cleaner import DocumentCleaner
 
 # Initialization functions
-from datus.storage.document.doc_init import InitResult, import_documents, init_platform_docs
+from datus.storage.document.doc_init import InitResult, import_documents, infer_platform_from_source, init_platform_docs
 
 # Fetchers
 from datus.storage.document.fetcher import BaseFetcher, GitHubFetcher, LocalFetcher, RateLimiter, WebFetcher
@@ -127,6 +127,7 @@ __all__ = [
     # Init functions
     "init_platform_docs",
     "import_documents",
+    "infer_platform_from_source",
     "InitResult",
     # Streaming processor
     "StreamingDocProcessor",

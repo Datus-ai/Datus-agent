@@ -1050,19 +1050,37 @@ def bootstrap_platform_doc(args: argparse.Namespace, agent_config: AgentConfig):
         InitResult on success/failure, or None if no document source is configured.
     """
     from datus.configuration.agent_config import DocumentConfig
-    from datus.storage.document import init_platform_docs
+    from datus.storage.document import infer_platform_from_source, init_platform_docs
 
     update_strategy = getattr(args, "update_strategy", "check")
     pool_size = getattr(args, "pool_size", 4) or 4
-    doc_platform = getattr(args, "platform", None) or "default"
+    doc_platform = getattr(args, "platform", None)
 
     # Merge: YAML config as base, CLI args override non-None values
+    # If platform is not specified, try to resolve from YAML config or source
+    if not doc_platform:
+        source_from_cli = getattr(args, "source", None)
+        if source_from_cli:
+            doc_platform = infer_platform_from_source(source_from_cli)
+        if not doc_platform:
+            # Try single-entry YAML config: if only one platform is configured, use it
+            if len(agent_config.document_configs) == 1:
+                doc_platform = next(iter(agent_config.document_configs))
+            else:
+                print(
+                    "\n[ERROR] Cannot determine platform name."
+                    "\n  Use --platform <name> to specify, or provide --source to auto-detect."
+                    "\n  Examples: --platform polaris, --platform snowflake"
+                )
+                return None
+
     base_cfg = agent_config.document_configs.get(doc_platform, DocumentConfig())
     cfg = base_cfg.merge_cli_args(args)
 
     dir_path = agent_config.document_storage_path(doc_platform)
 
     if not cfg.source:
+        print(f"\nPlatform Doc: skipped (no document source configured for '{doc_platform}')")
         return None
 
     logger.info(f"Initializing document from {cfg.source} (type: {cfg.type})")

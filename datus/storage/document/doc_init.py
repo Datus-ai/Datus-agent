@@ -466,6 +466,70 @@ def _delete_existing_versions(store, version: str, path_versions: Set[str]) -> N
 
 
 # =============================================================================
+# Platform Inference
+# =============================================================================
+
+
+def infer_platform_from_source(source: str) -> Optional[str]:
+    """Infer platform name from a document source string.
+
+    Handles three source formats:
+      - GitHub repo:  "owner/repo" or "https://github.com/owner/repo/..."
+      - Website URL:  "https://docs.snowflake.com/..."
+      - Local path:   "/path/to/starrocks-docs"
+
+    Returns:
+        Lowercase platform name, or None if unable to infer.
+    """
+    from pathlib import PurePosixPath
+    from urllib.parse import urlparse
+
+    source = source.strip().rstrip("/")
+    if not source:
+        return None
+
+    # --- GitHub URL: https://github.com/owner/repo/... ---
+    gh_url_match = re.match(r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?(?:/|$)", source)
+    if gh_url_match:
+        repo_name = gh_url_match.group(2).lower()
+        # Strip common suffixes: "-docs", "-documentation", etc.
+        repo_name = re.sub(r"[_-]?(docs?|documentation|website)$", "", repo_name)
+        return repo_name or None
+
+    # --- GitHub shorthand: "owner/repo" (no scheme, exactly one slash) ---
+    if "/" in source and not source.startswith(("http://", "https://", "/")):
+        parts = source.split("/")
+        if len(parts) == 2 and parts[0] and parts[1]:
+            repo_name = parts[1].lower()
+            repo_name = re.sub(r"[_-]?(docs?|documentation|website)$", "", repo_name)
+            return repo_name or None
+
+    # --- Website URL: extract from domain ---
+    if source.startswith(("http://", "https://")):
+        parsed = urlparse(source)
+        domain = parsed.netloc.lower()
+        # Remove port, "www.", and TLD suffixes
+        domain = re.sub(r":\d+$", "", domain)
+        domain = re.sub(r"^www\.", "", domain)
+        # "docs.snowflake.com" -> "snowflake"
+        # "snowflake.com" -> "snowflake"
+        domain_parts = domain.split(".")
+        if len(domain_parts) >= 2:
+            # Pick the second-level domain (e.g., "snowflake" from "docs.snowflake.com")
+            return domain_parts[-2] or None
+        return None
+
+    # --- Local path: use the last directory component ---
+    name = PurePosixPath(source).name.lower()
+    if name:
+        # Strip common suffixes
+        name = re.sub(r"[_-]?(docs?|documentation|website)$", "", name)
+        return name or None
+
+    return None
+
+
+# =============================================================================
 # Simple Document Import Functions
 # =============================================================================
 
