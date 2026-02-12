@@ -165,9 +165,6 @@ dev = [
 [tool.coverage.run]
 source = ["datus"]
 omit = [
-    "datus/mcp_server.py",
-    "datus/cli/*",
-    "datus/api/*",
     "datus/prompts/prompt_templates/*",
 ]
 

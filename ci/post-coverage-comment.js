@@ -6,9 +6,9 @@ module.exports = async ({ github, context, core }) => {
   const fs = require('fs');
 
   let diffReport = '';
-  try { diffReport = fs.readFileSync('diff-cover-report.md', 'utf8'); } catch {}
+  try { diffReport = fs.readFileSync('ci/diff-cover-report.md', 'utf8'); } catch {}
   let testReport = '';
-  try { testReport = fs.readFileSync('test-report.md', 'utf8'); } catch {}
+  try { testReport = fs.readFileSync('ci/test-report.md', 'utf8'); } catch {}
 
   const overall = process.env.METRIC_OVERALL || '';
   const diff = process.env.METRIC_DIFF || '';

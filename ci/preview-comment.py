@@ -45,19 +45,19 @@ def read_outputs():
         import xml.etree.ElementTree as ET
 
         try:
-            tree = ET.parse("coverage.xml")
+            tree = ET.parse("ci/coverage.xml")
             outputs["overall"] = f"{float(tree.getroot().attrib.get('line-rate', 0)) * 100:.2f}"
         except Exception:
             outputs["overall"] = "0.00"
 
         try:
-            with open("diff-cover.json") as f:
+            with open("ci/diff-cover.json") as f:
                 outputs["diff"] = f"{json.load(f).get('total_percent_covered', 0):.2f}"
         except Exception:
             outputs["diff"] = "0.00"
 
         try:
-            tree = ET.parse("test-results.xml")
+            tree = ET.parse("ci/test-results.xml")
             root = tree.getroot()
             suites = root.findall("testsuite") if root.tag == "testsuites" else [root]
             total = failed = errors = skipped = 0
@@ -80,8 +80,8 @@ def read_outputs():
 
 
 def build_comment(outputs):
-    diff_report = read_file("diff-cover-report.md")
-    test_report = read_file("test-report.md")
+    diff_report = read_file("ci/diff-cover-report.md")
+    test_report = read_file("ci/test-report.md")
 
     overall = outputs.get("overall", "0.00")
     diff = outputs.get("diff", "0.00")

@@ -13,13 +13,14 @@ Outputs (written to GITHUB_OUTPUT if available, otherwise stdout):
     test_skipped  - Skipped test count
     test_outcome  - "success" or "failure"
 
-Generated files:
-    coverage.xml        - Cobertura coverage report
-    test-results.xml    - JUnit test results
-    diff-cover.json     - Diff coverage data
-    diff-cover-report.md - Diff coverage markdown report
-    test-report.md      - Test failure markdown report
-    pytest-coverage.txt  - Full pytest output
+Generated files (all written to ci/ directory):
+    ci/coverage.xml        - Cobertura coverage report
+    ci/htmlcov/            - Full HTML coverage report
+    ci/test-results.xml    - JUnit test results
+    ci/diff-cover.json     - Diff coverage data
+    ci/diff-cover-report.md - Diff coverage markdown report
+    ci/test-report.md      - Test failure markdown report
+    ci/pytest-coverage.txt  - Full pytest output
 """
 
 import json
@@ -27,6 +28,9 @@ import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+
+
+OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 
 
 def log(msg):
@@ -40,17 +44,21 @@ def log(msg):
 def run_tests():
     """Run pytest and return the exit code."""
     log("Running pytest...")
+    coverage_xml = os.path.join(OUT_DIR, "coverage.xml")
+    coverage_html = os.path.join(OUT_DIR, "htmlcov")
+    results_xml = os.path.join(OUT_DIR, "test-results.xml")
     cmd = [
         sys.executable, "-m", "pytest", "tests/unit_tests/",
         "--cov=datus",
-        "--cov-report=xml:coverage.xml",
+        f"--cov-report=xml:{coverage_xml}",
+        f"--cov-report=html:{coverage_html}",
         "--cov-report=term-missing",
-        "--junitxml=test-results.xml",
+        f"--junitxml={results_xml}",
         "-s", "-vv", "--tb=short", "--showlocals",
     ]
     log(f"Command: {' '.join(cmd)}")
 
-    with open("pytest-coverage.txt", "w") as log_file:
+    with open(os.path.join(OUT_DIR, "pytest-coverage.txt"), "w") as log_file:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
@@ -68,7 +76,9 @@ def run_tests():
 # 2. Parse test results
 # ---------------------------------------------------------------------------
 
-def parse_test_results(junit_xml_path="test-results.xml"):
+def parse_test_results(junit_xml_path=None):
+    if junit_xml_path is None:
+        junit_xml_path = os.path.join(OUT_DIR, "test-results.xml")
     """Parse JUnit XML to extract test counts and failure details."""
     total = passed = failed = errors = skipped = 0
     failures = []
@@ -108,7 +118,9 @@ def parse_test_results(junit_xml_path="test-results.xml"):
     }
 
 
-def write_test_report(test_results, output_path="test-report.md"):
+def write_test_report(test_results, output_path=None):
+    if output_path is None:
+        output_path = os.path.join(OUT_DIR, "test-report.md")
     """Write a markdown report of test failures."""
     lines = []
     failures = test_results["failures"]
@@ -240,14 +252,18 @@ def find_compare_branch(base_ref):
 
 def extract_coverage(base_ref):
     """Extract overall and diff coverage metrics."""
+    coverage_xml = os.path.join(OUT_DIR, "coverage.xml")
+    diff_json = os.path.join(OUT_DIR, "diff-cover.json")
+    diff_report = os.path.join(OUT_DIR, "diff-cover-report.md")
+
     # Overall coverage
     try:
-        tree = ET.parse("coverage.xml")
+        tree = ET.parse(coverage_xml)
         overall = float(tree.getroot().attrib.get("line-rate", 0)) * 100
         log(f"Overall coverage: {overall:.2f}%")
     except Exception as e:
         overall = 0
-        log(f"Failed to parse coverage.xml: {e}")
+        log(f"Failed to parse {coverage_xml}: {e}")
 
     # Diff coverage
     compare_branch = find_compare_branch(base_ref)
@@ -255,10 +271,10 @@ def extract_coverage(base_ref):
         log(f"Running diff-cover --compare-branch={compare_branch}")
         proc = subprocess.run(
             [
-                "diff-cover", "coverage.xml",
+                "diff-cover", coverage_xml,
                 f"--compare-branch={compare_branch}",
-                "--json-report", "diff-cover.json",
-                "--markdown-report", "diff-cover-report.md",
+                "--json-report", diff_json,
+                "--markdown-report", diff_report,
                 "--fail-under=0",
             ],
             capture_output=True, text=True,
@@ -271,12 +287,12 @@ def extract_coverage(base_ref):
         log("Skipping diff-cover (no compare branch)")
 
     try:
-        with open("diff-cover.json") as f:
+        with open(diff_json) as f:
             diff_pct = json.load(f).get("total_percent_covered", 0)
         log(f"Diff coverage: {diff_pct:.2f}%")
     except Exception as e:
         diff_pct = 0
-        log(f"Failed to read diff-cover.json: {e}")
+        log(f"Failed to read {diff_json}: {e}")
 
     return overall, diff_pct
 

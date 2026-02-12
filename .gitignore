@@ -35,12 +35,13 @@ before_reflection_*.yaml
 .claude
 /.omc
 
-# Coverage
-coverage.xml
+# Coverage & CI output
 .coverage
 htmlcov/
-diff-cover-report.*
-diff-cover.json
-pytest-coverage.txt
-test-results.xml
-test-report.md
+ci/htmlcov/
+ci/coverage.xml
+ci/test-results.xml
+ci/diff-cover.json
+ci/diff-cover-report.*
+ci/pytest-coverage.txt
+ci/test-report.md
