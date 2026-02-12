@@ -22,7 +22,7 @@ def pytest_collection_modifyitems(config, items):
     selected = []
     deselected = []
     for item in items:
-        if any(model in item.nodeid for model in skip_models):
+        if any(f"-{model}]" in item.nodeid for model in skip_models):
             deselected.append(item)
         else:
             selected.append(item)
