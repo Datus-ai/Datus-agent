@@ -1,6 +1,3 @@
-from tests.regression.test_regression_llm import PROVIDER_MODELS
-
-
 def pytest_addoption(parser):
     parser.addoption(
         "--single-model",
@@ -13,6 +10,8 @@ def pytest_addoption(parser):
 def pytest_collection_modifyitems(config, items):
     if not config.getoption("--single-model"):
         return
+
+    from tests.regression.test_regression_llm import PROVIDER_MODELS
 
     # Collect model names to skip (all but the first per provider)
     skip_models = set()
