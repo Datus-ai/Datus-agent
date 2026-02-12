@@ -87,7 +87,8 @@ class ActionBus:
                 for name, it in iters.items():
                     if name not in exhausted and name not in tasks:
                         tasks[name] = asyncio.create_task(
-                            _safe_anext(it), name=name,
+                            _safe_anext(it),
+                            name=name,
                         )
 
                 if not tasks:
