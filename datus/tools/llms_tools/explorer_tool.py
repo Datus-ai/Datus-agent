@@ -220,7 +220,7 @@ class ExplorerTool(BaseTool):
                             or summary
                         )
 
-            logger.info(f"Explorer completed: {len(summary)} chars summary")
+            logger.info(f"Explorer completed: {len(summary)} chars summary1")
             return FuncToolResult(success=1, result=summary)
 
         except Exception as e:
