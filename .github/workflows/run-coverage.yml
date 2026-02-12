@@ -54,57 +54,15 @@ jobs:
           done < .env
           echo "Environment variables loaded successfully"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-
       - name: Run unit tests with coverage
         id: run-tests
         continue-on-error: true
-        run: |
-          python -m pytest tests/unit_tests/ \
-            --cov=datus \
-            --cov-report=xml:coverage.xml \
-            --cov-report=term-missing \
-            -s -vv --tb=short --showlocals \
-            --ignore=tests/test_full_gen_sql.py \
-            | tee pytest-coverage.txt
+        run: bash ci/run-tests.sh
 
       - name: Extract coverage metrics
         id: metrics
         if: always() && steps.run-tests.outcome != 'cancelled'
-        run: |
-          python3 - <<'PYEOF'
-          import xml.etree.ElementTree as ET
-          import subprocess, json, os
-
-          # Overall coverage: parse coverage.xml
-          try:
-              tree = ET.parse("coverage.xml")
-              overall = float(tree.getroot().attrib.get("line-rate", 0)) * 100
-          except Exception:
-              overall = 0
-
-          # Diff coverage: run diff-cover and generate JSON
-          subprocess.run([
-              "diff-cover", "coverage.xml",
-              "--compare-branch=origin/${{ github.event.pull_request.base.ref }}",
-              "--json-report", "diff-cover.json",
-              "--markdown-report", "diff-cover-report.md",
-              "--fail-under=0"
-          ], capture_output=True)
-
-          try:
-              with open("diff-cover.json") as f:
-                  diff_pct = json.load(f).get("total_percent_covered", 0)
-          except Exception:
-              diff_pct = 0
-
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"overall={overall:.2f}\n")
-              f.write(f"diff={diff_pct:.2f}\n")
-          PYEOF
+        run: python3 ci/extract-coverage-metrics.py "${{ github.event.pull_request.base.ref }}"
 
       - name: Post coverage comment
         if: always() && steps.run-tests.outcome != 'cancelled'
