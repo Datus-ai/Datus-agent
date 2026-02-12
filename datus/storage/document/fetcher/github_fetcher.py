@@ -172,7 +172,17 @@ class GitHubFetcher(BaseFetcher):
             # Explicit git ref provided — use it as branch for fetching,
             # and as version label if not explicitly set
             branch = branch or self.github_ref
-            version = self.version or self.github_ref
+            if self.version:
+                version = self.version
+            else:
+                # Only use github_ref as version if it matches a version pattern
+                # (e.g., "v3.4.0", "1.2.0"). Branch names like "versioned-docs"
+                # should not be used as version labels.
+                ref_match = re.match(r"^v?(\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9.]+)?)$", self.github_ref)
+                if ref_match:
+                    version = ref_match.group(1)
+                else:
+                    version = self._detect_version(repo, branch)
         else:
             branch = branch or self._detect_default_branch(repo)
             version = self.version or self._detect_version(repo, branch)
@@ -190,6 +200,19 @@ class GitHubFetcher(BaseFetcher):
                     logger.debug(f"Path not found: {path}")
                 else:
                     logger.warning(f"Error accessing {path}: {e}")
+
+        # Auto-discover version directories at branch root when default paths
+        # yield no files (e.g., "versioned-docs" branch with 1.2.0/, 1.3.0/ dirs)
+        if not file_paths:
+            version_dirs = self._discover_version_directories(repo, branch)
+            if version_dirs:
+                logger.info(f"Auto-discovered version directories: {version_dirs}")
+                for vdir in version_dirs:
+                    try:
+                        found_paths = self._collect_file_paths(repo, vdir, branch)
+                        file_paths.extend(found_paths)
+                    except GithubException as e:
+                        logger.debug(f"Error accessing version dir {vdir}: {e}")
 
         if not file_paths:
             logger.warning(f"No documentation files found in {source}")
@@ -371,7 +394,11 @@ class GitHubFetcher(BaseFetcher):
 
         if self.github_ref:
             branch = branch or self.github_ref
-            version = self.version or self.github_ref
+            if self.version:
+                version = self.version
+            else:
+                ref_match = re.match(r"^v?(\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9.]+)?)$", self.github_ref)
+                version = ref_match.group(1) if ref_match else self._detect_version(repo, branch)
         else:
             branch = branch or self._detect_default_branch(repo)
             version = self.version or self._detect_version(repo, branch)
@@ -451,6 +478,39 @@ class GitHubFetcher(BaseFetcher):
 
         # Fall back to date
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Regex for matching version directory names (e.g., "1.2.0", "v3.4.0", "1.0.0-beta")
+    _VERSION_DIR_RE = re.compile(r"^v?(\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9.]+)?)$")
+
+    def _discover_version_directories(self, repo: "Repository", branch: str) -> List[str]:
+        """Discover version directories at the root of a branch.
+
+        Checks root-level directories for version patterns like "1.2.0", "v3.4.0".
+        Useful for branches like "versioned-docs" where each top-level directory
+        is a documentation version.
+
+        Args:
+            repo: Repository object
+            branch: Branch name
+
+        Returns:
+            Sorted list of version directory names, or empty list
+        """
+        try:
+            self.rate_limiter.wait("api.github.com")
+            contents = repo.get_contents("", ref=branch)
+            if not isinstance(contents, list):
+                return []
+
+            version_dirs = []
+            for item in contents:
+                if item.type == "dir" and self._VERSION_DIR_RE.match(item.name):
+                    version_dirs.append(item.name)
+
+            return sorted(version_dirs)
+        except GithubException as e:
+            logger.debug(f"Error discovering version directories: {e}")
+            return []
 
     def _collect_file_paths(
         self,

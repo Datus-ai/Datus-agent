@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Set, Tuple
+from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
 from datus.storage.document.fetcher import GitHubFetcher, LocalFetcher, RateLimiter, WebFetcher
 from datus.storage.document.schemas import SOURCE_TYPE_GITHUB, SOURCE_TYPE_LOCAL
@@ -37,18 +37,28 @@ logger = get_logger(__name__)
 
 
 @dataclass
+class VersionStats:
+    """Per-version statistics for platform documentation."""
+
+    version: str
+    doc_count: int
+    chunk_count: int
+
+
+@dataclass
 class InitResult:
     """Result of platform documentation initialization.
 
     Attributes:
         platform: Platform name
-        version: Documentation version
+        version: Documentation version (comma-separated if multiple)
         source: Source location
         total_docs: Number of documents processed
         total_chunks: Number of chunks created
         success: Whether initialization succeeded
         errors: List of error messages
         duration_seconds: Time taken in seconds
+        version_details: Per-version breakdown (populated in check mode)
     """
 
     platform: str
@@ -59,6 +69,7 @@ class InitResult:
     success: bool
     errors: List[str]
     duration_seconds: float
+    version_details: Optional[List[VersionStats]] = None
 
 
 # =============================================================================
@@ -104,6 +115,65 @@ def _detect_versions_from_paths(paths: List[str]) -> Set[str]:
         return versions
 
     return set()
+
+
+def _detect_versions_from_file_paths(file_paths: List[str]) -> Set[str]:
+    """Detect version strings from the first path segment of file paths.
+
+    Used after auto-discovery to detect version directories from actual file paths
+    like ["1.2.0/docs/intro.md", "1.3.0/guides/setup.md"].
+
+    Args:
+        file_paths: List of file path strings (e.g., from GitHub metadata)
+
+    Returns:
+        Set of detected version strings, or empty set if no consistent pattern
+    """
+    if not file_paths:
+        return set()
+
+    versions = set()
+    for fp in file_paths:
+        first_segment = fp.split("/")[0]
+        match = _VERSION_PATH_RE.match(first_segment)
+        if match:
+            versions.add(match.group(1))
+
+    # Only return if a meaningful proportion of files are under version dirs
+    # (avoids false positives from a single versioned path in a mixed repo)
+    if not versions:
+        return set()
+
+    versioned_count = sum(1 for fp in file_paths if _VERSION_PATH_RE.match(fp.split("/")[0]))
+    if versioned_count >= len(file_paths) * 0.5:
+        return versions
+
+    return set()
+
+
+def _build_version_details(store, all_versions: List[str], target_versions: Set[str]) -> List[VersionStats]:
+    """Build per-version statistics, optionally filtered to target versions.
+
+    Args:
+        store: DocumentStore instance
+        all_versions: All versions found in the store
+        target_versions: If non-empty, only include these versions
+
+    Returns:
+        List of VersionStats sorted by version string
+    """
+    versions_to_check = sorted(target_versions) if target_versions else sorted(all_versions)
+    details = []
+    for ver in versions_to_check:
+        ver_stats = store.get_stats_by_version(ver)
+        details.append(
+            VersionStats(
+                version=ver,
+                doc_count=ver_stats.get("doc_count", 0),
+                chunk_count=ver_stats.get("total_chunks", 0),
+            )
+        )
+    return details
 
 
 # =============================================================================
@@ -172,16 +242,35 @@ def init_platform_docs(
     # ==================================================================
     if build_mode == "check":
         stats = store.get_stats()
+        all_versions = stats.get("versions", [])
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+
+        # Resolve target versions: explicit --version, or detected from paths
+        target_versions: Set[str] = set()
+        if version:
+            target_versions.add(version)
+        else:
+            target_versions = _detect_versions_from_paths(cfg.paths or [])
+
+        # Build per-version breakdown from store data
+        version_details = _build_version_details(store, all_versions, target_versions)
+
+        # Compute totals from the (possibly filtered) version details
+        shown_versions = [vd.version for vd in version_details]
+        total_docs = sum(vd.doc_count for vd in version_details)
+        total_chunks = sum(vd.chunk_count for vd in version_details)
+        version_str = ", ".join(shown_versions) if shown_versions else "unknown"
+
         return InitResult(
             platform=platform,
-            version=stats.get("versions", ["unknown"])[-1] if stats.get("versions") else "unknown",
+            version=version_str,
             source=source,
-            total_docs=stats.get("doc_count", 0),
-            total_chunks=stats.get("total_chunks", 0),
+            total_docs=total_docs,
+            total_chunks=total_chunks,
             success=True,
             errors=[],
             duration_seconds=duration,
+            version_details=version_details,
         )
 
     # Initialize components
@@ -219,8 +308,20 @@ def init_platform_docs(
                 logger.warning(f"No documentation files found in {source}")
                 return _make_empty_result(platform, version, source, start_time, ["No documents found"])
 
+            # Re-detect path_versions from actual file paths — this covers
+            # auto-discovered version directories when --paths was not specified
+            if not path_versions:
+                path_versions = _detect_versions_from_file_paths(github_metadata.file_paths)
+                if path_versions:
+                    logger.info(f"Detected versioned dirs from files: {sorted(path_versions)}")
+
             if not version:
-                version = github_metadata.version
+                if path_versions:
+                    # Use first detected path version as global fallback;
+                    # per-doc version is overridden from doc_path anyway
+                    version = sorted(path_versions)[0]
+                else:
+                    version = github_metadata.version
 
             logger.info(f"Found {len(github_metadata.file_paths)} files, version='{version}'")
 

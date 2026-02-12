@@ -250,6 +250,31 @@ class DocumentStore(BaseEmbeddingStore):
             "latest_update": latest_update,
         }
 
+    def get_stats_by_version(self, version: str) -> Dict[str, Any]:
+        """Get statistics for a specific version.
+
+        Args:
+            version: Version string to filter by
+
+        Returns:
+            Dict with total_chunks, doc_count for this version
+        """
+        self._ensure_table_ready()
+        self._validate_identifier(version, "version")
+
+        all_data = self._search_all(
+            where=f"version = '{version}'",
+            select_fields=["doc_path"],
+        )
+
+        rows = all_data.to_pylist()
+        doc_paths = {row["doc_path"] for row in rows}
+
+        return {
+            "total_chunks": len(rows),
+            "doc_count": len(doc_paths),
+        }
+
     @staticmethod
     def _validate_identifier(value: str, name: str) -> None:
         """Validate a string to prevent SQL injection.

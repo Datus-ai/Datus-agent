@@ -157,6 +157,10 @@ class StreamingDocProcessor:
                 "doc_path": doc.doc_path,
                 "content_hash": doc_metadata.get("content_hash", ""),
             }
+            # Use per-doc version if available (overridden from path in multi-version mode,
+            # e.g., "1.3.0/intro.md" → version="1.3.0")
+            if doc.version:
+                chunk_metadata["version"] = doc.version
 
             # Chunk
             chunks = self.chunker.chunk(parsed, chunk_metadata)

@@ -525,9 +525,7 @@ def main():
         # platform-doc is namespace-independent; handled before Agent init
         from datus.agent.agent import bootstrap_platform_doc
 
-        result = bootstrap_platform_doc(args, agent_config)
-        if result:
-            logger.info(f"platform-doc result: {result}")
+        bootstrap_platform_doc(args, agent_config)
         return 0
 
     # Initialize agent with both args and config

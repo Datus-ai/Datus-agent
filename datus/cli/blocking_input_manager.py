@@ -10,6 +10,9 @@ import threading
 import time
 from typing import Any, Callable
 
+# Re-export from utils so existing imports continue to work
+from datus.utils.terminal_utils import suppress_keyboard_input  # noqa: F401
+
 
 class BlockingInputManager:
     """Manages blocking user input with complete output isolation."""

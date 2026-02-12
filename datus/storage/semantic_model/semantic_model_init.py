@@ -16,6 +16,7 @@ from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.utils.loggings import get_logger
+from datus.utils.terminal_utils import suppress_keyboard_input
 
 logger = get_logger(__name__)
 
@@ -157,7 +158,8 @@ def init_success_story_semantic_model(
                 emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
             return False, error_msg
 
-    successful, error_message = asyncio.run(generate_semantic_models())
+    with suppress_keyboard_input():
+        successful, error_message = asyncio.run(generate_semantic_models())
     return successful, error_message
 
 

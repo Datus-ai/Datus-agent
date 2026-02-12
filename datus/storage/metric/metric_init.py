@@ -16,6 +16,7 @@ from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.storage.semantic_model.auto_create import ensure_semantic_models_exist_sync, extract_tables_from_sql_list
 from datus.utils.loggings import get_logger
+from datus.utils.terminal_utils import suppress_keyboard_input
 
 logger = get_logger(__name__)
 
@@ -131,7 +132,8 @@ def init_success_story_metrics(
             logger.error(f"Error in batch metrics extraction: {e}")
             return {"successful": False, "error": str(e)}
 
-    result = asyncio.run(process_batch())
+    with suppress_keyboard_input():
+        result = asyncio.run(process_batch())
 
     # Emit task completed (single batch)
     if result.get("successful"):

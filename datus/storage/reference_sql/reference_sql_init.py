@@ -15,6 +15,7 @@ from datus.storage.reference_sql.sql_file_processor import process_sql_files
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import normalize_sql
+from datus.utils.terminal_utils import suppress_keyboard_input
 
 logger = get_logger(__name__)
 
@@ -355,7 +356,8 @@ def init_reference_sql(
             return success_count, success_items, _errors
 
         # Run the async function
-        processed_count, process_items, errors = asyncio.run(process_all())
+        with suppress_keyboard_input():
+            processed_count, process_items, errors = asyncio.run(process_all())
         if errors:
             process_errors.extend(errors)
         logger.info(f"Processed {processed_count} reference SQL entries")

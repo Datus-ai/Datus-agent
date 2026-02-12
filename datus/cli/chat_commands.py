@@ -22,7 +22,7 @@ from rich.table import Table
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_history_display import ActionHistoryDisplay
-from datus.cli.blocking_input_manager import blocking_input_manager
+from datus.cli.blocking_input_manager import blocking_input_manager, suppress_keyboard_input
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
@@ -368,7 +368,9 @@ class ChatCommands:
                         incremental_actions.append(action)
 
             # Both normal and plan mode use the same interaction-aware streaming
-            with action_display.display_streaming_actions(incremental_actions):
+            # Suppress keyboard input (except Ctrl+C) during streaming to prevent
+            # accidental keypresses from being echoed or queued.
+            with suppress_keyboard_input(), action_display.display_streaming_actions(incremental_actions):
                 asyncio.run(run_chat_stream_with_interactions())
 
             # Display final response from the last successful action
