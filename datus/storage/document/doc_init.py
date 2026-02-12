@@ -481,7 +481,6 @@ def infer_platform_from_source(source: str) -> Optional[str]:
     Returns:
         Lowercase platform name, or None if unable to infer.
     """
-    from pathlib import PurePosixPath
     from urllib.parse import urlparse
 
     source = source.strip().rstrip("/")
@@ -520,7 +519,7 @@ def infer_platform_from_source(source: str) -> Optional[str]:
         return None
 
     # --- Local path: use the last directory component ---
-    name = PurePosixPath(source).name.lower()
+    name = Path(source).name.lower()
     if name:
         # Strip common suffixes
         name = re.sub(r"[_-]?(docs?|documentation|website)$", "", name)
