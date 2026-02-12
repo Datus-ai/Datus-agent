@@ -88,6 +88,10 @@ jobs:
           ./build_scripts/build_test_data.sh || exit 1
           echo "Test data build completed"
 
-      - name: run pytest
+      - name: run acceptance tests
         run: |
-          python -m pytest -m acceptance  tests/
+          python -m pytest -m acceptance tests/
+
+      - name: run regression tests (single model)
+        run: |
+          python -m pytest -m regression --single-model tests/regression/test_regression_llm.py
