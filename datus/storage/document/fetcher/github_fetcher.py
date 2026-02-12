@@ -454,7 +454,18 @@ class GitHubFetcher(BaseFetcher):
         Returns:
             Version string
         """
-        # Try releases first
+        # Try the "latest" release first (GitHub's explicit "Latest" marker,
+        # which is typically the highest stable version even when older branches
+        # receive newer patch releases, e.g., 3.3.22 created after 4.0.5).
+        try:
+            self.rate_limiter.wait("api.github.com")
+            latest = repo.get_latest_release()
+            if latest:
+                return latest.tag_name
+        except GithubException:
+            pass
+
+        # Fallback: try releases list (for repos without a "latest" marker)
         try:
             self.rate_limiter.wait("api.github.com")
             releases = list(repo.get_releases()[:5])
