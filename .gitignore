@@ -42,3 +42,5 @@ htmlcov/
 diff-cover-report.*
 diff-cover.json
 pytest-coverage.txt
+test-results.xml
+test-report.md
