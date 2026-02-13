@@ -21,6 +21,7 @@ from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
 from datus.tools.semantic_tools.models import AnomalyContext
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
+from datus.utils.compress_utils import DataCompressor
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -90,6 +91,7 @@ class SemanticTools:
         # Initialize storage RAG interfaces
         self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name)
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
+        self.compressor = DataCompressor()
 
         # Lazy load adapter and attribution tool
         self._adapter: Optional[BaseSemanticAdapter] = None
@@ -454,7 +456,7 @@ class SemanticTools:
             # Format result
             result_dict = {
                 "columns": result.columns,
-                "data": result.data,
+                "data": self.compressor.compress(result.data),
                 "metadata": result.metadata,
             }
 
