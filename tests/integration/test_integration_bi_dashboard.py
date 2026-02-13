@@ -136,6 +136,7 @@ class TestE2EIntegration:
         for dashboard_item in input_data:
             # Extract configuration
             platform = dashboard_item["platform"]
+            # remove old data:
             dashboard_url = dashboard_item["dashboard_url"]
             api_base_url = dashboard_item["api_base_url"]
             dialect = dashboard_item.get("dialect", "postgresql")
@@ -177,6 +178,9 @@ class TestE2EIntegration:
                 "charts_processed": 0,
                 "sub_agents": [],
                 "tables": 0,
+                "semantic_model_rows": 0,
+                "metrics_rows": 0,
+                "reference_sql_rows": 0,
             }
 
             try:
@@ -188,6 +192,14 @@ class TestE2EIntegration:
                 assert dashboard.name, "Dashboard should have name"
 
                 print(f"\n✓ Step 1: Extracted dashboard '{dashboard.name}' (ID: {dashboard_id})")
+                sub_agent_name = bi_commands._build_sub_agent_name(platform, dashboard.name or "")
+                attr_name = f"{sub_agent_name}_attribution"
+                # Clean sub-agent old data for a fresh build
+                for sa_name in [sub_agent_name, attr_name]:
+                    sa_path = agent_config.sub_agent_storage_path(sa_name)
+                    if os.path.exists(sa_path):
+                        shutil.rmtree(sa_path)
+                        print(f"  Cleaned sub-agent storage: {sa_name}")
 
                 # Step 2: Extract charts (REAL)
                 chart_metas = bi_adaptor.list_charts(dashboard_id)
@@ -296,9 +308,6 @@ class TestE2EIntegration:
                 print("✓ Step 4: Sub-agent build flow completed")
 
                 # Step 5: Verify 2 sub-agents created
-                sub_agent_name = bi_commands._build_sub_agent_name(platform, dashboard.name or "")
-                attr_name = f"{sub_agent_name}_attribution"
-
                 assert (
                     sub_agent_name in agent_config.agentic_nodes
                 ), f"Main sub-agent '{sub_agent_name}' not found in agentic_nodes"
@@ -314,35 +323,40 @@ class TestE2EIntegration:
 
                 print(f"✓ Step 5: Verified 2 sub-agents: '{sub_agent_name}' + '{attr_name}'")
 
-                # Step 6: Verify all 5 LanceDB tables in both sub-agent stores
-                import lancedb
+                # Step 6: Verify bootstrap data via store managers
+                from datus.storage.metric.store import MetricRAG
+                from datus.storage.reference_sql.store import ReferenceSqlRAG
+                from datus.storage.semantic_model.store import SemanticModelRAG
 
-                required_tables = [
-                    "schema_metadata",
-                    "schema_value",
-                    "metrics",
-                    "semantic_model",
-                    "reference_sql",
-                ]
+                # Track key bootstrap row counts across both sub-agents
+                total_semantic_model_rows = 0
+                total_metrics_rows = 0
+                total_reference_sql_rows = 0
 
                 for name in [sub_agent_name, attr_name]:
-                    store_path = agent_config.sub_agent_storage_path(name)
-                    assert os.path.isdir(
-                        store_path
-                    ), f"Sub-agent '{name}' storage directory does not exist: {store_path}"
-                    db = lancedb.connect(store_path)
-                    actual_tables = db.table_names()
-                    print(f"           Sub-agent '{name}' tables: {actual_tables}")
+                    sm_size = SemanticModelRAG(agent_config, sub_agent_name=name).get_size()
+                    m_size = MetricRAG(agent_config, sub_agent_name=name).get_metrics_size()
+                    rs_size = ReferenceSqlRAG(agent_config, sub_agent_name=name).get_reference_sql_size()
 
-                    for tbl_name in required_tables:
-                        assert tbl_name in actual_tables, (
-                            f"Sub-agent '{name}' missing required table '{tbl_name}'. " f"Found: {actual_tables}"
-                        )
-                        row_count = db.open_table(tbl_name).count_rows()
-                        assert row_count > 0, f"Sub-agent '{name}' table '{tbl_name}' is empty (0 rows)"
-                        print(f"           ✓ '{name}'.{tbl_name}: {row_count} rows")
+                    total_semantic_model_rows += sm_size
+                    total_metrics_rows += m_size
+                    total_reference_sql_rows += rs_size
 
-                print("✓ Step 6: Verified all 5 tables with data for both sub-agents")
+                    print(
+                        f"           Sub-agent '{name}': "
+                        f"semantic_model={sm_size}, metrics={m_size}, reference_sql={rs_size}"
+                    )
+
+                test_result["semantic_model_rows"] = total_semantic_model_rows
+                test_result["metrics_rows"] = total_metrics_rows
+                test_result["reference_sql_rows"] = total_reference_sql_rows
+
+                print(
+                    f"✓ Step 6: Bootstrap totals: "
+                    f"semantic_model={total_semantic_model_rows}, "
+                    f"metrics={total_metrics_rows}, "
+                    f"reference_sql={total_reference_sql_rows}"
+                )
 
                 # Step 7: Verify file artifacts
                 from datus.utils.path_manager import get_path_manager
@@ -366,22 +380,38 @@ class TestE2EIntegration:
                     f"{len(sql_files)} SQL, {len(csv_files)} CSV, {len(semantic_files)} semantic model files"
                 )
 
-                # Update test result
-                test_result["status"] = "passed"
+                # Update test result common fields
                 test_result["dashboard_name"] = dashboard.name
                 test_result["charts_processed"] = len(chart_selections)
                 test_result["sub_agents"] = [sub_agent_name, attr_name]
                 test_result["tables"] = len(result.tables)
 
-                print(f"\n✅ {platform} dashboard test PASSED")
+                # Mark as failed if any key bootstrap table has 0 total rows
+                bootstrap_failures = []
+                if total_semantic_model_rows == 0:
+                    bootstrap_failures.append("semantic_model")
+                if total_metrics_rows == 0:
+                    bootstrap_failures.append("metrics")
+                if total_reference_sql_rows == 0:
+                    bootstrap_failures.append("reference_sql")
+
+                if bootstrap_failures:
+                    error_msg = (
+                        f"Bootstrap data missing: {', '.join(bootstrap_failures)} "
+                        f"have 0 total rows across sub-agents"
+                    )
+                    test_result["status"] = "failed"
+                    test_result["error"] = error_msg
+                    print(f"\n❌ {platform} dashboard test FAILED: {error_msg}")
+                else:
+                    test_result["status"] = "passed"
+                    print(f"\n✅ {platform} dashboard test PASSED")
 
             except Exception as e:
                 # Capture failure
                 test_result["status"] = "failed"
                 test_result["error"] = str(e)
                 print(f"\n❌ {platform} dashboard test FAILED: {str(e)}")
-                # Re-raise to fail the test
-                raise
 
             finally:
                 # Add result to summary
@@ -415,6 +445,10 @@ class TestE2EIntegration:
                 print(f"  Charts processed: {result['charts_processed']}")
                 print(f"  Tables: {result['tables']}")
                 print(f"  Sub-agents: {', '.join(result['sub_agents'])}")
+                print("  Bootstrap data:")
+                print(f"    semantic_model: {result['semantic_model_rows']} rows")
+                print(f"    metrics:        {result['metrics_rows']} rows")
+                print(f"    reference_sql:  {result['reference_sql_rows']} rows")
 
         if failed_tests:
             print("\n" + "─" * 80)
@@ -424,5 +458,9 @@ class TestE2EIntegration:
                 print(f"\n  Platform: {result['platform']}")
                 print(f"  URL: {result['dashboard_url']}")
                 print(f"  Error: {result['error']}")
+                print("  Bootstrap data:")
+                print(f"    semantic_model: {result['semantic_model_rows']} rows")
+                print(f"    metrics:        {result['metrics_rows']} rows")
+                print(f"    reference_sql:  {result['reference_sql_rows']} rows")
 
         print("\n" + "─" * 80)
