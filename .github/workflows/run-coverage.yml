@@ -1,0 +1,95 @@
+name: "Coverage Check"
+on:
+  workflow_call:
+
+jobs:
+  coverage:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: git fetch origin ${{ github.event.pull_request.base.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+          pip install --upgrade --no-cache-dir datus-semantic-metricflow
+          pip install pytest-cov diff-cover
+
+      - name: Setup config file
+        run: |
+          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
+          cp /home/datus_ci/ci_template/ci.env .env
+
+      - name: Load environment variables
+        run: |
+          echo "Loading environment variables from .env file..."
+          # Export all variables from .env to GITHUB_ENV so they persist across steps
+          while IFS= read -r line || [ -n "$line" ]; do
+            # Skip empty lines and comments
+            if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
+              # Remove any surrounding whitespace and export to GITHUB_ENV
+              var_name=$(echo "$line" | cut -d'=' -f1)
+              var_value=$(echo "$line" | cut -d'=' -f2-)
+              echo "::add-mask::$var_value"
+              echo "Loading variable: $var_name"
+              echo "$line" >> $GITHUB_ENV
+            fi
+          done < .env
+          echo "Environment variables loaded successfully"
+
+      - name: Run tests and extract coverage
+        id: metrics
+        run: python3 ci/run-tests-and-coverage.py "${{ github.event.pull_request.base.ref }}"
+
+      - name: Post coverage comment
+        if: always() && steps.metrics.outcome != 'cancelled'
+        uses: actions/github-script@v7
+        env:
+          METRIC_OVERALL: ${{ steps.metrics.outputs.overall }}
+          METRIC_DIFF: ${{ steps.metrics.outputs.diff }}
+          METRIC_TEST_OUTCOME: ${{ steps.metrics.outputs.test_outcome }}
+          METRIC_TEST_TOTAL: ${{ steps.metrics.outputs.test_total }}
+          METRIC_TEST_PASSED: ${{ steps.metrics.outputs.test_passed }}
+          METRIC_TEST_FAILED: ${{ steps.metrics.outputs.test_failed }}
+          METRIC_TEST_SKIPPED: ${{ steps.metrics.outputs.test_skipped }}
+        with:
+          script: |
+            const script = require('./ci/post-coverage-comment.js');
+            await script({ github, context, core });
+
+      - name: Check coverage thresholds
+        if: always() && steps.metrics.outcome != 'cancelled'
+        run: |
+          python3 -c "
+          import sys
+          diff = float('${{ steps.metrics.outputs.diff }}')
+          test_outcome = '${{ steps.metrics.outputs.test_outcome }}'
+          failed = False
+          if diff < 80:
+              print(f'::error::Diff coverage {diff}% is below the 80% threshold')
+              failed = True
+          if test_outcome != 'success':
+              print('::error::Unit tests did not pass')
+              failed = True
+          sys.exit(1 if failed else 0)
+          "

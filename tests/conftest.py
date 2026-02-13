@@ -13,6 +13,8 @@ from datus.configuration.agent_config_loader import load_agent_config
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 PROJECT_ROOT = Path(__file__).parent.parent
+TEST_DATA_DIR = Path(__file__).parent / "data"
+TEST_CONF_DIR = Path(__file__).parent / "conf"
 
 
 @pytest.fixture
@@ -138,5 +140,5 @@ def sample_database_data():
 
 def load_acceptance_config(namespace: str = "snowflake", home: str = "") -> AgentConfig:
     return load_agent_config(
-        config="tests/conf/agent.yml", namespace=namespace, home=home, reload=True, force=True, yes=True
+        config=str(TEST_CONF_DIR / "agent.yml"), namespace=namespace, home=home, reload=True, force=True, yes=True
     )

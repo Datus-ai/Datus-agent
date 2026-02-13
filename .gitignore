@@ -34,3 +34,14 @@ before_reflection_*.yaml
 *.egg-info
 .claude
 /.omc
+
+# Coverage & CI output
+ci/htmlcov/
+ci/coverage.xml
+ci/test-results.xml
+ci/diff-cover.json
+ci/diff-cover-report.*
+ci/pytest-coverage.txt
+ci/test-report.md
+ci/dir-cover.json
+ci/.coverage

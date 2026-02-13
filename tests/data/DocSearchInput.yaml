@@ -1,15 +1,15 @@
 - doc_search:
+    platform: snowflake
     keywords:
       - snowflake sql reference
     top_n: 3
-    method: internal
 - doc_search:
+    platform: sqlite
     keywords:
       - sqlite sql reference
     top_n: 3
-    method: internal
 - doc_search:
+    platform: starrocks
     keywords:
       - starrocks sql reference
     top_n: 3
-    method: internal

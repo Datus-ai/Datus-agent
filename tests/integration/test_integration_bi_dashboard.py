@@ -5,7 +5,6 @@
 
 import os
 import shutil
-from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
@@ -18,7 +17,8 @@ from datus.configuration.agent_config_loader import load_agent_config
 from datus.tools.bi_tools.base_adaptor import AuthParam
 from datus.tools.bi_tools.dashboard_assembler import ChartSelection, DashboardAssembler
 from datus.utils.loggings import configure_logging
-from tests.test_bi_dashboard import validate_chart_sql
+from tests.conftest import TEST_CONF_DIR, TEST_DATA_DIR
+from tests.integration.tools.bi_tools.test_bi_dashboard import validate_chart_sql
 
 configure_logging(False, console_output=False)
 
@@ -31,7 +31,7 @@ configure_logging(False, console_output=False)
 @pytest.fixture(scope="module")
 def agent_config(tmp_path_factory) -> AgentConfig:
     """Load agent config from a temp copy so the source file is never modified."""
-    src = Path(__file__).parent.parent / "conf" / "agent.yml"
+    src = TEST_CONF_DIR / "agent.yml"
     tmp_dir = tmp_path_factory.mktemp("bi_conf")
     tmp_cfg = tmp_dir / "agent.yml"
     shutil.copy2(src, tmp_cfg)
@@ -50,7 +50,7 @@ def bi_commands(agent_config) -> BiDashboardCommands:
 @pytest.fixture(scope="module")
 def input_data() -> List[Dict[str, Any]]:
     """Load test data from YAML file."""
-    yaml_path = Path(__file__).parent.parent / "data" / "BIDashboardInput.yaml"
+    yaml_path = TEST_DATA_DIR / "BIDashboardInput.yaml"
     with open(yaml_path, "r") as f:
         data = yaml.safe_load(f)
         # Handle both list format and dict with 'input' key

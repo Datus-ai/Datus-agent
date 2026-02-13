@@ -37,6 +37,8 @@ jobs:
             if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
               # Remove any surrounding whitespace and export to GITHUB_ENV
               var_name=$(echo "$line" | cut -d'=' -f1)
+              var_value=$(echo "$line" | cut -d'=' -f2-)
+              echo "::add-mask::$var_value"
               echo "Loading variable: $var_name"
               echo "$line" >> $GITHUB_ENV
             fi

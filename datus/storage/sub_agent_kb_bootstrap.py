@@ -82,7 +82,7 @@ class SubAgentBootstrapper:
         self._valid_sub_agent(sub_agent_name, sub_agent, check_exists)
 
         # used for sqlite
-        self.dialect = self.agent_config.db_type
+        self.dialect = getattr(self.agent_config, "db_type", "")
         self.storage_path = self.agent_config.sub_agent_storage_path(self.sub_agent.system_prompt)
 
     def _valid_sub_agent(

@@ -500,6 +500,7 @@ class Workflow:
         workflow = cls(
             name=workflow_data["name"],
             task=task,
+            agent_config=agent_config,
             # db_conn=workflow_data.get("db_conn")
         )
 
