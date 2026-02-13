@@ -29,6 +29,7 @@ from datus.tools.skill_tools import SkillConfig, SkillManager
 # ============================================================================
 
 
+@pytest.mark.nightly
 class TestSkillDiscoveryIntegration:
     """Test skill discovery from real filesystem directories."""
 
@@ -115,6 +116,7 @@ class TestSkillDiscoveryIntegration:
 # ============================================================================
 
 
+@pytest.mark.nightly
 class TestSkillLoadAndExecuteIntegration:
     """Test the full load → execute → result pipeline with real scripts."""
 
@@ -195,6 +197,7 @@ class TestSkillLoadAndExecuteIntegration:
 # ============================================================================
 
 
+@pytest.mark.nightly
 class TestPermissionIntegration:
     """Test permission enforcement across SkillManager + PermissionManager layers."""
 
@@ -290,6 +293,7 @@ class TestPermissionIntegration:
 # ============================================================================
 
 
+@pytest.mark.nightly
 class TestAgenticNodeSkillFiltering:
     """Test skill filtering based on agentic_nodes configuration in agent.yml.
 
@@ -417,6 +421,7 @@ class TestAgenticNodeSkillFiltering:
 # ============================================================================
 
 
+@pytest.mark.nightly
 class TestSkillToolsAccumulationIntegration:
     """Test multi-skill loading lifecycle and tool management."""
 
@@ -473,6 +478,7 @@ class TestSkillToolsAccumulationIntegration:
 
 
 @pytest.mark.acceptance
+@pytest.mark.nightly
 class TestRealLLMSkillIntegration:
     """Real LLM integration test: ChatAgenticNode + Skills + california_schools.
 

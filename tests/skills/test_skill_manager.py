@@ -10,14 +10,12 @@ Tests skill coordination, permission integration, and XML generation.
 
 import pytest
 
-from datus.tools.permission.permission_config import (
-    PermissionConfig,
-    PermissionLevel,
-    PermissionRule,
-)
+from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_manager import SkillManager
+
+pytestmark = pytest.mark.nightly
 
 
 @pytest.fixture

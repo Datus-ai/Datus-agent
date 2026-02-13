@@ -84,6 +84,7 @@ class TestE2EIntegration:
     - REQUIRE full environment setup
     """
 
+    @pytest.mark.nightly
     def test_complete_workflow(
         self,
         bi_commands: BiDashboardCommands,

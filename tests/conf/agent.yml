@@ -101,6 +101,7 @@ agent:
       model: deepseek
       system_prompt: gen_sql
       prompt_language: en
+      max_turns: 5
       tools: db_tools.*, context_search_tools.*, filesystem_tools.*
       agent_description: "You are a specialized AI assistant for SQL generation"
       rules:

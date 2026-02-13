@@ -33,6 +33,7 @@ from tests.conftest import TEST_CONF_DIR
 TEST_CONF_PATH = str(TEST_CONF_DIR / "agent.yml")
 
 
+@pytest.mark.nightly
 class TestMCPServerCreation:
     """Test MCP server initialization."""
 
@@ -64,6 +65,7 @@ class TestMCPServerCreation:
             assert server.context_tool is not None
 
 
+@pytest.mark.nightly
 class TestMCPToolRegistration:
     """Test MCP tool registration."""
 
@@ -490,6 +492,7 @@ class TestDynamicModeSSEIntegration:
             assert "Unknown session_id" in response.json()["error"]
 
 
+@pytest.mark.nightly
 class TestDynamicRouterPathParsing:
     """Test DynamicRouter path parsing logic."""
 

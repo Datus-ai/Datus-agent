@@ -1,8 +1,11 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from datus.cli.init_util import detect_db_connectivity
 
 
+@pytest.mark.nightly
 class TestDatabaseConnectivity:
     """Test cases for database connectivity testing."""
 

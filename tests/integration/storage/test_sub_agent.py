@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 
 from datus.configuration.agent_config import AgentConfig
@@ -13,15 +15,16 @@ from tests.conftest import load_acceptance_config
 def agent_config() -> AgentConfig:
     agent_config = load_acceptance_config(namespace="bird_school")
     agent_config.rag_base_path = "tests/data"
+    agent_config.agentic_nodes = copy.deepcopy(agent_config.agentic_nodes)
     return agent_config
 
 
 class TestBootstrap:
     def _setup_sub_agent_config(
         self,
-        tables: str = "california_schools",
-        metrics: str = "education.schools",
-        sqls: str = "education.school_administration",
+        tables: str = "california_schools.*",
+        metrics: str = "california_schools",
+        sqls: str = "california_schools",
     ) -> SubAgentConfig:
         scoped_context = ScopedContext(tables=tables, metrics=metrics, sqls=sqls)
         return SubAgentConfig(
@@ -32,6 +35,7 @@ class TestBootstrap:
             scoped_context=scoped_context,
         )
 
+    @pytest.mark.nightly
     def test_plan(self, agent_config: AgentConfig):
         sub_agent_config = self._setup_sub_agent_config()
         scoped_context = sub_agent_config.scoped_context
@@ -44,28 +48,44 @@ class TestBootstrap:
         assert result
         assert result.storage_path == "tests/data/sub_agents/test"
         component_results = result.results
-        assert len(component_results) == 3
-        # metadata
-        assert component_results[0].details.get("match_count", 0) >= 3
-        # metrics
-        assert component_results[1].details.get("match_count", 0) == 5
-        # sql
-        assert component_results[2].details.get("match_count", 0) == 2
+        assert len(component_results) == len(
+            SUPPORTED_COMPONENTS
+        ), f"Expected {len(SUPPORTED_COMPONENTS)} components, got {len(component_results)}"
 
+        # Filter by component name instead of positional index
+        metadata = [r for r in component_results if r.component == "metadata"][0]
+        metrics = [r for r in component_results if r.component == "metrics"][0]
+        sql = [r for r in component_results if r.component == "reference_sql"][0]
+
+        assert (
+            metadata.details.get("match_count", 0) >= 3
+        ), f"Metadata should match >= 3 tables, got {metadata.details.get('match_count', 0)}"
+        assert (
+            metrics.details.get("match_count", 0) == 1
+        ), f"Metrics should match 1, got {metrics.details.get('match_count', 0)}"
+        assert sql.details.get("match_count", 0) == 13, f"SQL should match 13, got {sql.details.get('match_count', 0)}"
+
+        # Part 2: wildcard patterns
         scoped_context.tables = "california_schools.*"
-        scoped_context.metrics = "education.schools.*"
-        scoped_context.sqls = "education.school_*"
+        scoped_context.metrics = "california_schools.*"
+        scoped_context.sqls = "california_schools.*"
 
         bootstrapper = SubAgentBootstrapper(sub_agent=sub_agent_config, agent_config=agent_config)
 
         result = bootstrapper.run(strategy="plan")
         assert result
         component_results = result.results
-        assert len(component_results) == 3
-        assert component_results[0].details.get("match_count", 0) >= 3
-        assert component_results[1].details.get("match_count", 0) == 5
-        assert component_results[2].details.get("match_count", 0) == 7
+        assert len(component_results) == len(SUPPORTED_COMPONENTS)
 
+        metadata = [r for r in component_results if r.component == "metadata"][0]
+        metrics = [r for r in component_results if r.component == "metrics"][0]
+        sql = [r for r in component_results if r.component == "reference_sql"][0]
+
+        assert metadata.details.get("match_count", 0) >= 3
+        assert metrics.details.get("match_count", 0) == 1
+        assert sql.details.get("match_count", 0) == 13
+
+    @pytest.mark.nightly
     def test_overwrite(self, agent_config: AgentConfig):
         sub_agent_config = self._setup_sub_agent_config()
         agent_config.agentic_nodes[sub_agent_config.system_prompt] = sub_agent_config
@@ -75,17 +95,24 @@ class TestBootstrap:
         assert result
         assert result.storage_path == "tests/data/sub_agents/test"
 
-        table_schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name="test")
         component_results = result.results
-        # metadata
-        assert component_results[0].details.get("stored_tables", 0) == table_schema_rag.schema_store.table_size()
 
-        metrics_rag = MetricRAG(agent_config, sub_agent_name="test")
+        # Filter by component name instead of positional index
+        metadata_result = [r for r in component_results if r.component == "metadata"][0]
+        metrics_result = [r for r in component_results if r.component == "metrics"][0]
+        sql_result = [r for r in component_results if r.component == "reference_sql"][0]
+
+        # metadata
+        table_schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name="test")
+        assert metadata_result.details.get("stored_tables", 0) == table_schema_rag.schema_store.table_size()
+
         # metrics
-        assert component_results[1].details.get("stored_metrics", 0) == metrics_rag.storage.table_size()
+        metrics_rag = MetricRAG(agent_config, sub_agent_name="test")
+        assert metrics_result.details.get("stored_metrics", 0) == metrics_rag.storage.table_size()
+
         # sql
         sql_rag = ReferenceSqlRAG(agent_config, sub_agent_name="test")
-        assert component_results[2].details.get("stored_sqls", 0) == sql_rag.reference_sql_storage.table_size()
+        assert sql_result.details.get("stored_sqls", 0) == sql_rag.reference_sql_storage.table_size()
 
         for component in SUPPORTED_COMPONENTS:
             bootstrapper._clear_component(component)

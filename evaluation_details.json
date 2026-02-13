@@ -1,0 +1,2659 @@
+{
+  "status": "success",
+  "generated_time": "2026-02-13T16:28:02.556879",
+  "summary": {
+    "total_files": 30,
+    "total_output_nodes": 30,
+    "total_output_success": 28,
+    "total_output_failure": 2,
+    "success_rate": 93.33,
+    "comparison_summary": {
+      "total_comparisons": 28,
+      "match_count": 15,
+      "mismatch_count": 13,
+      "comparison_error_count": 0,
+      "comparison_error_task_ids": "",
+      "empty_result_count": 0,
+      "match_rate": 53.57
+    },
+    "metrics_summary": {
+      "total_with_expected_metrics": 0,
+      "metrics_matched_count": 0,
+      "metrics_mismatched_count": 0,
+      "metrics_match_rate": 0.0,
+      "metrics_matched_task_ids": "",
+      "metrics_mismatched_task_ids": ""
+    }
+  },
+  "task_ids": {
+    "failed_task_ids": "1370,1372",
+    "matched_task_ids": "1049,1076,1079,1208,1467,1509,459,570,609,724,733,760,844,858,920",
+    "mismatched_task_ids": "1144,1291,1337,1451,1477,1492,1533,217,299,458,463,481,958",
+    "empty_result_task_ids": ""
+  },
+  "details": {
+    "1208": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970995.514967,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1208",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1208.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "ID",
+                "ID"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              24,
+              1
+            ],
+            "expected_shape": [
+              24,
+              1
+            ],
+            "actual_preview": "ID\n       --\n       81043\n       444499\n       915768\n       ...",
+            "expected_preview": "ID\n       --\n       81043\n       444499\n       915768\n       ...",
+            "actual_tables": [
+              "Laboratory",
+              "Patient"
+            ],
+            "expected_tables": [
+              "Laboratory",
+              "Patient"
+            ],
+            "matched_tables": [
+              "Laboratory",
+              "Patient"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT DISTINCT p.ID FROM Patient p INNER JOIN Laboratory l ON p.ID = l.ID WHERE p.SEX = 'M' AND l.GPT >= 60",
+            "gold_sql": "SELECT DISTINCT T1.ID FROM Patient AS T1 INNER JOIN Laboratory AS T2 ON T1.ID = T2.ID WHERE T1.SEX = 'M' AND T2.GPT >= 60",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1533": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770971280.268655,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1533",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1533.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              9,
+              2
+            ],
+            "expected_shape": [
+              10,
+              1
+            ],
+            "actual_preview": "CustomerID | Consumption_August_2012\n       ------------------------------------\n       5443.0 | 88265.39\n       6768.0 | 126157.7\n       7626.0 | 45937.22\n       ...",
+            "expected_preview": "Consumption\n       -----------\n       1903.2\n       88265.39\n       1129.2\n       ...",
+            "actual_tables": [
+              "yearmonth",
+              "transactions_1k"
+            ],
+            "expected_tables": [
+              "yearmonth",
+              "transactions_1k"
+            ],
+            "matched_tables": [
+              "yearmonth",
+              "transactions_1k"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "WITH customers_paid_more_than_29 AS (\n    SELECT DISTINCT t.CustomerID\n    FROM transactions_1k t\n    WHERE t.ProductID = 5\n      AND (t.Price / t.Amount) > 29.00\n),\nconsumption_august_2012 AS (\n    SELECT y.CustomerID, y.Consumption\n    FROM yearmonth y\n    WHERE y.Date = '201208'\n)\nSELECT c.CustomerID, COALESCE(ca.Consumption, 0) AS Consumption_August_2012\nFROM customers_paid_more_than_29 c\nLEFT JOIN consumption_august_2012 ca ON c.CustomerID = ca.CustomerID\nORDER BY c.CustomerID;",
+            "gold_sql": "SELECT T2.Consumption FROM transactions_1k AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE T1.Price / T1.Amount > 29.00 AND T1.ProductID = 5 AND T2.Date = '201208'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "217": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970617.150672,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "217",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/217.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              40,
+              2
+            ],
+            "expected_shape": [
+              82,
+              2
+            ],
+            "actual_preview": "atom_id | element\n       -----------------\n       TR181_2 | o\n       TR181_1 | c\n       TR181_3 | c\n       ...",
+            "expected_preview": "atom_id | atom_id2\n       ------------------\n       TR181_1 | TR181_2\n       TR181_1 | TR181_3\n       TR181_1 | TR181_4\n       ...",
+            "actual_tables": [
+              "atom",
+              "molecule",
+              "connected"
+            ],
+            "expected_tables": [
+              "atom",
+              "connected"
+            ],
+            "matched_tables": [
+              "atom",
+              "connected"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT DISTINCT a2.atom_id, a2.element FROM molecule m JOIN atom a1 ON m.molecule_id = a1.molecule_id JOIN connected c ON (a1.atom_id = c.atom_id OR a1.atom_id = c.atom_id2) JOIN atom a2 ON (c.atom_id = a2.atom_id OR c.atom_id2 = a2.atom_id) WHERE m.molecule_id = 'TR181' AND a2.atom_id != a1.atom_id",
+            "gold_sql": "SELECT T2.atom_id, T2.atom_id2 FROM atom AS T1 INNER JOIN connected AS T2 ON T2.atom_id = T1.atom_id WHERE T1.molecule_id = 'TR181'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1477": {
+      "total_node_count": 10,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 2,
+        "generate_sql": 2,
+        "execute_sql": 2,
+        "reflect": 2,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770971206.471051,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1477",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1477.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [
+              "SUBSTRING(T2.Date, 1, 4)"
+            ],
+            "extra_columns": [
+              "year",
+              "total_gas_use_eur"
+            ],
+            "actual_shape": [
+              1,
+              2
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "year | total_gas_use_eur\n       ------------------------\n       2012 | 1576",
+            "expected_preview": "SUBSTRING(T2.Date, 1, 4)\n       ------------------------\n       2013",
+            "actual_tables": [
+              "customers",
+              "gasstations",
+              "transactions_1k"
+            ],
+            "expected_tables": [
+              "customers",
+              "yearmonth"
+            ],
+            "matched_tables": [
+              "customers"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "WITH gas_transactions AS (\n    SELECT \n        t.Date,\n        t.Amount\n    FROM transactions_1k t\n    INNER JOIN customers c ON t.CustomerID = c.CustomerID\n    INNER JOIN gasstations g ON t.GasStationID = g.GasStationID\n    WHERE c.Currency = 'EUR'\n),\nannual_gas_use AS (\n    SELECT \n        strftime('%Y', Date) AS year,\n        SUM(Amount) AS total_gas_use_eur\n    FROM gas_transactions\n    GROUP BY strftime('%Y', Date)\n)\nSELECT \n    year,\n    total_gas_use_eur\nFROM annual_gas_use\nWHERE total_gas_use_eur = (SELECT MAX(total_gas_use_eur) FROM annual_gas_use);",
+            "gold_sql": "SELECT SUBSTRING(T2.Date, 1, 4) FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE T1.Currency = 'EUR' GROUP BY SUBSTRING(T2.Date, 1, 4) ORDER BY SUM(T2.Consumption) DESC LIMIT 1",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1076": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970939.8890848,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1076",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1076.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "difference_of_average_ball_control",
+                "CAST(SUM(CASE WHEN t1.player_name = 'Abdou Diallo' THEN t2.ball_control ELSE 0 END) AS REAL) / COUNT(CASE WHEN t1.player_name = 'Abdou Diallo' THEN t2.id ELSE NULL END) - CAST(SUM(CASE WHEN t1.player_name = 'Aaron Appindangoye' THEN t2.ball_control ELSE 0 END) AS REAL) / COUNT(CASE WHEN t1.player_name = 'Aaron Appindangoye' THEN t2.id ELSE NULL END)"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "difference_of_average_ball_control\n       ----------------------------------\n       0.7999999999999972",
+            "expected_preview": "CAST(SUM(CASE WHEN t1.player_name = 'Abdou Diallo' THEN t2.ball_control ELSE 0 END) AS REAL) / COUNT(CASE WHEN t1.player_name = 'Abdou Diallo' THEN t2.id ELSE NULL END) - CAST(SUM(CASE WHEN t1.player_name = 'Aaron Appindangoye' THEN t2.ball_control ELSE 0 END) AS REAL) / COUNT(CASE WHEN t1.player_name = 'Aaron Appindangoye' THEN t2.id ELSE NULL END)\n       ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n       0.7999999999999972",
+            "actual_tables": [
+              "Player_Attributes",
+              "Player"
+            ],
+            "expected_tables": [
+              "Player_Attributes",
+              "Player"
+            ],
+            "matched_tables": [
+              "Player_Attributes",
+              "Player"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "WITH diallo_stats AS (\n    SELECT \n        AVG(pa.ball_control) AS avg_ball_control\n    FROM Player_Attributes pa\n    JOIN Player p ON pa.player_api_id = p.player_api_id\n    WHERE p.player_name = 'Abdou Diallo'\n),\nappindangoye_stats AS (\n    SELECT \n        AVG(pa.ball_control) AS avg_ball_control\n    FROM Player_Attributes pa\n    JOIN Player p ON pa.player_api_id = p.player_api_id\n    WHERE p.player_name = 'Aaron Appindangoye'\n)\nSELECT \n    COALESCE(d.avg_ball_control, 0) - COALESCE(a.avg_ball_control, 0) AS difference_of_average_ball_control\nFROM diallo_stats d\nCROSS JOIN appindangoye_stats a;",
+            "gold_sql": "SELECT CAST(SUM(CASE WHEN t1.player_name = 'Abdou Diallo' THEN t2.ball_control ELSE 0 END) AS REAL) / COUNT(CASE WHEN t1.player_name = 'Abdou Diallo' THEN t2.id ELSE NULL END) - CAST(SUM(CASE WHEN t1.player_name = 'Aaron Appindangoye' THEN t2.ball_control ELSE 0 END) AS REAL) / COUNT(CASE WHEN t1.player_name = 'Aaron Appindangoye' THEN t2.id ELSE NULL END) FROM Player AS t1 INNER JOIN Player_Attributes AS t2 ON t1.player_api_id = t2.player_api_id",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "733": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970791.202121,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "733",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/733.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "gold_eyed_marvel_superheroes",
+                "COUNT(T1.id)"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "gold_eyed_marvel_superheroes\n       ----------------------------\n       2",
+            "expected_preview": "COUNT(T1.id)\n       ------------\n       2",
+            "actual_tables": [
+              "superhero",
+              "colour",
+              "publisher"
+            ],
+            "expected_tables": [
+              "superhero",
+              "colour",
+              "publisher"
+            ],
+            "matched_tables": [
+              "superhero",
+              "colour",
+              "publisher"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT COUNT(*) AS gold_eyed_marvel_superheroes\nFROM superhero s\nJOIN colour c_eye ON s.eye_colour_id = c_eye.id\nJOIN publisher p ON s.publisher_id = p.id\nWHERE c_eye.colour = 'Gold'\n  AND p.publisher_name = 'Marvel Comics';",
+            "gold_sql": "SELECT COUNT(T1.id) FROM superhero AS T1 INNER JOIN publisher AS T2 ON T1.publisher_id = T2.id INNER JOIN colour AS T3 ON T1.eye_colour_id = T3.id WHERE T2.publisher_name = 'Marvel Comics' AND T3.colour = 'Gold'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1144": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970978.080925,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1144",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1144.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.6667,
+            "matched_columns": [
+              [
+                "finishing_rate",
+                "finishing"
+              ],
+              [
+                "curve_score",
+                "curve"
+              ]
+            ],
+            "missing_columns": [
+              "id"
+            ],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              2
+            ],
+            "expected_shape": [
+              1,
+              3
+            ],
+            "actual_preview": "finishing_rate | curve_score\n       ----------------------------\n       13 | 13",
+            "expected_preview": "id | finishing | curve\n       ----------------------\n       98022 | 13 | 13",
+            "actual_tables": [
+              "Player_Attributes",
+              "Player"
+            ],
+            "expected_tables": [
+              "Player_Attributes",
+              "Player"
+            ],
+            "matched_tables": [
+              "Player_Attributes",
+              "Player"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "WITH HeaviestPlayer AS (\n    SELECT \n        player_api_id\n    FROM Player\n    WHERE weight = (SELECT MAX(weight) FROM Player)\n    LIMIT 1\n),\nLatestAttributes AS (\n    SELECT \n        pa.player_api_id,\n        pa.finishing,\n        pa.curve\n    FROM Player_Attributes pa\n    INNER JOIN HeaviestPlayer hp ON pa.player_api_id = hp.player_api_id\n    ORDER BY pa.date DESC\n    LIMIT 1\n)\nSELECT \n    la.finishing AS finishing_rate,\n    la.curve AS curve_score\nFROM LatestAttributes la;",
+            "gold_sql": "SELECT id, finishing, curve FROM Player_Attributes WHERE player_api_id = ( SELECT player_api_id FROM Player ORDER BY weight DESC LIMIT 1 ) LIMIT 1",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "609": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970745.577576,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "609",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/609.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "post_count",
+                "COUNT(id)"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "post_count\n       ----------\n       741",
+            "expected_preview": "COUNT(id)\n       ---------\n       741",
+            "actual_tables": [
+              "posts"
+            ],
+            "expected_tables": [
+              "posts"
+            ],
+            "matched_tables": [
+              "posts"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT COUNT(*) AS post_count FROM posts WHERE Score = 10;",
+            "gold_sql": "SELECT COUNT(id) FROM posts WHERE Score = 10",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "299": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970633.32372,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "299",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/299.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [
+              "label"
+            ],
+            "extra_columns": [
+              "is_carcinogenic"
+            ],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "is_carcinogenic\n       ---------------\n       No",
+            "expected_preview": "label\n       -----\n       -",
+            "actual_tables": [
+              "molecule"
+            ],
+            "expected_tables": [
+              "molecule"
+            ],
+            "matched_tables": [
+              "molecule"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT CASE WHEN m.label = '+' THEN 'Yes' ELSE 'No' END AS is_carcinogenic FROM molecule m WHERE m.molecule_id = 'TR124';",
+            "gold_sql": "SELECT T.label FROM molecule AS T WHERE T.molecule_id = 'TR124'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "463": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970689.1367838,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "463",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/463.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [
+              "COUNT(DISTINCT translation)"
+            ],
+            "extra_columns": [
+              "translation_count"
+            ],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "translation_count\n       -----------------\n       43",
+            "expected_preview": "COUNT(DISTINCT translation)\n       ---------------------------\n       28",
+            "actual_tables": [
+              "foreign_data",
+              "cards"
+            ],
+            "expected_tables": [
+              "set_translations",
+              "cards"
+            ],
+            "matched_tables": [
+              "cards"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT COUNT(*) AS translation_count FROM foreign_data fd INNER JOIN cards c ON fd.uuid = c.uuid WHERE c.name = 'Angel of Mercy';",
+            "gold_sql": "SELECT COUNT(DISTINCT translation) FROM set_translations WHERE setCode IN ( SELECT setCode FROM cards WHERE name = 'Angel of Mercy' ) AND translation IS NOT NULL",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "459": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970671.623735,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "459",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/459.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "name",
+                "name"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [
+              "convertedManaCost"
+            ],
+            "actual_shape": [
+              1,
+              2
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "name | convertedManaCost\n       ------------------------\n       Serra Angel | 5.0",
+            "expected_preview": "name\n       ----\n       Serra Angel",
+            "actual_tables": [
+              "cards"
+            ],
+            "expected_tables": [
+              "cards"
+            ],
+            "matched_tables": [
+              "cards"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT name, convertedManaCost FROM cards WHERE name IN ('Serra Angel', 'Shrine Keeper') ORDER BY convertedManaCost DESC;",
+            "gold_sql": "SELECT name FROM cards WHERE name IN ('Serra Angel', 'Shrine Keeper') ORDER BY convertedManaCost DESC LIMIT 1",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "844": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970836.167946,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "844",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/844.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "eye_colour",
+                "colour"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "eye_colour\n       ----------\n       Red",
+            "expected_preview": "colour\n       ------\n       Red",
+            "actual_tables": [
+              "superhero",
+              "colour"
+            ],
+            "expected_tables": [
+              "superhero",
+              "colour"
+            ],
+            "matched_tables": [
+              "superhero",
+              "colour"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT c.colour AS eye_colour FROM colour c INNER JOIN superhero s ON s.eye_colour_id = c.id WHERE s.superhero_name = 'Blackwulf';",
+            "gold_sql": "SELECT T2.colour FROM superhero AS T1 INNER JOIN colour AS T2 ON T1.eye_colour_id = T2.id WHERE T1.superhero_name = 'Blackwulf'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1509": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770971252.53689,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1509",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1509.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "transaction_count",
+                "COUNT(T1.TransactionID)"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "transaction_count\n       -----------------\n       933",
+            "expected_preview": "COUNT(T1.TransactionID)\n       -----------------------\n       933",
+            "actual_tables": [
+              "gasstations",
+              "transactions_1k"
+            ],
+            "expected_tables": [
+              "gasstations",
+              "transactions_1k"
+            ],
+            "matched_tables": [
+              "gasstations",
+              "transactions_1k"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT COUNT(*) AS transaction_count FROM transactions_1k t JOIN gasstations g ON t.GasStationID = g.GasStationID WHERE g.Country = 'CZE' AND t.Date > '2012-01-01';",
+            "gold_sql": "SELECT COUNT(T1.TransactionID) FROM transactions_1k AS T1 INNER JOIN gasstations AS T2 ON T1.GasStationID = T2.GasStationID WHERE T2.Country = 'CZE' AND STRFTIME('%Y', T1.Date) >= '2012'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "481": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970710.045629,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "481",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/481.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              8,
+              1
+            ],
+            "expected_shape": [
+              15,
+              1
+            ],
+            "actual_preview": "language\n       --------\n       Chinese Simplified\n       French\n       German\n       ...",
+            "expected_preview": "language\n       --------\n       German\n       Spanish\n       French\n       ...",
+            "actual_tables": [
+              "foreign_data",
+              "cards"
+            ],
+            "expected_tables": [
+              "foreign_data",
+              "cards"
+            ],
+            "matched_tables": [
+              "foreign_data",
+              "cards"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT DISTINCT fd.language FROM foreign_data fd INNER JOIN cards c ON fd.uuid = c.uuid WHERE c.name = 'Ancestor''s Chosen' AND fd.flavorText IS NOT NULL ORDER BY fd.language;",
+            "gold_sql": "SELECT T2.language FROM cards AS T1 INNER JOIN foreign_data AS T2 ON T2.uuid = T1.uuid WHERE T1.name = 'Ancestor''s Chosen' AND T2.flavorText IS NOT NULL",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1079": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970953.884356,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1079",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1079.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "player_name",
+                "player_name"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [
+              "height"
+            ],
+            "actual_shape": [
+              1,
+              2
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "player_name | height\n       --------------------\n       Kristof van Hout | 208.28",
+            "expected_preview": "player_name\n       -----------\n       Kristof van Hout",
+            "actual_tables": [
+              "Player"
+            ],
+            "expected_tables": [
+              "Player"
+            ],
+            "matched_tables": [
+              "Player"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT player_name, height FROM Player ORDER BY height DESC LIMIT 1;",
+            "gold_sql": "SELECT player_name FROM Player ORDER BY height DESC LIMIT 1",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "724": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970768.604427,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "724",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/724.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "superhero_name",
+                "superhero_name"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              90,
+              1
+            ],
+            "expected_shape": [
+              90,
+              1
+            ],
+            "actual_preview": "superhero_name\n       --------------\n       Adam Monroe\n       Adam Strange\n       Agent 13\n       ...",
+            "expected_preview": "superhero_name\n       --------------\n       Adam Monroe\n       Adam Strange\n       Agent 13\n       ...",
+            "actual_tables": [
+              "superhero",
+              "colour"
+            ],
+            "expected_tables": [
+              "superhero",
+              "colour"
+            ],
+            "matched_tables": [
+              "superhero",
+              "colour"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT DISTINCT sh.superhero_name\nFROM superhero sh\nJOIN colour eye_colour ON sh.eye_colour_id = eye_colour.id\nJOIN colour hair_colour ON sh.hair_colour_id = hair_colour.id\nWHERE eye_colour.colour = 'Blue' AND hair_colour.colour = 'Blond';",
+            "gold_sql": "SELECT T1.superhero_name FROM superhero AS T1 INNER JOIN colour AS T2 ON T1.eye_colour_id = T2.id INNER JOIN colour AS T3 ON T1.hair_colour_id = T3.id WHERE T2.colour = 'Blue' AND T3.colour = 'Blond'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1492": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770971233.388598,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1492",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1492.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [
+              "CAST(SUM(Currency = 'EUR') AS FLOAT) * 100 / COUNT(CustomerID)"
+            ],
+            "extra_columns": [
+              "percentage_kam_euro"
+            ],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "percentage_kam_euro\n       -------------------\n       3.48",
+            "expected_preview": "CAST(SUM(Currency = 'EUR') AS FLOAT) * 100 / COUNT(CustomerID)\n       --------------------------------------------------------------\n       3.480392156862745",
+            "actual_tables": [
+              "customers"
+            ],
+            "expected_tables": [
+              "customers"
+            ],
+            "matched_tables": [
+              "customers"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "WITH kam_customers AS (\n    SELECT CustomerID, Currency\n    FROM customers\n    WHERE Segment = 'KAM'\n),\nkam_total AS (\n    SELECT COUNT(*) AS total_kam\n    FROM kam_customers\n),\nkam_euro AS (\n    SELECT COUNT(*) AS kam_euro_count\n    FROM kam_customers\n    WHERE Currency = 'EUR'\n)\nSELECT \n    CASE \n        WHEN total_kam > 0 \n        THEN ROUND((CAST(kam_euro_count AS REAL) / total_kam) * 100.0, 2)\n        ELSE 0.0\n    END AS percentage_kam_euro\nFROM kam_total, kam_euro;",
+            "gold_sql": "SELECT CAST(SUM(Currency = 'EUR') AS FLOAT) * 100 / COUNT(CustomerID) FROM customers WHERE Segment = 'KAM'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "858": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970856.0703418,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "858",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/858.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "nationality",
+                "nationality"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "nationality\n       -----------\n       Italian",
+            "expected_preview": "nationality\n       -----------\n       Italian",
+            "actual_tables": [
+              "results",
+              "constructors"
+            ],
+            "expected_tables": [
+              "constructorResults",
+              "constructors"
+            ],
+            "matched_tables": [
+              "constructors"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT c.nationality FROM constructors c WHERE c.constructorId = (SELECT r.constructorId FROM results r WHERE r.raceId = 24 AND r.points = 1 LIMIT 1);",
+            "gold_sql": "SELECT T2.nationality FROM constructorResults AS T1 INNER JOIN constructors AS T2 ON T2.constructorId = T1.constructorId WHERE T1.raceId = 24 AND T1.points = 1",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "958": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970894.2070951,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "958",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/958.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.6667,
+            "matched_columns": [
+              [
+                "forename",
+                "forename"
+              ],
+              [
+                "surname",
+                "surname"
+              ]
+            ],
+            "missing_columns": [
+              "fastestLapTime"
+            ],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              2
+            ],
+            "expected_shape": [
+              1,
+              3
+            ],
+            "actual_preview": "forename | surname\n       ------------------\n       Lewis | Hamilton",
+            "expected_preview": "forename | surname | fastestLapTime\n       -----------------------------------\n       Lewis | Hamilton | 1:07.411",
+            "actual_tables": [
+              "results",
+              "drivers"
+            ],
+            "expected_tables": [
+              "results",
+              "drivers"
+            ],
+            "matched_tables": [
+              "results",
+              "drivers"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT d.forename, d.surname FROM drivers d WHERE d.driverId = (SELECT driverId FROM results WHERE fastestLapTime IS NOT NULL ORDER BY fastestLapTime ASC LIMIT 1);",
+            "gold_sql": "SELECT T2.forename, T2.surname, T1.fastestLapTime FROM results AS T1 INNER JOIN drivers AS T2 on T1.driverId = T2.driverId WHERE T1.fastestLapTime IS NOT NULL ORDER BY T1.fastestLapTime ASC LIMIT 1",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1337": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770971033.8017862,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1337",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1337.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              4,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "total_budgeted_amount\n       ---------------------\n       155\n       75\n       25\n       ...",
+            "expected_preview": "SUM(T2.amount)\n       --------------\n       265",
+            "actual_tables": [
+              "budget",
+              "event"
+            ],
+            "expected_tables": [
+              "budget",
+              "event"
+            ],
+            "matched_tables": [
+              "budget",
+              "event"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT SUM(amount) AS total_budgeted_amount FROM budget WHERE link_to_event IN (SELECT event_id FROM event WHERE event_name = 'October Speaker')",
+            "gold_sql": "SELECT SUM(T2.amount) FROM event AS T1 INNER JOIN budget AS T2 ON T1.event_id = T2.link_to_event WHERE T1.event_name = 'October Speaker'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1467": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770971157.702529,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1467",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1467.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "event_name",
+                "event_name"
+              ],
+              [
+                "total_amount_spent",
+                "SUM(T1.spent)"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              7,
+              2
+            ],
+            "expected_shape": [
+              7,
+              2
+            ],
+            "actual_preview": "event_name | total_amount_spent\n       -------------------------------\n       November Speaker | 16.28\n       September Speaker | 13.45\n       October Speaker | 13.45\n       ...",
+            "expected_preview": "SUM(T1.spent) | event_name\n       --------------------------\n       0.0 | April Speaker\n       0.0 | February Speaker\n       0.0 | January Speaker\n       ...",
+            "actual_tables": [
+              "budget",
+              "event"
+            ],
+            "expected_tables": [
+              "budget",
+              "event"
+            ],
+            "matched_tables": [
+              "budget",
+              "event"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT e.event_name, SUM(b.spent) AS total_amount_spent FROM budget b JOIN event e ON b.link_to_event = e.event_id WHERE b.category = 'Speaker Gifts' GROUP BY e.event_name ORDER BY total_amount_spent DESC;",
+            "gold_sql": "SELECT SUM(T1.spent), T2.event_name FROM budget AS T1 INNER JOIN event AS T2 ON T1.link_to_event = T2.event_id WHERE T1.category = 'Speaker Gifts' GROUP BY T2.event_name",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1049": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970912.79529,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1049",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1049.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "match_count",
+                "COUNT(t2.id)"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "match_count\n       -----------\n       228",
+            "expected_preview": "COUNT(t2.id)\n       ------------\n       228",
+            "actual_tables": [
+              "League",
+              "Match"
+            ],
+            "expected_tables": [
+              "Match",
+              "League"
+            ],
+            "matched_tables": [
+              "Match",
+              "League"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT COUNT(*) AS match_count FROM Match WHERE league_id = (SELECT id FROM League WHERE name = 'Scotland Premier League') AND season = '2015/2016';",
+            "gold_sql": "SELECT COUNT(t2.id) FROM League AS t1 INNER JOIN Match AS t2 ON t1.id = t2.league_id WHERE t2.season = '2015/2016' AND t1.name = 'Scotland Premier League'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "760": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970816.283308,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "760",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/760.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "percentage_marvel",
+                "CAST(COUNT(CASE WHEN T2.publisher_name = 'Marvel Comics' THEN 1 ELSE NULL END) AS REAL) * 100 / COUNT(T1.id)"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "percentage_marvel\n       -----------------\n       60.869565217391305",
+            "expected_preview": "CAST(COUNT(CASE WHEN T2.publisher_name = 'Marvel Comics' THEN 1 ELSE NULL END) AS REAL) * 100 / COUNT(T1.id)\n       ------------------------------------------------------------------------------------------------------------\n       60.869565217391305",
+            "actual_tables": [
+              "superhero",
+              "publisher"
+            ],
+            "expected_tables": [
+              "superhero",
+              "publisher"
+            ],
+            "matched_tables": [
+              "superhero",
+              "publisher"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT \n    (COUNT(CASE WHEN p.publisher_name = 'Marvel Comics' THEN 1 END) * 100.0 / COUNT(*)) AS percentage_marvel\nFROM superhero s\nJOIN publisher p ON s.publisher_id = p.id\nWHERE s.height_cm BETWEEN 150 AND 180;",
+            "gold_sql": "SELECT CAST(COUNT(CASE WHEN T2.publisher_name = 'Marvel Comics' THEN 1 ELSE NULL END) AS REAL) * 100 / COUNT(T1.id) FROM superhero AS T1 INNER JOIN publisher AS T2 ON T1.publisher_id = T2.id WHERE T1.height_cm BETWEEN 150 AND 180",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "458": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970652.8919098,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "458",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/458.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [
+              "COUNT(CASE WHEN availability LIKE '%arena,mtgo%' AND borderColor = 'black' THEN 1 ELSE NULL END)"
+            ],
+            "extra_columns": [
+              "artist_count"
+            ],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "artist_count\n       ------------\n       338",
+            "expected_preview": "COUNT(CASE WHEN availability LIKE '%arena,mtgo%' AND borderColor = 'black' THEN 1 ELSE NULL END)\n       ------------------------------------------------------------------------------------------------\n       4537",
+            "actual_tables": [
+              "cards"
+            ],
+            "expected_tables": [
+              "cards"
+            ],
+            "matched_tables": [
+              "cards"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT COUNT(DISTINCT artist) AS artist_count\nFROM cards\nWHERE borderColor = 'black'\n  AND availability LIKE '%arena%'\n  AND availability LIKE '%mtgo%'\n  AND artist IS NOT NULL\n  AND artist != '';",
+            "gold_sql": "SELECT COUNT(CASE WHEN availability LIKE '%arena,mtgo%' AND borderColor = 'black' THEN 1 ELSE NULL END) FROM cards",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "570": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970729.094768,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "570",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/570.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "Name",
+                "Name"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "Name\n       ----\n       Autobiographer",
+            "expected_preview": "Name\n       ----\n       Autobiographer",
+            "actual_tables": [
+              "users",
+              "badges"
+            ],
+            "expected_tables": [
+              "users",
+              "badges"
+            ],
+            "matched_tables": [
+              "users",
+              "badges"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT DISTINCT b.Name FROM badges b JOIN users u ON b.UserId = u.Id WHERE u.DisplayName = 'DatEpicCoderGuyWhoPrograms'",
+            "gold_sql": "SELECT T2.Name FROM users AS T1 INNER JOIN badges AS T2 ON T1.Id = T2.UserId WHERE T1.DisplayName = 'DatEpicCoderGuyWhoPrograms'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1291": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770971015.834344,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1291",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1291.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [
+              "COUNT(T1.ID)"
+            ],
+            "extra_columns": [
+              "male_patients_normal_alb_tp"
+            ],
+            "actual_shape": [
+              1,
+              1
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "male_patients_normal_alb_tp\n       ---------------------------\n       46",
+            "expected_preview": "COUNT(T1.ID)\n       ------------\n       1696",
+            "actual_tables": [
+              "Laboratory",
+              "Patient"
+            ],
+            "expected_tables": [
+              "Laboratory",
+              "Patient"
+            ],
+            "matched_tables": [
+              "Laboratory",
+              "Patient"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT COUNT(DISTINCT p.ID) AS male_patients_normal_alb_tp\nFROM Patient p\nJOIN Laboratory l ON p.ID = l.ID\nWHERE p.SEX = 'M'\n  AND l.ALB > 3.5 AND l.ALB < 5.5\n  AND l.TP BETWEEN 6.0 AND 8.5;",
+            "gold_sql": "SELECT COUNT(T1.ID) FROM Patient AS T1 INNER JOIN Laboratory AS T2 ON T1.ID = T2.ID WHERE T1.SEX = 'M'  AND T2.ALB > 3.5 AND T2.ALB < 5.5 AND T2.TP BETWEEN 6.0 AND 8.5",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1372": {
+      "total_node_count": 14,
+      "output_node_count": 1,
+      "output_success_count": 0,
+      "output_failure_count": 1,
+      "errors": [
+        "node node_5: Output status is 'unknown'"
+      ],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 3,
+        "generate_sql": 3,
+        "execute_sql": 3,
+        "reflect": 3,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": null,
+      "status": "pending",
+      "comparison_results": []
+    },
+    "920": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770970873.449038,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "920",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/920.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 1.0,
+            "matched_columns": [
+              [
+                "year",
+                "year"
+              ]
+            ],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              51,
+              1
+            ],
+            "expected_shape": [
+              51,
+              1
+            ],
+            "actual_preview": "year\n       ----\n       1950\n       1951\n       1952\n       ...",
+            "expected_preview": "year\n       ----\n       2009\n       2008\n       2007\n       ...",
+            "actual_tables": [
+              "races",
+              "circuits"
+            ],
+            "expected_tables": [
+              "races",
+              "circuits"
+            ],
+            "matched_tables": [
+              "races",
+              "circuits"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "SELECT DISTINCT r.year FROM races r JOIN circuits c ON r.circuitId = c.circuitId WHERE c.name = 'Silverstone Circuit' ORDER BY r.year;",
+            "gold_sql": "SELECT DISTINCT T2.year FROM circuits AS T1 INNER JOIN races AS T2 ON T2.circuitID = T1.circuitId WHERE T1.name = 'Silverstone Circuit'",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    },
+    "1370": {
+      "total_node_count": 14,
+      "output_node_count": 1,
+      "output_success_count": 0,
+      "output_failure_count": 1,
+      "errors": [
+        "node node_5: Output status is 'unknown'"
+      ],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 3,
+        "generate_sql": 3,
+        "execute_sql": 3,
+        "reflect": 3,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": null,
+      "status": "pending",
+      "comparison_results": []
+    },
+    "1451": {
+      "total_node_count": 6,
+      "output_node_count": 1,
+      "output_success_count": 1,
+      "output_failure_count": 0,
+      "errors": [],
+      "node_types": {
+        "start": 1,
+        "schema_linking": 1,
+        "generate_sql": 1,
+        "execute_sql": 1,
+        "reflect": 1,
+        "output": 1
+      },
+      "tool_calls": {},
+      "completion_time": 1770971138.0338619,
+      "status": "completed",
+      "comparison_results": [
+        {
+          "task_id": "1451",
+          "actual_file_exists": true,
+          "gold_file_exists": true,
+          "actual_path": "/Users/kangxue/.datus/save/bird_sqlite/20260213_161631/1451.csv",
+          "gold_path": "/Users/kangxue/.datus/benchmark/bird/dev_20240627/dev.json",
+          "comparison": {
+            "match_rate": 0.0,
+            "matched_columns": [],
+            "missing_columns": [],
+            "extra_columns": [],
+            "actual_shape": [
+              16,
+              4
+            ],
+            "expected_shape": [
+              1,
+              1
+            ],
+            "actual_preview": "member_id | first_name | last_name | total_spent\n       ------------------------------------------------\n       recUdRhbhcEO1Hk5r | Amy | Firth | 2025.45\n       recQaxyXBQG5BBtD0 | Dean | O'Reilly | 2025.45\n       recTjHY5xXhvkCdVT | Edwardo | Ing | 2025.45\n       ...",
+            "expected_preview": "member_id\n       ---------\n       rec4BLdZHS2Blfp4v",
+            "actual_tables": [
+              "member",
+              "budget",
+              "attendance"
+            ],
+            "expected_tables": [
+              "expense",
+              "member",
+              "event",
+              "budget"
+            ],
+            "matched_tables": [
+              "member",
+              "budget"
+            ],
+            "actual_sql_error": null,
+            "sql_error": null,
+            "actual_sql": "WITH member_event_expenses AS (\n    SELECT \n        m.member_id,\n        m.first_name,\n        m.last_name,\n        b.link_to_event,\n        b.spent\n    FROM member m\n    JOIN attendance a ON m.member_id = a.link_to_member\n    JOIN budget b ON a.link_to_event = b.link_to_event\n    WHERE b.spent IS NOT NULL AND b.spent > 0\n),\nmembers_with_multiple_events AS (\n    SELECT \n        member_id,\n        first_name,\n        last_name,\n        COUNT(DISTINCT link_to_event) as event_count,\n        SUM(spent) as total_spent\n    FROM member_event_expenses\n    GROUP BY member_id, first_name, last_name\n    HAVING COUNT(DISTINCT link_to_event) > 1\n)\nSELECT \n    member_id,\n    first_name,\n    last_name,\n    total_spent\nFROM members_with_multiple_events\nWHERE total_spent = (SELECT MAX(total_spent) FROM members_with_multiple_events)\nORDER BY total_spent DESC, first_name, last_name;",
+            "gold_sql": "SELECT T2.member_id FROM expense AS T1 INNER JOIN member AS T2 ON T1.link_to_member = T2.member_id INNER JOIN budget AS T3 ON T1.link_to_budget = T3.budget_id INNER JOIN event AS T4 ON T3.link_to_event = T4.event_id GROUP BY T2.member_id HAVING COUNT(DISTINCT T4.event_id) > 1 ORDER BY SUM(T1.cost) DESC LIMIT 1",
+            "tools_comparison": {
+              "expected_file": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_sql": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_semantic_model": {
+                "expected": "",
+                "actual": [],
+                "matched_actual": [],
+                "match": true
+              },
+              "expected_metrics": {
+                "expected": [],
+                "actual": [],
+                "matched_expected": [],
+                "matched_actual": [],
+                "missing_expected": [],
+                "match": true
+              }
+            },
+            "error": null
+          }
+        }
+      ]
+    }
+  }
+}

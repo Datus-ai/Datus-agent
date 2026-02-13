@@ -29,12 +29,12 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 import uvicorn
-from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from datus.mcp_server import DatusMCPServer, create_dynamic_app
+from mcp import ClientSession
 
 CONFIG_PATH = str(Path(__file__).resolve().parents[1] / "conf" / "agent.yml")
 
@@ -299,6 +299,7 @@ class DynamicModeTestBase:
 
 
 @pytest.mark.asyncio
+@pytest.mark.nightly
 class TestStaticModeHTTPStreamable(StaticModeTestBase):
     """Test DatusMCPServer in static mode using HTTP Streamable transport."""
 
@@ -326,6 +327,7 @@ class TestStaticModeHTTPStreamable(StaticModeTestBase):
 
 
 @pytest.mark.asyncio
+@pytest.mark.nightly
 class TestStaticModeSSE(StaticModeTestBase):
     """Test DatusMCPServer in static mode using SSE transport."""
 
@@ -353,6 +355,7 @@ class TestStaticModeSSE(StaticModeTestBase):
 
 
 @pytest.mark.asyncio
+@pytest.mark.nightly
 class TestStaticModeStdio(StaticModeTestBase):
     """Test DatusMCPServer in static mode using stdio transport."""
 

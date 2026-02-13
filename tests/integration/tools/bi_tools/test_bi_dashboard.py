@@ -129,6 +129,7 @@ class TestPartialIntegration:
     """
 
     @pytest.mark.acceptance
+    @pytest.mark.nightly
     def test_workflow_without_llm(
         self,
         bi_commands: BiDashboardCommands,

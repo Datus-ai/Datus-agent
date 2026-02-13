@@ -168,6 +168,7 @@ def test_tables_command(mock_args, capsys):
         assert "Tables in Database" in captured.out
 
 
+@pytest.mark.nightly
 @pytest.mark.acceptance
 def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     """
