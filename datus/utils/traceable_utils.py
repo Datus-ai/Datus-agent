@@ -44,11 +44,26 @@ _tracing_initialized = False
 _tracing_processor = None
 
 
+def _is_tracing_enabled() -> bool:
+    """Check if LangSmith tracing is explicitly enabled via environment variables."""
+    import os
+
+    tracing_enabled = (
+        os.environ.get("LANGSMITH_TRACING", "").lower() == "true"
+        or os.environ.get("LANGCHAIN_TRACING_V2", "").lower() == "true"
+    )
+    has_api_key = bool(os.environ.get("LANGCHAIN_API_KEY") or os.environ.get("LANGSMITH_API_KEY"))
+    return tracing_enabled and has_api_key
+
+
 def setup_tracing():
     """Set up LangSmith tracing with DatusTracingProcessor.
 
     Creates a DatusTracingProcessor (subclass of OpenAIAgentsTracingProcessor)
     that captures trace URLs on trace end, and registers it via set_trace_processors.
+
+    Requires both a tracing env var (LANGSMITH_TRACING=true or LANGCHAIN_TRACING_V2=true)
+    and a valid API key (LANGCHAIN_API_KEY or LANGSMITH_API_KEY) to be set.
 
     Safe to call multiple times; initialization only happens once.
     """
@@ -58,6 +73,10 @@ def setup_tracing():
     _tracing_initialized = True
 
     if not HAS_LANGSMITH:
+        return
+
+    if not _is_tracing_enabled():
+        logger.debug("LangSmith tracing not enabled (set LANGSMITH_TRACING=true and LANGCHAIN_API_KEY to enable)")
         return
 
     try:
