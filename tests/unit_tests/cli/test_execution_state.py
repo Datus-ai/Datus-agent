@@ -26,7 +26,6 @@ from datus.cli.execution_state import (
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
-
 # ===========================================================================
 # PendingInteraction Tests
 # ===========================================================================

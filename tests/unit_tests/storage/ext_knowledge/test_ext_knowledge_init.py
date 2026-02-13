@@ -8,7 +8,6 @@ import argparse
 
 import pytest
 
-from datus.schemas.action_history import ActionStatus
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.ext_knowledge.ext_knowledge_init import (
     init_ext_knowledge,
@@ -299,9 +298,7 @@ class TestProcessKnowledgeLine:
             "sql": "SELECT COUNT(*) FROM schools",
             "subject_path": "Education/Schools",
         }
-        result = await process_knowledge_line(
-            row, real_agent_config, subject_tree=["Education", "Finance"]
-        )
+        result = await process_knowledge_line(row, real_agent_config, subject_tree=["Education", "Finance"])
         assert result["successful"] is True
         assert result["error"] == ""
 
@@ -353,9 +350,7 @@ class TestInitSuccessStoryKnowledge:
         )
 
         args = argparse.Namespace(success_story=csv_path)
-        success, error_msg = init_success_story_knowledge(
-            args, real_agent_config, subject_tree=["Education"]
-        )
+        success, error_msg = init_success_story_knowledge(args, real_agent_config, subject_tree=["Education"])
         assert success is True
         assert error_msg == ""
 

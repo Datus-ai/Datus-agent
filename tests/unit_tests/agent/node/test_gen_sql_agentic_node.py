@@ -1069,10 +1069,12 @@ class TestEndToEndPlanModeHooksInteraction:
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
-        todos = json.dumps([
-            {"content": "Query database schema", "status": "pending"},
-            {"content": "Generate SQL report", "status": "pending"},
-        ])
+        todos = json.dumps(
+            [
+                {"content": "Query database schema", "status": "pending"},
+                {"content": "Generate SQL report", "status": "pending"},
+            ]
+        )
 
         mock_llm_create.reset(
             responses=[
@@ -1154,11 +1156,13 @@ class TestEndToEndPlanModeHooksInteraction:
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
-        todos = json.dumps([
-            {"content": "List all tables", "status": "pending"},
-            {"content": "Describe satscores table", "status": "pending"},
-            {"content": "Run sample query", "status": "pending"},
-        ])
+        todos = json.dumps(
+            [
+                {"content": "List all tables", "status": "pending"},
+                {"content": "Describe satscores table", "status": "pending"},
+                {"content": "Run sample query", "status": "pending"},
+            ]
+        )
 
         mock_llm_create.reset(
             responses=[
@@ -1231,9 +1235,11 @@ class TestEndToEndPlanModeHooksInteraction:
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
-        todos = json.dumps([
-            {"content": "Some task", "status": "pending"},
-        ])
+        todos = json.dumps(
+            [
+                {"content": "Some task", "status": "pending"},
+            ]
+        )
 
         mock_llm_create.reset(
             responses=[
@@ -1565,7 +1571,6 @@ class TestEndToEndGenerationHooksInteraction:
     @pytest.mark.asyncio
     async def test_e2e_generation_hooks_no_yaml_no_interaction(self, real_agent_config, mock_llm_create, tmp_path):
         """When end_semantic_model_generation returns no file paths, no interaction is triggered."""
-        import asyncio
 
         from agents import FunctionTool
 
