@@ -3,6 +3,7 @@ agent:
   # Using relative path for portability across different environments
   home: ~/.datus/tests
   target: deepseek
+  workspace_root: ~/.datus/workspace
   models:
     deepseek:
       type: deepseek
