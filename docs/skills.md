@@ -296,6 +296,31 @@ export DATUS_LOG_LEVEL=DEBUG
 
 Datus includes a built-in CLI for interacting with the AgenticDataStack Town Skills Marketplace. You can search, install, publish, and manage skills directly from the command line.
 
+### Authentication
+
+The Town Marketplace requires authentication for all API operations. Use the `login` command to authenticate before using marketplace features.
+
+```bash
+# Interactive login (prompts for email and password)
+datus skill login --marketplace http://my-town:9000
+
+# Non-interactive login
+datus skill login --marketplace http://my-town:9000 --email user@example.com --password secret
+
+# Logout (clear saved token)
+datus skill logout --marketplace http://my-town:9000
+```
+
+In the REPL:
+```
+datus> .skill login http://my-town:9000
+Email: user@example.com
+Password: ****
+Login successful! Token saved for http://my-town:9000
+```
+
+Tokens are saved at `~/.datus/marketplace_auth.json` and automatically included in all subsequent marketplace requests. Tokens expire after 24 hours; re-run `login` to refresh.
+
 ### Configuration
 
 Marketplace settings in `agent.yml`:

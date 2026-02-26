@@ -25,12 +25,25 @@ logger = logging.getLogger(__name__)
 class SkillMarketplaceClient:
     """HTTP client for Town Skills Marketplace."""
 
-    def __init__(self, base_url: str = "http://localhost:9000"):
+    def __init__(self, base_url: str = "http://localhost:9000", token: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
         self.timeout = 60.0
 
+        if token:
+            self.token = token
+        else:
+            from datus.tools.skill_tools.marketplace_auth import load_token
+
+            self.token = load_token(self.base_url)
+
     def _url(self, path: str) -> str:
         return f"{self.base_url}/api/skills{path}"
+
+    def _auth_headers(self) -> Dict[str, str]:
+        """Return Authorization header if a token is available."""
+        if self.token:
+            return {"Authorization": f"Bearer {self.token}"}
+        return {}
 
     def _handle_response(self, resp: httpx.Response) -> Any:
         if resp.status_code >= 400:
@@ -50,7 +63,7 @@ class SkillMarketplaceClient:
             params["q"] = query
         if tag:
             params["tag"] = tag
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx.Client(timeout=self.timeout, headers=self._auth_headers()) as client:
             resp = client.get(self._url("/search"), params=params)
             data = self._handle_response(resp)
             return data.get("skills", [])
@@ -60,20 +73,20 @@ class SkillMarketplaceClient:
         params = {}
         if promoted is not None:
             params["promoted"] = str(promoted).lower()
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx.Client(timeout=self.timeout, headers=self._auth_headers()) as client:
             resp = client.get(self._url(""), params=params)
             data = self._handle_response(resp)
             return data.get("skills", [])
 
     def get_skill_info(self, name: str) -> Dict:
         """Get detailed skill info including version history."""
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx.Client(timeout=self.timeout, headers=self._auth_headers()) as client:
             resp = client.get(self._url(f"/{name}"))
             return self._handle_response(resp)
 
     def get_version(self, name: str, version: str) -> Dict:
         """Get a specific version of a skill."""
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx.Client(timeout=self.timeout, headers=self._auth_headers()) as client:
             resp = client.get(self._url(f"/{name}/{version}"))
             return self._handle_response(resp)
 
@@ -93,7 +106,7 @@ class SkillMarketplaceClient:
             info = self.get_skill_info(name)
             version = info.get("latest_version", version)
 
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx.Client(timeout=self.timeout, headers=self._auth_headers()) as client:
             resp = client.get(self._url(f"/{name}/{version}/download"))
             if resp.status_code >= 400:
                 try:
@@ -158,7 +171,7 @@ class SkillMarketplaceClient:
             "changelog": frontmatter.get("changelog"),
         }
 
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx.Client(timeout=self.timeout, headers=self._auth_headers()) as client:
             # Step 1: Publish metadata
             resp = client.post(self._url(""), json=body)
             skill_data = self._handle_response(resp)

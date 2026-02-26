@@ -6,9 +6,13 @@
 Non-REPL skill CLI handler for `datus skill <subcommand>` usage.
 """
 
+import getpass
+
+import httpx
 from rich.console import Console
 from rich.table import Table
 
+from datus.tools.skill_tools.marketplace_auth import clear_token, save_token
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_manager import SkillManager
 from datus.utils.loggings import get_logger
@@ -33,7 +37,13 @@ def run_skill_command(args) -> int:
     skill_args = getattr(args, "skill_args", [])
     manager = _get_manager(args)
 
-    if subcmd == "list":
+    if subcmd == "login":
+        marketplace_url = getattr(args, "marketplace", "") or manager.config.marketplace_url
+        _cmd_login(marketplace_url, args)
+    elif subcmd == "logout":
+        marketplace_url = getattr(args, "marketplace", "") or manager.config.marketplace_url
+        _cmd_logout(marketplace_url)
+    elif subcmd == "list":
         _cmd_list(manager)
     elif subcmd == "search":
         query = " ".join(skill_args) if skill_args else ""
@@ -66,6 +76,49 @@ def run_skill_command(args) -> int:
         _cmd_remove(manager, skill_args[0])
 
     return 0
+
+
+def _cmd_login(marketplace_url: str, args) -> None:
+    """Authenticate with the Town Marketplace and save the JWT token."""
+    email = getattr(args, "email", None) or input("Email: ")
+    password = getattr(args, "password", None) or getpass.getpass("Password: ")
+
+    login_url = f"{marketplace_url.rstrip('/')}/api/auth/login"
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(login_url, json={"email": email, "password": password})
+            if resp.status_code >= 400:
+                try:
+                    detail = resp.json().get("detail", resp.text)
+                except Exception:
+                    detail = resp.text
+                console.print(f"[red]Login failed ({resp.status_code}): {detail}[/]")
+                return
+
+            # Token is returned as a cookie named 'town_token'
+            token = resp.cookies.get("town_token")
+            if not token:
+                # Fallback: check JSON body
+                body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                token = body.get("access_token") or body.get("token")
+            if not token:
+                console.print("[red]Login succeeded but no token was returned.[/]")
+                return
+
+            save_token(token, marketplace_url, email)
+            console.print(f"[green]Login successful![/] Token saved for {marketplace_url}")
+    except httpx.ConnectError:
+        console.print(f"[red]Cannot connect to {login_url}[/]")
+    except Exception as exc:
+        console.print(f"[red]Login error: {exc}[/]")
+
+
+def _cmd_logout(marketplace_url: str) -> None:
+    """Clear saved credentials for the marketplace."""
+    if clear_token(marketplace_url):
+        console.print(f"[green]Logged out from {marketplace_url}[/]")
+    else:
+        console.print(f"[yellow]No saved credentials for {marketplace_url}[/]")
 
 
 def _cmd_list(manager: SkillManager):

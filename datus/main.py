@@ -442,12 +442,14 @@ def create_parser() -> argparse.ArgumentParser:
     )
     skill_parser.add_argument(
         "subcommand",
-        choices=["list", "search", "install", "publish", "info", "update", "remove"],
+        choices=["list", "search", "install", "publish", "info", "update", "remove", "login", "logout"],
         help="Skill subcommand",
     )
     skill_parser.add_argument("skill_args", nargs="*", help="Arguments for the skill subcommand")
     skill_parser.add_argument("--owner", type=str, default="", help="Owner name for publish")
     skill_parser.add_argument("--marketplace", type=str, default="", help="Marketplace URL override")
+    skill_parser.add_argument("--email", type=str, default=None, help="Email for marketplace login")
+    skill_parser.add_argument("--password", type=str, default=None, help="Password for marketplace login")
 
     # tutorial command
     subparsers.add_parser(

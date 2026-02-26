@@ -50,6 +50,10 @@ class SkillCommands:
         args = args.strip()
         if not args or args == "help":
             self._show_usage()
+        elif args.startswith("login"):
+            self.cmd_skill_login(args[5:].strip())
+        elif args.startswith("logout"):
+            self.cmd_skill_logout()
         elif args == "list":
             self.cmd_skill_list()
         elif args.startswith("search"):
@@ -67,6 +71,59 @@ class SkillCommands:
         else:
             self.console.print(f"[red]Unknown skill command: {args}[/red]")
             self._show_usage()
+
+    def cmd_skill_login(self, args: str = ""):
+        """Authenticate with the Town Marketplace: .skill login [marketplace_url]"""
+        import getpass
+
+        import httpx
+
+        from datus.tools.skill_tools.marketplace_auth import save_token
+
+        manager = self._get_skill_manager()
+        marketplace_url = args.strip() if args.strip() else manager.config.marketplace_url
+
+        email = input("Email: ")
+        password = getpass.getpass("Password: ")
+
+        login_url = f"{marketplace_url.rstrip('/')}/api/auth/login"
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(login_url, json={"email": email, "password": password})
+                if resp.status_code >= 400:
+                    try:
+                        detail = resp.json().get("detail", resp.text)
+                    except Exception:
+                        detail = resp.text
+                    self.console.print(f"[red]Login failed ({resp.status_code}): {detail}[/]")
+                    return
+
+                token = resp.cookies.get("town_token")
+                if not token:
+                    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                    token = body.get("access_token") or body.get("token")
+                if not token:
+                    self.console.print("[red]Login succeeded but no token was returned.[/]")
+                    return
+
+                save_token(token, marketplace_url, email)
+                self.console.print(f"[green]Login successful![/] Token saved for {marketplace_url}")
+        except httpx.ConnectError:
+            self.console.print(f"[red]Cannot connect to {login_url}[/]")
+        except Exception as exc:
+            self.console.print(f"[red]Login error: {exc}[/]")
+
+    def cmd_skill_logout(self):
+        """Clear saved marketplace credentials: .skill logout"""
+        from datus.tools.skill_tools.marketplace_auth import clear_token
+
+        manager = self._get_skill_manager()
+        marketplace_url = manager.config.marketplace_url
+
+        if clear_token(marketplace_url):
+            self.console.print(f"[green]Logged out from {marketplace_url}[/]")
+        else:
+            self.console.print(f"[yellow]No saved credentials for {marketplace_url}[/]")
 
     def cmd_skill_list(self):
         """List locally installed skills in a Rich table."""
@@ -273,6 +330,8 @@ class SkillCommands:
         """Show .skill command usage."""
         self.console.print("[bold]Skill Marketplace Commands:[/]")
         cmds = [
+            (".skill login [url]", "Authenticate with marketplace"),
+            (".skill logout", "Clear saved marketplace credentials"),
             (".skill list", "List locally installed skills"),
             (".skill search <query>", "Search skills in marketplace"),
             (".skill install <name> [version]", "Install skill from marketplace"),

@@ -1,13 +1,22 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
-"""Tests for skill marketplace client and CLI commands."""
+"""Tests for skill marketplace client, auth, and CLI commands."""
 
+import base64
+import json
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from datus.tools.skill_tools.marketplace_auth import (
+    _is_token_expired,
+    clear_token,
+    load_token,
+    save_token,
+)
 from datus.tools.skill_tools.marketplace_client import SkillMarketplaceClient
 
 SKILL_MD = """---
@@ -220,3 +229,107 @@ class TestSkillMetadataMarketplace:
         assert d["license"] == "Apache-2.0"
         assert d["source"] == "marketplace"
         assert d["marketplace_version"] == "1.0.0"
+
+
+def _make_jwt(exp: int) -> str:
+    """Create a fake JWT with the given exp claim."""
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256"}).encode()).rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": exp, "sub": "test"}).encode()).rstrip(b"=").decode()
+    sig = base64.urlsafe_b64encode(b"fakesig").rstrip(b"=").decode()
+    return f"{header}.{payload}.{sig}"
+
+
+class TestMarketplaceAuth:
+    """Tests for marketplace_auth token persistence."""
+
+    def test_save_and_load_token(self, tmp_path, monkeypatch):
+        auth_file = tmp_path / "marketplace_auth.json"
+        monkeypatch.setattr("datus.tools.skill_tools.marketplace_auth.AUTH_FILE", auth_file)
+
+        future_exp = int(time.time()) + 3600
+        token = _make_jwt(future_exp)
+
+        save_token(token, "http://localhost:9000", "user@test.com")
+        loaded = load_token("http://localhost:9000")
+        assert loaded == token
+
+    def test_load_token_returns_none_when_missing(self, tmp_path, monkeypatch):
+        auth_file = tmp_path / "marketplace_auth.json"
+        monkeypatch.setattr("datus.tools.skill_tools.marketplace_auth.AUTH_FILE", auth_file)
+
+        assert load_token("http://localhost:9000") is None
+
+    def test_load_token_returns_none_when_expired(self, tmp_path, monkeypatch):
+        auth_file = tmp_path / "marketplace_auth.json"
+        monkeypatch.setattr("datus.tools.skill_tools.marketplace_auth.AUTH_FILE", auth_file)
+
+        past_exp = int(time.time()) - 100
+        token = _make_jwt(past_exp)
+
+        save_token(token, "http://localhost:9000", "user@test.com")
+        assert load_token("http://localhost:9000") is None
+
+    def test_clear_token(self, tmp_path, monkeypatch):
+        auth_file = tmp_path / "marketplace_auth.json"
+        monkeypatch.setattr("datus.tools.skill_tools.marketplace_auth.AUTH_FILE", auth_file)
+
+        future_exp = int(time.time()) + 3600
+        token = _make_jwt(future_exp)
+
+        save_token(token, "http://localhost:9000", "user@test.com")
+        assert clear_token("http://localhost:9000") is True
+        assert load_token("http://localhost:9000") is None
+
+    def test_clear_token_returns_false_when_missing(self, tmp_path, monkeypatch):
+        auth_file = tmp_path / "marketplace_auth.json"
+        monkeypatch.setattr("datus.tools.skill_tools.marketplace_auth.AUTH_FILE", auth_file)
+
+        assert clear_token("http://localhost:9000") is False
+
+    def test_is_token_expired_invalid_format(self):
+        assert _is_token_expired("not-a-jwt") is True
+
+    def test_trailing_slash_normalization(self, tmp_path, monkeypatch):
+        auth_file = tmp_path / "marketplace_auth.json"
+        monkeypatch.setattr("datus.tools.skill_tools.marketplace_auth.AUTH_FILE", auth_file)
+
+        future_exp = int(time.time()) + 3600
+        token = _make_jwt(future_exp)
+
+        save_token(token, "http://localhost:9000/", "user@test.com")
+        loaded = load_token("http://localhost:9000")
+        assert loaded == token
+
+
+class TestMarketplaceClientAuth:
+    """Tests for SkillMarketplaceClient token integration."""
+
+    def test_client_uses_explicit_token(self):
+        client = SkillMarketplaceClient(token="my-token")
+        assert client.token == "my-token"
+        assert client._auth_headers() == {"Authorization": "Bearer my-token"}
+
+    def test_client_no_token_returns_empty_headers(self):
+        with patch("datus.tools.skill_tools.marketplace_auth.load_token", return_value=None):
+            client = SkillMarketplaceClient()
+            assert client.token is None
+            assert client._auth_headers() == {}
+
+    @patch("datus.tools.skill_tools.marketplace_client.httpx.Client")
+    def test_search_sends_auth_header(self, mock_client_cls):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"skills": [], "total": 0}
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.return_value = mock_resp
+        mock_client_cls.return_value = mock_client
+
+        client = SkillMarketplaceClient(token="test-jwt")
+        client.search(query="sql")
+
+        mock_client_cls.assert_called_once_with(
+            timeout=60.0,
+            headers={"Authorization": "Bearer test-jwt"},
+        )
