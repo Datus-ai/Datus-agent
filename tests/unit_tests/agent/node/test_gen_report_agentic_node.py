@@ -298,6 +298,45 @@ class TestGenReportAgenticNodeExecution:
         assert last_action.output is not None
 
     @pytest.mark.asyncio
+    async def test_report_with_db_schema_context(self, real_agent_config, mock_llm_create):
+        """Test execute_stream with db_schema enriches the enhanced message."""
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Report with schema context generated."),
+            ]
+        )
+
+        node = GenReportAgenticNode(
+            node_id="report_schema_ctx",
+            description="Report with schema context",
+            node_type=NodeType.TYPE_GEN_REPORT,
+            agent_config=real_agent_config,
+            node_name="gen_report",
+        )
+
+        node.input = GenReportNodeInput(
+            user_message="Analyze revenue by department",
+            database="california_schools",
+            db_schema="main",
+        )
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+        # Verify the model was called with a prompt that includes schema context
+        assert len(mock_llm_create.call_history) >= 1
+        call = mock_llm_create.call_history[0]
+        prompt = call.get("prompt", "")
+        assert "Schema" in prompt or "main" in prompt or "Analyze" in prompt
+
+    @pytest.mark.asyncio
     async def test_report_input_not_set_raises(self, real_agent_config, mock_llm_create):
         """Test that execute_stream raises when input is not set."""
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -313,5 +352,69 @@ class TestGenReportAgenticNodeExecution:
 
         action_manager = ActionHistoryManager()
         with pytest.raises(ValueError, match="Report input not set"):
+            async for _ in node.execute_stream(action_manager):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_report_template_fallback(self, real_agent_config, mock_llm_create):
+        """Test that a non-existent system_prompt falls back to gen_report_system template."""
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        # Set a non-existent system_prompt so the template lookup fails and falls back
+        original_prompt = real_agent_config.agentic_nodes["gen_report"].get("system_prompt")
+        real_agent_config.agentic_nodes["gen_report"]["system_prompt"] = "nonexistent_prompt_xyz"
+
+        try:
+            mock_llm_create.reset(
+                responses=[
+                    build_simple_response("Report with fallback template."),
+                ]
+            )
+
+            node = GenReportAgenticNode(
+                node_id="report_fallback_test",
+                description="Report with template fallback",
+                node_type=NodeType.TYPE_GEN_REPORT,
+                agent_config=real_agent_config,
+                node_name="gen_report",
+            )
+
+            node.input = GenReportNodeInput(user_message="Analyze data")
+
+            action_manager = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream(action_manager):
+                actions.append(action)
+
+            # Should still succeed using the fallback template
+            assert len(actions) >= 2
+            assert actions[-1].status == ActionStatus.SUCCESS
+        finally:
+            real_agent_config.agentic_nodes["gen_report"]["system_prompt"] = original_prompt
+
+    @pytest.mark.asyncio
+    async def test_report_execution_interrupted_propagates(self, real_agent_config, mock_llm_create):
+        """Test that ExecutionInterrupted is re-raised from execute_stream."""
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+        from datus.cli.execution_state import ExecutionInterrupted
+
+        async def _raise_interrupted(*args, **kwargs):
+            """Async generator that raises ExecutionInterrupted."""
+            raise ExecutionInterrupted("User pressed ESC")
+            yield  # noqa: makes this an async generator
+
+        node = GenReportAgenticNode(
+            node_id="report_interrupt_test",
+            description="Report interrupt test",
+            node_type=NodeType.TYPE_GEN_REPORT,
+            agent_config=real_agent_config,
+            node_name="gen_report",
+        )
+
+        node.input = GenReportNodeInput(user_message="Analyze data")
+        mock_llm_create.generate_with_tools_stream = _raise_interrupted
+
+        action_manager = ActionHistoryManager()
+        with pytest.raises(ExecutionInterrupted):
             async for _ in node.execute_stream(action_manager):
                 pass

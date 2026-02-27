@@ -19,6 +19,37 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+class ExecutionInterrupted(Exception):
+    """Raised when the user interrupts the current execution."""
+
+    pass
+
+
+class InterruptController:
+    """Thread-safe interrupt controller for graceful execution cancellation."""
+
+    def __init__(self):
+        self._interrupted = threading.Event()
+
+    def interrupt(self):
+        """Signal that execution should be interrupted."""
+        self._interrupted.set()
+
+    @property
+    def is_interrupted(self) -> bool:
+        """Check if interrupt has been signaled."""
+        return self._interrupted.is_set()
+
+    def check(self):
+        """Raise ExecutionInterrupted if interrupted."""
+        if self._interrupted.is_set():
+            raise ExecutionInterrupted("Execution interrupted by user")
+
+    def reset(self):
+        """Clear the interrupt signal for a new execution cycle."""
+        self._interrupted.clear()
+
+
 @dataclass
 class PendingInteraction:
     """Pending interaction waiting for user response"""

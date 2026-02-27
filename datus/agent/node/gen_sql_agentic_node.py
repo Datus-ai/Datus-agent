@@ -14,6 +14,7 @@ from typing import Any, AsyncGenerator, Dict, Optional, Union
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.workflow import Workflow
+from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.agent_models import SubAgentConfig
@@ -26,6 +27,13 @@ from datus.tools.mcp_tools import MCPServer
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
+from datus.utils.message_utils import (
+    MessagePart,
+    build_structured_content,
+    extract_enhanced_context,
+    extract_user_input,
+    is_structured_content,
+)
 
 logger = get_logger(__name__)
 
@@ -655,12 +663,11 @@ class GenSQLAgenticNode(AgenticNode):
                     if action.output and isinstance(action.output, dict):
                         usage_info = action.output.get("usage", {})
                         if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            conversation_tokens = usage_info.get("total_tokens", 0)
-                            if conversation_tokens > 0:
-                                # Add this conversation's tokens to the session
-                                self._add_session_tokens(conversation_tokens)
-                                tokens_used = conversation_tokens
-                                logger.info(f"Added {conversation_tokens} tokens to session")
+                            try:
+                                tokens_used = int(usage_info.get("total_tokens", 0))
+                            except (TypeError, ValueError):
+                                tokens_used = 0
+                            if tokens_used > 0:
                                 break
                             else:
                                 logger.warning(f"no usage token found in this action {action.messages}")
@@ -704,6 +711,10 @@ class GenSQLAgenticNode(AgenticNode):
             )
             action_history_manager.add_action(final_action)
             yield final_action
+
+        except ExecutionInterrupted:
+            # Let ExecutionInterrupted propagate to execute_stream_with_interactions
+            raise
 
         except Exception as e:
             logger.error(f"{self.get_node_name()} execution error: {e}")
@@ -819,6 +830,7 @@ class GenSQLAgenticNode(AgenticNode):
                 session=session,
                 action_history_manager=action_history_manager,
                 hooks=config.get("hooks"),
+                interrupt_controller=self.interrupt_controller,
             ):
                 yield stream_action
 
@@ -891,6 +903,18 @@ class GenSQLAgenticNode(AgenticNode):
             # Fallback to inline prompt if template not found
             logger.warning("plan_mode_system template not found, using inline prompt")
             plan_prompt_addition = "\n\nPLAN MODE\nCheck todo_read to see current plan status and proceed accordingly."
+
+        # If structured format, append plan addition to enhanced part and rebuild
+        if is_structured_content(original_prompt):
+            user_input = extract_user_input(original_prompt)
+            enhanced = extract_enhanced_context(original_prompt)
+            new_enhanced = (enhanced or "") + "\n\n" + plan_prompt_addition
+            return build_structured_content(
+                [
+                    MessagePart(type="enhanced", content=new_enhanced),
+                    MessagePart(type="user", content=user_input),
+                ]
+            )
 
         return original_prompt + "\n\n" + plan_prompt_addition
 
@@ -1036,7 +1060,6 @@ def build_enhanced_message(
     metrics: Optional[list[Metric]] = None,
     reference_sql: Optional[list[ReferenceSql]] = None,
 ) -> str:
-    enhanced_message = user_message
     enhanced_parts = []
     if external_knowledge:
         enhanced_parts.append(f"MUST use these business logic:\n{external_knowledge}")
@@ -1064,8 +1087,12 @@ def build_enhanced_message(
         enhanced_parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
 
     if enhanced_parts:
-        enhanced_message = (
-            f"{'\n\n'.join(enhanced_parts)}\n\nNow based on the rules above, answer the user question: {user_message}"
+        enhanced_context = "\n\n".join(enhanced_parts)
+        return build_structured_content(
+            [
+                MessagePart(type="enhanced", content=enhanced_context),
+                MessagePart(type="user", content=user_message),
+            ]
         )
 
-    return enhanced_message
+    return user_message

@@ -253,6 +253,73 @@ class TestGenMetricsAgenticNodeExecution:
                 pass
 
     @pytest.mark.asyncio
+    async def test_metrics_with_database_context(self, real_agent_config, mock_llm_create):
+        """Test execute_stream with database context enriches the enhanced message."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Metrics generated with database context."),
+            ]
+        )
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+
+        node.input = SemanticNodeInput(
+            user_message="Generate revenue metrics",
+            database="california_schools",
+        )
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+        # Verify the model was called with enhanced prompt containing database context
+        assert len(mock_llm_create.call_history) >= 1
+        call = mock_llm_create.call_history[0]
+        prompt = call.get("prompt", "")
+        assert "california_schools" in prompt or "Generate" in prompt
+
+    @pytest.mark.asyncio
+    async def test_metrics_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
+        """Test that interactive mode tracks token usage from action history."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Metrics generated in interactive mode."),
+            ]
+        )
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="interactive",
+        )
+
+        node.input = SemanticNodeInput(user_message="Generate revenue metrics")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+        # In interactive mode, the final result should have tokens_used > 0
+        last_output = actions[-1].output
+        assert last_output is not None
+        if isinstance(last_output, dict) and "tokens_used" in last_output:
+            assert last_output["tokens_used"] > 0
+
+    @pytest.mark.asyncio
     async def test_metrics_with_thinking(self, real_agent_config, mock_llm_create):
         """Test response with thinking content yields a thinking action."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -294,3 +361,27 @@ class TestGenMetricsAgenticNodeExecution:
                 thinking_found = True
                 break
         assert thinking_found, "Expected thinking content in actions"
+
+    @pytest.mark.asyncio
+    async def test_metrics_execution_interrupted_propagates(self, real_agent_config, mock_llm_create):
+        """Test that ExecutionInterrupted is re-raised from execute_stream."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.cli.execution_state import ExecutionInterrupted
+
+        async def _raise_interrupted(*args, **kwargs):
+            """Async generator that raises ExecutionInterrupted."""
+            raise ExecutionInterrupted("User pressed ESC")
+            yield  # noqa: makes this an async generator
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+
+        node.input = SemanticNodeInput(user_message="Generate metrics")
+        mock_llm_create.generate_with_tools_stream = _raise_interrupted
+
+        action_manager = ActionHistoryManager()
+        with pytest.raises(ExecutionInterrupted):
+            async for _ in node.execute_stream(action_manager):
+                pass

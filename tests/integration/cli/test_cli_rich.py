@@ -286,7 +286,9 @@ def test_chat_command_with_ext_knowledge(mock_args):
 
     # Check that a chat node was created and has an active session
     assert cli.chat_commands.current_node is not None, "Should have an active chat node."
-    session_info = cli.chat_commands.current_node.get_session_info()
+    import asyncio
+
+    session_info = asyncio.run(cli.chat_commands.current_node.get_session_info())
     assert session_info.get("session_id"), "Should have a valid session ID."
     assert session_info.get("action_count", 0) > 0, "Session should have recorded actions."
 

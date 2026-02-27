@@ -21,12 +21,39 @@ from typing import Dict, List, Optional
 import structlog
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.json_utils import llm_result2json
+from datus.utils.message_utils import extract_user_input
 
 logger = structlog.get_logger(__name__)
 
 
 class SessionLoader:
     """Loads and reconstructs chat sessions from SQLite storage."""
+
+    def _parse_final_output(self, last_action: ActionHistory, current_assistant_group: Dict) -> Optional[ActionHistory]:
+        """Try to parse sql/output from last action's messages and update assistant group."""
+
+        if last_action.role == ActionRole.ASSISTANT and last_action.messages:
+            result_json = llm_result2json(last_action.messages)
+            if isinstance(result_json, dict) and ("sql" in result_json or "output" in result_json):
+                output = {}
+                if "sql" in result_json:
+                    output["sql"] = result_json["sql"]
+                if "output" in result_json:
+                    output["response"] = result_json["output"]
+                current_assistant_group["content"] = result_json.get("output", "")
+                current_assistant_group["sql"] = result_json.get("sql", "")
+                # Create final action
+                final_action = ActionHistory.create_action(
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="Chat interaction completed successfully",
+                    input_data={},
+                    output_data=output,
+                    status=ActionStatus.SUCCESS,
+                )
+                return final_action
+        return None
 
     def get_session_messages(self, session_id: str) -> List[Dict]:
         """
@@ -80,7 +107,6 @@ class SessionLoader:
                 current_assistant_group = None
                 assistant_progress = []
                 current_actions = []  # Collect ActionHistory objects for detailed view
-                last_timestamp = None
 
                 for message_data, created_at in cursor.fetchall():
                     try:
@@ -92,18 +118,24 @@ class SessionLoader:
                         if role == "user":
                             # Before adding user message, flush any pending assistant group
                             if current_assistant_group:
-                                # Add collected actions to the assistant group
+                                final_action = self._parse_final_output(current_actions[-1], current_assistant_group)
+                                if final_action:
+                                    current_actions.append(final_action)
+
+                                # Add collected actions and progress to the assistant group
                                 if current_actions:
                                     current_assistant_group["actions"] = current_actions.copy()
+                                if assistant_progress:
+                                    current_assistant_group["progress_messages"] = assistant_progress.copy()
+
                                 messages.append(current_assistant_group)
                                 current_assistant_group = None
                                 assistant_progress = []
                                 current_actions = []
 
-                            # Add user message
-                            messages.append(
-                                {"role": "user", "content": message_json.get("content", ""), "timestamp": created_at}
-                            )
+                            # Add user message (extract original user input from structured content)
+                            content = extract_user_input(message_json.get("content", ""))
+                            messages.append({"role": "user", "content": content, "timestamp": created_at})
                             continue
 
                         # Handle function calls (tool calls)
@@ -114,7 +146,6 @@ class SessionLoader:
                             # Initialize assistant group if needed
                             if not current_assistant_group:
                                 current_assistant_group = {"role": "assistant", "content": "", "timestamp": created_at}
-                                last_timestamp = created_at
 
                             # Parse arguments
                             try:
@@ -141,7 +172,7 @@ class SessionLoader:
 
                         # Handle function outputs (tool results)
                         if msg_type == "function_call_output":
-                            # Update the last action with output
+                            # Create a new SUCCESS action for the tool output
                             if current_actions:
                                 last_action = current_actions[-1]
 
@@ -164,11 +195,19 @@ class SessionLoader:
                                             # Last resort: store as string
                                             output_data = {"result": output_text}
 
-                                last_action.output = output_data
-                                last_action.status = ActionStatus.SUCCESS
-                                last_action.end_time = (
-                                    datetime.fromisoformat(created_at) if created_at else datetime.now()
+                                # Create a new SUCCESS action instead of updating the PROCESSING one
+                                success_action = ActionHistory(
+                                    action_id=str(uuid.uuid4()),
+                                    role=ActionRole.TOOL,
+                                    messages=f"Tool result: {last_action.action_type}",
+                                    action_type=last_action.action_type,
+                                    input=last_action.input,
+                                    output=output_data,
+                                    status=ActionStatus.SUCCESS,
+                                    start_time=last_action.start_time,
+                                    end_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
                                 )
+                                current_actions.append(success_action)
                             continue
 
                         # Handle assistant messages (thinking and final output)
@@ -184,49 +223,18 @@ class SessionLoader:
                                 text = item.get("text", "")
 
                                 if item_type == "output_text" and text:
-                                    # Check if this is the final SQL output
-                                    if text.strip().startswith("{"):
-                                        try:
-                                            output_json = json.loads(text)
-                                            if "sql" in output_json and "output" in output_json:
-                                                # This is the final output - finalize the group
-                                                if not current_assistant_group:
-                                                    current_assistant_group = {
-                                                        "role": "assistant",
-                                                        "content": "",
-                                                        "timestamp": created_at,
-                                                    }
-
-                                                current_assistant_group["content"] = output_json["output"]
-                                                current_assistant_group["sql"] = output_json["sql"]
-                                                current_assistant_group["progress_messages"] = assistant_progress.copy()
-                                                current_assistant_group["timestamp"] = last_timestamp or created_at
-
-                                                # Add collected actions
-                                                if current_actions:
-                                                    current_assistant_group["actions"] = current_actions.copy()
-
-                                                messages.append(current_assistant_group)
-                                                current_assistant_group = None
-                                                assistant_progress = []
-                                                current_actions = []
-                                                continue
-                                        except json.JSONDecodeError:
-                                            pass
-
-                                    # This is a thinking/progress message
+                                    # Initialize assistant group if needed
                                     if not current_assistant_group:
                                         current_assistant_group = {
                                             "role": "assistant",
                                             "content": "",
                                             "timestamp": created_at,
                                         }
-                                        last_timestamp = created_at
 
                                     # Add to progress
                                     assistant_progress.append(f"💭Thinking: {text}")
 
-                                    # Create ActionHistory for thinking
+                                    # Create ActionHistory for thinking (will parse sql/output on flush)
                                     thinking_action = ActionHistory(
                                         action_id=str(uuid.uuid4()),
                                         role=ActionRole.ASSISTANT,
@@ -246,6 +254,10 @@ class SessionLoader:
 
                 # Flush any remaining assistant group
                 if current_assistant_group:
+                    final_action = self._parse_final_output(current_actions[-1], current_assistant_group)
+                    if final_action:
+                        current_actions.append(final_action)
+
                     if not current_assistant_group.get("content"):
                         current_assistant_group["content"] = "Processing completed"
                     if assistant_progress:

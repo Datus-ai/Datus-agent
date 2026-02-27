@@ -16,15 +16,16 @@ import uuid
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 
-from agents import SQLiteSession, Tool
+from agents import Tool
+from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 
 from datus.agent.node.node import Node
-from datus.cli.execution_state import InteractionBroker
+from datus.cli.execution_state import ExecutionInterrupted, InteractionBroker, InterruptController
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -72,8 +73,7 @@ class AgenticNode(Node):
         self.mcp_servers = mcp_servers or {}
         self.actions: List[ActionHistory] = []
         self.session_id: Optional[str] = None
-        self._session: Optional[SQLiteSession] = None
-        self._session_tokens: int = 0
+        self._session: Optional[AdvancedSQLiteSession] = None
         self.last_summary: Optional[str] = None
         self.context_length: Optional[int] = None
 
@@ -102,6 +102,7 @@ class AgenticNode(Node):
             self.context_length = self.model.context_length() if self.model else None
 
         self.interaction_broker = InteractionBroker()
+        self.interrupt_controller = InterruptController()
 
     def get_node_name(self) -> str:
         """
@@ -207,7 +208,7 @@ class AgenticNode(Node):
         """Generate a unique session ID."""
         return f"{self.get_node_name()}_session_{str(uuid.uuid4())[:8]}"
 
-    def _get_or_create_session(self) -> tuple[SQLiteSession, Optional[str]]:
+    def _get_or_create_session(self) -> tuple[AdvancedSQLiteSession, Optional[str]]:
         """
         Get or create the session for this node.
 
@@ -236,41 +237,17 @@ class AgenticNode(Node):
 
         return self._session, summary
 
-    def _count_session_tokens(self) -> int:
+    async def _count_session_tokens(self) -> int:
         """
-        Count the total tokens in the current session.
-        Returns the cumulative token count stored in self._session_tokens.
+        Count the total tokens in the current session from turn_usage table.
 
         Returns:
             Total token count in the session
         """
-        return self._session_tokens
-
-    def _add_session_tokens(self, tokens_used: int) -> None:
-        """
-        Add tokens to the current session count.
-        Validates that the total doesn't exceed the model's context length.
-
-        Args:
-            tokens_used: Number of tokens to add to the session count
-        """
-        if tokens_used <= 0:
-            return
-
-        # Validate against context length if available
-        if self.context_length and (self._session_tokens + tokens_used) > self.context_length:
-            logger.warning(
-                f"Cannot add {tokens_used} tokens: would exceed context length "
-                f"({self._session_tokens + tokens_used} > {self.context_length})"
-            )
-            return
-
-        self._session_tokens += tokens_used
-        logger.debug(f"Added {tokens_used} tokens to session. Total: {self._session_tokens}")
-
-        # Update SQLite session with current token count via model's session manager
-        if self.model and hasattr(self.model, "session_manager") and self.session_id:
-            self.model.session_manager.update_session_tokens(self.session_id, self._session_tokens)
+        if self._session and hasattr(self._session, "get_session_usage"):
+            usage = await self._session.get_session_usage()
+            return usage.get("total_tokens", 0) if usage else 0
+        return 0
 
     async def _manual_compact(self) -> dict:
         """
@@ -289,7 +266,6 @@ class AgenticNode(Node):
 
             # Store old session info for logging
             old_session_id = self.session_id
-            old_tokens = self._session_tokens
 
             # 1. Generate summary using LLM with existing session
             summarization_prompt = (
@@ -327,12 +303,9 @@ class AgenticNode(Node):
             self.session_id = None
             self._session = None
 
-            # Reset token count for new session
-            self._session_tokens = 0
-
             logger.info(
                 f"Manual compacting completed. Cleared session: {old_session_id}, "
-                f"Token reset: {old_tokens} -> 0, Summary stored: {len(summary)} chars"
+                f"Summary stored: {len(summary)} chars"
             )
             return {"success": True, "summary": summary, "summary_token": summary_token}
 
@@ -351,11 +324,16 @@ class AgenticNode(Node):
             return False
 
         try:
-            current_tokens = self._count_session_tokens()
+            current_tokens = await self._count_session_tokens()
 
             if current_tokens > (self.context_length * 0.9):
                 logger.info(f"Auto-compacting triggered: {current_tokens}/{self.context_length} tokens")
-                return await self._manual_compact()  # Will reset tokens to 0
+                try:
+                    result = await self._manual_compact()
+                    return result.get("success", False)
+                except Exception as e:
+                    logger.error(f"Auto-compact manual compaction failed: {e}")
+                    return False
 
             return False
 
@@ -849,6 +827,9 @@ class AgenticNode(Node):
         This is the method that UI components should call instead of execute_stream()
         when they want to handle interactions from hooks.
 
+        Supports graceful interruption via self.interrupt_controller. When interrupted,
+        yields an "interrupted" action and stops execution cleanly.
+
         Args:
             action_history_manager: Optional action history manager for tracking
 
@@ -857,30 +838,40 @@ class AgenticNode(Node):
         """
         from datus.cli.execution_state import merge_interaction_stream
 
+        self.interrupt_controller.reset()
         broker = self._get_or_create_broker()
 
         action_stream = self.execute_stream(action_history_manager)
-        async for action in merge_interaction_stream(action_stream, broker):
-            yield action
+        try:
+            async for action in merge_interaction_stream(action_stream, broker):
+                self.interrupt_controller.check()
+                yield action
+        except ExecutionInterrupted:
+            logger.info("Execution interrupted by user")
+            yield ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="interrupted",
+                messages="Execution interrupted. You can continue with additional information.",
+                input_data={},
+                status=ActionStatus.SUCCESS,
+            )
 
     def clear_session(self) -> None:
-        """Clear the current session and reset token count."""
+        """Clear the current session."""
         if self.model and self.session_id:
             self.model.clear_session(self.session_id)
             self._session = None
-            self._session_tokens = 0  # Reset token count
-            logger.info(f"Cleared session: {self.session_id}, tokens reset to 0")
+            logger.info(f"Cleared session: {self.session_id}")
 
     def delete_session(self) -> None:
-        """Delete the current session completely and reset token count."""
+        """Delete the current session completely."""
         if self.model and self.session_id:
             self.model.delete_session(self.session_id)
             self._session = None
             self.session_id = None
-            self._session_tokens = 0  # Reset token count
-            logger.info("Deleted session, tokens reset to 0")
+            logger.info("Deleted session")
 
-    def get_session_info(self) -> Dict[str, Any]:
+    async def get_session_info(self) -> Dict[str, Any]:
         """
         Get information about the current session.
 
@@ -890,7 +881,7 @@ class AgenticNode(Node):
         if not self.session_id:
             return {"session_id": None, "active": False}
 
-        current_tokens = self._count_session_tokens()
+        current_tokens = await self._count_session_tokens()
 
         return {
             "session_id": self.session_id,

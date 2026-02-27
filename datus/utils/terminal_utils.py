@@ -4,8 +4,15 @@
 
 """Terminal utilities shared across layers (CLI, storage, etc.)."""
 
+import os
+import select
 import sys
+import threading
 from contextlib import contextmanager
+
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 @contextmanager
@@ -58,6 +65,87 @@ def suppress_keyboard_input():
         yield
     finally:
         termios.tcsetattr(fd, termios.TCSANOW, old_settings)
+        try:
+            termios.tcflush(fd, termios.TCIFLUSH)
+        except termios.error:
+            pass
+
+
+@contextmanager
+def interrupt_on_escape(interrupt_controller):
+    """Listen for ESC key and trigger interrupt_controller when detected.
+
+    Starts a daemon thread that puts the terminal in non-canonical, no-echo
+    mode and polls stdin for ESC (\\x1b). On detection, calls
+    interrupt_controller.interrupt(). Ctrl+C (\\x03) sends SIGINT to
+    preserve the original KeyboardInterrupt behavior.
+
+    On non-Unix platforms or non-terminal environments this is a no-op.
+
+    Args:
+        interrupt_controller: InterruptController instance to signal on ESC
+    """
+    try:
+        import termios
+    except ImportError:
+        yield
+        return
+
+    try:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+    except (AttributeError, OSError, termios.error):
+        yield
+        return
+
+    stop_event = threading.Event()
+
+    def _listener():
+        try:
+            # Set terminal to raw-like mode: non-canonical, no echo
+            new_settings = termios.tcgetattr(fd)
+            # Turn off ICANON and ECHO in lflag
+            new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO)
+            # Set VMIN=0, VTIME=0 for non-blocking reads
+            new_settings[6][termios.VMIN] = 0
+            new_settings[6][termios.VTIME] = 0
+            termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+
+            while not stop_event.is_set():
+                # Use select with timeout to avoid busy-waiting
+                ready, _, _ = select.select([fd], [], [], 0.1)
+                if ready:
+                    try:
+                        ch = os.read(fd, 1)
+                    except OSError:
+                        break
+                    if ch == b"\x1b":  # ESC
+                        logger.info("ESC key detected, triggering interrupt")
+                        interrupt_controller.interrupt()
+                        break
+                    elif ch == b"\x03":  # Ctrl+C
+                        # Send SIGINT to preserve original behavior
+                        import signal
+
+                        os.kill(os.getpid(), signal.SIGINT)
+                        break
+        except Exception:
+            # Silently ignore errors in the listener thread
+            pass
+
+    listener_thread = threading.Thread(target=_listener, daemon=True)
+    listener_thread.start()
+
+    try:
+        yield
+    finally:
+        stop_event.set()
+        listener_thread.join(timeout=1.0)
+        # Restore original terminal settings
+        try:
+            termios.tcsetattr(fd, termios.TCSANOW, old_settings)
+        except termios.error:
+            pass
         try:
             termios.tcflush(fd, termios.TCIFLUSH)
         except termios.error:

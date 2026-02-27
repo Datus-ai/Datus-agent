@@ -3,6 +3,7 @@
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -227,6 +228,7 @@ class CompareAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
+                interrupt_controller=self.interrupt_controller,
             ):
                 yield stream_action
 
@@ -254,7 +256,6 @@ class CompareAgenticNode(AgenticNode):
                         conversation_tokens = usage.get("total_tokens") or usage.get("output_tokens")
                         if conversation_tokens:
                             tokens_used = int(conversation_tokens)
-                            self._add_session_tokens(tokens_used)
                             break
 
             result = CompareResult(
@@ -276,6 +277,9 @@ class CompareAgenticNode(AgenticNode):
             )
             action_history_manager.add_action(final_action)
             yield final_action
+
+        except ExecutionInterrupted:
+            raise
 
         except Exception as exc:
             logger.error(f"CompareAgenticNode streaming execution failed: {exc}")

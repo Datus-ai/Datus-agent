@@ -13,6 +13,7 @@ from typing import AsyncGenerator, Optional, override
 
 from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.agent.workflow import Workflow
+from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
@@ -535,12 +536,8 @@ class ChatAgenticNode(GenSQLAgenticNode):
                     if action.output and isinstance(action.output, dict):
                         usage_info = action.output.get("usage", {})
                         if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            conversation_tokens = usage_info.get("total_tokens", 0)
-                            if conversation_tokens > 0:
-                                # Add this conversation's tokens to the session
-                                self._add_session_tokens(conversation_tokens)
-                                tokens_used = conversation_tokens
-                                logger.info(f"Added {conversation_tokens} tokens to session")
+                            tokens_used = usage_info.get("total_tokens", 0)
+                            if tokens_used > 0:
                                 break
                             else:
                                 logger.warning(f"no usage token found in this action {action.messages}")
@@ -596,6 +593,10 @@ class ChatAgenticNode(GenSQLAgenticNode):
             )
             action_history_manager.add_action(final_action)
             yield final_action
+
+        except ExecutionInterrupted:
+            # Let ExecutionInterrupted propagate to execute_stream_with_interactions
+            raise
 
         except Exception as e:
             # Handle user cancellation as success, not error

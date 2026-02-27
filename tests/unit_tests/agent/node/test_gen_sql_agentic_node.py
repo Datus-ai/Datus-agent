@@ -1639,3 +1639,40 @@ class TestEndToEndGenerationHooksInteraction:
         # No INTERACTION actions (empty file list = no sync prompt)
         interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
         assert len(interaction_actions) == 0
+
+
+# ===========================================================================
+# ExecutionInterrupted Tests
+# ===========================================================================
+
+
+class TestBuildEnhancedMessageWithContext:
+    """Tests for build_enhanced_message with various context combinations."""
+
+    def test_build_enhanced_message_with_db_type_only(self):
+        """build_enhanced_message includes dialect context when only db_type is provided."""
+        from datus.agent.node.gen_sql_agentic_node import build_enhanced_message
+
+        result = build_enhanced_message(
+            user_message="Show me the data",
+            db_type="sqlite",
+        )
+
+        assert "sqlite" in result
+        assert "Show me the data" in result
+
+    def test_build_enhanced_message_with_database_and_schema(self):
+        """build_enhanced_message includes database and schema in context."""
+        from datus.agent.node.gen_sql_agentic_node import build_enhanced_message
+
+        result = build_enhanced_message(
+            user_message="Query sales",
+            db_type="postgresql",
+            database="analytics",
+            db_schema="public",
+        )
+
+        assert "postgresql" in result
+        assert "analytics" in result
+        assert "public" in result
+        assert "Query sales" in result

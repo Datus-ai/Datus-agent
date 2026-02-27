@@ -19,12 +19,64 @@ import asyncio
 import pytest
 
 from datus.cli.execution_state import (
+    ExecutionInterrupted,
     InteractionBroker,
     InteractionCancelled,
+    InterruptController,
     PendingInteraction,
     merge_interaction_stream,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+# ===========================================================================
+# InterruptController Tests
+# ===========================================================================
+
+
+class TestInterruptController:
+    """Tests for InterruptController thread-safe interrupt management."""
+
+    def test_initial_state_not_interrupted(self):
+        """Newly created controller is not in interrupted state."""
+        ctrl = InterruptController()
+        assert ctrl.is_interrupted is False
+        # check() should not raise
+        ctrl.check()
+
+    def test_interrupt_sets_flag(self):
+        """interrupt() sets the interrupted flag."""
+        ctrl = InterruptController()
+        ctrl.interrupt()
+        assert ctrl.is_interrupted is True
+
+    def test_check_raises_when_interrupted(self):
+        """check() raises ExecutionInterrupted after interrupt() is called."""
+        ctrl = InterruptController()
+        ctrl.interrupt()
+        with pytest.raises(ExecutionInterrupted, match="Execution interrupted by user"):
+            ctrl.check()
+
+    def test_reset_clears_interrupted_flag(self):
+        """reset() clears the interrupt signal for a new cycle."""
+        ctrl = InterruptController()
+        ctrl.interrupt()
+        assert ctrl.is_interrupted is True
+        ctrl.reset()
+        assert ctrl.is_interrupted is False
+        # check() should not raise after reset
+        ctrl.check()
+
+    def test_interrupt_and_check_cycle(self):
+        """Multiple interrupt-reset cycles work correctly."""
+        ctrl = InterruptController()
+        for _ in range(3):
+            ctrl.interrupt()
+            assert ctrl.is_interrupted is True
+            with pytest.raises(ExecutionInterrupted):
+                ctrl.check()
+            ctrl.reset()
+            assert ctrl.is_interrupted is False
+
 
 # ===========================================================================
 # PendingInteraction Tests

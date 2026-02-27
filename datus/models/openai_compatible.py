@@ -14,8 +14,9 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import httpx
 import litellm
 import yaml
-from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
+from agents import Agent, ModelSettings, Runner, Tool
 from agents.exceptions import MaxTurnsExceeded
+from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 from openai.types.shared.reasoning import Reasoning
@@ -387,7 +388,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         output_type: type = str,
         strict_json_schema: bool = True,
         max_turns: int = 10,
-        session: Optional[SQLiteSession] = None,
+        session: Optional[AdvancedSQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         hooks=None,
         **kwargs,
@@ -446,9 +447,10 @@ class OpenAICompatibleModel(LLMBaseModel):
         output_type: type = str,
         strict_json_schema: bool = True,
         max_turns: int = 10,
-        session: Optional[SQLiteSession] = None,
+        session: Optional[AdvancedSQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         hooks=None,
+        interrupt_controller=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
@@ -483,6 +485,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             session,
             action_history_manager,
             hooks,
+            interrupt_controller=interrupt_controller,
             **kwargs,
         ):
             yield action
@@ -496,7 +499,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         output_type: type,
         strict_json_schema: bool,
         max_turns: int,
-        session: Optional[SQLiteSession] = None,
+        session: Optional[AdvancedSQLiteSession] = None,
         hooks=None,
         **kwargs,
     ) -> Dict:
@@ -542,7 +545,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                 }
 
                 # Build ModelSettings with provider-specific configurations
-                model_settings_kwargs = {}
+                model_settings_kwargs = {
+                    "include_usage": True,
+                }
 
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
@@ -594,6 +599,13 @@ class OpenAICompatibleModel(LLMBaseModel):
                             logger.debug(f"Failed to get conversation history: {e}")
 
                     self._save_llm_trace(messages, result.final_output, conversation_history)
+
+                # Store per-turn usage in turn_usage table
+                if session and hasattr(session, "store_run_usage"):
+                    try:
+                        await session.store_run_usage(result)
+                    except Exception as e:
+                        logger.warning(f"Failed to store run usage: {e}")
 
                 # Extract usage information from the correct location: result.context_wrapper.usage
                 usage_info = {}
@@ -658,9 +670,10 @@ class OpenAICompatibleModel(LLMBaseModel):
         output_type: type,
         strict_json_schema: bool,
         max_turns: int,
-        session: Optional[SQLiteSession],
+        session: Optional[AdvancedSQLiteSession],
         action_history_manager: ActionHistoryManager,
         hooks=None,
+        interrupt_controller=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Internal method for tool streaming execution with error handling.
@@ -709,7 +722,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                 }
 
                 # Build ModelSettings with provider-specific configurations
-                model_settings_kwargs = {}
+                model_settings_kwargs = {
+                    "include_usage": True,
+                }
 
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
@@ -756,7 +771,15 @@ class OpenAICompatibleModel(LLMBaseModel):
                 temp_tool_calls = {}  # {call_id: ActionHistory}
 
                 while not result.is_complete:
+                    if interrupt_controller and interrupt_controller.is_interrupted:
+                        from datus.cli.execution_state import ExecutionInterrupted
+
+                        raise ExecutionInterrupted("Interrupted by user")
                     async for event in result.stream_events():
+                        if interrupt_controller and interrupt_controller.is_interrupted:
+                            from datus.cli.execution_state import ExecutionInterrupted
+
+                            raise ExecutionInterrupted("Interrupted by user")
                         if not hasattr(event, "type") or event.type != "run_item_stream_event":
                             continue
 
@@ -945,6 +968,13 @@ class OpenAICompatibleModel(LLMBaseModel):
                     final_output = result.final_output if hasattr(result, "final_output") else ""
                     self._save_llm_trace(messages, final_output, conversation_history)
 
+                # Store per-turn usage in turn_usage table
+                if session and hasattr(session, "store_run_usage"):
+                    try:
+                        await session.store_run_usage(result)
+                    except Exception as e:
+                        logger.warning(f"Failed to store run usage: {e}")
+
                 # After streaming completes, extract usage information from the final result
                 # and add it to the final assistant action
                 await self._extract_and_distribute_token_usage(result, action_history_manager)
@@ -955,6 +985,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         # Track already processed action IDs to prevent duplicates across retries
         processed_action_ids = set()
+
+        from datus.cli.execution_state import ExecutionInterrupted
 
         for attempt in range(max_retries):
             try:
@@ -969,6 +1001,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                     yield action
                 # If we successfully complete, break out of retry loop
                 break
+
+            except ExecutionInterrupted:
+                # User-initiated interrupt: propagate immediately, do not retry
+                raise
 
             except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError) as e:
                 if attempt < max_retries - 1:

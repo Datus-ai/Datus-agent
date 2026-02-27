@@ -250,6 +250,73 @@ class TestGenSemanticModelAgenticNodeExecution:
         assert actions[-1].status == ActionStatus.SUCCESS
 
     @pytest.mark.asyncio
+    async def test_semantic_model_with_database_context(self, real_agent_config, mock_llm_create):
+        """Test execute_stream with database context enriches the enhanced message."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Semantic model generated with database context."),
+            ]
+        )
+
+        node = GenSemanticModelAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+
+        node.input = SemanticNodeInput(
+            user_message="Generate semantic model for satscores",
+            database="california_schools",
+        )
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+        # Verify the model was called with enhanced prompt containing database context
+        assert len(mock_llm_create.call_history) >= 1
+        call = mock_llm_create.call_history[0]
+        prompt = call.get("prompt", "")
+        assert "california_schools" in prompt or "Generate" in prompt
+
+    @pytest.mark.asyncio
+    async def test_semantic_model_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
+        """Test that interactive mode tracks token usage from action history."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Semantic model generated in interactive mode."),
+            ]
+        )
+
+        node = GenSemanticModelAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="interactive",
+        )
+
+        node.input = SemanticNodeInput(user_message="Generate semantic model")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+        # In interactive mode, the final result should have tokens_used > 0
+        last_output = actions[-1].output
+        assert last_output is not None
+        if isinstance(last_output, dict) and "tokens_used" in last_output:
+            assert last_output["tokens_used"] > 0
+
+    @pytest.mark.asyncio
     async def test_semantic_model_input_not_set_raises(self, real_agent_config, mock_llm_create):
         """Test that execute_stream raises when input is not set."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
@@ -262,5 +329,29 @@ class TestGenSemanticModelAgenticNodeExecution:
 
         action_manager = ActionHistoryManager()
         with pytest.raises(ValueError, match="Semantic input not set"):
+            async for _ in node.execute_stream(action_manager):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_semantic_model_execution_interrupted_propagates(self, real_agent_config, mock_llm_create):
+        """Test that ExecutionInterrupted is re-raised from execute_stream."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        from datus.cli.execution_state import ExecutionInterrupted
+
+        async def _raise_interrupted(*args, **kwargs):
+            """Async generator that raises ExecutionInterrupted."""
+            raise ExecutionInterrupted("User pressed ESC")
+            yield  # noqa: makes this an async generator
+
+        node = GenSemanticModelAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+
+        node.input = SemanticNodeInput(user_message="Generate semantic model")
+        mock_llm_create.generate_with_tools_stream = _raise_interrupted
+
+        action_manager = ActionHistoryManager()
+        with pytest.raises(ExecutionInterrupted):
             async for _ in node.execute_stream(action_manager):
                 pass

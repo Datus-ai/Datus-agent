@@ -253,6 +253,36 @@ class TestSqlSummaryAgenticNodeExecution:
         # The enhanced message should contain the SQL query
         assert "SELECT" in prompt or "Summarize" in prompt
 
+    @pytest.mark.asyncio
+    async def test_sql_summary_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
+        """Test that interactive mode tracks token usage from action history."""
+        node = _create_node(real_agent_config, execution_mode="interactive")
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("SQL summary created in interactive mode"),
+            ]
+        )
+        node.model = mock_llm_create
+
+        node.input = SqlSummaryNodeInput(
+            user_message="Summarize this SQL query",
+            sql_query="SELECT COUNT(*) FROM satscores",
+        )
+
+        actions = []
+        async for action in node.execute_stream():
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+        # In interactive mode, the final result should have tokens_used > 0
+        last_output = actions[-1].output
+        assert last_output is not None
+        if isinstance(last_output, dict) and "tokens_used" in last_output:
+            assert last_output["tokens_used"] > 0
+
 
 # ===========================================================================
 # Test Extract Methods

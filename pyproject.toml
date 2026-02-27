@@ -132,6 +132,12 @@ index-url = "http://mirrors.aliyun.com/pypi/simple"
 line-length = 120
 target-version = ["py312"]
 
+[tool.isort]
+profile = "black"
+line_length = 120
+known_first_party = ["datus"]
+known_third_party = ["mcp"]
+
 [tool.flake8]
 max-line-length = 120
 ignore = "E203, E266, E501, W503"
@@ -167,6 +173,9 @@ dev = [
 source = ["datus"]
 omit = [
     "datus/prompts/prompt_templates/*",
+    "datus/cli/web/chatbot.py",
+    "datus/cli/web/ui_components.py",
+    "datus/cli/screen/subject_screen.py",
 ]
 
 [tool.coverage.report]

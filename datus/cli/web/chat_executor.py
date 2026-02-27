@@ -141,6 +141,12 @@ class ChatExecutor:
                 async_gen = run_stream()
                 while True:
                     try:
+                        # Check for interrupt before each iteration
+                        if (
+                            hasattr(current_node, "interrupt_controller")
+                            and current_node.interrupt_controller.is_interrupted
+                        ):
+                            break
                         result = loop.run_until_complete(async_gen.__anext__())
                         yield result
                     except StopAsyncIteration:

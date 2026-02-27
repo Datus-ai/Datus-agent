@@ -96,9 +96,15 @@ class UIComponents:
             latest_msg = info.get("latest_user_message", "")
             if latest_msg:
                 st.caption(f"**Latest:** {latest_msg[:50]}...")
-            if st.button("🔗 Load Session", key=f"load_{info['session_id']}", use_container_width=True):
-                self.safe_update_query_params({"session": info["session_id"]})
-                st.rerun()
+            col_view, col_resume = st.columns(2)
+            with col_view:
+                if st.button("👁 View", key=f"view_{info['session_id']}", use_container_width=True):
+                    self.safe_update_query_params({"session": info["session_id"], "mode": "readonly"})
+                    st.rerun()
+            with col_resume:
+                if st.button("▶ Resume", key=f"resume_{info['session_id']}", use_container_width=True):
+                    self.safe_update_query_params({"session": info["session_id"], "mode": "resume"})
+                    st.rerun()
 
     def generate_report_issue_html(self, session_id: Optional[str] = None) -> str:
         """Generate Report Issue button HTML with JavaScript."""

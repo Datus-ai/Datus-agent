@@ -23,10 +23,11 @@ from rich.table import Table
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli._cli_utils import select_choice
 from datus.cli.action_history_display import ActionHistoryDisplay
-from datus.cli.blocking_input_manager import suppress_keyboard_input
+from datus.cli.execution_state import ExecutionInterrupted
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
+from datus.utils.terminal_utils import interrupt_on_escape
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
@@ -73,7 +74,11 @@ class ChatCommands:
         """Trigger compact on current node before switching."""
         if self.current_node and hasattr(self.current_node, "_manual_compact"):
             try:
-                session_info = self.current_node.get_session_info()
+
+                async def _get_info():
+                    return await self.current_node.get_session_info()
+
+                session_info = asyncio.run(_get_info())
                 if session_info.get("session_id"):
                     self.console.print("[yellow]Switching node, compacting current session...[/]")
 
@@ -321,7 +326,7 @@ class ChatCommands:
 
             # Show session info for existing session
             if not need_new_node:
-                session_info = current_node.get_session_info()
+                session_info = asyncio.run(current_node.get_session_info())
                 if session_info.get("session_id"):
                     session_display = (
                         f"[dim]Using existing session: {session_info['session_id']} "
@@ -339,6 +344,7 @@ class ChatCommands:
 
             # Display streaming execution
             self.console.print(f"[bold green]Processing {node_type} request...[/]")
+            self.console.print("[dim]Press ESC or Ctrl+C to interrupt[/dim]")
 
             # Initialize action history display for incremental actions only
             action_display = ActionHistoryDisplay(self.console)
@@ -369,10 +375,19 @@ class ChatCommands:
                         incremental_actions.append(action)
 
             # Both normal and plan mode use the same interaction-aware streaming
-            # Suppress keyboard input (except Ctrl+C) during streaming to prevent
-            # accidental keypresses from being echoed or queued.
-            with suppress_keyboard_input(), action_display.display_streaming_actions(incremental_actions):
-                asyncio.run(run_chat_stream_with_interactions())
+            # Use interrupt_on_escape to listen for ESC key (replaces suppress_keyboard_input)
+            # ESC triggers graceful interrupt; Ctrl+C sends SIGINT for KeyboardInterrupt
+            with interrupt_on_escape(current_node.interrupt_controller), action_display.display_streaming_actions(
+                incremental_actions
+            ):
+                try:
+                    asyncio.run(run_chat_stream_with_interactions())
+                except KeyboardInterrupt:
+                    # Ctrl+C: trigger graceful interrupt via the controller
+                    current_node.interrupt_controller.interrupt()
+                    logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
+                except ExecutionInterrupted:
+                    logger.info("ExecutionInterrupted caught, execution stopped gracefully")
 
             # Display final response from the last successful action
             if incremental_actions:
@@ -834,7 +849,7 @@ class ChatCommands:
     def cmd_chat_info(self, args: str):
         """Display information about the current session."""
         if self.current_node:
-            session_info = self.current_node.get_session_info()
+            session_info = asyncio.run(self.current_node.get_session_info())
             if session_info.get("session_id"):
                 # Determine node type for display
                 node_type = "Chat" if isinstance(self.current_node, ChatAgenticNode) else "Subagent"
@@ -861,7 +876,7 @@ class ChatCommands:
             self.console.print("[yellow]No active session to compact.[/]")
             return
 
-        session_info = self.current_node.get_session_info()
+        session_info = asyncio.run(self.current_node.get_session_info())
         if not session_info.get("session_id"):
             self.console.print("[yellow]No active session to compact.[/]")
             return
@@ -959,6 +974,261 @@ class ChatCommands:
 
         except Exception as e:
             logger.error(f"Error listing sessions: {e}")
+            self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+    @staticmethod
+    def _extract_node_type_from_session_id(session_id: str) -> str:
+        """Extract node type from session_id format {node_name}_session_{uuid}."""
+        if "_session_" in session_id:
+            return session_id.rsplit("_session_", 1)[0]
+        return "chat"
+
+    def cmd_resume(self, args: str):
+        """Resume a previous chat session."""
+        from datus.cli._cli_utils import prompt_input
+        from datus.models.session_manager import SessionManager
+
+        try:
+            session_manager = SessionManager()
+
+            # If session_id provided directly, use it
+            target_session_id = args.strip() if args else None
+
+            if not target_session_id:
+                # List all sessions for user to choose
+                sessions = session_manager.list_sessions(sort_by_modified=True)
+                if not sessions:
+                    self.console.print("[yellow]No sessions found.[/]")
+                    return
+
+                # Get session info and filter empty sessions
+                session_infos = []
+                for sid in sessions:
+                    info = session_manager.get_session_info(sid)
+                    if info.get("exists") and info.get("message_count", 0) > 0:
+                        session_infos.append(info)
+
+                if not session_infos:
+                    self.console.print("[yellow]No sessions with messages found.[/]")
+                    return
+
+                # Display sessions in a Rich Table
+                table = Table(title="Available Sessions", show_header=True, header_style="bold blue")
+                table.add_column("#", style="dim", width=4)
+                table.add_column("Session ID", style="cyan", no_wrap=True)
+                table.add_column("Type", style="green", width=12)
+                table.add_column("First User Message", style="white", max_width=40)
+                table.add_column("Updated", style="yellow", width=19)
+                table.add_column("Msgs", justify="right", style="magenta", width=5)
+
+                for idx, info in enumerate(session_infos, 1):
+                    sid = info["session_id"]
+                    node_type = self._extract_node_type_from_session_id(sid)
+                    first_msg = info.get("first_user_message", "") or ""
+                    if len(first_msg) > 37:
+                        first_msg = first_msg[:37] + "..."
+                    updated = (info.get("updated_at") or info.get("latest_message_at") or "N/A")[:19]
+                    msg_count = str(info.get("message_count", 0))
+                    table.add_row(str(idx), sid[:24] + "...", node_type, first_msg, updated, msg_count)
+
+                self.console.print(table)
+
+                # Let user pick
+                choice = prompt_input(self.console, "Enter session number to resume (or 'q' to cancel)")
+                if not choice or choice.lower() == "q":
+                    self.console.print("[dim]Cancelled.[/]")
+                    return
+
+                try:
+                    idx = int(choice) - 1
+                    if idx < 0 or idx >= len(session_infos):
+                        self.console.print("[bold red]Invalid selection.[/]")
+                        return
+                    target_session_id = session_infos[idx]["session_id"]
+                except ValueError:
+                    self.console.print("[bold red]Invalid input. Please enter a number.[/]")
+                    return
+
+            # Validate the session exists
+            if not session_manager.session_exists(target_session_id):
+                self.console.print(f"[bold red]Session not found:[/] {target_session_id}")
+                return
+
+            # Extract node type and create the appropriate node
+            node_name = self._extract_node_type_from_session_id(target_session_id)
+            subagent_name = node_name if node_name != "chat" else None
+
+            self.console.print(f"[dim]Resuming session: {target_session_id} (type: {node_name})...[/]")
+
+            new_node = self._create_new_node(subagent_name)
+            new_node.session_id = target_session_id
+
+            # Update state
+            self.current_node = new_node
+            self.current_subagent_name = subagent_name
+            self.chat_node = new_node if not subagent_name else self.chat_node
+
+            # Show conversation history with full formatting
+            from rich.rule import Rule
+
+            from datus.cli.web.session_loader import SessionLoader
+
+            loader = SessionLoader()
+            messages = loader.get_session_messages(target_session_id)
+            if messages:
+                self.console.print(f"\n[bold green]Session resumed![/] Showing {len(messages)} message(s):\n")
+                action_display = ActionHistoryDisplay(self.console)
+                for msg in messages:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        self.console.print(f"[bold blue]You:[/] {content}")
+                    else:
+                        actions = msg.get("actions")
+                        if actions:
+                            action_display.display_action_list(actions)
+                        sql = msg.get("sql")
+                        if sql:
+                            self._display_sql_with_copy(sql)
+                        if content:
+                            stripped = content.strip()
+                            is_json = stripped.startswith("{") and stripped.endswith("}")
+                            if not (is_json and (sql or actions)):
+                                self._display_markdown_response(content)
+                    self.console.print(Rule(style="dim"))
+                self.console.print()
+
+            # Get session info to check token usage
+            info = session_manager.get_session_info(target_session_id)
+            total_tokens = info.get("total_tokens", 0)
+            if total_tokens > 50000:
+                self.console.print(
+                    "[yellow]Note: This session has high token usage. "
+                    "Consider using .compact to reduce context size.[/]"
+                )
+
+            self.console.print("[green]You can now continue the conversation.[/]")
+
+        except Exception as e:
+            logger.error(f"Error resuming session: {e}")
+            self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+    def cmd_rewind(self, args: str):
+        """Rewind the current session to a specific user turn, creating a new branched session."""
+        from datus.cli._cli_utils import prompt_input
+        from datus.cli.web.session_loader import SessionLoader
+        from datus.models.session_manager import SessionManager
+
+        try:
+            # Check for an active session
+            if not self.current_node or not self.current_node.session_id:
+                self.console.print("[yellow]No active session. Start a conversation first or use .resume.[/]")
+                return
+
+            source_session_id = self.current_node.session_id
+
+            # Load conversation history
+            loader = SessionLoader()
+            messages = loader.get_session_messages(source_session_id)
+            if not messages:
+                self.console.print("[yellow]Current session has no messages.[/]")
+                return
+
+            # Build a table of user turns
+            user_turns = []
+            for msg in messages:
+                if msg.get("role") == "user":
+                    user_turns.append(msg)
+
+            if not user_turns:
+                self.console.print("[yellow]No user turns found in current session.[/]")
+                return
+
+            # Display the turns
+            table = Table(title="Conversation Turns", show_header=True, header_style="bold blue")
+            table.add_column("Turn", style="cyan", width=6, justify="right")
+            table.add_column("User Message", style="white", max_width=80)
+
+            for idx, turn_msg in enumerate(user_turns, 1):
+                content = turn_msg.get("content", "")
+                if len(content) > 77:
+                    content = content[:77] + "..."
+                table.add_row(str(idx), content)
+
+            self.console.print(table)
+
+            # Get user choice (from args or prompt)
+            turn_str = args.strip() if args else None
+            if not turn_str:
+                turn_str = prompt_input(
+                    self.console,
+                    "Enter turn number to rewind to (or 'q' to cancel)",
+                )
+            if not turn_str or turn_str.lower() == "q":
+                self.console.print("[dim]Cancelled.[/]")
+                return
+
+            try:
+                turn_num = int(turn_str)
+            except ValueError:
+                self.console.print("[bold red]Invalid input. Please enter a number.[/]")
+                return
+
+            if turn_num < 1 or turn_num > len(user_turns):
+                self.console.print(f"[bold red]Invalid turn number. Must be between 1 and {len(user_turns)}.[/]")
+                return
+
+            # Create the rewound session
+            session_manager = SessionManager()
+            new_session_id = session_manager.rewind_session(
+                source_session_id, turn_num, include_assistant_response=True
+            )
+
+            # Switch to the new session (same pattern as cmd_resume)
+            node_name = self._extract_node_type_from_session_id(new_session_id)
+            subagent_name = node_name if node_name != "chat" else None
+
+            new_node = self._create_new_node(subagent_name)
+            new_node.session_id = new_session_id
+
+            self.current_node = new_node
+            self.current_subagent_name = subagent_name
+            self.chat_node = new_node if not subagent_name else self.chat_node
+
+            # Show the rewound conversation
+            from rich.rule import Rule
+
+            new_messages = loader.get_session_messages(new_session_id)
+            if new_messages:
+                self.console.print(
+                    f"\n[bold green]Rewound to turn {turn_num}![/] "
+                    f"New session: [cyan]{new_session_id}[/] ({len(new_messages)} messages)\n"
+                )
+                action_display = ActionHistoryDisplay(self.console)
+                for msg in new_messages:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        self.console.print(f"[bold blue]You:[/] {content}")
+                    else:
+                        actions = msg.get("actions")
+                        if actions:
+                            action_display.display_action_list(actions)
+                        sql = msg.get("sql")
+                        if sql:
+                            self._display_sql_with_copy(sql)
+                        if content:
+                            stripped = content.strip()
+                            is_json = stripped.startswith("{") and stripped.endswith("}")
+                            if not (is_json and (sql or actions)):
+                                self._display_markdown_response(content)
+                    self.console.print(Rule(style="dim"))
+                self.console.print()
+
+            self.console.print("[green]You can now continue the conversation from this point.[/]")
+
+        except Exception as e:
+            logger.error(f"Error rewinding session: {e}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     def add_in_sql_context(self, sql: str, explanation: str, incremental_actions: List[ActionHistory]):

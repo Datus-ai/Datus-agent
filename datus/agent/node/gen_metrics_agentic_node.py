@@ -13,6 +13,7 @@ hooks, and metricflow MCP server integration.
 from typing import AsyncGenerator, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.cli.execution_state import ExecutionInterrupted
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -20,6 +21,7 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, Semant
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
+from datus.utils.message_utils import MessagePart, build_structured_content
 from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
@@ -366,9 +368,12 @@ class GenMetricsAgenticNode(AgenticNode):
                 enhanced_parts.append(context_part_str)
 
             if enhanced_parts:
-                separator = "\n\n"
-                enhanced_message = (
-                    f"{separator.join(enhanced_parts)}{separator}User question: {user_input.user_message}"
+                enhanced_context = "\n\n".join(enhanced_parts)
+                enhanced_message = build_structured_content(
+                    [
+                        MessagePart(type="enhanced", content=enhanced_context),
+                        MessagePart(type="user", content=user_input.user_message),
+                    ]
                 )
 
             logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
@@ -391,6 +396,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 session=session,
                 action_history_manager=action_history_manager,
                 hooks=self.hooks if self.execution_mode == "interactive" else None,
+                interrupt_controller=self.interrupt_controller,
             ):
                 yield stream_action
 
@@ -436,12 +442,8 @@ class GenMetricsAgenticNode(AgenticNode):
                         if action.output and isinstance(action.output, dict):
                             usage_info = action.output.get("usage", {})
                             if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                                conversation_tokens = usage_info.get("total_tokens", 0)
-                                if conversation_tokens > 0:
-                                    # Add this conversation's tokens to the session
-                                    self._add_session_tokens(conversation_tokens)
-                                    tokens_used = conversation_tokens
-                                    logger.info(f"Added {conversation_tokens} tokens to session")
+                                tokens_used = usage_info.get("total_tokens", 0)
+                                if tokens_used > 0:
                                     break
                                 else:
                                     logger.warning(f"no usage token found in this action {action.messages}")
@@ -486,6 +488,9 @@ class GenMetricsAgenticNode(AgenticNode):
             )
             action_history_manager.add_action(final_action)
             yield final_action
+
+        except ExecutionInterrupted:
+            raise
 
         except Exception as e:
             logger.error(f"{self.get_node_name()} execution error: {e}")

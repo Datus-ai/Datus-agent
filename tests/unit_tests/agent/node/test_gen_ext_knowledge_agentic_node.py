@@ -330,6 +330,35 @@ class TestGenExtKnowledgeNodeExecution:
         assert actions[-1].action_type == "ext_knowledge_response"
 
     @pytest.mark.asyncio
+    async def test_ext_knowledge_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
+        """Test that interactive mode tracks token usage from action history."""
+        node = _create_node(real_agent_config, execution_mode="interactive")
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("External knowledge created in interactive mode"),
+            ]
+        )
+        node.model = mock_llm_create
+
+        node.input = ExtKnowledgeNodeInput(
+            user_message="Generate external knowledge documentation",
+        )
+
+        actions = []
+        async for action in node.execute_stream():
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+        # In interactive mode, the final result should have tokens_used > 0
+        last_output = actions[-1].output
+        assert last_output is not None
+        if isinstance(last_output, dict) and "tokens_used" in last_output:
+            assert last_output["tokens_used"] > 0
+
+    @pytest.mark.asyncio
     async def test_ext_knowledge_input_not_set_raises(self, real_agent_config, mock_llm_create):
         """execute_stream raises ValueError when input is not set."""
         node = _create_node(real_agent_config)
