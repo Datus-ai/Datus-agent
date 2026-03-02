@@ -31,13 +31,28 @@ import json
 import os
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 
 
 def log(msg):
     print(f"[ci] {msg}", flush=True)
+
+
+# Timeout configuration (seconds), configurable via environment variables
+TEST_CMD_TIMEOUT = int(os.environ.get("TEST_CMD_TIMEOUT", "1800"))    # 30 min
+GIT_CMD_TIMEOUT = int(os.environ.get("GIT_CMD_TIMEOUT", "60"))        # 60 sec
+DIFF_COVER_TIMEOUT = int(os.environ.get("DIFF_COVER_TIMEOUT", "300")) # 5 min
+
+
+def _run_cmd(cmd, timeout, **kwargs):
+    """Run a command with timeout. Returns CompletedProcess or None on timeout."""
+    try:
+        return subprocess.run(cmd, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired:
+        log(f"Command timed out after {timeout}s: {' '.join(cmd)}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +106,18 @@ def run_tests(test_paths=None):
             for line in proc.stdout:
                 sys.stdout.write(line)
                 log_file.write(line)
-        exit_code = proc.wait()
+        try:
+            exit_code = proc.wait(timeout=TEST_CMD_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            log(f"pytest timed out after {TEST_CMD_TIMEOUT}s, killing process")
+            proc.kill()
+            if proc.stdout:
+                for line in proc.stdout:
+                    sys.stdout.write(line)
+                    log_file.write(line)
+            proc.wait()
+            log_file.write(f"\n[ci] TIMEOUT: pytest killed after {TEST_CMD_TIMEOUT}s\n")
+            exit_code = 1
 
     log(f"pytest exited with code {exit_code}")
 
@@ -144,6 +170,7 @@ def parse_test_results(junit_xml_path=None):
         log(f"Test results: {passed} passed, {failed} failed, {errors} errors, {skipped} skipped (total: {total})")
     except Exception as e:
         log(f"Failed to parse {junit_xml_path}: {e}")
+        sys.exit(1)
 
     return {
         "total": total,
@@ -218,20 +245,22 @@ def find_compare_branch(base_ref):
 
     log("No base_ref provided, auto-detecting compare branch...")
 
-    current = subprocess.run(
+    current = _run_cmd(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        GIT_CMD_TIMEOUT,
         capture_output=True,
         text=True,
     )
-    current_branch = current.stdout.strip() if current.returncode == 0 else ""
+    current_branch = current.stdout.strip() if current and current.returncode == 0 else ""
     log(f"Current branch: {current_branch}")
 
-    result = subprocess.run(
+    result = _run_cmd(
         ["git", "branch", "-r", "--format=%(refname:short)"],
+        GIT_CMD_TIMEOUT,
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0:
+    if not result or result.returncode != 0:
         log("Failed to list remote branches")
         return None
 
@@ -242,12 +271,13 @@ def find_compare_branch(base_ref):
     ]
     log(f"Candidate remote branches: {len(branches)}")
 
-    head = subprocess.run(
+    head = _run_cmd(
         ["git", "rev-parse", "HEAD"],
+        GIT_CMD_TIMEOUT,
         capture_output=True,
         text=True,
     )
-    head_commit = head.stdout.strip() if head.returncode == 0 else ""
+    head_commit = head.stdout.strip() if head and head.returncode == 0 else ""
     log(f"HEAD commit: {head_commit[:12]}")
 
     best_commit = None
@@ -255,23 +285,25 @@ def find_compare_branch(base_ref):
     best_timestamp = -1
     skipped_same_as_head = 0
     for branch in branches:
-        mb = subprocess.run(
+        mb = _run_cmd(
             ["git", "merge-base", "HEAD", branch],
+            GIT_CMD_TIMEOUT,
             capture_output=True,
             text=True,
         )
-        if mb.returncode != 0:
+        if not mb or mb.returncode != 0:
             continue
         commit = mb.stdout.strip()
         if commit == head_commit:
             skipped_same_as_head += 1
             continue
-        ts = subprocess.run(
+        ts = _run_cmd(
             ["git", "log", "-1", "--format=%ct", commit],
+            GIT_CMD_TIMEOUT,
             capture_output=True,
             text=True,
         )
-        if ts.returncode == 0:
+        if ts and ts.returncode == 0:
             timestamp = int(ts.stdout.strip())
             if timestamp > best_timestamp:
                 best_timestamp = timestamp
@@ -280,12 +312,13 @@ def find_compare_branch(base_ref):
 
     log(f"Skipped {skipped_same_as_head} branches (merge-base == HEAD)")
     if best_commit:
-        count = subprocess.run(
+        count = _run_cmd(
             ["git", "rev-list", "--count", f"{best_commit}..HEAD"],
+            GIT_CMD_TIMEOUT,
             capture_output=True,
             text=True,
         )
-        commits_ahead = count.stdout.strip() if count.returncode == 0 else "?"
+        commits_ahead = count.stdout.strip() if count and count.returncode == 0 else "?"
         log(f"Selected merge-base: {best_commit[:12]} (branch: {best_branch}, {commits_ahead} commits ahead)")
     else:
         log("No suitable merge-base found")
@@ -305,14 +338,14 @@ def extract_coverage(base_ref):
         overall = float(tree.getroot().attrib.get("line-rate", 0)) * 100
         log(f"Overall coverage: {overall:.2f}%")
     except Exception as e:
-        overall = 0
         log(f"Failed to parse {coverage_xml}: {e}")
+        sys.exit(1)
 
     # Diff coverage
     compare_branch = find_compare_branch(base_ref)
     if compare_branch:
         log(f"Running diff-cover --compare-branch={compare_branch}")
-        proc = subprocess.run(
+        proc = _run_cmd(
             [
                 "diff-cover",
                 coverage_xml,
@@ -323,11 +356,14 @@ def extract_coverage(base_ref):
                 diff_report,
                 "--fail-under=0",
             ],
+            DIFF_COVER_TIMEOUT,
             capture_output=True,
             text=True,
         )
-        if proc.returncode != 0:
-            log(f"diff-cover failed (exit {proc.returncode}): {proc.stderr.strip()}")
+        if not proc or proc.returncode != 0:
+            err = proc.stderr.strip() if proc else "timed out"
+            code = proc.returncode if proc else "timeout"
+            log(f"diff-cover failed (exit {code}): {err}")
         else:
             log("diff-cover completed successfully")
     else:
@@ -369,8 +405,8 @@ def extract_directory_coverage(source_dir):
         overall = float(root.attrib.get("line-rate", 0)) * 100
         log(f"Overall coverage: {overall:.2f}%")
     except Exception as e:
-        overall = 0
         log(f"Failed to parse {coverage_xml}: {e}")
+        sys.exit(1)
 
     # Determine the directory prefix relative to the source root.
     # coverage.xml <source> points to e.g. ".../datus", and filenames are
@@ -422,6 +458,7 @@ def extract_directory_coverage(source_dir):
 
     except Exception as e:
         log(f"Failed to parse {coverage_xml} for directory coverage: {e}")
+        sys.exit(1)
 
     total_lines = total_covered + total_violations
     dir_pct = (total_covered / total_lines * 100) if total_lines > 0 else 100.0
