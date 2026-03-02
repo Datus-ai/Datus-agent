@@ -44,7 +44,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 raise DatusException(ErrorCode.DB_CONNECTION_FAILED, message_args={"error_message": str(e)}) from e
 ```
 
-Error code ranges: 1xxxxx (common), 2xxxxx (node), 3xxxxx (model/LLM), 4xxxxx (tool/storage), 5xxxxx (database).
+Error code ranges: 100000–199999 (common), 200000–299999 (node), 300000–399999 (model/LLM), 400000–499999 (tool/storage), 500000–599999 (database).
 
 ### Async
 
@@ -134,7 +134,7 @@ Error code ranges: 1xxxxx (common), 2xxxxx (node), 3xxxxx (model/LLM), 4xxxxx (t
 | Modified Module | Required Test Files |
 |----------------|-------------------|
 | `datus/configuration/` | test_configuration_load.py, test_openai_headers.py |
-| `datus/models/{provider}_model.py` | test_{provider}_model.py, regression/test_regression_llm.py |
+| `datus/models/{provider}_model.py` | integration/models/test_*_model.py, regression/test_regression_llm.py |
 | `datus/agent/node/` | test_node.py, test_schema_linking.py, test_date_parser_*.py |
 | `datus/agent/workflow.py` | test_workflow.py, test_planning.py |
 | `datus/cli/repl.py` | test_cli_rich.py, regression/test_regression_web*.py |
@@ -157,7 +157,7 @@ Error code ranges: 1xxxxx (common), 2xxxxx (node), 3xxxxx (model/LLM), 4xxxxx (t
 
 - **New public functions/classes** → CI-level tests in `tests/unit_tests/`
 - **New agent nodes** → nightly test in `test_node.py`
-- **New LLM adapters** → register in `regression/test_regression_llm.py`
+- **New LLM adaptors** → register in `regression/test_regression_llm.py`
 - **New CLI commands** → test in `test_cli_rich.py`
 - **New MCP tools** → test in `test_mcp_server.py`
 - **New connectors** → tests following `test_connector_duckdb.py`
